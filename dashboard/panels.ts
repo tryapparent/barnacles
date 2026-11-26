@@ -7,7 +7,7 @@ const timingPath = "/d/barnacles-timing/timing";
 const tracePath = "/d/barnacles-trace/trace";
 
 type Window = { from: number; to: number };
-type Range = Window & { defaultTrace?: Window & { session: number; traceId: string } };
+type Range = Window & { traceSessions: number; defaultTrace?: Window & { session: number; traceId: string } };
 type FieldProperty = { id: string; value: unknown };
 type Override = { matcher: { id: string; options: string }; properties: FieldProperty[] };
 
@@ -164,12 +164,13 @@ export function dashboards(range: Range) {
   const reasoningTime = "strftime('%Y-%m-%dT%H:%M:%fZ', observed / 1000.0, 'unixepoch')";
   const trace = board("barnacles-trace", "Barnacles · Rollout waterfall",
     first ? new Date(first.from).toISOString() : from, first ? new Date(first.to).toISOString() : to, [
-      data(1, "table", "Session coverage", [0, 0, 24, 5],
-        `SELECT kind AS "Evidence", observed AS "Observed", missing AS "Untimed"
+      range.traceSessions ? data(1, "table", "Session coverage", [0, 0, 24, 5],
+        `SELECT kind AS "Evidence", observed AS "Seen", missing AS "Untimed"
           FROM trace_coverage WHERE CAST(session AS TEXT) = ${session} ORDER BY ordinal`,
         { showHeader: true }, { noValue: "—", custom: { minWidth: 64 } },
-        [byName("Observed", width(72)), byName("Untimed", width(68))], [],
-        "Untimed spans have incomplete clocks. Reasoning events are timestamps on the session root. Import a rollout and rebuild the snapshot to add coverage."),
+        [byName("Seen", width(61)), byName("Untimed", width(80))], [],
+        "Untimed spans have incomplete clocks. Reasoning events are timestamps on the session root.")
+        : block(1, "Session coverage", [0, 0, 24, 5], "Import a Codex rollout and rebuild the snapshot to view a trace."),
       {
         id: 2, type: "traces", title: "Session trace", datasource: tempo,
         gridPos: { x: 0, y: 5, w: 24, h: 14 },

@@ -159,6 +159,7 @@ function writeSnapshot(input: string, output: string, otlp: string, repo: string
     }
 
     let defaultTrace: { session: number; from: number; to: number; traceId: string; mixed: boolean } | undefined;
+    let traceSessions = 0;
     if (table("codex_spans")) {
       const spans = table("codex_commands")
         ? all(`SELECT codex_spans.*, command FROM codex_spans LEFT JOIN codex_commands USING (instance, session_id, call_id)
@@ -173,9 +174,8 @@ function writeSnapshot(input: string, output: string, otlp: string, repo: string
       const mark = view.prepare("INSERT INTO trace_reasoning VALUES (?, ?, ?)");
       const windows = view.prepare("INSERT INTO trace_windows VALUES (?, ?, ?, ?, ?)");
       const coverage = view.prepare("INSERT INTO trace_coverage VALUES (?, ?, ?, ?, ?)");
-      let session = 0;
       for (const [key, rows] of sessions) {
-        session++;
+        const session = ++traceSessions;
         const observations = rows.map((row) => ({ call: String(row.call_id), terminal: row.terminal_call_id as string | null,
           line: Number(row.source_line), tool: String(row.tool), command: String(row.command ?? ""), clock: String(row.clock),
           start: row.started_ms as number | null, end: row.ended_ms as number | null }));
@@ -222,7 +222,7 @@ function writeSnapshot(input: string, output: string, otlp: string, repo: string
     });
 
     view.exec("COMMIT");
-    return { from: Math.min(priorWeek, ...weeks.keys()), to: cutoff, defaultTrace };
+    return { from: Math.min(priorWeek, ...weeks.keys()), to: cutoff, defaultTrace, traceSessions };
   } finally {
     closeSync(payloads);
     source.close();
