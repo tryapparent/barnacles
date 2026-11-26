@@ -1,6 +1,6 @@
 # Evidence
 
-SQLite holds exact Actions source identities, observations, and an occupancy view. The following table also describes the planned records for later importers. Apply each bounded import in a transaction. Replaying the same source observations must preserve row counts and derived results. Keep collection time, observation time, and source event time distinct.
+SQLite holds exact source identities, observations, and read views. The table describes each source and its intended coverage. Apply each bounded import in a transaction. Replaying the same source observations must preserve row counts and derived results. Keep collection time, observation time, and source event time distinct.
 
 | Record | Identity and payload |
 | --- | --- |
@@ -17,6 +17,12 @@ SQLite holds exact Actions source identities, observations, and an occupancy vie
 [action_attempts, action_jobs, and action_steps](actions.sql) retain the exact GitHub keys and normalized clocks in UTC Unix seconds. Attempt rows carry expected head SHA, workflow ID, source status, conclusion, update time, observation time, and captured job count. Job rows retain provider creation time, measured endpoints, and a flag for execution timestamps predating job creation. Step intervals are retained when the measured job execution bounds contain them. Missing measured endpoints are SQL NULL. The importer re-reads the selected attempt, so it cannot reconstruct earlier queue or active-job snapshots.
 
 The `action_occupancy` view groups measured durations by repository, workflow, clock, and operation. `unmeasured_count` counts rows without a completed measured span, including skipped or inapplicable clocks. Query one clock at a time for totals. The underlying tables retain IDs for drilldown.
+
+## T3, rollout, and delivery tables
+
+[Source tables](sources.sql) store T3 runtime snapshots and explicit PR links, Codex session and call identities, GitHub PR milestones, release IDs and source SHAs, and separate asset probes. T3 and Codex clocks use UTC Unix milliseconds. GitHub uses UTC Unix seconds. A Codex span has a stable call ID and the source line where the call began. An observed async cell also points to its terminal wait call. `codex_spans` exposes both clocks and preserves unknown endpoints. `open_delivery_threads` uses explicit owning links with an observed open PR and unsettled T3 status.
+
+The delivery report joins independent source rows by explicit owner, repository and PR number. GitHub release proofs retain the PR merge SHA, ancestry result, channel, and asset check time. The report uses the earliest verified publication available in the local sample, and computes an elapsed value through the compiled [Bend2 source policy](sources.bend) only with sufficient evidence. A later range probe establishes accessibility at observation time.
 
 ## Read views
 

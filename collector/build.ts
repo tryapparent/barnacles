@@ -14,8 +14,12 @@ const sources = {
   "base.bend": "9a457145eacff52a36340cf86400b64b94b6eccc124c8ef3cf48bba4eab29af0",
 };
 
-export async function buildClocks(directory: string): Promise<string> {
-  const output = resolve(directory, "clocks.mjs");
+export function buildClocks(directory: string): Promise<string> {
+  return buildPolicy(directory, new URL("./github/clocks.bend", import.meta.url), "clocks.mjs");
+}
+
+export async function buildPolicy(directory: string, source: URL, filename: string): Promise<string> {
+  const output = resolve(directory, filename);
   const scratch = mkdtempSync(join(directory, "bend-"));
   try {
     const verified = await Promise.all(Object.entries(sources).map(async ([file, digest]) => {
@@ -29,7 +33,7 @@ export async function buildClocks(directory: string): Promise<string> {
       return { file, bytes };
     }));
     for (const { file, bytes } of verified) writeFileSync(join(scratch, file), bytes, { flag: "wx" });
-    const input = fileURLToPath(new URL("./github/clocks.bend", import.meta.url));
+    const input = fileURLToPath(source);
     const compile = `
       import { load } from "./main.ts";
       import { pathToFileURL } from "node:url";
