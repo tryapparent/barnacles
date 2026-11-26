@@ -519,13 +519,14 @@ test("shipping API preserves historical and partial evidence and reads a replace
   const iso = (seconds: number) => new Date(seconds * 1000).toISOString();
   const cutoff = at + 60;
   const time = (seconds: number) => encodeURIComponent(iso(seconds));
-  const save = (pullRequest: PullRequest, release?: ReleaseEvidence) =>
-    loadEvidence(source, { source: "github-delivery", pullRequest, release });
   const prepare = (path: string) => promisify(execFile)(process.execPath,
     ["dashboard/prepare.ts", source, path, repo, iso(cutoff).replace(".000Z", "Z")], { timeout: 60_000 });
   let server: ReturnType<typeof spawn> | undefined;
   let stopped: Promise<unknown> | undefined;
   try {
+    const admission = await buildAdmissionPolicy(job);
+    const save = (pullRequest: PullRequest, release?: ReleaseEvidence) =>
+      loadEvidence(source, { source: "github-delivery", pullRequest, release }, admission);
     const shipped: PullRequest = {
       repository: repo, number: 101, state: "merged", opened: at - 800, merged: at - 600, mergeSha: "a".repeat(40),
       firstCommit: { sha: "b".repeat(40), at: at - 900 }, firstCI: { id: 11, at: at - 750 },
@@ -545,7 +546,7 @@ test("shipping API preserves historical and partial evidence and reads a replace
       instance: "synthetic", id: "owner-101", created: (at - 1000) * 1000, updated: at * 1000,
       status: "completed", origin: "manual_t3", settled: true, runs: [],
       pullRequests: [{ repository: repo, number: 101, source: "created", state: "merged", owning: true }],
-    } });
+    } }, admission);
     await prepare(snapshot);
     const db = new DatabaseSync(join(snapshot, "dashboard.sqlite"), { readOnly: true });
     try {
