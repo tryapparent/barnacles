@@ -125,11 +125,11 @@ type Candidate is Data:
 
 type Recorded is Data:
   Recorded{observations: List<&2, Observation>, parents: Map<&2, Candidate>, bounds: Metrics.Focus,
-    timing: Metrics.TimingGroups, coverage: Metrics.SessionTiming}
+    coverage: Metrics.SessionTiming}
 
 type TraceResult is Data:
   TraceResult{observations: List<&2, Observation>, bounds: Metrics.Focus, spans: List<&2, Measured>,
-    markers: List<&2, Reasoning>, estimates: List<&2, Reasoning>, timing: Metrics.TimingGroups,
+    markers: List<&2, Reasoning>, estimates: List<&2, Reasoning>,
     coverage: Metrics.SessionTiming, reasoning_count: Nat}
 
 def clock_time(value: Maybe<&2, Nat>) -> Nat:
@@ -157,7 +157,7 @@ def add_parent_pair(terminal: Maybe<&2, String>, parents: Map<&2, Candidate>, +c
 
 def trace_observation(state: Recorded, +span: Span, +command: String, +categories: String) -> Recorded:
   match state span:
-    case Recorded{observations, +parents, +bounds, timing, coverage} Span{call, terminal, line, tool, +clock, start, end}:
+    case Recorded{observations, +parents, +bounds, coverage} Span{call, terminal, line, tool, +clock, start, end}:
       +a = clock_time(start)
       +b = clock_time(end)
       +valid = Metrics.interval_valid(a, b)
@@ -165,7 +165,7 @@ def trace_observation(state: Recorded, +span: Span, +command: String, +categorie
         Metrics.interval_clock(clock)} <> observations,
         Bool.pick(Map<&2, Candidate>, valid, add_parent_pair(terminal, parents, call, a, b), parents),
         Bool.pick(Metrics.Focus, valid, Metrics.extend_window(bounds, a, b), bounds),
-        Metrics.timing_codex(timing, clock, categories, a, b), Metrics.session_timing_observe(coverage, clock, a, b)}
+        Metrics.session_timing_observe(coverage, clock, a, b)}
 
 def resolve_span(state: Recorded, +span: Span, +identity: SessionKey, +labels: Map<&2, String>) -> Recorded:
   match span:
@@ -251,29 +251,29 @@ def record_markers(markers: List<&2, Marker>, progress: ReasoningProgress, +clea
 
 def trace_result(recorded: Recorded, reasoning: ReasoningProjection) -> TraceResult:
   match recorded reasoning:
-    case Recorded{+observations, parents, old_bounds, timing, coverage} ReasoningProjection{bounds, markers, estimates, count}:
+    case Recorded{+observations, parents, old_bounds, coverage} ReasoningProjection{bounds, markers, estimates, count}:
       TraceResult{List.reverse(&2, Observation, observations), bounds, complete_spans(observations, [], parents),
-        List.reverse(&2, Reasoning, markers), List.reverse(&2, Reasoning, estimates), timing, coverage, count}
+        List.reverse(&2, Reasoning, markers), List.reverse(&2, Reasoning, estimates), coverage, count}
 
 def trace_bounds(recorded: Recorded) -> Metrics.Focus:
   match recorded:
-    case Recorded{observations, parents, bounds, timing, coverage}: bounds
+    case Recorded{observations, parents, bounds, coverage}: bounds
 
-def trace_session_result(session: TraceSession, facts: TraceFacts, timing: Metrics.TimingGroups) -> TraceResult:
+def trace_session_result(session: TraceSession, facts: TraceFacts) -> TraceResult:
   match session facts:
     case TraceSession{+identity, spans, markers} TraceFacts{labels, inputs, results, clean}:
       +ordered = List.reverse(&2, Span, spans)
-      +recorded = record_spans(ordered, Recorded{[], Map.new(&2, Candidate), Metrics.Window{0n, 0n}, timing,
+      +recorded = record_spans(ordered, Recorded{[], Map.new(&2, Candidate), Metrics.Window{0n, 0n},
         Metrics.empty_session_timing()}, identity, labels)
       trace_result(recorded, record_markers(List.reverse(&2, Marker, markers),
         ReasoningProgress{ReasoningScan{ordered, Metrics.Scan{0n, False{}}}, ReasoningProjection{trace_bounds(recorded), [], [], 0n}},
         indexed(Bool, Map.get(Bool, False{}, clean, session_key(identity))), identity, inputs, results))
 
-def project_trace(sessions: Sessions, +identity: SessionKey, facts: TraceFacts, timing: Metrics.TimingGroups) -> TraceResult:
+def project_trace(sessions: Sessions, +identity: SessionKey, facts: TraceFacts) -> TraceResult:
   match sessions:
     case Sessions{keys, groups}:
       trace_session_result(indexed(TraceSession, Map.get(TraceSession, TraceSession{identity, [], []}, groups,
-        session_key(identity))), facts, timing)
+        session_key(identity))), facts)
 
 type TraceChoice is Data:
   TraceChoice{session: Nat, trace_id: String, from: Nat, to: Nat, mixed: Bool}

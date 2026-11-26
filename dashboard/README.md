@@ -10,22 +10,39 @@ The [local provisioning guide](provisioning/README.md) describes the pinned Graf
 
 ## Operation timings
 
-The Shipping review opens on **Tool envelopes**. Use **Clock** to switch the
-treemap and ranked table to async cells, CI queue, CI job execution, or CI steps
-when that evidence is present. Tile area shows total recorded duration within
-the selected clock. The table shows measured span count, mean duration, and
-total for each operation. Select an operation to see its workflow and missing
-clocks in **Timing breakdown**.
+Shipping review and Timing breakdown use **Timing window** to choose the final
+**1h** or **24h** before the displayed UTC cutoff. The cutoff defaults to
+snapshot preparation time. To replay a historical interval against the retained
+evidence, pass an ISO UTC cutoff as the fourth argument to `dashboard/prepare.ts`.
+Delivery elapsed time, weekly release trends, and category estimates use the
+full imported snapshot.
 
-The snapshot builds `operation_totals` from the same rollout and Actions spans
-used by the detailed views. A single-category span keeps its category name.
-A mixed command contributes its elapsed duration once to **Mixed**. Select
-**Mixed** to see the submitted category groups and their whole-span durations.
-The waterfall retains the submitted category names for each span. CI job and step
-names can repeat across workflows, and the overview combines their counts and
-durations within each clock. Nested and overlapping spans are cumulative
-recorded time. The category model and estimated model-wait spans have their
-own displays.
+Use **Clock** to switch between tool envelopes, async cells, CI job queue,
+CI job execution, and CI steps. Sum adds all measured durations clipped to the
+selected window. Union counts overlap once within the displayed clock and group.
+Unions from different groups or clocks can overlap. CI steps are nested within
+jobs. These clocks measure observed occupancy. Delivery elapsed time measures the
+time between milestones and can include idle time.
+
+The timing intervals are half-open. A nonzero span must intersect the window
+for positive time. A zero-length span counts when its timestamp is inside the
+window. An incomplete or reversed span contributes to **Untimed** when its
+start is in the window, or when only its end is available and that end is in
+the window. Spans with neither timestamp appear under **Unplaced** for their
+clock across the whole import. Missing duration stays unknown.
+
+**Source freshness** shows first and latest recorded timestamps for imported
+Codex calls, cells and reasoning, sampled Actions attempts and jobs, imported
+T3 threads and runs, and verified publications for the delivery surface.
+The latest Actions capture and release access check appear as receipts.
+The retained Codex and T3 schemas have no capture clock. Bounds describe the
+observed sample and may contain gaps. They can extend outside the selected window.
+
+Select an operation to open **Timing breakdown** with its window and clock.
+A mixed command contributes its clipped duration once to **Mixed**. Select
+**Mixed** to see its submitted category groups. The waterfall retains the
+submitted category names for each span. The category model and estimated
+model-wait spans have their own displays.
 
 ## Actions waits
 

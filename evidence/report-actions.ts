@@ -14,7 +14,7 @@ async function main() {
     const file = await buildPolicy(scratch, new URL("./projection/metrics.bend", import.meta.url), "metrics.mjs");
     const metrics: TimingPolicy = await loadPolicy(file);
     db.exec("BEGIN");
-    const report = rows(metrics.timing_result(collectTiming(db, repo, metrics)).operations).map(({ clock, operation, workflow, stats }) => ({
+    const report = rows(collectTiming(db, repo, metrics).result().operations).map(({ clock, operation, workflow, stats }) => ({
       workflow_id: workflow, clock, operation, count: stats.count, mean_seconds: seconds(metrics.mean(stats)),
       total_seconds: seconds(metrics.measured_total(stats)), unmeasured_count: stats.missing,
     }));

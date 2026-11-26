@@ -1,7 +1,7 @@
 import type { DatabaseSync, SQLOutputValue } from "node:sqlite";
 import type { List } from "../storage/sources.ts";
 import type { IntervalIdentity, ObservedInterval } from "./intervals.ts";
-import { rows, type Stats } from "./timing.ts";
+import { rows, type collectTiming, type Stats } from "./timing.ts";
 
 export type TraceWindow = { $: "Window"; from: number; to: number };
 type SessionKey = { $: "SessionKey"; instance: string; session: string };
@@ -12,8 +12,8 @@ type Measured = { $: "Measured"; call: string; terminal: Optional<string>; paren
   categories: string; clock: Span["clock"]; start: number; end: number; name: string };
 type Reasoning = { line: number; at: number; result_at: number; result_call_line: number };
 type SessionTiming = { $: "SessionTiming"; envelopes: Stats; cells: Stats };
-type TraceResult = { observations: List<{ span: Span; operation: string; clock: string }>; bounds: TraceWindow;
-  spans: List<Measured>; markers: List<Reasoning>; estimates: List<Reasoning>; timing: unknown;
+type TraceResult = { observations: List<{ span: Span; categories: string; operation: string; clock: string }>; bounds: TraceWindow;
+  spans: List<Measured>; markers: List<Reasoning>; estimates: List<Reasoning>;
   coverage: SessionTiming; reasoning_count: number };
 type TraceChoice = { session: number; trace_id: string; from: number; to: number; mixed: boolean };
 
@@ -27,7 +27,7 @@ export type TracePolicy = {
   note_trace_span(sessions: unknown, key: SessionKey, span: Span): unknown;
   note_trace_marker(sessions: unknown, key: SessionKey, marker: { $: "Marker"; line: number; at: number }): unknown;
   trace_sessions(sessions: unknown): List<SessionKey>;
-  project_trace(sessions: unknown, key: SessionKey, facts: unknown, timing: unknown): TraceResult;
+  project_trace(sessions: unknown, key: SessionKey, facts: unknown): TraceResult;
   empty_trace_choice(): TraceChoice;
   choose_trace(best: TraceChoice, session: number, traceId: string, bounds: TraceWindow, coverage: SessionTiming, count: number):
     TraceChoice;
@@ -46,12 +46,12 @@ const identity = (row: Record<string, SQLOutputValue>): SessionKey =>
 const reasoning = ({ line, at, result_at, result_call_line }: Reasoning): ReasoningRow =>
   ({ line, at, resultAt: result_at, resultCallLine: result_call_line });
 
-export function writeTraces(source: DatabaseSync, view: DatabaseSync, policy: TracePolicy, timing: unknown,
+export function writeTraces(source: DatabaseSync, view: DatabaseSync, policy: TracePolicy, timing: ReturnType<typeof collectTiming>,
   writeTrace: (key: string, trace: TraceProjection) => string) {
   const table = (name: string) => Boolean(source.prepare("SELECT 1 FROM sqlite_schema WHERE name=?").get(name));
   const scan = (sql: string) => source.prepare(sql).iterate();
   const rolloutCount = table("codex_rollouts") ? Number(source.prepare("SELECT count(*) AS count FROM codex_rollouts").get()?.count) : 0;
-  if (!table("codex_spans")) return { timing, rolloutCount, traceSessions: 0, defaultTrace: undefined };
+  if (!table("codex_spans")) return { rolloutCount, traceSessions: 0, defaultTrace: undefined };
   let facts = policy.empty_trace_facts();
   for (const row of scan("SELECT * FROM codex_rollouts")) {
     facts = policy.note_trace_rollout(facts, identity(row), Number(row.malformed_count), Number(row.orphan_count));
@@ -80,7 +80,9 @@ export function writeTraces(source: DatabaseSync, view: DatabaseSync, policy: Tr
     });
   }
   if (table("codex_reasoning")) for (const row of scan("SELECT * FROM codex_reasoning ORDER BY observed_ms, source_line")) {
-    groups = policy.note_trace_marker(groups, identity(row), { $: "Marker", line: Number(row.source_line), at: Number(row.observed_ms) });
+    const at = Number(row.observed_ms);
+    timing.observe("Codex", at);
+    groups = policy.note_trace_marker(groups, identity(row), { $: "Marker", line: Number(row.source_line), at });
   }
 
   const insert = view.prepare("INSERT INTO trace VALUES (?, ?, ?, ?, ?, ?)");
@@ -91,11 +93,13 @@ export function writeTraces(source: DatabaseSync, view: DatabaseSync, policy: Tr
   const sessions = rows(policy.trace_sessions(groups));
   for (const [index, key] of sessions.entries()) {
     const session = index + 1;
-    const result = policy.project_trace(groups, key, facts, timing);
-    timing = result.timing;
+    const result = policy.project_trace(groups, key, facts);
     const observations = rows(result.observations);
-    for (const { span, operation, clock } of observations) {
-      insert.run(session, span.line, operation, clock, decode(span.start), decode(span.end));
+    for (const { span, categories, operation, clock } of observations) {
+      const start = decode(span.start);
+      const end = decode(span.end);
+      timing.observeCodex(span.clock, categories, start ?? 0, end ?? 0);
+      insert.run(session, span.line, operation, clock, start, end);
     }
     const { envelopes, cells } = result.coverage;
     coverage.run(session, 0, "Tool envelopes", envelopes.count, envelopes.missing);
@@ -115,5 +119,5 @@ export function writeTraces(source: DatabaseSync, view: DatabaseSync, policy: Tr
   }
   const defaultTrace = choice.trace_id ? { session: choice.session, traceId: choice.trace_id, from: choice.from, to: choice.to, mixed: choice.mixed }
     : undefined;
-  return { timing, rolloutCount, traceSessions: sessions.length, defaultTrace };
+  return { rolloutCount, traceSessions: sessions.length, defaultTrace };
 }

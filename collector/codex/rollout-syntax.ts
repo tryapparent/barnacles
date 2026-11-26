@@ -131,23 +131,23 @@ function printedCommand(root: Node, policy: SyntaxPolicy): string {
   const last = statements.at(-1);
   const print = last?.namedChild(0);
   const printArgs = print?.childForFieldName("arguments");
-  const arg = printArgs?.namedChild(0);
+  const arg = named(printArgs)[0];
   const declaration = statements[0];
-  const binding = declaration?.namedChild(0);
+  const binding = named(declaration)[0];
   const name = binding?.childForFieldName("name");
-  const awaited = statements.length === 2 ? binding?.childForFieldName("value") : arg;
-  const call = awaited?.namedChild(0);
+  const awaited = unwrapParentheses(statements.length === 2 ? binding?.childForFieldName("value") : arg);
+  const call = printedCall(root);
   const args = call?.childForFieldName("arguments");
   const facts: PrintedScript = {
     $: "PrintedScript", statements: statements.length, last_kind: last?.type ?? "",
-    printer: print?.childForFieldName("function")?.text ?? "", print_args: printArgs?.namedChildCount ?? 0,
-    declaration_kind: declaration?.type ?? "", bindings: declaration?.namedChildCount ?? 0,
+    printer: print?.childForFieldName("function")?.text ?? "", print_args: named(printArgs).length,
+    declaration_kind: declaration?.type ?? "", bindings: named(declaration).length,
     binding_kind: name?.type ?? "", argument_kind: arg?.type ?? "",
     binding_name: name?.text ?? "", argument_name: arg?.type === "identifier" ? arg.text : "",
     awaited_kind: awaited?.type ?? "", callee: call?.childForFieldName("function")?.text ?? "",
-    call_args: args?.namedChildCount ?? 0,
+    call_args: named(args).length,
   };
-  return policy.printed_execution(facts) ? propertyCmd(args?.namedChild(0)) : "";
+  return policy.printed_execution(facts) ? propertyCmd(named(args)[0]) : "";
 }
 
 const named = (node?: Node | null) => node?.namedChildren.filter((part) => part.type !== "comment") ?? [];
@@ -169,8 +169,13 @@ function printedArgument(statement?: Node) {
       !named(call).some((node) => node.type === "optional_chain") && named(args).length === 1) return named(args)[0];
 }
 
-function commandCall(awaited: Node | null | undefined): Node | null {
-  while (awaited?.type === "parenthesized_expression" && named(awaited).length === 1) awaited = named(awaited)[0];
+function unwrapParentheses(node: Node | null | undefined) {
+  while (node?.type === "parenthesized_expression" && named(node).length === 1) node = named(node)[0];
+  return node;
+}
+
+function commandCall(value: Node | null | undefined): Node | null {
+  const awaited = unwrapParentheses(value);
   const call = named(awaited)[0];
   const args = field(call, "arguments");
   if (awaited?.type !== "await_expression" || call?.type !== "call_expression" ||
