@@ -25,13 +25,13 @@ Use Node 22.18 or later. The installer selects the tracked hook directory in the
 
 The directory-width guard allows at most ten immediate files and ten immediate subdirectories per affected first-party directory. It checks the staged or outgoing Git tree, including affected parent directories whose immediate entries changed. Docs and extensionless files count. Symlinks count as files and submodules count as directories. Dependency and cache trees are excluded. The root has separate slots for actual `.github` and `.githooks` directories, and GitHub's immediate `.github/workflows` directory is exempt. The push hook repeats the check against the outgoing commit.
 
-The guard adapts [Apparent's staged directory-width policy](https://github.com/tryapparent/apparent/blob/204f0dadccc55253290e1100a1ee271bfef5a361/enablement/directory-width/check.py). The [donor MIT notice](collector/APPARENT-LICENSE) covers the adaptation.
+The guard adapts [Apparent's staged directory-width policy](https://github.com/tryapparent/apparent/blob/204f0dadccc55253290e1100a1ee271bfef5a361/enablement/directory-width/check.py). The [donor MIT notice](LICENSE) covers the adaptation.
 
 The Bend2 path check reads the exception registry from the staged tree. New implementation paths, including rename and copy destinations, must use `.bend` or appear in [the exact-path registry](.githooks/bend-exceptions.json). Markdown and license files are allowed. Existing-file repairs remain possible. For a new host exception, get an explicit decision and record the concrete Bend2 limitation beside the owning code. Review changes inside approved paths for misplaced behavior. The push hook repeats the check against the committed tree.
 
 The check covers Bend2, JS and TS, shell, SQLite, YAML, JSON and JSONC, CSS, HTML and its supported embedded code, Markdown HTML comments, Git patterns, and several other common source formats. It treats recognized shebangs as executable syntax and ignores comment-like text in strings, regexes, and documentation examples. Plain text, license text, and recognized media files carry no code comment syntax. Unsupported changed formats and parse errors require a supported parser.
 
-Run the focused tests with `npm run test:hooks`. The hook adapts Apparent's staged snapshot and comment comparison approach. The [donor MIT notice](collector/APPARENT-LICENSE) covers adapted code.
+Run the focused tests with `npm run test:hooks`. The hook adapts Apparent's staged snapshot and comment comparison approach. The [donor MIT notice](LICENSE) covers adapted code.
 
 ## Push hook
 

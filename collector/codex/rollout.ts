@@ -1,4 +1,3 @@
-// Timestamp and call pairing adapted from Apparent's rollout census. See APPARENT-LICENSE.
 import { createHash } from "node:crypto";
 import { open, type FileHandle } from "node:fs/promises";
 import { resolve } from "node:path";
