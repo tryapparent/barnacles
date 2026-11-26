@@ -351,3 +351,58 @@ export function watchOverlaps(path: string, policy: SourcePolicy, workflow: Extr
     db.close();
   }
 }
+
+export const processTimingPolicy = new URL("../process-timing.bend", import.meta.url);
+
+type KernelEvent =
+  | { $: "ProcessRoot" | "ProcessExit"; at: number; pid: number }
+  | { $: "ProcessFork"; at: number; parent: number; pid: number }
+  | { $: "ProcessExec"; at: number; pid: number; image: string };
+
+type KernelSpan = { id: number; parent: number; depth: number; name: string; start: number; end: number; elapsed: number };
+type KernelTrace = { duration: number; extent: number; closed: boolean; spans: List<KernelSpan>; faults: number; pending: number };
+type CaptureRef = { $: "CaptureRef"; key: string; at: number };
+
+export type KernelPolicy = {
+  trace(events: List<KernelEvent>): KernelTrace;
+  admission(faults: number, events: number, extent: number, quiet: boolean): boolean;
+  binding(expectedLine: number, expectedStart: number, line: number, start: number, ambiguous: boolean): boolean;
+  capture_visible(at: number, cutoff: number): boolean;
+  visible_captures(captures: List<CaptureRef>): List<CaptureRef>;
+  probe(parent: number, owner: number, major: number, minor: number, inode: number): string;
+};
+
+export type KernelCapture = {
+  capture: string; instance: string; session: string; call: string; line: number; start: number;
+  events: List<KernelEvent>; count: number; quiet: boolean;
+};
+
+export function saveKernelCapture(path: string, input: KernelCapture, policy: KernelPolicy) {
+  const trace = policy.trace(input.events);
+  if (!policy.admission(trace.faults, input.count, trace.extent, input.quiet)) throw Error("Invalid or oversized kernel event capture");
+  const spans: KernelSpan[] = [];
+  for (let row = trace.spans; row.$ === "Con"; row = row.tail) {
+    const { id, parent, depth, name, start, end, elapsed } = row.head;
+    spans.push({ id, parent, depth, name, start, end, elapsed });
+  }
+  writeSources(path, (db) => {
+    const key = [input.instance, input.session, input.call] as const;
+    const call = db.prepare("SELECT source_line, started_ms, ambiguous FROM codex_calls WHERE instance=? AND session_id=? AND call_id=?")
+      .get(...key);
+    if (!policy.binding(input.line, input.start, Number(call?.source_line), Number(call?.started_ms), call?.ambiguous !== 0)) {
+      throw Error("Capture binding does not match an unambiguous imported rollout call");
+    }
+    db.prepare(`
+      INSERT INTO codex_kernel_captures VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(capture) DO NOTHING
+    `).run(input.capture, ...key, input.line, input.start, JSON.stringify({
+      durationMicros: trace.closed ? trace.duration : null,
+      observedMicros: trace.extent, unfinished: trace.pending, spans,
+    }));
+    const saved = db.prepare("SELECT instance, session_id, call_id, source_line, started_ms FROM codex_kernel_captures WHERE capture=?")
+      .get(input.capture);
+    if (saved?.instance !== input.instance || saved.session_id !== input.session || saved.call_id !== input.call ||
+        saved.source_line !== input.line || saved.started_ms !== input.start) throw Error("Capture is already bound to a different rollout call");
+  });
+  return { spans: spans.length, elapsedMicros: trace.closed ? trace.duration : null, unfinished: trace.pending };
+}

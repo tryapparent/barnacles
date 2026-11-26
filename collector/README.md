@@ -159,3 +159,28 @@ The checksum-pinned Bend2 compiler recursively lowers nested patterns in the sou
 ### Fetch attempts named by rollout watchers
 
 After importing the rollouts into a private job directory, run `node collector/import-actions.ts JOB_DIRECTORY OWNER/REPO --from-waits FROM TO MAX_ATTEMPTS` with UTC seconds and a limit of 1–20. The read-only GitHub collector fetches missing exact attempts named by confirmed watcher receipts that overlap the interval. The JSON receipt gives the number missing before capture and the number imported. See [the Actions wait dashboard and evidence contract](../evidence/actions-wait.md).
+
+### Capture one local command
+
+On Linux with bpftrace, BTF, and permission to attach the scheduler probes, generate an observer for one agent worker and a fresh, isolated working directory. Use a directory reserved for a single shell launch from that worker. This gives a verifiable binding when the executor does not expose a root PID receipt.
+
+```sh
+umask 077
+job=$(mktemp -d /tmp/apparent-dev-barnacles-process-XXXXXX)
+node collector/import-sources.ts "$job" process-probe "$worker_pid" "$isolated_workdir" >"$job/process.bt"
+timeout --signal=INT --kill-after=5s 60s sudo -n bpftrace -q "$job/process.bt" >"$job/events" 2>"$job/observer.log"
+```
+
+Run the unchanged agent command in the isolated directory after the observer prints `ready`. The probe follows fork, exec, and exit events for that shell tree and stops at the shell's exit or the timeout. It writes allowlisted executable labels, monotonic timestamps, and local task IDs. The capture contains no arguments, command output, or paths. Keep the observer, log, and capture private.
+
+Verify the isolated launch against the retained rollout and import the rollout under a local instance name. Construct a private binding JSON object with `instance`, `session`, `call`, `line` (the physical source line), `startedAt` (the imported call's UTC timestamp), and `eventsSha256` (SHA-256 of the unchanged event file). Use a binding only when one rollout call accounts for the scoped shell launch. The existing rollout import uses the nearest millisecond of `create_time` when present.
+
+```sh
+node collector/import-sources.ts "$job" rollout "$instance" "$rollout"
+node collector/import-sources.ts "$job" process "$job/binding.json" "$job/events" "$job/observer.log"
+node dashboard/prepare.ts "$job/evidence.sqlite" "$job/snapshot" "$repository"
+npm run build:harbor -- --outDir "$job/harbor"
+node dashboard/prepare.ts --serve "$job/snapshot" 3031 "$job/harbor"
+```
+
+Open **Process timings** in Harbor. The collector rejects ambiguous or mismatched calls, changed checksums, unrecognized event rows, observer diagnostics, and captures over 4,096 events or 120 seconds. A capture with a clean stop and missing exit evidence can still surface its measured spans. A replay of the same binding is idempotent. Concurrent launches in a shared directory need an executor-supplied process identity or another explicit binding.

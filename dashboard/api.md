@@ -129,3 +129,20 @@ Run `BARNACLES_TEST_DIRECTORY="$job" npm run verify -- dashboard evidence`.
 The HTTP integration test prepares synthetic evidence, queries the running
 API, compares publication with verified access, checks missing milestones and
 pagination, and replaces the database while the server is running.
+
+## Local process timings
+
+`GET /api/v1/process-timings` returns `{ captures: [...] }` with up to eight
+explicitly bound Linux captures from the prepared snapshot, newest first.
+An older snapshot without this evidence returns an empty list. Each capture has
+`startedAt` from the linked rollout call, `durationMicros` for the root
+(null when its exit is unknown), `observedMicros` for the visible axis,
+`unfinished` for executable intervals with no end, and `spans`. Each span has
+a capture-local `id`, `parent` (1 denotes the measured command root),
+`depth`, safe executable `name`, and `start`, `end`, and `elapsed` in
+microseconds. The time origin is the kernel-observed launch.
+
+Harbor links to this waterfall from the masthead. It shows captured local
+commands independently of the selected PR or shipping date filter. See
+[local process timing](../evidence/README.md#local-process-timing) for
+provenance and coverage.

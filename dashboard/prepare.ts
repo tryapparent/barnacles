@@ -182,10 +182,15 @@ async function serve(args: string[]) {
           version: 1,
           endpoints: {
             shipping: { path: "/api/v1/shipping", parameters: ["from", "to", "clock", "operation", "limit", "offset"] },
+            processTimings: { path: "/api/v1/process-timings" },
             pullRequest: { path: "/api/v1/pull-requests/{number}", parameters: ["asOf"] },
           },
           timeFormat: "UTC ISO 8601 (YYYY-MM-DD or timestamp ending in Z)",
         });
+      }
+      if (url.pathname === "/api/v1/process-timings") {
+        queryParams(url.searchParams, []);
+        return json(response, 200, review.processTimings());
       }
       const pr = /^\/api\/v1\/pull-requests\/(\d+)$/.exec(url.pathname);
       let result;

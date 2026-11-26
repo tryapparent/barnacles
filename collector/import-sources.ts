@@ -1,11 +1,12 @@
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { sourcePolicy, deliveryReport, rolloutCoverage, waitReport, watchOverlaps, loadEvidence, type SourcePolicy } from "../evidence/index.ts";
+import { sourcePolicy, deliveryReport, rolloutCoverage, waitReport, watchOverlaps, loadEvidence,
+  processTimingPolicy, saveKernelCapture, type SourcePolicy, type KernelPolicy } from "../evidence/index.ts";
 import { buildPolicy, loadPolicy } from "../tooling/bend.ts";
 import { positiveInt } from "./github/attempt.ts";
 import { pullRequest, releaseEvidence } from "./github/delivery.ts";
 import { inspectRollout } from "./codex/rollout.ts";
-import { str, token } from "./wire.ts";
+import { kernelCapture, kernelInteger, str, token } from "./wire.ts";
 import { t3Snapshot } from "./t3.ts";
 
 async function main() {
@@ -14,10 +15,12 @@ async function main() {
     ((command === "report" || command === "rollout-coverage") && !first) ||
     (command === "waits" && !third) ||
     (command === "watch-overlaps" && first && second && third && fourth) ||
+    (command === "process" && first && second && third && !fourth) ||
+    (command === "process-probe" && first && second && !third) ||
     (command === "t3" && first && !second) ||
     (command === "rollout" && first && second && !fourth) ||
     (command === "github" && first && second && !fourth)
-  )) throw Error("Usage: import-sources.ts JOB_DIRECTORY { t3 SNAPSHOT | rollout INSTANCE FILE [SOURCE_ID] | github OWNER/REPO PR [TAG] | report | rollout-coverage | waits [SESSION [CALL]] | watch-overlaps OWNER/REPO RUN SHA ATTEMPT }");
+  )) throw Error("Usage: import-sources.ts JOB_DIRECTORY { t3 SNAPSHOT | rollout INSTANCE FILE [SOURCE_ID] | github OWNER/REPO PR [TAG] | process BINDING EVENTS DIAGNOSTICS | process-probe PARENT_PID WORK_DIRECTORY | report | rollout-coverage | waits [SESSION [CALL]] | watch-overlaps OWNER/REPO RUN SHA ATTEMPT }");
 
   const db = join(resolve(directory), "evidence.sqlite");
   if (command === "waits") {
@@ -26,6 +29,24 @@ async function main() {
   }
   const scratch = mkdtempSync(join(resolve(directory), "build-"));
   try {
+    if (command === "process" || command === "process-probe") {
+      const policy = await loadPolicy<KernelPolicy>(await buildPolicy(scratch, processTimingPolicy, "process-timing.mjs"));
+      if (command === "process") {
+        console.log(JSON.stringify(saveKernelCapture(db, kernelCapture(first, second, third), policy)));
+      } else {
+        const parent = kernelInteger(first);
+        const uid = process.getuid?.();
+        const directory = statSync(second, { bigint: true });
+        if (uid === undefined || statSync(`/proc/${parent}`).uid !== uid || !directory.isDirectory()) {
+          throw Error("Expected a Linux worker owned by the caller and an existing work directory");
+        }
+        const dev = directory.dev;
+        const major = ((dev >> 8n) & 4095n) | ((dev >> 32n) & ~4095n);
+        const minor = (dev & 255n) | ((dev >> 12n) & ~255n);
+        process.stdout.write(policy.probe(parent, uid, Number(major), Number(minor), kernelInteger(Number(directory.ino))));
+      }
+      return;
+    }
     const output = await buildPolicy(scratch, sourcePolicy, "sources.mjs");
     const policy: SourcePolicy = await loadPolicy(output);
     if (command === "t3") {

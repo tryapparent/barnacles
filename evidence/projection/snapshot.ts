@@ -4,7 +4,7 @@ import { DatabaseSync, type SQLInputValue, type SQLOutputValue } from "node:sqli
 import { buildPolicies, buildPolicy, loadPolicy } from "../../tooling/bend.ts";
 import { readDelivery } from "../delivery/delivery.ts";
 import type { AttemptIdentity } from "../storage/actions.ts";
-import { sourcePolicy, type List, type SourcePolicy } from "../storage/sources.ts";
+import { processTimingPolicy, sourcePolicy, type KernelPolicy, type List, type SourcePolicy } from "../storage/sources.ts";
 import { collectTiming, empty, millis, rows, seconds, type ProcessAttribution, type Stats, type TimingPolicy } from "./timing.ts";
 import { projectTrace, type TracePolicy, type TraceProjection, type SpanRow } from "./trace.ts";
 
@@ -208,14 +208,41 @@ function writeActionsWait(source: DatabaseSync, view: DatabaseSync, repo: string
   }
 }
 
+function writeProcessTimings(source: DatabaseSync, view: DatabaseSync, cutoff: number, policy: KernelPolicy) {
+  view.exec("CREATE TABLE process_timings (position INTEGER PRIMARY KEY, started_ms INTEGER NOT NULL, trace_json TEXT NOT NULL)");
+  const candidates = source.prepare(`
+    SELECT capture.capture, capture.started_ms, capture.source_line,
+      call.source_line AS call_line, call.started_ms AS call_start, call.ambiguous
+    FROM codex_kernel_captures capture JOIN codex_calls call USING (instance, session_id, call_id)
+    ORDER BY capture.capture
+  `);
+  const trace = source.prepare("SELECT trace_json FROM codex_kernel_captures WHERE capture=?");
+  const insert = view.prepare("INSERT INTO process_timings VALUES (?, ?, ?)");
+  let refs: Parameters<KernelPolicy["visible_captures"]>[0] = { $: "Nil" };
+  for (const row of candidates.iterate()) {
+    const at = Number(row.started_ms);
+    if (policy.binding(Number(row.source_line), at, Number(row.call_line), Number(row.call_start), row.ambiguous !== 0) &&
+        policy.capture_visible(at, cutoff)) {
+      refs = { $: "Con", head: { $: "CaptureRef", key: String(row.capture), at }, tail: refs };
+    }
+  }
+  let position = 0;
+  for (const ref of rows(policy.visible_captures(refs))) {
+    const row = trace.get(ref.key);
+    if (!row) throw Error("Missing process capture in the source transaction");
+    insert.run(position++, ref.at, row.trace_json);
+  }
+}
+
 export async function writeSnapshot(input: string, output: string, scratch: string, repo: string, cutoff: number,
   writeTrace: (key: string, trace: TraceProjection) => string, actionsWaitWindow?: ActionWaitWindow,
   timingCutoff = cutoff * 1000, reviewPolicyOutput?: string) {
-  const [sources, metricModule, modelModule, waitModule] = await buildPolicies(scratch, [
+  const [sources, metricModule, modelModule, waitModule, kernelModule] = await buildPolicies(scratch, [
     [sourcePolicy, "sources.mjs"],
     [new URL("./metrics.bend", import.meta.url), "metrics.mjs"],
     [new URL("./estimate.bend", import.meta.url), "estimate.mjs"],
     [actionsWaitPolicy, "actions-wait.mjs"],
+    [processTimingPolicy, "process-timing.mjs"],
   ]);
   const policy: SourcePolicy = await loadPolicy(sources);
   const metrics: Metrics = await loadPolicy(metricModule);
@@ -464,6 +491,10 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
 
     writeActionsWait(source, view, repo,
       actionsWaitWindow ? { $: "Window", ...actionsWaitWindow } : waits.report_window(timingCutoff), waits);
+    if (table("codex_kernel_captures")) {
+      const kernel = await loadPolicy<KernelPolicy>(kernelModule);
+      writeProcessTimings(source, view, timingCutoff, kernel);
+    }
     view.exec("COMMIT");
     if (reviewPolicyOutput) copyFileSync(metricModule, reviewPolicyOutput);
     const from = Math.min(priorWeek, ...weeks.keys());
@@ -550,6 +581,15 @@ export async function openShippingReview(directory: string) {
   read(() => undefined);
 
   return {
+    processTimings() {
+      return read((db) => {
+        const available = db.prepare("SELECT 1 FROM sqlite_schema WHERE name='process_timings' AND type='table'").get();
+        const captures = available ? db.prepare("SELECT started_ms, trace_json FROM process_timings ORDER BY position").all() : [];
+        return { captures: captures.map((row) => ({
+          startedAt: utc(Number(row.started_ms)), ...JSON.parse(String(row.trace_json)),
+        })) };
+      });
+    },
     shipping(input: ReviewInput) {
       if (!policy.review_clock_valid(input.clock)) return { error: "invalid_clock" } as const;
       if (!policy.review_page_valid(input.limit, input.offset)) return { error: "invalid_page" } as const;

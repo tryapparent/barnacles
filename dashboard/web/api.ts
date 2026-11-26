@@ -19,6 +19,11 @@ export type Milestone = { key: string; phase: Stage; observedAt: string | null; 
   provenance?: { source: string; url: string | null } | null };
 export type Vessel = { number: number; stage: Stage; lastObservedAt: string; detailPath: string; pullRequestUrl: string };
 export type Delivery = Vessel & { milestones: Milestone[] };
+export type ProcessCapture = {
+  startedAt: string; durationMicros: number | null; observedMicros: number; unfinished: number;
+  spans: { id: number; parent: number; depth: number; name: string; start: number; end: number; elapsed: number }[];
+};
+
 export type Detail = Delivery & { asOf: string; snapshotAt: string };
 export type Operation = { operation: string; measuredSpans: number; meanSeconds: number | null; totalSeconds: number | null;
   unmeasuredSpans: number; hasArea: boolean };
