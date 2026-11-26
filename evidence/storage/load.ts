@@ -1,5 +1,5 @@
 import { saveAttempt, type ActionAttempt } from "./actions.ts";
-import { saveDelivery, type PullRequest, type ReleaseEvidence } from "./delivery.ts";
+import { saveDelivery, type PullRequest, type ReleaseEvidence } from "../delivery/delivery.ts";
 import { saveRollout, saveThread, writeSources, type RolloutEvidence, type ThreadEvidence } from "./sources.ts";
 
 export type ChangedCodeFile = ({ path: string } | { pathBytesBase64: string }) & { commits: number };

@@ -23,6 +23,10 @@ npm run hooks:install
 
 Use Node 22.18 or later. The installer selects the tracked hook directory in the current worktree. The hook runs offline and compares parsed comments in the staged Git tree to the current HEAD. Existing comments may remain or be deleted. A detected rename can carry an existing comment to the new path. A copy receives no allowance.
 
+The directory-width guard allows at most ten immediate files and ten immediate subdirectories per affected first-party directory. It checks the staged or outgoing Git tree, including affected parent directories whose immediate entries changed. Docs and extensionless files count. Symlinks count as files and submodules count as directories. Dependency and cache trees are excluded. The root has separate slots for actual `.github` and `.githooks` directories, and GitHub's immediate `.github/workflows` directory is exempt. The push hook repeats the check against the outgoing commit.
+
+The guard adapts [Apparent's staged directory-width policy](https://github.com/tryapparent/apparent/blob/204f0dadccc55253290e1100a1ee271bfef5a361/enablement/directory-width/check.py). The [donor MIT notice](collector/APPARENT-LICENSE) covers the adaptation.
+
 The Bend2 path check reads the exception registry from the staged tree. New implementation paths, including rename and copy destinations, must use `.bend` or appear in [the exact-path registry](.githooks/bend-exceptions.json). Markdown and license files are allowed. Existing-file repairs remain possible. For a new host exception, get an explicit decision and record the concrete Bend2 limitation beside the owning code. Review changes inside approved paths for misplaced behavior. The push hook repeats the check against the committed tree.
 
 The check covers Bend2, JS and TS, shell, SQLite, YAML, JSON and JSONC, CSS, HTML and its supported embedded code, Markdown HTML comments, Git patterns, and several other common source formats. It treats recognized shebangs as executable syntax and ignores comment-like text in strings, regexes, and documentation examples. Plain text, license text, and recognized media files carry no code comment syntax. Unsupported changed formats and parse errors require a supported parser.
@@ -33,6 +37,6 @@ Run the focused tests with `npm run test:hooks`. The hook adapts Apparent's stag
 
 The same installation enables the pre-push hook. Fetch the target remote's `main` branch before feature pushes. The hook compares each outgoing ref tip with its integration base and repeats the comment check on that committed tree. It runs tests from a private snapshot of the outgoing commit, so local edits cannot affect the result.
 
-Documentation-only changes run the comment check. Collector changes also run the Collector and Dashboard suites. Evidence changes run all three product suites. Dashboard changes run its snapshot suite. Hook changes run the hook suite. Shared changes run the full verification command. Deleting a ref sends no source to verify.
+Documentation-only changes still run the directory-width, comment, and Bend2 path checks. Collector changes also run the Collector and Dashboard suites. Evidence changes run all three product suites. Dashboard changes run its snapshot suite. Hook changes run the hook suite. Shared changes run the full verification command. Deleting a ref sends no source to verify.
 
 The push hook sources its locked dependencies from the npm cache populated by setup. The suites use the same commands as local and hosted verification.

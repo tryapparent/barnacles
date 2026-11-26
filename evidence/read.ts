@@ -1,4 +1,4 @@
-export { writeSnapshot } from "./snapshot.ts";
-export type { TraceProjection } from "./trace.ts";
+export { writeSnapshot } from "./projection/snapshot.ts";
+export type { TraceProjection } from "./projection/trace.ts";
 
 export { repository } from "./repository.ts";

@@ -26,7 +26,7 @@ test("lexical comment parsers distinguish comments from literals", async () => {
   }
   await assert.rejects(comments("example.unknown", Buffer.from("x")), /Unsupported comment syntax/);
   await assert.rejects(comments("example.json", Buffer.from('{"x":1 /* marked */}')));
-  for (const path of ["evidence/actions.sql", "evidence/sources.sql", ".githooks/pre-commit"]) {
+  for (const path of ["evidence/storage/actions.sql", "evidence/storage/sources.sql", ".githooks/pre-commit"]) {
     assert.deepEqual(await comments(path, readFileSync(path)), []);
   }
 });
@@ -55,6 +55,7 @@ test("real Git commits check the staged tree and enforce comment multiplicity", 
       symlinkSync(fileURLToPath(new URL("../" + entry, import.meta.url)), join(cwd, entry));
     }
     mkdirSync(join(cwd, ".githooks"));
+    symlinkSync(fileURLToPath(new URL("../tooling", import.meta.url)), join(cwd, "tooling"));
     for (const file of ["pre-commit", "check-comments.ts", "check-bend-paths.ts"]) {
       symlinkSync(fileURLToPath(new URL(file, import.meta.url)), join(cwd, ".githooks", file));
     }

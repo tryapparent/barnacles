@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 import { Language, Parser, type Node } from "web-tree-sitter";
-import type { List, ShellCommand, ToolInvocation } from "../evidence/index.ts";
+import type { List, ShellCommand, ToolInvocation } from "../../evidence/index.ts";
 
 const require = createRequire(import.meta.url);
 const maxText = 64 * 1024;
