@@ -1,6 +1,6 @@
 # Collector
 
-The first entry point imports one GitHub Actions attempt by repository, run ID, attempt, and expected head SHA. It uses Node 22.18+ and an authenticated GitHub CLI. Run it in a private job directory. Source readers own authentication, pagination, caps, timeouts, and conversion to allowlisted records. They return coverage alongside the records so a failed read cannot appear as an empty source.
+The Actions entry point imports an exact GitHub Actions attempt or samples attempts discovered in a creation-time window. It uses Node 22.18+ and an authenticated GitHub CLI. Run it in a private job directory. Source readers own authentication, pagination, caps, timeouts, and conversion to allowlisted records. They return coverage alongside the records so a failed read cannot appear as an empty source.
 
 Each adapter extracts bounded provider input and decodes its wire format. Bend2 transforms it into allowlisted evidence, retaining the source identifiers and coverage needed for replay. The import commands pass an `EvidenceBatch` to Evidence's `loadEvidence` entry point. A new source should use this path and prove replay, partial input, and the relevant consumer with synthetic fixtures.
 
@@ -44,9 +44,22 @@ node evidence/report-actions.ts "$job/evidence.sqlite" tryapparent/apparent
 
 These are the public landed CI and desktop release runs for Apparent #2071. The command reads metadata only. Bend2 matches source identities, filters status and display labels, and selects queue, execution, and step clocks. The CLI host uses Node for GitHub subprocess calls, JSON and timestamp decoding, loading the compiled Bend2 module, and SQLite writes. The pinned Bend2 build emits an ES module of policy exports for this caller. The host supplies the process, filesystem, and SQLite interfaces. The command builds that policy using the pinned, checksum-verified compiler and disables Bend telemetry. The import requires network access to fetch those pinned tools and read GitHub metadata. It downloads neither workflow logs nor artifacts.
 
-The importer checks the attempt and SHA, reads at most ten 100-job pages, and rejects changing counts, duplicate IDs, or partial inventories before writing. Replaying a complete snapshot replaces the same attempt atomically. Submission to runner allocation is distinct from execution. A cancelled job with an explicit unallocated runner ID can supply a terminal queue clock. Pending, skipped, and unresolved carried-over jobs supply no execution duration. Jobless attempts keep their status and zero job count with no inferred queue. Arbitrary job and step names are grouped under Other jobs or Other steps. The SQLite file stays local.
+The importer checks the run ID, attempt and SHA, then reads at most ten 100-job pages per pass. It confirms the job inventory with a second pass bracketed by exact attempt metadata reads. Missing rows, changing counts or snapshots, duplicate IDs, and identity mismatches abort before writing. Both forms write in one SQLite transaction. Replaying the same complete observation replaces the same attempt.
 
-Run the synthetic boundary checks with `npm run verify -- collector`. It compiles the actual Bend2 policy and exercises the importer and SQLite write path.
+Submission to runner allocation is distinct from execution. A cancelled job with an explicit unallocated runner ID can supply a terminal queue clock. Pending, skipped, and unresolved carried-over jobs supply no execution duration. Jobless attempts retain their status and zero job count with no inferred start or queue. Reruns leave the run-level start unknown because it can carry forward, while individually measured job clocks remain available. The Intel Mac platform and native acceptance jobs have exact allowlists for named packaging, setup, and test steps in their respective job contexts. Arbitrary job and step names are grouped under Other jobs or Other steps. The SQLite file stays local.
+
+### Discover by creation time
+
+```sh
+node collector/import-actions.ts "$job" OWNER/REPO --window \
+  2026-01-01T00:00:00Z 2026-01-01T00:59:59Z 2 5
+```
+
+The interval is inclusive and uses UTC seconds. Set the last two arguments to the maximum inventory pages (1–10, 100 runs per page) and maximum exact attempts (1–20). The importer lists the run inventory up to the page cap, then captures the first eligible entries in GitHub response order using each entry's reported attempt and SHA. This sample favors the start of that ordering. It covers the attempt reported during discovery for each selected run. Earlier attempts can be imported explicitly by exact identity. The GitHub list and the attempt reads require Actions read access and use GET. [GitHub workflow runs API](https://docs.github.com/en/rest/actions/workflow-runs)
+
+Successful window imports print a JSON receipt containing the window, requested limits, `pagesRead`, GitHub's `reportedTotal`, `eligible` unique in-window run records validated on those pages, and `captured` exact attempts committed. `inventoryComplete` indicates that the validated listing reached the reported count below GitHub's 1,000-result search ceiling. It describes discovery, so it can be true when the attempt sample cap limits capture. A valid empty result reports zero eligible and captured. If an inventory page or selected attempt is incomplete or changes during its checks, the command exits with an error and writes no attempt rows. Discovery uses offset pagination and can detect inconsistent totals, short pages, and duplicate runs, with no point-in-time guarantee from GitHub.
+
+Run the synthetic checks with `npm run verify -- collector`. They compile the actual Bend2 policy and exercise pagination, partial and changing inventories, the command-line entry point, and SQLite replay.
 
 ## Apparent donor code
 
