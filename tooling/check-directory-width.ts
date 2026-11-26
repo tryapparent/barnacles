@@ -1,50 +1,32 @@
 import { execFileSync } from "node:child_process";
-import { posix } from "node:path";
+import { withHookPolicy } from "./bend.ts";
 
-const limit = 10;
-const excluded = new Set([".git", "target", "node_modules", "vendor", "third_party", "third-party", "__pycache__"]);
-const toolRoots = [".github", ".githooks"];
-
-type Tree = {
-  children: Map<string, Map<string, "file" | "directory">>;
-  eligible: Set<string>;
-  directories: Set<string>;
+type BendList<T> = { $: "Nil" } | { $: "Con"; head: T; tail: BendList<T> };
+type TreeEntry = { $: "Entry"; mode: string; kind: string; path: string };
+type Violation = { directory: string; files: number; directories: number; limit: number };
+type WidthPolicy = {
+  has_first_party_changes(paths: BendList<string>): boolean;
+  check_width(before: BendList<TreeEntry>, after: BendList<TreeEntry>, changed: BendList<string>): BendList<Violation>;
 };
 
 const git = (...args: string[]) => execFileSync("git", args, {
   maxBuffer: 64 * 1024 * 1024, stdio: ["pipe", "pipe", "pipe"],
 });
 const decode = (value: Buffer) => new TextDecoder("utf-8", { fatal: true }).decode(value);
-const firstParty = (path: string) => !path.split("/").some((part) => excluded.has(part));
+const toBend = <T>(items: T[]): BendList<T> =>
+  items.reduceRight<BendList<T>>((tail, head) => ({ $: "Con", head, tail }), { $: "Nil" });
 
-function inspect(treeish: string): Tree {
-  const children: Tree["children"] = new Map();
-  const eligible = new Set<string>();
-  const directories = new Set<string>();
-  for (const entry of decode(git("ls-tree", "-rz", "--full-tree", treeish)).split("\0")) {
-    if (!entry) continue;
+function treeEntries(treeish: string): BendList<TreeEntry> {
+  const entries = decode(git("ls-tree", "-rz", "--full-tree", treeish)).split("\0");
+  entries.pop();
+  return toBend(entries.map((entry) => {
     const split = entry.indexOf("\t");
     const [mode, kind] = entry.slice(0, split).split(" ");
-    const path = entry.slice(split + 1);
-    if (!firstParty(path)) continue;
-    const parts = path.split("/");
-    let parent = "";
-    for (const [index, part] of parts.entries()) {
-      const nested = index < parts.length - 1;
-      const direct = children.get(parent) ?? new Map();
-      direct.set(part, nested || mode === "160000" ? "directory" : "file");
-      children.set(parent, direct);
-      if (kind === "blob") eligible.add(parent);
-      if (nested) {
-        parent = parent ? parent + "/" + part : part;
-        directories.add(parent);
-      }
-    }
-  }
-  return { children, eligible, directories };
+    return { $: "Entry", mode, kind, path: entry.slice(split + 1) };
+  }));
 }
 
-function check() {
+async function check() {
   const [from, to, ...extra] = process.argv.slice(2);
   if (extra.length || Boolean(from) !== Boolean(to) ||
       (from && ![from, to].every((oid) => /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(oid)))) {
@@ -60,35 +42,26 @@ function check() {
       base = decode(git("hash-object", "-t", "tree", "-w", "--stdin")).trim();
     }
   }
-  const changed = decode(git("diff", "--name-only", "--no-renames", "-z", base, candidate, "--"))
-    .split("\0").filter((path) => path && firstParty(path));
-  if (!changed.length) return;
-  const after = inspect(candidate);
-  const before = inspect(base);
-  const affected = new Set(changed.map((path) => posix.dirname(path) === "." ? "" : posix.dirname(path)));
-  for (const directory of new Set([...after.children.keys(), ...before.children.keys()])) {
-    const oldEntries = before.children.get(directory) ?? new Map();
-    const entries = after.children.get(directory) ?? new Map();
-    if (oldEntries.size !== entries.size || [...oldEntries].some(([name, kind]) => entries.get(name) !== kind)) {
-      affected.add(directory);
-    }
-  }
-  for (const directory of [...affected].sort()) {
-    if (directory === ".github/workflows" || !(after.eligible.has(directory) || before.eligible.has(directory))) continue;
-    const entries = [...(after.children.get(directory)?.values() ?? [])];
-    const files = entries.filter((kind) => kind === "file").length;
-    const directories = entries.length - files;
-    const tools = directory ? 0 : toolRoots.filter((root) => after.directories.has(root)).length;
-    if (files > limit || directories - tools > limit) {
-      console.error(`directory-width check: ${JSON.stringify(directory || ".")} has ${files} files and ${directories - tools} ordinary subdirectories (limit ${limit} each). Split changes by responsibility.`);
+  const paths = decode(git("diff", "--name-only", "--no-renames", "-z", base, candidate, "--")).split("\0");
+  paths.pop();
+  if (!paths.length) return;
+  const changed = toBend(paths);
+  await withHookPolicy<WidthPolicy>(new URL("../.githooks/policy/width.bend", import.meta.url), (policy) => {
+    if (!policy.has_first_party_changes(changed)) return;
+    const violations: Violation[] = [];
+    const result = policy.check_width(treeEntries(base), treeEntries(candidate), changed);
+    for (let node = result; node.$ === "Con"; node = node.tail) violations.push(node.head);
+    violations.sort((a, b) => a.directory < b.directory ? -1 : a.directory > b.directory ? 1 : 0);
+    for (const { directory: path, files, directories, limit } of violations) {
+      console.error(`directory-width check: ${JSON.stringify(path || ".")} has ${files} files and ${directories} ordinary subdirectories (limit ${limit} each). Split changes by responsibility.`);
       process.exitCode = 1;
     }
-  }
-  if (!to && decode(git("write-tree")).trim() !== candidate) throw Error("Git index changed during the directory-width check");
+    if (!to && decode(git("write-tree")).trim() !== candidate) throw Error("Git index changed during the directory-width check");
+  });
 }
 
 try {
-  check();
+  await check();
 } catch (error) {
   console.error(`directory-width check: ${error instanceof Error ? error.message : error}`);
   process.exitCode = 1;

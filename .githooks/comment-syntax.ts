@@ -5,59 +5,57 @@ import { parseFragment } from "parse5";
 import { Language, Parser } from "web-tree-sitter";
 import { Language as SqlLanguage, Parser as SqlParser } from "@willbooster/web-tree-sitter";
 import { Parser as YamlParser, parseAllDocuments } from "yaml";
+import { withHookPolicy } from "../tooling/bend.ts";
 
-const grammar: Record<string, string> = {
-  ts: "typescript", cts: "typescript", mts: "typescript", tsx: "tsx",
-  js: "javascript", cjs: "javascript", mjs: "javascript", jsx: "javascript",
-  css: "css", sh: "bash", bash: "bash", py: "python", rs: "rust",
-  c: "c", h: "c", cpp: "cpp", hpp: "cpp", go: "go", jsonc: "json", toml: "toml",
+type Span = { start: number; end: number };
+type BendList<T> = { $: "Nil" } | { $: "Con"; head: T; tail: BendList<T> };
+type LexResult = { $: "Lexed"; spans: BendList<Span> } | { $: "MalformedLiteral" | "InvalidEscape" };
+
+type SyntaxPolicy = {
+  file_format(name: string, extension: string): string;
+  valid_text(text: string): boolean;
+  has_text(text: string): boolean;
+  interpreter(firstLine: string): string;
+  is_comment_node(kind: string): boolean;
+  executable_shebang(text: string, start: number): boolean;
+  comment_line_ending(ending: string): number;
+  git_pattern_comment(text: string, relaxed: boolean): boolean;
+  markdown_html(kind: string): boolean;
+  embedded_element(tag: string, scriptType: string): string;
+  embedded_attr(name: string): string;
+  bend_comments(text: string): LexResult;
 };
-const media = new Set(["png", "jpg", "jpeg", "gif", "webp", "ico", "woff", "woff2", "ttf", "mp4", "wav", "pdf"]);
+
+type ParseComments = (file: string, bytes: Buffer) => Promise<string[]>;
+
 const markdown = new MarkdownIt({ html: true });
 const wasm = (path: string) => fileURLToPath(new URL("../node_modules/" + path, import.meta.url));
 const languages = new Map<string, Language>();
 let initialized: Promise<void> | undefined;
 let sqlLanguage: Promise<SqlLanguage> | undefined;
 
-function bendComments(text: string) {
+function bendComments(policy: SyntaxPolicy, text: string): string[] {
+  const result = policy.bend_comments(text);
+  if (result.$ === "InvalidEscape") throw Error("Invalid Bend literal escape");
+  if (result.$ !== "Lexed") throw Error("Malformed Bend literal");
   const comments: string[] = [];
-  for (let i = 0; i < text.length;) {
-    const start = i;
-    const token = text[i++];
-    if (token === "#") {
-      while (i < text.length && text[i] !== "\n") i++;
-      comments.push(text.slice(start, i).replace(/\r$/, ""));
-    } else if (token === '"' || token === "'") {
-      let units = 0;
-      while (i < text.length && text[i] !== token) {
-        if (text[i] === "\\") {
-          i++;
-          const unicode = /^u\{[0-9a-f]+\}/i.exec(text.slice(i, i + 11));
-          if (unicode) i += unicode[0].length;
-          else if (i < text.length && "ntr0\\'\"".includes(text[i])) i++;
-          else throw Error("Invalid Bend literal escape");
-        } else {
-          i += text.codePointAt(i)! > 0xffff ? 2 : 1;
-        }
-        units++;
-      }
-      if (text[i] !== token || (token === "'" && units !== 1)) throw Error("Malformed Bend literal");
-      i++;
-    }
+  for (let node = result.spans; node.$ === "Con"; node = node.tail) {
+    comments.push(text.slice(node.head.start, node.head.end));
   }
   return comments;
 }
 
 type SyntaxNode = { type: string; text: string; startIndex: number; children: readonly SyntaxNode[] };
 
-function syntaxComments(root: SyntaxNode): string[] {
+function syntaxComments(policy: SyntaxPolicy, root: SyntaxNode): string[] {
   const comments: string[] = [];
   const pending = [root];
   while (pending.length) {
     const node = pending.pop()!;
-    if (/(?:^|_)comment$/.test(node.type)) {
-      if (!(node.startIndex === 0 && /^#!\s*(?:\/|env\b)/.test(node.text))) {
-        comments.push(node.text.replace(/\r?\n$/, ""));
+    if (policy.is_comment_node(node.type)) {
+      const { text, startIndex } = node;
+      if (!policy.executable_shebang(text, startIndex)) {
+        comments.push(text.slice(0, text.length - policy.comment_line_ending(text.slice(-2))));
       }
     } else {
       for (const child of node.children) pending.push(child);
@@ -66,7 +64,7 @@ function syntaxComments(root: SyntaxNode): string[] {
   return comments;
 }
 
-async function parsedComments(language: string, text: string): Promise<string[]> {
+async function parsedComments(policy: SyntaxPolicy, language: string, text: string): Promise<string[]> {
   if (language === "sqlite") {
     sqlLanguage ??= SqlParser.init().then(() =>
       SqlLanguage.load(wasm("@willbooster/tree-sitter-sql/tree-sitter-sqlite.wasm")));
@@ -77,7 +75,7 @@ async function parsedComments(language: string, text: string): Promise<string[]>
       const tree = parser.parse(text);
       try {
         if (!tree || tree.rootNode.hasError) throw Error("Cannot parse SQLite source to check comments");
-        return syntaxComments(tree.rootNode);
+        return syntaxComments(policy, tree.rootNode);
       } finally { tree?.delete(); }
     } finally { parser.delete(); }
   }
@@ -94,7 +92,7 @@ async function parsedComments(language: string, text: string): Promise<string[]>
     const tree = parser.parse(text);
     try {
       if (!tree || tree.rootNode.hasError) throw Error(`Cannot parse ${language} source to check comments`);
-      return syntaxComments(tree.rootNode);
+      return syntaxComments(policy, tree.rootNode);
     } finally { tree?.delete(); }
   } finally { parser.delete(); }
 }
@@ -114,7 +112,7 @@ function yamlComments(text: string) {
   return result;
 }
 
-async function htmlComments(text: string) {
+async function htmlComments(policy: SyntaxPolicy, text: string) {
   const result: string[] = [];
   const pending = [...parseFragment(text, { sourceCodeLocationInfo: true }).childNodes];
   while (pending.length) {
@@ -125,56 +123,69 @@ async function htmlComments(text: string) {
     if (!("tagName" in node)) continue;
     pending.push(...node.childNodes);
     if ("content" in node) pending.push(...node.content.childNodes);
-    const content = node.childNodes.map((child) => "value" in child ? child.value : "").join("");
-    if (node.tagName === "style" && content.trim()) result.push(...await parsedComments("css", content));
-    if (node.tagName === "script" && content.trim()) {
-      const kind = node.attrs.find((attr) => attr.name === "type")?.value.trim().toLowerCase() ?? "";
-      if (["application/json", "application/ld+json", "importmap"].includes(kind)) JSON.parse(content);
-      else if (["", "module", "text/javascript", "application/javascript"].includes(kind)) {
-        result.push(...await parsedComments("javascript", content));
-      } else throw Error("Unsupported embedded HTML script syntax");
+    const embedded = policy.embedded_element(node.tagName, node.attrs.find((attr) => attr.name === "type")?.value ?? "");
+    if (embedded) {
+      const content = node.childNodes.map((child) => "value" in child ? child.value : "").join("");
+      if (policy.has_text(content)) {
+        if (embedded === "unsupported") throw Error("Unsupported embedded HTML script syntax");
+        if (embedded === "json") JSON.parse(content);
+        else result.push(...await parsedComments(policy, embedded, content));
+      }
     }
     for (const { name, value } of node.attrs) {
-      if (name === "style") result.push(...await parsedComments("css", `x {${value}}`));
-      if (name.startsWith("on")) result.push(...await parsedComments("javascript", `function handler() {${value}\n}`));
-      if (name === "srcdoc") result.push(...await htmlComments(value));
+      switch (policy.embedded_attr(name)) {
+        case "css": result.push(...await parsedComments(policy, "css", `x {${value}}`)); break;
+        case "javascript": result.push(...await parsedComments(policy, "javascript", `function handler() {${value}\n}`)); break;
+        case "html": result.push(...await htmlComments(policy, value)); break;
+      }
     }
   }
   return result;
 }
 
-export async function comments(file: string, bytes: Buffer): Promise<string[]> {
-  const ext = extname(file).slice(1).toLowerCase();
-  const name = basename(file);
-  if (media.has(ext)) return [];
+async function parseComments(policy: SyntaxPolicy, file: string, bytes: Buffer): Promise<string[]> {
+  const format = policy.file_format(basename(file), extname(file).slice(1));
+  if (format === "media") return [];
   const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  if (text.includes("\0")) throw Error("Unexpected NUL in text source");
-  if (/^(?:.*-)?(?:LICENSE|NOTICE)$/.test(name) || ext === "txt") return [];
-  if (name === ".gitignore" || name === ".gitattributes") {
-    const commentStart = name === ".gitignore" ? /^#/ : /^\s*#/;
-    return text.split(/\r?\n/).filter((line) => commentStart.test(line));
-  }
-  if (ext === "bend") return bendComments(text);
-  if (ext === "sql") return parsedComments("sqlite", text);
-  if (ext === "yaml" || ext === "yml") return yamlComments(text);
-  if (ext === "json" || ext === "jsonl") {
-    for (const value of ext === "json" ? [text] : text.split(/\r?\n/).filter((line) => line.trim())) JSON.parse(value);
-    return [];
-  }
-  if (["html", "htm", "svg"].includes(ext)) return htmlComments(text);
-  if (ext === "md") {
-    const tokens = markdown.parse(text, {}).flatMap((token) => token.children ?? [token]);
-    const result: string[] = [];
-    for (const { type, content } of tokens) {
-      if (type === "html_block" || type === "html_inline") result.push(...await htmlComments(content));
+  if (!policy.valid_text(text)) throw Error("Unexpected NUL in text source");
+  switch (format) {
+    case "plain": return [];
+    case "gitignore":
+    case "gitattributes":
+      return text.split(/\r?\n/).filter((line) => policy.git_pattern_comment(line, format === "gitattributes"));
+    case "bend": return bendComments(policy, text);
+    case "yaml": return yamlComments(text);
+    case "json": JSON.parse(text); return [];
+    case "jsonl":
+      for (const line of text.split(/\r?\n/)) {
+        if (policy.has_text(line)) JSON.parse(line);
+      }
+      return [];
+    case "html": return htmlComments(policy, text);
+    case "markdown": {
+      const tokens = markdown.parse(text, {}).flatMap((token) => token.children ?? [token]);
+      const result: string[] = [];
+      for (const { type, content } of tokens) {
+        if (policy.markdown_html(type)) result.push(...await htmlComments(policy, content));
+      }
+      return result;
     }
-    return result;
+    case "jsonc": return parsedComments(policy, "json", text);
+    default: {
+      const language = format || policy.interpreter(text.split("\n", 1)[0]);
+      if (!language) throw Error("Unsupported comment syntax. Add a parser for this file type.");
+      return parsedComments(policy, language, text);
+    }
   }
-  const first = text.split("\n", 1)[0];
-  const interpreter = /^#!.*\b(?:ba|da|z)?sh\b/.test(first) ? "bash"
-    : /^#!.*\bnode\b/.test(first) ? "javascript"
-    : /^#!.*\bpython[23]?(?:\.\d+)?\b/.test(first) ? "python" : undefined;
-  const language = Object.hasOwn(grammar, ext) ? grammar[ext] : interpreter;
-  if (!language) throw Error("Unsupported comment syntax. Add a parser for this file type.");
-  return parsedComments(language, text);
+}
+
+export async function withCommentSyntax(action: (parse: ParseComments) => Promise<void> | void): Promise<void> {
+  await withHookPolicy<SyntaxPolicy>(new URL("./policy/syntax.bend", import.meta.url), (policy) =>
+    action((file, bytes) => parseComments(policy, file, bytes)));
+}
+
+export async function comments(file: string, bytes: Buffer): Promise<string[]> {
+  let result: string[] = [];
+  await withCommentSyntax(async (parse) => { result = await parse(file, bytes); });
+  return result;
 }
