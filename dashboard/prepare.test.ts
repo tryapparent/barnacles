@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import assert from "node:assert/strict";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
@@ -7,7 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { promisify } from "node:util";
 import {
-  loadEvidence, type ActionAttempt, type PullRequest, type ReleaseEvidence, type RolloutEvidence, type ThreadEvidence,
+  buildAdmissionPolicy, loadEvidence, type ActionAttempt, type PullRequest, type ReleaseEvidence, type RolloutEvidence, type ThreadEvidence,
 } from "../evidence/index.ts";
 import { dashboards } from "./panels.ts";
 
@@ -88,13 +89,14 @@ test("dashboard derives a covered comparison and preserves missing source covera
   assert.ok(parent, "Set BARNACLES_TEST_DIRECTORY to a private job directory");
   const job = mkdtempSync(join(parent, "dashboard-test-"));
   try {
+    const admission = await buildAdmissionPolicy(job);
     const repo = "synthetic/example";
     const source = join(job, "source.sqlite");
     const saveDelivery = (pullRequest: PullRequest, release?: ReleaseEvidence) =>
-      loadEvidence(source, { source: "github-delivery", pullRequest, release });
-    const saveRollout = (rollout: RolloutEvidence) => loadEvidence(source, { source: "codex", rollout });
-    const saveThread = (thread: ThreadEvidence) => loadEvidence(source, { source: "t3", thread });
-    const saveAttempt = (attempt: ActionAttempt) => loadEvidence(source, { source: "github-actions", attempt });
+      loadEvidence(source, { source: "github-delivery", pullRequest, release }, admission);
+    const saveRollout = (rollout: RolloutEvidence) => loadEvidence(source, { source: "codex", rollout }, admission);
+    const saveThread = (thread: ThreadEvidence) => loadEvidence(source, { source: "t3", thread }, admission);
+    const saveAttempt = (attempt: ActionAttempt) => loadEvidence(source, { source: "github-actions", attempt }, admission);
     const week = 7 * 86400;
     const cutoff = Math.floor(Date.now() / 1000);
     const monday = cutoff - ((cutoff + 3 * 86400) % week);
@@ -134,8 +136,9 @@ test("dashboard derives a covered comparison and preserves missing source covera
         }],
       });
     }
+    const pointSession = "point-only\b\f\\u0008😀";
     saveRollout({
-      instance: "local", session: "point-only", lines: 5, malformed: 0, orphans: 0,
+      instance: "local", session: pointSession, lines: 5, malformed: 0, orphans: 0,
       calls: [], markers: [{ line: 3, at }],
     });
     saveRollout({
@@ -169,11 +172,11 @@ test("dashboard derives a covered comparison and preserves missing source covera
     loadEvidence(source, { source: "git-change-scan", repository: repo, report: {
       revision: "a".repeat(40), commitsScanned: 5, hasMoreCommits: true, shallow: true,
       files: [{ path: "src/frequent.ts", commits: 4 }, { pathBytesBase64: "/w==", commits: 2 }],
-    } });
+    } }, admission);
     loadEvidence(source, { source: "git-change-scan", repository: "synthetic/other", report: {
       revision: "b".repeat(40), commitsScanned: 5, hasMoreCommits: false, shallow: false,
       files: [{ path: "other.ts", commits: 5 }],
-    } });
+    } }, admission);
     const out = join(job, "out");
     assert.throws(() => execFileSync(process.execPath,
       ["dashboard/prepare.ts", join(job, "missing.sqlite"), out, repo], { stdio: "pipe" }), /existing evidence SQLite/);
@@ -255,14 +258,19 @@ test("dashboard derives a covered comparison and preserves missing source covera
       assert.ok(!JSON.stringify(full).includes("Tool script"));
       assert.equal(envelopeOnly.length, 8);
       const [window, ...spans] = full;
+      assert.equal(window.traceId, "695719703bc0fad47217c2cd16ef4ff6");
+      assert.equal(window.spanId, "39e4bba7420737a5");
+      assert.equal(Object.hasOwn(window, "parentSpanId"), false);
       const estimates = spans.filter((span: { name: string }) => span.name === "Estimated model wait");
       assert.equal(estimates.length, 1);
+      assert.equal(estimates[0].spanId, "e8edc28e125acea2");
       assert.equal(estimates[0].parentSpanId, window.spanId);
       assert.equal(estimates[0].startTimeUnixNano, ((BigInt(at) + 600n) * 1_000_000n).toString());
       assert.equal(estimates[0].endTimeUnixNano, ((BigInt(at) + 650n) * 1_000_000n).toString());
       const cell = spans.find((span: { name: string }) => span.name === "Async cell · Git inspection +1");
       const launch = spans.find((span: { name: string }) => span.name === "Git inspection +1");
       assert.equal(window.traceId, db.prepare("SELECT trace_id FROM trace_windows WHERE session=1").get()?.trace_id);
+      assert.equal(cell.spanId, "f1580dc4d6ea1977");
       assert.equal(cell.parentSpanId, window.spanId);
       assert.equal(launch.parentSpanId, cell.spanId);
       assert.ok(launch.attributes.some(({ key, value }: { key: string; value: { stringValue?: string } }) =>
@@ -272,6 +280,9 @@ test("dashboard derives a covered comparison and preserves missing source covera
       assert.equal(spans.find((span: { name: string }) => span.name === "Cell wait").parentSpanId, cell.spanId);
       assert.equal(window.events[0].timeUnixNano, ((BigInt(at) + 650n) * 1_000_000n).toString());
       assert.equal(eventOnly.length, 1);
+      const pointKey = JSON.stringify(["local", pointSession]);
+      const traceId = createHash("sha256").update(JSON.stringify(["barnacles-codex-trace", pointKey])).digest("hex").slice(0, 32);
+      assert.equal(eventOnly[0].traceId, traceId);
       assert.equal(eventOnly[0].startTimeUnixNano, eventOnly[0].endTimeUnixNano);
       const config = JSON.parse(readFileSync(join(out, "dashboards/shipping.json"), "utf8"));
       assert.equal(config.uid, "barnacles-shipping");
@@ -298,11 +309,19 @@ test("dashboard derives a covered comparison and preserves missing source covera
       const timingBoard = JSON.parse(readFileSync(join(out, "dashboards/timing.json"), "utf8"));
       assert.equal(timingBoard.timepicker.hidden, true);
       const details = timingBoard.panels.find(({ id }: { id: number }) => id === 3);
-      const mixQuery = details.targets[0].rawQueryText.replaceAll("${clock:sqlstring}", "'Tool envelopes'")
-        .replaceAll("${workflow:sqlstring}", "'*'").replaceAll("${operation:sqlstring}", "'Mixed'")
-        .replaceAll("${window:sqlstring}", "'24h'");
-      assert.deepEqual(db.prepare(mixQuery).all().map(({ Operation }) => Operation),
-        ["Mixed · File inspection + Rust build", "Mixed · Git inspection + File inspection"]);
+      const drilldown = (clock: string, workflow: string, operation: string) => {
+        const query = details.targets[0].rawQueryText.replaceAll("${clock:sqlstring}", `'${clock}'`)
+          .replaceAll("${workflow:sqlstring}", `'${workflow}'`).replaceAll("${operation:sqlstring}", `'${operation}'`)
+          .replaceAll("${window:sqlstring}", "'24h'");
+        return db.prepare(query).all().map(({ Operation }) => Operation);
+      };
+      const groups = ["Mixed · File inspection + Rust build", "Mixed · Git inspection + File inspection"];
+      assert.deepEqual(drilldown("Tool envelopes", "*", "Mixed"), groups);
+      assert.deepEqual(drilldown("Tool envelopes", "0", "Mixed"), groups);
+      assert.deepEqual(drilldown("Tool envelopes", "2", "Mixed"), []);
+      assert.deepEqual(drilldown("Tool envelopes", "0", groups[1]), [groups[1]]);
+      assert.deepEqual(drilldown("Tool envelopes", "*", "All operations"), ["Mixed", "Unknown", "Git inspection"]);
+      assert.deepEqual(drilldown("CI execution", "2", "*"), ["Build"]);
       const trace = JSON.parse(readFileSync(join(out, "dashboards/trace.json"), "utf8"));
       assert.ok(trace.panels.some(({ type }: { type: string }) => type === "traces"));
       assert.equal(trace.templating.list[0].current.value, "1");
@@ -314,6 +333,26 @@ test("dashboard derives a covered comparison and preserves missing source covera
         await verifyCompose(out, next, window.traceId);
       }
     } finally { db.close(); }
+
+    const report = JSON.parse(execFileSync(process.execPath, ["evidence/report-actions.ts", source, repo],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 60_000 }));
+    assert.deepEqual(report.filter(({ clock }: { clock: string }) => clock === "CI queue"), [
+      { workflow_id: 2, clock: "CI queue", operation: "Build", count: 1, mean_seconds: 2, total_seconds: 2, unmeasured_count: 0 },
+      { workflow_id: 1, clock: "CI queue", operation: "Build", count: 1, mean_seconds: 1, total_seconds: 1, unmeasured_count: 0 },
+    ]);
+
+    const legacy = new DatabaseSync(source);
+    try {
+      legacy.exec("DROP TABLE codex_reasoning_inputs; DROP TABLE codex_commands");
+    } finally { legacy.close(); }
+    const legacyOut = join(job, "legacy");
+    execFileSync(process.execPath, ["dashboard/prepare.ts", source, legacyOut, repo], { stdio: "pipe", timeout: 60_000 });
+    const legacyPayload = readFileSync(join(legacyOut, "tempo.ndjson"), "utf8");
+    const legacyTrace = JSON.parse(legacyPayload.split("\n")[0]).resourceSpans[0].scopeSpans[0].spans;
+    assert.equal(legacyTrace[0].events.length, 2);
+    assert.equal(legacyTrace.length, 5);
+    assert.ok(!legacyPayload.includes("Estimated model wait"));
+    assert.ok(!legacyPayload.includes("barnacles.submitted_command"));
   } finally { rmSync(job, { recursive: true, force: true }); }
 });
 
@@ -392,11 +431,12 @@ test("Actions dashboard reads ranked overlap, coverage and exact job steps from 
   }
 });
 
-test("timing windows clip spans, count overlap once and preserve unknown clocks", () => {
+test("timing windows clip spans, count overlap once and preserve unknown clocks", async () => {
   const parent = process.env.BARNACLES_TEST_DIRECTORY;
   assert.ok(parent, "Set BARNACLES_TEST_DIRECTORY to a private job directory");
   const job = mkdtempSync(join(parent, "dashboard-window-test-"));
   try {
+    const admission = await buildAdmissionPolicy(job);
     const source = join(job, "source.sqlite");
     const out = join(job, "out");
     const upper = Date.parse("2025-02-03T12:00:00Z");
@@ -422,8 +462,21 @@ test("timing windows clip spans, count overlap once and preserve unknown clocks"
         instance: "local", session: `synthetic-${index}`, lines: 2, malformed: 0, orphans: 0, markers: [],
         calls: [{ id: "operation", line: 2, tool: "Shell command", start, end, categories,
           async: false, asyncEnd: null, terminalCall: null, ambiguous: false }],
-      } });
+      } }, admission);
     }
+    const jobStart = day / 1000 + 1;
+    const steps = Array.from({ length: 20_000 }, (_, index) => {
+      const start = jobStart + (index * 177) % 10_000;
+      return { number: index + 1, label: "Compile", status: "completed", conclusion: "success", start, end: start + 1 };
+    });
+    loadEvidence(source, { source: "github-actions", attempt: {
+      repository: "synthetic/example", runId: 1, workflowId: 1, attempt: 1, sha: "a".repeat(40),
+      status: "completed", conclusion: "success", createdAt: jobStart, startedAt: jobStart,
+      sourceUpdated: jobStart + 10_000, observedAt: jobStart + 10_001, jobs: [{
+        id: 1, label: "Build", status: "completed", conclusion: "success", created: jobStart,
+        priorExecution: false, queueEnd: jobStart, executionStart: jobStart, executionEnd: jobStart + 10_000, steps,
+      }],
+    } }, admission);
     execFileSync(process.execPath, ["dashboard/prepare.ts", source, out, "synthetic/example",
       new Date(upper).toISOString()], { stdio: "pipe", timeout: 120_000 });
     const db = new DatabaseSync(join(out, "dashboard.sqlite"), { readOnly: true });
@@ -438,7 +491,7 @@ test("timing windows clip spans, count overlap once and preserve unknown clocks"
       ]);
       assert.deepEqual(clock.all("CI steps").map(Object.values), [
         ["1h", 0, null, null, 0, 0],
-        ["24h", 0, null, null, 0, 0],
+        ["24h", 20_000, 20_000, 10_000, 0, 0],
       ]);
       const config = JSON.parse(readFileSync(join(out, "dashboards/shipping.json"), "utf8"));
       const ranked = config.panels.find(({ id }: { id: number }) => id === 10);
@@ -449,12 +502,12 @@ test("timing windows clip spans, count overlap once and preserve unknown clocks"
       assert.deepEqual(rows("'1h'"), [["Build", 25, 22, 4, 6.25], ["Git", 8, 8, 1, 8]]);
       assert.deepEqual(rows("'24h'"), [["Build", 36, 33, 6, 6], ["Git", 13, 13, 1, 13]]);
       assert.equal(db.prepare("SELECT position FROM source_bounds WHERE source='Actions' AND window='1h'").get()?.position,
-        "No observed timestamps");
+        "Before window");
     } finally { db.close(); }
   } finally { rmSync(job, { recursive: true, force: true }); }
 });
 
-test("timing names waits from confirmed process receipts and keeps unresolved time", () => {
+test("timing names waits from confirmed process receipts and keeps unresolved time", async () => {
   const parent = process.env.BARNACLES_TEST_DIRECTORY;
   assert.ok(parent, "Set BARNACLES_TEST_DIRECTORY to a private job directory");
   const job = mkdtempSync(join(parent, "dashboard-waits-test-"));
@@ -478,6 +531,7 @@ test("timing names waits from confirmed process receipts and keeps unresolved ti
       receipt: { $: "ExitReceipt", seconds: 1, code: 0 } },
   });
   try {
+    const admission = await buildAdmissionPolicy(job);
     const source = join(job, "source.sqlite");
     const out = join(job, "out");
     const batch: { source: "codex"; rollout: RolloutEvidence } = { source: "codex", rollout: {
@@ -503,8 +557,8 @@ test("timing names waits from confirmed process receipts and keeps unresolved ti
         ],
       },
     } };
-    loadEvidence(source, batch);
-    loadEvidence(source, batch);
+    loadEvidence(source, batch, admission);
+    loadEvidence(source, batch, admission);
     execFileSync(process.execPath, ["dashboard/prepare.ts", source, out, "synthetic/example", cutoff],
       { stdio: "pipe", timeout: 120_000 });
     const db = new DatabaseSync(join(out, "dashboard.sqlite"), { readOnly: true });
@@ -539,13 +593,14 @@ test("shipping API preserves historical and partial evidence and reads a replace
   const iso = (seconds: number) => new Date(seconds * 1000).toISOString();
   const cutoff = at + 60;
   const time = (seconds: number) => encodeURIComponent(iso(seconds));
-  const save = (pullRequest: PullRequest, release?: ReleaseEvidence) =>
-    loadEvidence(source, { source: "github-delivery", pullRequest, release });
   const prepare = (path: string) => promisify(execFile)(process.execPath,
     ["dashboard/prepare.ts", source, path, repo, iso(cutoff).replace(".000Z", "Z")], { timeout: 120_000 });
   let server: ReturnType<typeof spawn> | undefined;
   let stopped: Promise<unknown> | undefined;
   try {
+    const admission = await buildAdmissionPolicy(job);
+    const save = (pullRequest: PullRequest, release?: ReleaseEvidence) =>
+      loadEvidence(source, { source: "github-delivery", pullRequest, release }, admission);
     const shipped: PullRequest = {
       repository: repo, number: 101, state: "merged", opened: at - 800, merged: at - 600, mergeSha: "a".repeat(40),
       firstCommit: { sha: "b".repeat(40), at: at - 900 }, firstCI: { id: 11, at: at - 750 },
@@ -565,7 +620,7 @@ test("shipping API preserves historical and partial evidence and reads a replace
       instance: "synthetic", id: "owner-101", created: (at - 1000) * 1000, updated: at * 1000,
       status: "completed", origin: "manual_t3", settled: true, runs: [],
       pullRequests: [{ repository: repo, number: 101, source: "created", state: "merged", owning: true }],
-    } });
+    } }, admission);
     const hour = Math.floor(cutoff / 3600) * 3600000;
     const operations = [
       ["File inspection", hour - 7200000, 30000], ["File inspection", hour - 3600000, 20000],
@@ -581,8 +636,8 @@ test("shipping API preserves historical and partial evidence and reads a replace
         async: false, asyncEnd: null, terminalCall: null, ambiguous: false,
       })),
     } };
-    loadEvidence(source, batch);
-    loadEvidence(source, batch);
+    loadEvidence(source, batch, admission);
+    loadEvidence(source, batch, admission);
     await prepare(snapshot);
     const db = new DatabaseSync(join(snapshot, "dashboard.sqlite"), { readOnly: true });
     try {

@@ -306,9 +306,6 @@ export function dashboards(range: Range, repository: string) {
   const clock = "${clock:sqlstring}";
   const workflow = "${workflow:sqlstring}";
   const operation = "${operation:sqlstring}";
-  const mixedDrilldown = `(${operation} <> 'Mixed' OR NOT EXISTS (
-    SELECT 1 FROM mixed_groups WHERE window = ${timingWindow} AND clock = ${clock}
-  ))`;
   const timeFields = [byName("Mean", unit("s")), byName("Sum", unit("s")), byName("Union", unit("s"))];
   const timing = board("barnacles-timing", "Barnacles · Timing breakdown", from, to, [
     timingRange(range.timingCutoff),
@@ -323,19 +320,11 @@ export function dashboards(range: Range, repository: string) {
       [], "Workflow 0 is local Codex evidence."),
     data(3, "table", "Operations ranked by summed time", [0, 21, 24, 11],
       `SELECT operation AS "Operation", total_seconds AS "Sum", union_seconds AS "Union",
-        count AS "Spans", mean_seconds AS "Mean", unmeasured AS "Untimed" FROM (
-          SELECT operation, count, mean_seconds, total_seconds, union_seconds, unmeasured, rank
-          FROM operation_totals WHERE window = ${timingWindow} AND clock = ${clock} AND ${workflow} = '*'
-            AND (${operation} IN ('*', 'All operations') OR (operation = ${operation} AND ${mixedDrilldown}))
-          UNION ALL
-          SELECT operation, count, mean_seconds, total_seconds, union_seconds, unmeasured, rank
-          FROM timing WHERE window = ${timingWindow} AND clock = ${clock} AND CAST(workflow AS TEXT) = ${workflow}
-            AND (${operation} IN ('*', 'All operations') OR (operation = ${operation} AND ${mixedDrilldown}))
-          UNION ALL
-          SELECT operation, count, mean_seconds, total_seconds, union_seconds, unmeasured, rank
-          FROM mixed_groups WHERE window = ${timingWindow} AND clock = ${clock}
-            AND (${operation} = 'Mixed' OR ${operation} = operation) AND ${workflow} IN ('*', '0')
-        ) ORDER BY rank`,
+        count AS "Spans", mean_seconds AS "Mean", unmeasured AS "Untimed"
+        FROM timing_selection JOIN timing_details USING (window, clock, kind, rank)
+        WHERE window = ${timingWindow} AND clock = ${clock}
+          AND workflow_choice = ${workflow} AND operation_choice = ${operation}
+        ORDER BY rank`,
       { showHeader: true, enablePagination: true },
       { noValue: "—", custom: { minWidth: 60 } }, [...timeFields, byName("Operation", wrap)],
       [], "Choose Mixed to see submitted command groups. Each group uses the clipped duration of its entire span. Union values for different rows can overlap."),

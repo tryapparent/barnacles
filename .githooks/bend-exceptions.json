@@ -35,10 +35,9 @@
     "dashboard/provisioning/datasources/barnacles.yml",
     "dashboard/provisioning/tempo.yml",
     "dashboard/run.sh",
-    "dashboard/trace.ts"
+    "compose.yaml"
   ],
-  "Node, Git, compiler, and verification tooling": [
-    "compose.yaml",
+  "Node, Git, compiler, and verification tooling (see tooling/README.md)": [
     ".githooks/bend-exceptions.json",
     ".githooks/check-bend-paths.ts",
     ".githooks/check-comments.ts",

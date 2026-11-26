@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 
@@ -11,7 +11,9 @@ test("pre-push routes the outgoing commit and blocks failed verification", () =>
   const cwd = join(root, "repo");
   const remote = join(root, "remote.git");
   mkdirSync(cwd);
-  const git = (...args: string[]) => spawnSync("git", args, { cwd, encoding: "utf8" });
+  const env = { ...process.env };
+  delete env.BARNACLES_BEND_BUNDLE;
+  const git = (...args: string[]) => spawnSync("git", args, { cwd, env, encoding: "utf8" });
   const pass = (...args: string[]) => {
     const result = git(...args);
     assert.equal(result.status, 0, result.stderr);
@@ -34,27 +36,38 @@ test("pre-push routes the outgoing commit and blocks failed verification", () =>
     mkdirSync(join(cwd, "node_modules/web-tree-sitter"), { recursive: true });
     mkdirSync(join(cwd, "collector/github"), { recursive: true });
     mkdirSync(join(cwd, "dashboard"));
+    mkdirSync(join(cwd, "evidence"));
+    write("evidence/README.md", "Synthetic evidence owner\n");
     mkdirSync(join(cwd, "tooling"));
-    copyFileSync(new URL("../tooling/verify.ts", import.meta.url), join(cwd, "tooling", "verify.ts"));
-    copyFileSync(new URL("../tooling/check-directory-width.ts", import.meta.url), join(cwd, "tooling", "check-directory-width.ts"));
-    write("tooling/check-boundaries.ts", "process.exit(0)\n");
+    for (const file of ["verify.ts", "check-directory-width.ts", "check-boundaries.ts", "bend.ts", "verification.bend"]) {
+      copyFileSync(new URL("../tooling/" + file, import.meta.url), join(cwd, "tooling", file));
+    }
     write("dashboard/prepare.test.ts", "process.exit(process.env.BARNACLES_WEB_BUILD ? 0 : 1)\n");
-    for (const file of ["pre-push", "snapshot.ts"]) {
+    for (const file of ["pre-push", "snapshot.ts", "check-bend-paths.ts"]) {
       copyFileSync(new URL("./" + file, import.meta.url), join(cwd, ".githooks", file));
     }
     write(".gitattributes", "collector/github/attempt.test.ts export-ignore\n");
     write(".githooks/check-comments.ts", "process.exit(0)\n");
-    write(".githooks/check-bend-paths.ts", "process.exit(0)\n");
+    write(".githooks/bend-exceptions.json", "{}\n");
+    mkdirSync(join(cwd, ".githooks/policy"));
+    for (const file of ["paths.bend", "rules.bend", "width.bend"]) {
+      copyFileSync(new URL("./policy/" + file, import.meta.url), join(cwd, ".githooks/policy", file));
+    }
     write("README.md", "Baseline\n");
-    write("package.json", '{"name":"push-fixture","version":"1.0.0","type":"module","scripts":{"verify":"node tooling/verify.ts","build:harbor":"node tooling/build-harbor.ts"}}\n');
+    for (const file of ["package-lock.json"]) {
+      copyFileSync(new URL("../" + file, import.meta.url), join(cwd, file));
+    }
+    const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+    packageJson.scripts["build:harbor"] = "node tooling/build-harbor.ts";
+    write("package.json", JSON.stringify(packageJson));
     write("tooling/build-harbor.ts", "process.exit(process.argv[2] === '--outDir' && process.argv[3] ? 0 : 1)\n");
-    write("package-lock.json", '{"name":"push-fixture","version":"1.0.0","lockfileVersion":3,"packages":{}}\n');
     write("collector/github/attempt.test.ts", 'console.log("committed collector test")\n');
     write("collector/sources.test.ts", "process.exit(0)\n");
-    pass("add", "README.md", "package.json", "package-lock.json", "collector", "dashboard", "tooling", ".githooks", ".gitattributes");
+    pass("add", "README.md", "package.json", "package-lock.json", "collector", "dashboard", "evidence", "tooling", ".githooks", ".gitattributes");
     pass("commit", "--quiet", "-m", "baseline");
     pass("push", "--quiet", "origin", "main");
-    pass("config", "core.hooksPath", ".githooks");
+    const install = spawnSync(process.execPath, ["tooling/bend.ts", "--install-hooks"], { cwd, encoding: "utf8" });
+    assert.equal(install.status, 0, install.stderr);
     pass("switch", "--quiet", "-c", "feature");
 
     write("README.md", "Documentation change\n");
@@ -63,12 +76,18 @@ test("pre-push routes the outgoing commit and blocks failed verification", () =>
 
     write("collector/github/attempt.test.ts", 'console.log("pushed snapshot test")\n');
     commit("collector/github/attempt.test.ts");
-    write("collector/github/attempt.test.ts", "process.exit(1)\n");
+    write("collector/github/attempt.test.ts", 'import "../../dashboard/prepare.test.ts";\nprocess.exit(1)\n');
     const success = pass("push", "origin", "feature");
     assert.match(success.stderr, /checking collector dashboard tests/);
     assert.match(success.stdout, /pushed snapshot test/);
     assert.doesNotMatch(success.stderr, /checking hook tests/);
 
+    commit("collector/github/attempt.test.ts");
+    const boundary = git("push", "origin", "feature");
+    assert.equal(boundary.status, 1);
+    assert.match(boundary.stderr, /collector\/github\/attempt\.test\.ts:1 cannot import/);
+
+    write("collector/github/attempt.test.ts", "process.exit(1)\n");
     commit("collector/github/attempt.test.ts");
     const failure = git("push", "origin", "feature");
     assert.equal(failure.status, 1);

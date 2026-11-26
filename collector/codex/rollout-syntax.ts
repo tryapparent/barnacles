@@ -1,12 +1,11 @@
 import { createRequire } from "node:module";
 import { Language, Parser, type Node } from "web-tree-sitter";
 import type { List, ProcessReceipt, ShellCommand, SourcePolicy, ToolInvocation } from "../../evidence/index.ts";
+import { bendList as list } from "../wire.ts";
 
 const require = createRequire(import.meta.url);
 const maxText = 64 * 1024;
 const nil = { $: "Nil" } as const;
-const list = <T>(items: T[]): List<T> =>
-  items.reduceRight<List<T>>((tail, head) => ({ $: "Con", head, tail }), nil);
 
 async function parser(module: string) {
   const language = await Language.load(require.resolve(module));
@@ -26,11 +25,11 @@ function* nodes(root: Node): Generator<Node> {
   }
 }
 
-function decode<T>(parser: Parser, text: unknown, project: (root: Node) => T[]): List<T> {
-  if (typeof text !== "string" || !text || text.length > maxText) return nil;
+function decode<T>(parser: Parser, text: unknown, project: (root: Node) => T): T | undefined {
+  if (typeof text !== "string" || !text || text.length > maxText) return;
   const tree = parser.parse(text);
   try {
-    return tree && !tree.rootNode.hasError ? list(project(tree.rootNode)) : nil;
+    return tree && !tree.rootNode.hasError ? project(tree.rootNode) : undefined;
   } finally { tree?.delete(); }
 }
 
@@ -102,103 +101,121 @@ function shellCommand(node: Node): ShellCommand {
     args: list(node.childrenForFieldName("argument").map(shellWord)) };
 }
 
-function andSeries(node: Node): Node[] {
-  if (node.type === "command") {
-    return Array.from(nodes(node)).some((part) => ["command_substitution", "process_substitution"].includes(part.type))
-      ? [] : [node];
+type ShellSyntax = { $: "OtherShell" }
+  | { $: "ShellLiteral"; command: ShellCommand; nested_kinds: List<string> }
+  | { $: "ShellBinary"; operators: List<string>; left: ShellSyntax; right: ShellSyntax };
+type PrintedOutput = {
+  $: "PrintedOutput"; statement: string; call: string; printer: string; args: number; optional: boolean;
+};
+type BindingSyntax = { $: "BindingSyntax"; declaration: string; count: number; kind: string; name: string };
+type PollLoop = {
+  $: "PollLoop"; kind: string; initial_kind: string; initial: string; ceiling_kind: string; ceiling: string;
+  condition: string; increment: string; body: string; statements: number; branch: string;
+  alternative: boolean; stop: string; consequence: string; actions: number; exit: string; exit_args: number;
+  output_kind: string; output_name: string;
+};
+type ExactShell = { $: "ExactShell"; kind: string; command: ShellCommand; nested: List<string>; redirects: List<string> };
+
+export type SyntaxPolicy = {
+  printed_process(statements: number, output: PrintedOutput, binding: BindingSyntax, kind: string, name: string): boolean;
+  poll_loop(loop: PollLoop, index: BindingSyntax, result: BindingSyntax, output: PrintedOutput): boolean;
+  awaited_process(awaited: string, call: string, callee: string, arity: number, optional: boolean, fields: List<string>, poll: boolean): boolean;
+  exact_shell(separators: List<string>, statements: List<ExactShell>): List<ShellCommand>;
+  sequential_shell(statements: number, syntax: ShellSyntax): List<ShellCommand>;
+};
+
+function shellSyntax(node: Node | undefined): ShellSyntax {
+  if (node?.type === "command") {
+    return { $: "ShellLiteral", command: shellCommand(node), nested_kinds: list(Array.from(nodes(node), (part) => part.type)) };
   }
-  if (node.type !== "list" || node.children.some((part) => !part.isNamed && part.type !== "&&")) return [];
-  const parts = node.namedChildren.map(andSeries);
-  return parts.length === 2 && parts.every((part) => part.length) ? parts.flat() : [];
+  if (node?.type === "list" && node.namedChildCount === 2) {
+    const [left, right] = node.namedChildren;
+    return { $: "ShellBinary", operators: list(node.children.filter((part) => !part.isNamed).map((part) => part.type)),
+      left: shellSyntax(left), right: shellSyntax(right) };
+  }
+  return { $: "OtherShell" };
 }
 
 const named = (node?: Node | null) => node?.namedChildren.filter((part) => part.type !== "comment") ?? [];
 const field = (node: Node | null | undefined, name: string) => node?.childForFieldName(name);
-const expression = (node?: Node | null) => node?.type === "expression_statement" ? node.namedChild(0) : null;
+const kind = (node?: Node | null) => node?.type ?? "";
+const source = (node?: Node | null) => node?.text ?? "";
+const compact = (node?: Node | null) => source(node).replace(/\s/g, "");
+const optional = (node?: Node | null) => named(node).some((part) => part.type === "optional_chain");
 
-function binding(node?: Node | null): { name: string; value: Node } | undefined {
-  if (node?.type !== "lexical_declaration" || named(node).length !== 1) return;
-  const declaration = named(node)[0];
-  const name = field(declaration, "name");
-  const value = field(declaration, "value");
-  if (name?.type === "identifier" && value) return { name: name.text, value };
+function binding(node?: Node | null) {
+  const bindings = named(node);
+  const name = field(bindings[0], "name");
+  return {
+    facts: { $: "BindingSyntax", declaration: kind(node), count: bindings.length, kind: kind(name), name: source(name) } as const,
+    value: field(bindings[0], "value"),
+  };
 }
 
-function printedArgument(statement?: Node) {
-  const call = expression(statement);
-  const args = field(call, "arguments");
-  if (call?.type === "call_expression" && field(call, "function")?.text === "text" &&
-      !named(call).some((node) => node.type === "optional_chain") && named(args).length === 1) return named(args)[0];
+function printedOutput(statement?: Node) {
+  const call = statement?.namedChild(0);
+  const args = named(field(call, "arguments"));
+  return {
+    facts: { $: "PrintedOutput", statement: kind(statement), call: kind(call), printer: source(field(call, "function")),
+      args: args.length, optional: optional(call) } as const,
+    value: args[0],
+  };
 }
 
-function commandCall(awaited: Node | null | undefined): Node | null {
-  while (awaited?.type === "parenthesized_expression" && named(awaited).length === 1) awaited = named(awaited)[0];
+function unwrapParentheses(node: Node | null | undefined) {
+  while (node?.type === "parenthesized_expression" && named(node).length === 1) node = named(node)[0];
+  return node;
+}
+
+function commandCall(value: Node | null | undefined, policy: SyntaxPolicy, poll = false): Node | null {
+  const awaited = unwrapParentheses(value);
   const call = named(awaited)[0];
-  const args = field(call, "arguments");
-  if (awaited?.type !== "await_expression" || call?.type !== "call_expression" ||
-      !["tools.exec_command", "tools.write_stdin"].includes(field(call, "function")?.text ?? "")) return null;
-  const fields = literalFields(named(args)[0]);
-  const literalTypes = ["string", "template_string", "number", "true", "false", "null"];
-  if (named(args).length !== 1 || !fields.size || named(call).some((node) => node.type === "optional_chain") ||
-      Array.from(fields.values()).some((value) => !literalTypes.includes(value.type) ||
-        named(value).some((child) => child.type === "template_substitution"))) return null;
-  return call;
+  const args = named(field(call, "arguments"));
+  const fields = literalFields(args[0]);
+  const literals = Array.from(fields.values(), (node) =>
+    named(node).some((child) => child.type === "template_substitution") ? "template_substitution" : node.type);
+  return policy.awaited_process(kind(awaited), kind(call), source(field(call, "function")), args.length,
+    optional(call), list(literals), poll) ? call : null;
 }
 
-function loopPoll(loop: Node): Node | null {
-  if (loop.type !== "for_statement") return null;
+function loopPoll(loop: Node, policy: SyntaxPolicy): Node | null {
   const index = binding(field(loop, "initializer"));
-  const ceiling = field(field(loop, "condition"), "right");
-  if (!index || !/^[A-Za-z_][A-Za-z_0-9]*$/.test(index.name) || !safeLoopCount(index.value) || !safeLoopCount(ceiling) ||
-      field(loop, "condition")?.text.replace(/\s/g, "") !== `${index.name}<${ceiling!.text}` ||
-      field(loop, "increment")?.text.replace(/\s/g, "") !== `${index.name}++`) return null;
+  const condition = field(loop, "condition");
+  const ceiling = field(condition, "right");
   const body = field(loop, "body");
-  const [declaration, branch, ...extra] = named(body);
+  const statements = named(body);
+  const [declaration, branch] = statements;
   const result = binding(declaration);
-  if (body?.type !== "statement_block" || extra.length || !result || result.name === index.name ||
-      branch?.type !== "if_statement" || field(branch, "alternative")) return null;
-  const condition = field(branch, "condition")?.text.replace(/\s/g, "");
-  const exhausted = Number(ceiling!.text) - 1;
-  const closed = `!${result.name}.session_id`;
-  if (condition !== `(${closed})` && condition !== `(${closed}||${index.name}===${exhausted})`) return null;
   const consequence = field(branch, "consequence");
-  const output = printedArgument(named(consequence)[0]);
-  if (consequence?.type !== "statement_block" || named(consequence).length !== 2 ||
-      named(consequence)[1].type !== "break_statement" || named(named(consequence)[1]).length !== 0 ||
-      output?.type !== "identifier" || output.text !== result.name) return null;
-  const call = commandCall(result.value);
-  return field(call, "function")?.text === "tools.write_stdin" ? call : null;
+  const actions = named(consequence);
+  const output = printedOutput(actions[0]);
+  const facts: PollLoop = {
+    $: "PollLoop", kind: kind(loop), initial_kind: kind(index.value), initial: source(index.value),
+    ceiling_kind: kind(ceiling), ceiling: source(ceiling), condition: compact(condition), increment: compact(field(loop, "increment")),
+    body: kind(body), statements: statements.length, branch: kind(branch), alternative: Boolean(field(branch, "alternative")),
+    stop: compact(field(branch, "condition")), consequence: kind(consequence), actions: actions.length,
+    exit: kind(actions[1]), exit_args: named(actions[1]).length, output_kind: kind(output.value), output_name: source(output.value),
+  };
+  return policy.poll_loop(facts, index.facts, result.facts, output.facts) ? commandCall(result.value, policy, true) : null;
 }
 
-function safeLoopCount(node?: Node | null) {
-  return node?.type === "number" && /^(?:0|[1-9]\d{0,2})$/.test(node.text);
-}
-
-function printedCall(root: Node): Node | null {
+function printedCall(root: Node, policy: SyntaxPolicy): Node | null {
   const statements = named(root);
-  if (statements.length === 1) return commandCall(printedArgument(statements[0])) ?? loopPoll(statements[0]);
-  if (statements.length !== 2) return null;
-  const result = binding(statements[0]);
-  const output = printedArgument(statements[1]);
-  return result && output?.type === "identifier" && output.text === result.name ? commandCall(result.value) : null;
+  const bound = binding(statements[0]);
+  const output = printedOutput(statements.at(-1));
+  if (policy.printed_process(statements.length, output.facts, bound.facts, kind(output.value), source(output.value))) {
+    return commandCall(statements.length === 2 ? bound.value : output.value, policy);
+  }
+  return statements.length === 1 && statements[0].type === "for_statement" ? loopPoll(statements[0], policy) : null;
 }
 
-function exactCommand(statement: Node): ShellCommand | null {
+function exactStatement(statement: Node): ExactShell {
   const command = statement.type === "redirected_statement" ? field(statement, "body") : statement;
-  if (command?.type !== "command" ||
-      named(statement).some((part) => part.type === "file_redirect" &&
-        !/^(?:[12]?>{1,2}|[12]>&[12])/.test(part.text)) ||
-      Array.from(nodes(statement)).some((part) => ["command_substitution", "process_substitution",
-        "variable_assignment", "heredoc_redirect", "herestring_redirect"].includes(part.type))) return null;
-  return shellCommand(command);
-}
-
-function exactShell(root: Node): ShellCommand[] {
-  if (root.children.some((node) => !node.isNamed && node.type !== ";")) return [];
-  const statements = named(root);
-  if (statements.length > 3) return [];
-  const commands = statements.map(exactCommand);
-  return commands.every((command) => command !== null) ? commands : [];
+  return {
+    $: "ExactShell", kind: kind(command), command: command ? shellCommand(command) : { $: "Command", name: "", args: nil },
+    nested: list(Array.from(nodes(statement), (node) => node.type)),
+    redirects: list(named(statement).filter((part) => part.type === "file_redirect").map(source)),
+  };
 }
 
 async function loadParsers() {
@@ -209,29 +226,30 @@ async function loadParsers() {
   ] as const);
 }
 
-export async function rolloutSyntax() {
+export async function rolloutSyntax(policy: SyntaxPolicy) {
   const [js, bash] = await (parsers ??= loadParsers());
-  const shell = (input: unknown) => decode<ShellCommand>(bash, input, (root) =>
-    Array.from(nodes(root)).flatMap((node) => node.type === "command" ? [shellCommand(node)] : []));
+  const shell = (input: unknown) => decode(bash, input, (root) =>
+    list(Array.from(nodes(root)).flatMap((node) => node.type === "command" ? [shellCommand(node)] : []))) ?? nil;
 
-  const exact = (input: unknown) => decode<ShellCommand>(bash, input, exactShell);
+  const exact = (input: unknown) => decode(bash, input, (root) => policy.exact_shell(
+    list(root.children.filter((node) => !node.isNamed).map(kind)), list(named(root).map(exactStatement)),
+  )) ?? nil;
   return {
-    direct: (input: unknown) => shell(input),
+    direct: shell,
     exact,
     sequential: (input: unknown): List<ShellCommand> => {
-      const decoded = decode<string>(js, input, (root) => {
-        const call = printedCall(root);
-        return [call?.childForFieldName("function")?.text === "tools.exec_command"
-          ? propertyCmd(call.childForFieldName("arguments")?.namedChild(0)) : ""];
+      const command = decode(js, input, (root) => {
+        const call = printedCall(root, policy);
+        return source(field(call, "function")) === "tools.exec_command" ? propertyCmd(named(field(call, "arguments"))[0]) : "";
       });
-      return decode<ShellCommand>(bash, decoded.$ === "Con" ? decoded.head : "", (root) => {
-        const statements = root.namedChildren.filter((node) => node.type !== "comment");
-        return statements.length === 1 ? andSeries(statements[0]).map(shellCommand) : [];
-      });
+      return decode(bash, command, (root) => {
+        const statements = named(root);
+        return policy.sequential_shell(statements.length, shellSyntax(statements[0]));
+      }) ?? nil;
     },
-    wrapped: (input: unknown) => decode<ToolInvocation>(js, input, (root) => {
+    wrapped: (input: unknown): List<ToolInvocation> => decode(js, input, (root) => {
       const invocations: ToolInvocation[] = [];
-      const printed = printedCall(root);
+      const printed = printedCall(root, policy);
       for (const node of nodes(root)) {
         if (node.type !== "call_expression") continue;
         const callee = node.childForFieldName("function");
@@ -250,8 +268,8 @@ export async function rolloutSyntax() {
           handle: handle?.type === "number" && /^[1-9]\d*$/.test(handle.text) ? sessionHandle(Number(handle.text)) : "",
           read_only: !chars || ((chars.text === '""' || chars.text === "''") && chars.type === "string") });
       }
-      return invocations;
-    }),
+      return list(invocations);
+    }) ?? nil,
   };
 }
 
