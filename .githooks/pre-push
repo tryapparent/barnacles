@@ -44,7 +44,7 @@ while read -r local_ref local_oid remote_ref remote_oid; do
   scopes=''
   while IFS= read -r path; do
     case "$path" in
-      *.md|LICENSE|*/APPARENT-LICENSE) ;;
+      *.md|LICENSE) ;;
       .githooks/*) scopes="$scopes hooks" ;;
       collector/*) scopes="$scopes collector dashboard" ;;
       evidence/*) scopes="$scopes collector dashboard evidence" ;;

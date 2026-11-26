@@ -1,4 +1,3 @@
-// Compiler bootstrap adapted from Apparent. See APPARENT-LICENSE.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
