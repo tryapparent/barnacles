@@ -53,6 +53,12 @@ test("dashboard derives a covered comparison and preserves missing source covera
           async: false, asyncEnd: null, terminalCall: null, ambiguous: false },
       ], markers: [{ line: 7, at: at + 650 }],
     });
+    saveRollout(source, {
+      instance: "local", session: "newer-envelope-only", lines: 6, malformed: 1, orphans: 0,
+      calls: [{ id: "launch", line: 2, tool: "Tool script", command: null, start: at + 800, end: at + 900,
+        async: true, asyncEnd: null, terminalCall: null, ambiguous: false }],
+      markers: [],
+    });
     const out = join(job, "out");
     execFileSync(process.execPath, ["dashboard/prepare.ts", source, out, repo], { stdio: "pipe", timeout: 60_000 });
     const db = new DatabaseSync(join(out, "dashboard.sqlite"), { readOnly: true });
@@ -66,16 +72,21 @@ test("dashboard derives a covered comparison and preserves missing source covera
         [["Thread started", null], ["First commit", 4700], ["PR opened", null], ["First PR CI", null],
           ["PR merged", null], ["Release dispatch", null], ["Shipped", null], ["Access verified", null]]);
       assert.equal(db.prepare("SELECT count(*) AS n FROM time_map").get()?.n, 2);
-      assert.equal(db.prepare("SELECT count(*) AS n FROM trace WHERE ended IS NULL").get()?.n, 1);
+      assert.equal(db.prepare("SELECT count(*) AS n FROM trace WHERE ended IS NULL").get()?.n, 2);
       assert.deepEqual(db.prepare("SELECT started, ended, measured FROM trace_windows ORDER BY session").all().map(Object.values),
-        [[at, at + 650, 3], [at, at, 0]]);
+        [[at, at + 650, 3], [at + 800, at + 900, 1], [at, at, 0]]);
+      assert.deepEqual(db.prepare("SELECT kind, observed, missing FROM trace_coverage ORDER BY session, ordinal").all().map(Object.values),
+        [["Tool envelopes", 2, 1], ["Async cells", 1, 0], ["Reasoning events", 1, null],
+          ["Tool envelopes", 1, 0], ["Async cells", 0, 1], ["Reasoning events", 0, null],
+          ["Tool envelopes", 0, 0], ["Async cells", 0, 0], ["Reasoning events", 1, null]]);
       assert.deepEqual(db.prepare("SELECT source_line, observed FROM trace_reasoning ORDER BY session").all().map(Object.values),
         [[7, at + 650], [3, at]]);
       const otlp = readFileSync(join(out, "tempo.ndjson"), "utf8");
       assert.ok(!otlp.includes("test-session"));
-      assert.ok(!otlp.includes("Tool script"));
-      const [full, eventOnly] = otlp.trim().split("\n").map((line) => JSON.parse(line).resourceSpans[0].scopeSpans[0].spans);
+      const [full, envelopeOnly, eventOnly] = otlp.trim().split("\n").map((line) => JSON.parse(line).resourceSpans[0].scopeSpans[0].spans);
       assert.equal(full.length, 4);
+      assert.ok(!JSON.stringify(full).includes("Tool script"));
+      assert.equal(envelopeOnly.length, 2);
       const [window, ...spans] = full;
       const cell = spans.find((span: { name: string }) => span.name === "Async cell · Shell command · git status");
       const launch = spans.find((span: { name: string }) => span.name === "Shell command · git status");
@@ -91,6 +102,8 @@ test("dashboard derives a covered comparison and preserves missing source covera
       assert.ok(config.panels.some(({ type }: { type: string }) => type === "marcusolsson-treemap-panel"));
       const trace = JSON.parse(readFileSync(join(out, "dashboards/trace.json"), "utf8"));
       assert.ok(trace.panels.some(({ type }: { type: string }) => type === "traces"));
+      assert.equal(trace.templating.list[0].current.value, "1");
+      assert.equal(trace.templating.list[1].current.value, window.traceId);
     } finally { db.close(); }
   } finally { rmSync(job, { recursive: true, force: true }); }
 });

@@ -7,7 +7,7 @@ const timingPath = "/d/barnacles-timing/timing";
 const tracePath = "/d/barnacles-trace/trace";
 
 type Window = { from: number; to: number };
-type Range = Window & { traceWindows: (Window & { session: number; traceId: string })[] };
+type Range = Window & { traceSessions: number; defaultTrace?: Window & { session: number; traceId: string } };
 type FieldProperty = { id: string; value: unknown };
 type Override = { matcher: { id: string; options: string }; properties: FieldProperty[] };
 
@@ -159,31 +159,35 @@ export function dashboards(range: Range) {
     variable("workflow", "Workflow", "SELECT '*' AS workflow UNION SELECT DISTINCT CAST(workflow AS TEXT) FROM timing ORDER BY workflow", "*"),
   ]);
 
-  const first = range.traceWindows[0];
+  const first = range.defaultTrace;
   const session = "${session:sqlstring}";
   const reasoningTime = "strftime('%Y-%m-%dT%H:%M:%fZ', observed / 1000.0, 'unixepoch')";
   const trace = board("barnacles-trace", "Barnacles · Rollout waterfall",
     first ? new Date(first.from).toISOString() : from, first ? new Date(first.to).toISOString() : to, [
-      block(1, "Local Codex evidence", [0, 0, 24, 3], first
-        ? "Reasoning events mark observed times. Their duration is unknown."
-        : "Import a Codex rollout and rebuild this snapshot to view a trace."),
+      range.traceSessions ? data(1, "table", "Session coverage", [0, 0, 24, 5],
+        `SELECT kind AS "Evidence", observed AS "Seen", missing AS "Untimed"
+          FROM trace_coverage WHERE CAST(session AS TEXT) = ${session} ORDER BY ordinal`,
+        { showHeader: true }, { noValue: "—", custom: { minWidth: 64 } },
+        [byName("Seen", width(61)), byName("Untimed", width(80))], [],
+        "Untimed spans have incomplete clocks. Reasoning events are timestamps on the session root.")
+        : block(1, "Session coverage", [0, 0, 24, 5], "Import a Codex rollout and rebuild the snapshot to view a trace."),
       {
         id: 2, type: "traces", title: "Session trace", datasource: tempo,
-        gridPos: { x: 0, y: 3, w: 24, h: 14 },
+        gridPos: { x: 0, y: 5, w: 24, h: 14 },
         description: "The root groups the observed clocks and events. Async cells end at the observed terminal wait. Command labels describe submitted operations.",
         targets: [{ datasource: tempo, refId: "A", queryType: "traceql", query: "${traceId}" }],
       },
-      data(4, "table", "Completed spans", [0, 17, 24, 6],
+      data(4, "table", "Completed spans", [0, 19, 24, 6],
         `SELECT operation AS "Operation", source_line AS "Line" FROM trace
           WHERE CAST(session AS TEXT) = ${session} AND started IS NOT NULL AND ended IS NOT NULL
           ORDER BY started, source_line, clock`,
         { showHeader: true }, {}, [byName("Line", width(72))]),
-      data(3, "table", "Spans with missing clocks", [0, 23, 12, 5],
+      data(3, "table", "Spans with missing clocks", [0, 25, 12, 5],
         `SELECT source_line || ' · ' || operation AS "Span",
           started / 1000.0 AS "Started", ended / 1000.0 AS "Ended" FROM trace
           WHERE CAST(session AS TEXT) = ${session} AND (started IS NULL OR ended IS NULL) ORDER BY started`,
         { showHeader: true }, { noValue: "Unknown", custom: { minWidth: 70 } }, [], ["Started", "Ended"]),
-      data(5, "table", "Reasoning timestamps", [12, 23, 12, 5],
+      data(5, "table", "Reasoning timestamps", [12, 25, 12, 5],
         `SELECT ${reasoningTime} AS "Observed UTC", source_line AS "Line"
           FROM trace_reasoning WHERE CAST(session AS TEXT) = ${session} ORDER BY observed, source_line`,
         { showHeader: true }, {}, [
@@ -191,7 +195,7 @@ export function dashboards(range: Range) {
         ], ["Observed UTC"],
         "Point events in the selected session with their rollout source lines. Reimport older rollouts to add reasoning coverage."),
     ], [link("Shipping review", "/d/barnacles-shipping/shipping")], [
-      variable("session", "Session", "SELECT CAST(session AS TEXT) FROM trace_windows ORDER BY session", "1"),
+      variable("session", "Session", "SELECT CAST(session AS TEXT) FROM trace_windows ORDER BY session", String(first?.session ?? 1)),
       { ...variable("traceId", "Trace ID", `SELECT COALESCE((SELECT trace_id FROM trace_windows
         WHERE CAST(session AS TEXT) = ${session}), '')`, first?.traceId ?? ""), hide: 2 },
     ]);

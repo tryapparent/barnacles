@@ -18,6 +18,8 @@ type Metrics = TracePolicy & {
   visible_release(channel: string, published: number): boolean;
   codex_clock(clock: string): string;
   record_interval(sample: Stats, start: number, end: number): Stats;
+  trace_preference(asyncSpans: number, reasoningEvents: number): boolean;
+  trace_preferred(ended: number, mixed: boolean, otherEnded: number, otherMixed: boolean): boolean;
   cycle_stage(start: number, end: number): CycleStage;
   count_cycle_stage(sample: Stats, stage: CycleStage): Stats;
   mean(sample: Stats): Ratio;
@@ -61,6 +63,8 @@ function writeSnapshot(input: string, output: string, otlp: string, repo: string
         mean_seconds REAL, unmeasured INTEGER, rank INTEGER);
       CREATE TABLE trace(session INTEGER, source_line INTEGER, operation TEXT, clock TEXT, started INTEGER, ended INTEGER);
       CREATE TABLE trace_windows(session INTEGER, trace_id TEXT, started INTEGER, ended INTEGER, measured INTEGER);
+      CREATE TABLE trace_coverage(session INTEGER, ordinal INTEGER, kind TEXT, observed INTEGER, missing INTEGER,
+        PRIMARY KEY (session, ordinal));
       CREATE TABLE trace_reasoning(session INTEGER, source_line INTEGER, observed INTEGER,
         PRIMARY KEY (session, source_line));
       CREATE INDEX trace_reasoning_window ON trace_reasoning(session, observed);
@@ -154,7 +158,8 @@ function writeSnapshot(input: string, output: string, otlp: string, repo: string
       }
     }
 
-    const traceWindows = [];
+    let defaultTrace: { session: number; from: number; to: number; traceId: string; mixed: boolean } | undefined;
+    let traceSessions = 0;
     if (table("codex_spans")) {
       const spans = table("codex_commands")
         ? all(`SELECT codex_spans.*, command FROM codex_spans LEFT JOIN codex_commands USING (instance, session_id, call_id)
@@ -168,26 +173,36 @@ function writeSnapshot(input: string, output: string, otlp: string, repo: string
       const insert = view.prepare("INSERT INTO trace VALUES (?, ?, ?, ?, ?, ?)");
       const mark = view.prepare("INSERT INTO trace_reasoning VALUES (?, ?, ?)");
       const windows = view.prepare("INSERT INTO trace_windows VALUES (?, ?, ?, ?, ?)");
+      const coverage = view.prepare("INSERT INTO trace_coverage VALUES (?, ?, ?, ?, ?)");
       for (const [key, rows] of sessions) {
-        const session = traceWindows.length + 1;
+        const session = ++traceSessions;
         const observations = rows.map((row) => ({ call: String(row.call_id), terminal: row.terminal_call_id as string | null,
           line: Number(row.source_line), tool: String(row.tool), command: String(row.command ?? ""), clock: String(row.clock),
           start: row.started_ms as number | null, end: row.ended_ms as number | null }));
         const events = (bySession.get(key) ?? []).map((row) => ({ line: Number(row.source_line), at: Number(row.observed_ms) }));
+        const clocks = new Map([["Tool envelopes", empty], ["Async cells", empty]]);
         for (const row of observations) {
           const clock = metrics.codex_clock(row.clock);
-          add(clock, 0, row.tool, row.start ?? 0, row.end ?? 0);
+          const start = row.start ?? 0;
+          const end = row.end ?? 0;
+          add(clock, 0, row.tool, start, end);
+          clocks.set(clock, metrics.record_interval(clocks.get(clock) ?? empty, start, end));
           insert.run(session, row.line, metrics.trace_operation(row.clock, row.tool, row.command),
             clock, row.start, row.end);
         }
+        let ordinal = 0;
+        for (const [clock, stats] of clocks) coverage.run(session, ordinal++, clock, stats.count, stats.missing);
+        coverage.run(session, ordinal, "Reasoning events", events.length, null);
         for (const event of events) mark.run(session, event.line, event.at);
         const trace = encodeTrace(key, observations, events, metrics);
         if (trace) {
           writeSync(payloads, JSON.stringify(trace.payload) + "\n");
         }
         windows.run(session, trace?.traceId ?? null, trace?.bounds.from ?? null, trace?.bounds.to ?? null, trace?.spans ?? 0);
-        traceWindows.push({ session, from: trace?.bounds.from ?? cutoff * 1000, to: trace?.bounds.to ?? cutoff * 1000,
-          traceId: trace?.traceId ?? "" });
+        const mixed = metrics.trace_preference(clocks.get("Async cells")?.count ?? 0, events.length);
+        if (trace && metrics.trace_preferred(trace.bounds.to, mixed, defaultTrace?.to ?? 0, defaultTrace?.mixed ?? false)) {
+          defaultTrace = { session, from: trace.bounds.from, to: trace.bounds.to, traceId: trace.traceId, mixed };
+        }
       }
     }
     const compare = <T>(left: [string, T], right: [string, T], total: (data: T) => number) =>
@@ -207,7 +222,7 @@ function writeSnapshot(input: string, output: string, otlp: string, repo: string
     });
 
     view.exec("COMMIT");
-    return { from: Math.min(priorWeek, ...weeks.keys()), to: cutoff, traceWindows };
+    return { from: Math.min(priorWeek, ...weeks.keys()), to: cutoff, defaultTrace, traceSessions };
   } finally {
     closeSync(payloads);
     source.close();
