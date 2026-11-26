@@ -27,6 +27,7 @@ export type ProcessCapture = {
 export type Detail = Delivery & { asOf: string; snapshotAt: string };
 export type Operation = { operation: string; measuredSpans: number; meanSeconds: number | null; totalSeconds: number | null;
   unmeasuredSpans: number; hasArea: boolean };
+export type OperationTile = { label: string; totalSeconds: number; index: number; grouped: number; children: OperationTile[] };
 export type Week = { startsAt: string; verified: number; attributed: number; meanCycleSeconds: number | null };
 export type DeliveryDay = { startsAt: string; verified: number;
   stages: { phase: Stage; measured: number; meanSeconds: number | null }[] };
@@ -37,7 +38,7 @@ export type Review = {
   cycleComparison: { deltaSeconds: number | null; direction: string; prior: ComparisonWeek; recent: ComparisonWeek };
   shipments: { verified: number; attributed: number; weekly: Week[]; dailyStages?: DeliveryDay[] };
   operations: { window: string; clock: string; operation: string | null; clockOptions: string[];
-    operationOptions: string[]; items: Operation[] };
+    operationOptions: string[]; items: Operation[]; map?: OperationTile[] };
   fleet: { from: string; to: string; items: Vessel[] };
   deliveries: { total: number; limit: number; offset: number; nextOffset: number | null; maxMeasuredMillis: number; items: Delivery[] };
 };
@@ -75,8 +76,8 @@ export function detailPage(number: number, to: string) {
   return pagePath({ pr: number, to, offset: null }, `#delivery-pr-${number}`);
 }
 
-export async function fetchEvidence<T>(path: string, signal: AbortSignal): Promise<T> {
-  const response = await fetch(path, { signal, credentials: "same-origin", headers: { Accept: "application/json" } });
+export async function fetchEvidence<T>(path: string, signal: AbortSignal, method = "GET"): Promise<T> {
+  const response = await fetch(path, { method, signal, credentials: "same-origin", headers: { Accept: "application/json" } });
   if (!response.ok) {
     const data = await response.json().catch(() => null);
     throw Error(data?.error?.message ?? "The evidence request failed. Try again.");

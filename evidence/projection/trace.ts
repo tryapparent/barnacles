@@ -54,7 +54,7 @@ const reasoning = ({ line, at, result_at, result_call_line }: Reasoning): Reason
   ({ line, at, resultAt: result_at, resultCallLine: result_call_line });
 
 export function writeTraces(source: DatabaseSync, view: DatabaseSync, policy: TracePolicy, otlp: OtlpPolicy, timing: ReturnType<typeof collectTiming>,
-  writeTrace: TraceWriter) {
+  writeTrace?: TraceWriter) {
   const table = (name: string) => Boolean(source.prepare("SELECT 1 FROM sqlite_schema WHERE name=?").get(name));
   const scan = (sql: string) => source.prepare(sql).iterate();
   const rolloutCount = table("codex_rollouts") ? Number(source.prepare("SELECT count(*) AS count FROM codex_rollouts").get()?.count) : 0;
@@ -138,7 +138,7 @@ export function writeTraces(source: DatabaseSync, view: DatabaseSync, policy: Tr
     }));
     const { bounds } = result;
     const wireKey = Buffer.from(otlp.wire_key_bytes(key.instance, key.session), "latin1").toString("utf8");
-    const traceId = bounds.from ? writeTrace(wireKey, { bounds, spans, markers, estimates: rows(result.estimates).map(reasoning) },
+    const traceId = bounds.from && writeTrace ? writeTrace(wireKey, { bounds, spans, markers, estimates: rows(result.estimates).map(reasoning) },
       () => otlp.encode(policy.trace_wire(wireKey, result))) : null;
     windows.run(session, traceId, bounds.from || null, bounds.from ? bounds.to : null, spans.length);
     choice = policy.choose_trace(choice, session, traceId ?? "", bounds, result.coverage, result.reasoning_count);

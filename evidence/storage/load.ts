@@ -1,3 +1,5 @@
+import { closeSync, openSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { buildPolicy, loadPolicy } from "../../tooling/bend.ts";
 import { admissionPolicy, saveAttempt, saveAttempts, type ActionAttempt, type AdmissionPolicy } from "./actions.ts";
 import { saveDelivery, type PullRequest, type ReleaseEvidence } from "../delivery/delivery.ts";
@@ -50,5 +52,25 @@ export function loadEvidence(database: string, batch: EvidenceBatch, policy: Adm
     case "codex": return saveRollout(database, batch.rollout, policy);
     case "git-change-scan": return saveChangedCode(database, batch.repository, batch.report);
     case "t3": return saveThread(database, batch.thread, policy);
+  }
+}
+export function githubPollRows(path: string, repository: string) {
+  closeSync(openSync(path, "a", 0o600));
+  const db = new DatabaseSync(path, { readOnly: true });
+  try {
+    db.exec("BEGIN");
+    const table = db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?");
+    const prs = table.get("github_prs") ? db.prepare(
+      "SELECT pr_number, merge_sha, updated_at FROM github_prs WHERE repository=?",
+    ).all(repository) : [];
+    const attempts = table.get("action_attempts") ? db.prepare(
+      "SELECT run_id, attempt, status, source_updated FROM action_attempts WHERE repository=?",
+    ).all(repository) : [];
+    const releases = table.get("github_release_observations") ? db.prepare(
+      "SELECT pr_number, release_id, merge_sha, shipped FROM github_release_observations WHERE repository=?",
+    ).all(repository) : [];
+    return { prs, attempts, releases };
+  } finally {
+    db.close();
   }
 }

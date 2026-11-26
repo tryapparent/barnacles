@@ -61,6 +61,45 @@ Successful window imports print a JSON receipt containing the window, requested 
 
 Run the synthetic checks with `npm run verify -- collector`. They compile the actual Bend2 policy and exercise pagination, partial and changing inventories, the command-line entry point, and SQLite replay.
 
+## Poll GitHub for Harbor
+
+Use one collector process per evidence database and Harbor snapshot. From the
+same checkout used for Harbor, with Node 22.18+, dependencies installed and
+`gh` authenticated with repository read access, run:
+
+```sh
+export BARNACLES_POLL_SETTINGS="$job/poll-interval"
+node collector/import-sources.ts "$job" poll-github OWNER/REPO "$job/harbor-snapshot"
+```
+
+Use an existing private job directory. For an ongoing installation, give the
+collector a stable directory for its SQLite database and use a process
+supervisor. It runs immediately at startup and waits **15 minutes** between
+passes by default. Harbor can save a different interval in **Settings**.
+Set the same environment variable when starting
+[Harbor](../dashboard/api.md#github-polling-settings) and serve
+`"$job/harbor-snapshot"` as its snapshot directory. The first publish creates
+this directory. Append `--once` to run a single pass for a supervised check
+or bootstrap. GitHub setup consists of the existing authenticated read access.
+
+Each pass checks the 30 most recently updated PRs, the first 30 workflow runs
+and the first 20 releases in GitHub's listings. The collector reuses stored
+clocks to skip unchanged PRs and completed attempts. It refreshes in-flight
+attempts within that listing. This is bounded recent coverage. Use the
+one-off import commands below for historical backfill, older reruns outside
+the listing, or PR-to-release mappings where the release tag points to a
+descendant of the PR merge. Automatic Linux Main release capture uses exact
+merge-SHA matches against known PRs and runs the existing artifact access
+check. T3 and Codex imports can share the input evidence database.
+
+If a listing fails, the pass keeps the previous Harbor snapshot. If an
+individual record changes during capture or fails to import, the pass reports
+the failure, keeps previous evidence for that record, and publishes the valid
+captures. The next pass can retry records still within scope. Harbor's cutoff
+is the time its snapshot was prepared. Collector logs show the listing sizes
+and failed import count. Each publish replaces the Harbor SQLite file
+atomically.
+
 ## Apparent donor code
 
 Use the reviewed upstream revision `ed8e448f6b7d0826b1922a97fcef9691c9f5676f` as the starting point. The Actions import adapts exact-attempt reads and clock rules from the donor. It also adapts the checksum-pinned [Bend2 bootstrap](https://github.com/tryapparent/apparent/blob/ed8e448f6b7d0826b1922a97fcef9691c9f5676f/shared/enablement/bend/toolchain.ts). The [root LICENSE](../LICENSE) retains the donor notice. Preserve the original license and notices on copied code. Barnacles should run from its own checkout.

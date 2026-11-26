@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { closeSync, copyFileSync, openSync } from "node:fs";
-import { repository } from "../repository.ts";
+import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, renameSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { DatabaseSync, type SQLInputValue, type SQLOutputValue } from "node:sqlite";
+import { repository } from "../repository.ts";
 import { buildPolicies, buildPolicy, loadPolicy } from "../../tooling/bend.ts";
 import { deliveryPolicy, readDelivery, type DeliveryPolicy } from "../delivery/delivery.ts";
 import type { AttemptIdentity } from "../storage/actions.ts";
@@ -50,6 +51,10 @@ type ReviewFact = {
 type ReviewItem = { $: "Item"; pr: number; order: number; changed: number; stage: string;
   milestones: List<{ key: string; phase: string; observed: number; elapsed: CycleStage }> };
 type ReviewWindow = { $: "ReviewRange"; from: number; to: number; fleet_from: number } | { $: "InvalidRange" };
+type MapTile = { index: number; millis: number; grouped: number; children: List<MapTile> };
+type MapEntry = {
+  label: string; totalSeconds: number; index: number; grouped: number; children: MapEntry[];
+};
 type ReviewPolicy = {
   review_fact(pr: number, release: boolean, thread: number, commit: number, opened: number, ci: number,
     merged: number, dispatch: number, publication: number, access: number, linked: boolean, cycle: number): ReviewFact;
@@ -60,6 +65,7 @@ type ReviewPolicy = {
   review_timing_window(): string;
   review_count_facts(facts: List<ReviewFact>): number;
   review_clock_valid(clock: string): boolean;
+  review_operation_map?(weights: List<number>): List<MapTile>;
   review_operation_matches(selection: string, all: boolean, name: string): boolean;
   review_item(fact: ReviewFact, asOf: number): ReviewItem;
   review_report(facts: List<ReviewFact>, from: number, to: number, fleetFrom: number, limit: number, offset: number): {
@@ -234,8 +240,7 @@ function writeProcessTimings(source: DatabaseSync, view: DatabaseSync, cutoff: n
   }
 }
 
-export async function writeSnapshot(input: string, output: string, scratch: string, requestedRepository: string, cutoff: number,
-  writeTrace: TraceWriter, actionsWaitWindow?: ActionWaitWindow, timingCutoff = cutoff * 1000, reviewPolicyOutput?: string) {
+async function compileSnapshotPolicies(scratch: string) {
   const [deliveryModule, metricModule, modelModule, traceModule, otlpModule, waitModule, kernelModule] = await buildPolicies(scratch, [
     [deliveryPolicy, "delivery.mjs"],
     [new URL("./metrics.bend", import.meta.url), "metrics.mjs"],
@@ -247,11 +252,21 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
   ]);
   const policy = await loadPolicy<DeliveryPolicy>(deliveryModule);
   const metrics: Metrics = await loadPolicy(metricModule);
-  const repo = repository(requestedRepository, metrics);
   const tracePolicy: TracePolicy = await loadPolicy(traceModule);
   const otlp: OtlpPolicy = await loadPolicy(otlpModule);
   const estimator: Estimator = await loadPolicy(modelModule);
   const waits: WaitPolicy = await loadPolicy(waitModule);
+  const kernel = await loadPolicy<KernelPolicy>(kernelModule);
+  return { policy, metrics, estimator, waits, metricModule, tracePolicy, otlp, kernel };
+}
+
+type SnapshotPolicies = Awaited<ReturnType<typeof compileSnapshotPolicies>>;
+
+export async function writeSnapshot(input: string, output: string, scratch: string, requestedRepository: string, cutoff: number,
+  writeTrace?: TraceWriter, actionsWaitWindow?: ActionWaitWindow,
+  timingCutoff = cutoff * 1000, reviewPolicyOutput?: string, compiled?: SnapshotPolicies) {
+  const { policy, metrics, estimator, waits, metricModule, tracePolicy, otlp, kernel } = compiled ?? await compileSnapshotPolicies(scratch);
+  const repo = repository(requestedRepository, metrics);
   const source = new DatabaseSync(input, { readOnly: true });
   closeSync(openSync(output, "wx", 0o600));
   const view = new DatabaseSync(output);
@@ -392,10 +407,7 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
 
     writeActionsWait(source, view, repo,
       actionsWaitWindow ? { $: "Window", ...actionsWaitWindow } : waits.report_window(timingCutoff), waits);
-    if (table("codex_kernel_captures")) {
-      const kernel = await loadPolicy<KernelPolicy>(kernelModule);
-      writeProcessTimings(source, view, timingCutoff, kernel);
-    }
+    if (table("codex_kernel_captures")) writeProcessTimings(source, view, timingCutoff, kernel);
     view.exec("COMMIT");
     if (reviewPolicyOutput) copyFileSync(metricModule, reviewPolicyOutput);
     const from = summary.from;
@@ -409,6 +421,38 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
     source.close();
     view.close();
   }
+}
+
+export function harborSnapshotPublisher(directory: string, repo: string, scratch: string) {
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const database = join(directory, "dashboard.sqlite");
+  const reviewPolicy = join(directory, "review-policy.mjs");
+  if (existsSync(database)) {
+    const previous = new DatabaseSync(database, { readOnly: true });
+    try {
+      if (previous.prepare("SELECT repository FROM review_metadata").get()?.repository !== repo) {
+        throw Error("The Harbor snapshot belongs to another repository");
+      }
+    } finally {
+      previous.close();
+    }
+  }
+  let compiled: SnapshotPolicies | undefined;
+  return async (input: string) => {
+    compiled ??= await compileSnapshotPolicies(scratch);
+    const staging = mkdtempSync(join(directory, ".harbor-"));
+    try {
+      const next = join(staging, "dashboard.sqlite");
+      const policy = join(staging, "review-policy.mjs");
+      const now = Date.now();
+      await writeSnapshot(input, next, scratch, repo, Math.floor(now / 1000), undefined, undefined, now,
+        existsSync(reviewPolicy) ? undefined : policy, compiled);
+      if (existsSync(policy)) renameSync(policy, reviewPolicy);
+      renameSync(next, database);
+    } finally {
+      rmSync(staging, { recursive: true, force: true });
+    }
+  };
 }
 
 type ReviewInput = {
@@ -463,6 +507,20 @@ function reviewProvenance(key: string, row: ReviewRow, repo: string) {
   return sources[key];
 }
 
+function encodeOperationMap(policy: NonNullable<ReviewPolicy["review_operation_map"]>,
+  entries: Pick<MapEntry, "label" | "index" | "children">[], weights: number[]): MapEntry[] {
+  const input = weights.reduceRight<List<number>>((tail, head) => ({ $: "Con", head, tail }), { $: "Nil" });
+  const encode = (tiles: List<MapTile>): MapEntry[] => rows(tiles).map(({ index, millis, grouped, children }) => ({
+    ...(grouped ? { label: "Other", index: 0, children: encode(children) } : entries[index]),
+    totalSeconds: millis / 1000, grouped,
+  }));
+  return encode(policy(input));
+}
+
+const operationHour = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "UTC", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+});
+
 export async function openShippingReview(directory: string) {
   const database = `${directory}/dashboard.sqlite`;
   const policy: ReviewPolicy = await loadPolicy(`${directory}/review-policy.mjs`);
@@ -507,6 +565,18 @@ export async function openShippingReview(directory: string) {
         const timingWindow = policy.review_timing_window();
         const operationRows = db.prepare("SELECT * FROM operation_totals WHERE window = ? AND clock = ? ORDER BY rank")
           .all(timingWindow, input.clock);
+        const selectedOperations = operationRows.flatMap((row, index) =>
+          policy.review_operation_matches(input.operation ?? "", input.operation === undefined, String(row.operation))
+            ? [{ row, index }] : []);
+        const mapPolicy = policy.review_operation_map;
+        const hourRows = db.prepare("SELECT 1 FROM sqlite_schema WHERE name = 'operation_hours'").get() &&
+          db.prepare("SELECT hour, total_millis FROM operation_hours WHERE window = ? AND clock = ? AND operation = ? ORDER BY rank");
+        const operationMap = mapPolicy && encodeOperationMap(mapPolicy, selectedOperations.map(({ row, index }) => {
+          const hours = hourRows ? hourRows.all(timingWindow, input.clock, row.operation) : [];
+          return { label: String(row.operation), index, children: encodeOperationMap(mapPolicy,
+            hours.map(({ hour }) => ({ label: operationHour.format(Number(hour) * 3600000) + " UTC", index, children: [] })),
+            hours.map(({ total_millis }) => Number(total_millis))) };
+        }), selectedOperations.map(({ row }) => Math.round(Number(row.total_seconds) * 1000)));
         const week = db.prepare("SELECT cycle_count, mean_seconds FROM weeks WHERE week = ?");
         const weekCoverage = (start: number) => {
           const row = week.get(start);
@@ -534,9 +604,8 @@ export async function openShippingReview(directory: string) {
           operations: {
             scope: "snapshot", window: timingWindow, clock: input.clock, operation: input.operation ?? null,
             clockOptions: rows(policy.review_clock_options()), operationOptions: operationRows.map(({ operation }) => operation),
-            items: operationRows.filter(({ operation }) =>
-              policy.review_operation_matches(input.operation ?? "", input.operation === undefined, String(operation)))
-              .map(({ operation, count, mean_seconds, total_seconds, unmeasured, has_area }) => ({
+            map: operationMap,
+            items: selectedOperations.map(({ row: { operation, count, mean_seconds, total_seconds, unmeasured, has_area } }) => ({
                 operation, measuredSpans: count, meanSeconds: mean_seconds, totalSeconds: total_seconds,
                 unmeasuredSpans: unmeasured, hasArea: has_area === 1,
               })),

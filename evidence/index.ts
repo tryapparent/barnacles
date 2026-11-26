@@ -7,5 +7,6 @@ export {
   type CallRecord, type CommandMix, type ProcessInput, type ProcessReceipt, type List, type Milestone, type Point,
   type RolloutAdmission, type RolloutImport, type RolloutEvidence, type ShellCommand, type SourcePolicy, type ThreadEvidence, type ToolInvocation,
 } from "./storage/sources.ts";
-export { repository } from "./repository.ts";
-export { actionsWaitCapturePlan } from "./projection/snapshot.ts";
+export { readPollMinutes, repository } from "./repository.ts";
+export { actionsWaitCapturePlan, harborSnapshotPublisher } from "./projection/snapshot.ts";
+export { githubPollRows } from "./storage/load.ts";
