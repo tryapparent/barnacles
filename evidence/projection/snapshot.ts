@@ -1,7 +1,8 @@
 import { closeSync, openSync } from "node:fs";
 import { DatabaseSync, type SQLInputValue, type SQLOutputValue } from "node:sqlite";
-import { buildPolicies, loadPolicy } from "../../tooling/bend.ts";
+import { buildPolicies, buildPolicy, loadPolicy } from "../../tooling/bend.ts";
 import { readDelivery } from "../delivery/delivery.ts";
+import type { AttemptIdentity } from "../storage/actions.ts";
 import { sourcePolicy, type List, type SourcePolicy } from "../storage/sources.ts";
 import { collectTiming, empty, millis, rows, seconds, type Stats, type TimingPolicy } from "./timing.ts";
 import { projectTrace, type TracePolicy, type TraceProjection, type SpanRow } from "./trace.ts";
@@ -9,6 +10,32 @@ import { projectTrace, type TracePolicy, type TraceProjection, type SpanRow } fr
 type SessionTiming = { $: "SessionTiming"; envelopes: Stats; cells: Stats };
 type Shipping = { $: "Delivery"; shipped: number; cycles: Stats };
 type CycleStage = { $: "Measured"; ms: number } | { $: "Missing" };
+type ActionWaitWindow = { start: number; end: number };
+type WaitWindow = ActionWaitWindow & { $: "Window" };
+type WaitClock = { $: "Interval"; start: number; end: number; observed: boolean };
+type WaitIdentity = { $: "Identity"; repository: string; run_id: number; head_sha: string; attempt: number };
+type WaitImport = { $: "AttemptRow" }
+  | { $: "JobRow"; job: { $: "Job"; job_id: number; label: string; execution: WaitClock; queue: WaitClock } }
+  | { $: "StepRow"; step: { $: "Step"; job_id: number; number: number; label: string; execution: WaitClock } };
+type WaitDurations = { execution_ms: CycleStage; only_known_running_ms: CycleStage; queue_ms: CycleStage };
+type WaitAttribution = {
+  coverage: {
+    wait_count: number; exact_wait_count: number; matched_wait_count: number; matched_attempts: number;
+    unmatched_attempts: number; jobless_attempts: number; matched_wait_ms: number; running_ms: number;
+    queue_only_ms: number; unknown_job_ms: number;
+  };
+  jobs: List<{ rank: number; summary: WaitDurations & { job_label: string; job_count: number } }>;
+  instances: List<WaitDurations & { identity: WaitIdentity; job_id: number; job_label: string }>;
+  steps: List<{ run_id: number; attempt: number; job_id: number; step_number: number; step_label: string; execution_ms: CycleStage }>;
+};
+type WaitPolicy = {
+  report_window(cutoffMs: number): WaitWindow;
+  start_report(window: WaitWindow, repository: string): unknown;
+  observe_wait(inputs: unknown, identity: WaitIdentity, exact: boolean, interval: WaitClock): unknown;
+  observe_import(inputs: unknown, identity: WaitIdentity, fact: WaitImport): unknown;
+  finish_report(inputs: unknown): WaitAttribution;
+  capture_plan(inputs: unknown, limit: number): { missing: number; attempts: List<WaitIdentity> };
+};
 type Estimator = {
   empty_model(): unknown;
   model_observe(model: unknown, scope: string, files: number, git: number, builds: number, pushes: number, seconds: number): unknown;
@@ -33,16 +60,137 @@ type Metrics = TracePolicy & TimingPolicy & {
 };
 
 const emptyShipping: Shipping = { $: "Delivery", shipped: 0, cycles: empty };
+
+const actionsWaitPolicy = new URL("./actions-wait.bend", import.meta.url);
+
+const waitIdentity = (row: Record<string, SQLOutputValue>): WaitIdentity => ({
+  $: "Identity", repository: String(row.repository ?? ""), run_id: Number(row.run_id),
+  head_sha: String(row.head_sha ?? ""), attempt: Number(row.attempt),
+});
+
+function waitInterval(start: SQLOutputValue, end: SQLOutputValue, unit = 1): WaitClock {
+  return { $: "Interval", start: Number(start) * unit, end: Number(end) * unit, observed: start !== null && end !== null };
+}
+
+function actionWaitInputs(source: DatabaseSync, repo: string, window: WaitWindow, policy: WaitPolicy) {
+  const exists = source.prepare("SELECT 1 FROM sqlite_schema WHERE name = ? AND type IN ('table', 'view')");
+  const hasWaitFacts = Boolean(exists.get("actions_wait_facts"));
+  let input = policy.start_report(window, repo);
+  if (hasWaitFacts) {
+    for (const row of source.prepare(`
+      SELECT repository, run_id, head_sha, attempt, identity_exact, started_ms, ended_ms
+      FROM actions_wait_facts WHERE repository = ?
+    `).iterate(repo)) {
+      input = policy.observe_wait(input, waitIdentity(row), row.identity_exact === 1,
+        waitInterval(row.started_ms, row.ended_ms));
+    }
+    if (exists.get("action_attempts")) {
+      for (const row of source.prepare(`
+        SELECT repository, run_id, head_sha, attempt FROM action_attempts WHERE repository = ?
+      `).iterate(repo)) {
+        input = policy.observe_import(input, waitIdentity(row), { $: "AttemptRow" });
+      }
+    }
+  }
+  return { input, hasWaitFacts, exists };
+}
+
+export async function actionsWaitCapturePlan(database: string, scratch: string, repo: string, window: ActionWaitWindow,
+  limit: number): Promise<{ sourceAvailable: boolean; missing: number; attempts: AttemptIdentity[] }> {
+  const policy = await loadPolicy<WaitPolicy>(await buildPolicy(scratch, actionsWaitPolicy, "actions-wait.mjs"));
+  const source = new DatabaseSync(database, { readOnly: true });
+  try {
+    const { input, hasWaitFacts } = actionWaitInputs(source, repo, { $: "Window", ...window }, policy);
+    const { missing, attempts } = policy.capture_plan(input, limit);
+    return { sourceAvailable: hasWaitFacts, missing, attempts: [...rows(attempts)].map((identity) => ({
+      repository: identity.repository, runId: identity.run_id, sha: identity.head_sha, attempt: identity.attempt,
+    })) };
+  } finally {
+    source.close();
+  }
+}
+
+function writeActionsWait(source: DatabaseSync, view: DatabaseSync, repo: string, window: WaitWindow, policy: WaitPolicy) {
+  let { input, hasWaitFacts, exists } = actionWaitInputs(source, repo, window, policy);
+  if (hasWaitFacts && exists.get("action_attempts")) {
+    if (exists.get("action_jobs")) {
+      for (const row of source.prepare(`
+        SELECT repository, run_id, head_sha, attempt, job_id, label,
+          action_jobs.created_at, queue_end, execution_start, execution_end
+        FROM action_jobs JOIN action_attempts USING (repository, run_id, attempt) WHERE repository = ?
+      `).iterate(repo)) {
+        input = policy.observe_import(input, waitIdentity(row), { $: "JobRow", job: {
+          $: "Job", job_id: Number(row.job_id), label: String(row.label),
+          execution: waitInterval(row.execution_start, row.execution_end, 1000),
+          queue: waitInterval(row.created_at, row.queue_end, 1000),
+        } });
+      }
+    }
+    if (exists.get("action_steps")) {
+      for (const row of source.prepare(`
+        SELECT repository, run_id, head_sha, attempt, job_id, step_number, label, action_steps.started_at, completed_at
+        FROM action_steps JOIN action_attempts USING (repository, run_id, attempt) WHERE repository = ?
+      `).iterate(repo)) {
+        input = policy.observe_import(input, waitIdentity(row), { $: "StepRow", step: {
+          $: "Step", job_id: Number(row.job_id), number: Number(row.step_number), label: String(row.label),
+          execution: waitInterval(row.started_at, row.completed_at, 1000),
+        } });
+      }
+    }
+  }
+
+  view.exec(`
+    CREATE TABLE actions_wait_coverage(window_start_ms INTEGER, window_end_ms INTEGER,
+      wait_count INTEGER, exact_wait_count INTEGER, matched_wait_count INTEGER, matched_attempts INTEGER,
+      unmatched_attempts INTEGER, jobless_attempts INTEGER, matched_wait_ms INTEGER, running_ms INTEGER,
+      queue_only_ms INTEGER, unknown_job_ms INTEGER, wait_source_present INTEGER);
+    CREATE TABLE actions_wait_jobs(window_start_ms INTEGER, window_end_ms INTEGER,
+      job_label TEXT, job_count INTEGER, execution_ms INTEGER, only_known_running_ms INTEGER, queue_ms INTEGER, rank INTEGER);
+    CREATE TABLE actions_wait_job_instances(window_start_ms INTEGER, window_end_ms INTEGER,
+      repository TEXT, run_id INTEGER, head_sha TEXT, attempt INTEGER, job_id INTEGER, job_label TEXT,
+      execution_ms INTEGER, only_known_running_ms INTEGER, queue_ms INTEGER,
+      PRIMARY KEY (repository, run_id, head_sha, attempt, job_id));
+    CREATE TABLE actions_wait_steps(window_start_ms INTEGER, window_end_ms INTEGER,
+      run_id INTEGER, attempt INTEGER, job_id INTEGER, step_number INTEGER, step_label TEXT, execution_ms INTEGER,
+      PRIMARY KEY (run_id, attempt, job_id, step_number));
+  `);
+  const bounds = [window.start, window.end] as const;
+  const { coverage, jobs, instances, steps } = policy.finish_report(input);
+  view.prepare("INSERT INTO actions_wait_coverage VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+    ...bounds, coverage.wait_count, coverage.exact_wait_count, coverage.matched_wait_count, coverage.matched_attempts,
+    coverage.unmatched_attempts, coverage.jobless_attempts, coverage.matched_wait_ms, coverage.running_ms,
+    coverage.queue_only_ms, coverage.unknown_job_ms, Number(hasWaitFacts),
+  );
+  const duration = (clock: CycleStage) => clock.$ === "Measured" ? clock.ms : null;
+  const durations = (row: WaitDurations) =>
+    [duration(row.execution_ms), duration(row.only_known_running_ms), duration(row.queue_ms)] as const;
+  const job = view.prepare("INSERT INTO actions_wait_jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+  for (const { rank, summary } of rows(jobs)) {
+    job.run(...bounds, summary.job_label, summary.job_count, ...durations(summary), rank);
+  }
+  const instance = view.prepare("INSERT INTO actions_wait_job_instances VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+  for (const row of rows(instances)) {
+    const { repository, run_id, head_sha, attempt } = row.identity;
+    instance.run(...bounds, repository, run_id, head_sha, attempt, row.job_id, row.job_label, ...durations(row));
+  }
+  const step = view.prepare("INSERT INTO actions_wait_steps VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+  for (const row of rows(steps)) {
+    step.run(...bounds, row.run_id, row.attempt, row.job_id, row.step_number, row.step_label, duration(row.execution_ms));
+  }
+}
+
 export async function writeSnapshot(input: string, output: string, scratch: string, repo: string, cutoff: number,
-  writeTrace: (key: string, trace: TraceProjection) => string) {
-  const [sources, metricModule, modelModule] = await buildPolicies(scratch, [
+  writeTrace: (key: string, trace: TraceProjection) => string, actionsWaitWindow?: ActionWaitWindow) {
+  const [sources, metricModule, modelModule, waitModule] = await buildPolicies(scratch, [
     [sourcePolicy, "sources.mjs"],
     [new URL("./metrics.bend", import.meta.url), "metrics.mjs"],
     [new URL("./estimate.bend", import.meta.url), "estimate.mjs"],
+    [actionsWaitPolicy, "actions-wait.mjs"],
   ]);
   const policy: SourcePolicy = await loadPolicy(sources);
   const metrics: Metrics = await loadPolicy(metricModule);
   const estimator: Estimator = await loadPolicy(modelModule);
+  const waits: WaitPolicy = await loadPolicy(waitModule);
   const source = new DatabaseSync(input, { readOnly: true });
   closeSync(openSync(output, "wx", 0o600));
   const view = new DatabaseSync(output);
@@ -250,6 +398,8 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
       mixInsert.run(row.clock, row.operation, row.stats.count, seconds(metrics.mean(row.stats)),
         seconds(metrics.measured_total(row.stats)), row.stats.missing, rank));
 
+    writeActionsWait(source, view, repo,
+      actionsWaitWindow ? { $: "Window", ...actionsWaitWindow } : waits.report_window(cutoff * 1000), waits);
     view.exec("COMMIT");
     return { from: Math.min(priorWeek, ...weeks.keys()), to: cutoff, defaultTrace, traceSessions,
       rolloutCount, operationCount: operations.length, changedCode };

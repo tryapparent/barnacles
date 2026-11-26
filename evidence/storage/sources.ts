@@ -6,16 +6,39 @@ export type Elapsed = { $: "Duration"; seconds: number; subtract_ms: number } | 
 export type Point = { $: "Time"; s: number; ms: number };
 export type List<T> = { $: "Nil" } | { $: "Con"; head: T; tail: List<T> };
 export type ShellCommand = { $: "Command"; name: string; args: List<string> };
-export type ToolInvocation = { $: "Invocation"; receiver: string; method: string; commands: List<ShellCommand> };
+export type ToolInvocation = {
+  $: "Invocation"; receiver: string; method: string; commands: List<ShellCommand>; printed: boolean;
+  exact: List<ShellCommand>; handle: string; read_only: boolean;
+};
 export type CommandMix = { $: "NoMix" } | {
   $: "Mix"; file_count: number; git_count: number; build_count: number; push_count: number;
 };
-type CallRecord = { $: "Ignored"; orphans: number } | {
+export type CallRecord = { $: "Ignored"; orphans: number } | {
   $: "Observed"; orphans: number; line: number; tool: string; command: string; categories: string; start: Point; finish: Point;
-  launched: boolean; ambiguous: boolean;
+  result_line: number; target: string; launched: boolean; ambiguous: boolean;
 };
 type CellFact = { $: "NoCell" } | { $: "Launch" | "Terminal"; key: string };
 type CellLink = { $: "Unlinked" } | { $: "Linked"; owner: string; call_id: string; end: Point };
+export type WatchIdentity = { $: "NoWatch" } | {
+  $: "ExactWatch"; repository: string; run_id: string; head_sha: string; attempt: string;
+};
+export type ProcessReceipt = { $: "MissingReceipt" } | { $: "InvalidReceipt" } |
+  { $: "RunningReceipt"; seconds: number; handle: string } | { $: "ExitReceipt"; seconds: number; code: number };
+export type ProcessInput = { $: "NoProcess" } | { $: "LaunchProcess"; category: string; watch: WatchIdentity } |
+  { $: "PollProcess"; handle: string } | { $: "UnresolvedProcess"; status: string; handle: string; potential_io: boolean };
+type ProcessSlot = { $: "Vacant" } | { $: "Conflict" } | {
+  $: "Live"; owner: string; category: string; watch: WatchIdentity; line: number; end: Point;
+};
+type ProcessFact = {
+  $: "ProcessFact"; status: string; owner: string; category: string; watch: WatchIdentity; receipt: ProcessReceipt;
+};
+type WaitCell = { $: "NotWait" } | { $: "WaitCell"; status: string; owner: string };
+type Observer = { $: "Observer"; session: string; launch: string };
+type ProcessObservation = {
+  call: string; resultCall: string | null; resultLine: number | null; handle: string | null;
+  fact: ProcessFact; observer: WatchIdentity; start: number | null; end: number | null;
+};
+
 export type Milestone = { $: "Milestone"; id: string; at: number };
 type Owners = { $: "Owners"; count: number; s: number; ms: number };
 export type ReleaseOrder = { $: "Release"; published: number; checked: number; id: string; dispatch: number; index: number };
@@ -61,10 +84,27 @@ export type SourcePolicy = {
   command_mix(commands: List<ShellCommand>): CommandMix;
   keep_mix_receipt(seconds: number, exitCode: number, running: boolean, endSeen: boolean, ambiguous: boolean): boolean;
   start_call(state: unknown, line: number, tool: unknown, start: Point, target: string): unknown;
-  finish_call(state: unknown, end: Point, yielded: string, completed: boolean): unknown;
+  finish_call(state: unknown, line: number, end: Point, yielded: string, completed: boolean): unknown;
   cell_fact(id: string, state: unknown): CellFact;
   add_cell_fact(pair: unknown, fact: CellFact): unknown;
-  cell_link(pair: unknown, malformed: number): CellLink;
+  cell_link(pair: unknown, clean: boolean): CellLink;
+  wait_cell(state: unknown, pair: unknown, clean: boolean): WaitCell;
+  clean_rollout(malformed: number, orphans: number): boolean;
+  process_input(name: string, exact: List<ShellCommand>, wrapped: List<ToolInvocation>, handle: string,
+    readOnly: boolean, observed: unknown): ProcessInput;
+  process_receipt(handle: string, hasHandle: boolean, code: number, hasExit: boolean, seconds: number): ProcessReceipt;
+  process_key(input: ProcessInput, receipt: ProcessReceipt): string;
+  process_taint(input: ProcessInput, receipt: ProcessReceipt): string;
+  process_barrier(input: ProcessInput, receipt: ProcessReceipt, handle: string, ambiguous: boolean): boolean;
+  observed_slot(slot: ProcessSlot, barrier: number): ProcessSlot;
+  process_result(input: ProcessInput, slot: ProcessSlot, receipt: ProcessReceipt, owner: string, startLine: number,
+    start: Point, line: number, end: Point, valid: boolean): { slot: ProcessSlot; fact: ProcessFact };
+  process_observer(fact: ProcessFact): WatchIdentity;
+  valid_process_result(clean: boolean, ambiguous: boolean, start: Point, end: Point): boolean;
+  watch_identity(repository: string, run: string, sha: string, attempt: string): WatchIdentity;
+  time_order(first: Point, last: Point): boolean;
+  watch_overlap(first: Observer, second: Observer, firstStart: Point, firstEnd: Point, secondStart: Point, secondEnd: Point):
+    { $: "NoOverlap" } | { $: "Overlap"; start: Point; end: Point };
   call_record(state: unknown): CallRecord;
   pick_milestone(best: Milestone, next: Milestone): Milestone;
   pick_review(best: Milestone, next: Milestone, opened: number): Milestone;
@@ -115,6 +155,10 @@ export type RolloutEvidence = {
   quality?: RolloutQuality & { first: number | null; last: number | null };
   instance: string; session: string; lines: number; malformed: number; orphans: number;
   markers: { line: number; at: number; resultCall?: string }[];
+  waitAttribution?: {
+    waits: { call: string; cell: string | null; status: string; owner: string | null }[];
+    observations: ProcessObservation[];
+  };
   calls: { id: string; line: number; tool: string; command: string | null; start: number | null; end: number | null;
     async: boolean; asyncEnd: number | null; terminalCall: string | null; ambiguous: boolean; categories?: string;
     mix?: Extract<CommandMix, { $: "Mix" }> & { seconds: number } }[];
@@ -187,6 +231,9 @@ export function saveRollout(path: string, data: RolloutEvidence) {
     db.prepare("DELETE FROM codex_commands WHERE instance=? AND session_id=?").run(...key);
     db.prepare("DELETE FROM codex_categories WHERE instance=? AND session_id=?").run(...key);
     db.prepare("DELETE FROM codex_command_mixes WHERE instance=? AND session_id=?").run(...key);
+    db.prepare("DELETE FROM codex_wait_attribution WHERE instance=? AND session_id=?").run(...key);
+    db.prepare("DELETE FROM codex_process_receipts WHERE instance=? AND session_id=?").run(...key);
+    db.prepare("DELETE FROM codex_wait_coverage WHERE instance=? AND session_id=?").run(...key);
     db.prepare("DELETE FROM codex_calls WHERE instance=? AND session_id=?").run(...key);
     const calls = db.prepare("INSERT INTO codex_calls VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
     const commands = db.prepare("INSERT INTO codex_commands VALUES (?, ?, ?, ?)");
@@ -199,6 +246,21 @@ export function saveRollout(path: string, data: RolloutEvidence) {
       if (call.categories) categories.run(...key, call.id, call.categories);
       if (call.mix) mixes.run(...key, call.id, call.mix.file_count, call.mix.git_count,
         call.mix.build_count, call.mix.push_count, call.mix.seconds);
+    }
+    if (data.waitAttribution) {
+      db.prepare("INSERT INTO codex_wait_coverage VALUES (?, ?)").run(...key);
+      const waits = db.prepare("INSERT INTO codex_wait_attribution VALUES (?, ?, ?, ?, ?, ?)");
+      for (const wait of data.waitAttribution.waits) waits.run(...key, wait.call, wait.cell, wait.status, wait.owner);
+      const observations = db.prepare("INSERT INTO codex_process_receipts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+      for (const { call, resultCall, resultLine, handle, fact, observer, start, end } of data.waitAttribution.observations) {
+        const { receipt, watch } = fact;
+        observations.run(...key, call, resultCall, resultLine, handle,
+          receipt.$ === "RunningReceipt" ? receipt.handle : null, fact.status, fact.owner || null, fact.category || null,
+          receipt.$, "seconds" in receipt ? receipt.seconds : null, receipt.$ === "ExitReceipt" ? receipt.code : null,
+          watch.$ === "ExactWatch" ? watch.repository : null, watch.$ === "ExactWatch" ? watch.run_id : null,
+          watch.$ === "ExactWatch" ? watch.head_sha : null, watch.$ === "ExactWatch" ? watch.attempt : null,
+          observer.$ === "ExactWatch" ? start : null, observer.$ === "ExactWatch" ? end : null);
+      }
     }
     db.prepare("DELETE FROM codex_reasoning_inputs WHERE instance=? AND session_id=?").run(...key);
     db.prepare("DELETE FROM codex_reasoning WHERE instance=? AND session_id=?").run(...key);
@@ -222,6 +284,69 @@ export function rolloutCoverage(path: string) {
         ? db.prepare(`SELECT quality.*, rollout.orphan_count FROM codex_rollout_quality quality
             JOIN codex_rollouts rollout USING (instance, session_id) ORDER BY instance, session_id`).all() : null,
     };
+  } finally {
+    db.close();
+  }
+}
+
+function waitSchema(db: DatabaseSync) {
+  return db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name='codex_wait_coverage'").get();
+}
+
+export function waitReport(path: string, session: string | null, call: string | null) {
+  const db = new DatabaseSync(path, { readOnly: true });
+  try {
+    if (!waitSchema(db)) return { coverage: [], waits: [] };
+    const coverage = db.prepare(`
+      SELECT rollout.instance, rollout.session_id, line_count, malformed_count, orphan_count
+      FROM codex_wait_coverage JOIN codex_rollouts rollout USING (instance, session_id)
+      WHERE (? IS NULL OR rollout.session_id=?) ORDER BY rollout.instance, rollout.session_id`).all(session, session);
+    const waits = db.prepare(`
+      SELECT wait.*, envelope.source_line, envelope.started_ms, envelope.ended_ms,
+        process.process_status, process.process_handle, process.process_launch_call_id, process.process_category,
+        process.result_call_id, process.receipt_source_line, process.receipt_kind, process.receipt_handle, process.receipt_seconds,
+        process.exit_code, process.repository, process.run_id, process.head_sha, process.attempt,
+        process.poll_started_ms, process.poll_result_ms
+      FROM codex_wait_attribution wait JOIN codex_calls envelope USING (instance, session_id, call_id)
+      LEFT JOIN codex_process_receipts process ON (process.instance, process.session_id, process.call_id)
+        = (wait.instance, wait.session_id, wait.cell_launch_call_id)
+      WHERE (? IS NULL OR wait.session_id=?) AND (? IS NULL OR wait.call_id=?)
+      ORDER BY wait.instance, wait.session_id, envelope.source_line`).all(session, session, call, call);
+    return { coverage, waits };
+  } finally {
+    db.close();
+  }
+}
+
+export function watchOverlaps(path: string, policy: SourcePolicy, workflow: Extract<WatchIdentity, { $: "ExactWatch" }>) {
+  const db = new DatabaseSync(path, { readOnly: true });
+  const point = (ms: number): Point => ({ $: "Time", s: Math.floor(ms / 1000), ms: ms % 1000 });
+  const millis = ({ s, ms }: Point) => s * 1000 + ms;
+  try {
+    const observations = waitSchema(db) ? db.prepare(`
+      SELECT instance, session_id, call_id, result_call_id, process_launch_call_id, poll_started_ms, poll_result_ms
+      FROM codex_process_receipts
+      WHERE repository=? AND run_id=? AND head_sha=? AND attempt=? AND poll_started_ms IS NOT NULL
+      ORDER BY poll_started_ms, instance, session_id, call_id`)
+      .all(workflow.repository, workflow.run_id, workflow.head_sha, workflow.attempt) : [];
+    const intervals = observations.map((row) => ({
+      row, start: point(Number(row.poll_started_ms)), end: point(Number(row.poll_result_ms)),
+      observer: { $: "Observer", session: String(row.session_id), launch: String(row.process_launch_call_id) } as const,
+    }));
+    const overlaps = [];
+    let active: typeof intervals = [];
+    for (const current of intervals) {
+      active = active.filter((previous) => policy.time_order(current.start, previous.end));
+      for (const previous of active) {
+        const overlap = policy.watch_overlap(previous.observer, current.observer,
+          previous.start, previous.end, current.start, current.end);
+        if (overlap.$ === "Overlap") overlaps.push({
+          first: previous.row, second: current.row, started_ms: millis(overlap.start), ended_ms: millis(overlap.end),
+        });
+      }
+      active.push(current);
+    }
+    return { workflow, observations: observations.length, overlaps };
   } finally {
     db.close();
   }
