@@ -43,8 +43,9 @@ type ProcessObservation = {
 export type Milestone = { $: "Milestone"; id: string; at: number };
 
 export type RolloutAdmission = {
-  $: "Gate"; status: string; session: string; parent: string; boundary: number; inherited: number;
-  unassigned: number; keep: boolean;
+  $: "Gate";
+  phase: { $: "AwaitingMetadata" | "SingleSource" | "ForkSource" | "InvalidMetadata" | "UnprovenFork" | "ConflictingMetadata" };
+  session: string; parent: string; boundary: number; inherited: number; unassigned: number; keep: boolean;
 };
 
 type RolloutQuality = {
@@ -56,6 +57,7 @@ type RolloutClocks = { $: "Clocks"; first: Point; last: Point };
 
 export type SourcePolicy = {
   repository_name(value: string): string;
+  rollout_admission(): RolloutAdmission;
   rollout_file_status(available: boolean, regular: boolean, empty: boolean, oversized: boolean): string;
   rollout_line(state: RolloutAdmission, meta: boolean, id: string, parent: string, fork: string, shared: string,
     boundary: number, line: number, ordinalOk: boolean, decoded: boolean): RolloutAdmission;

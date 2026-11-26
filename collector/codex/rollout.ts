@@ -50,10 +50,6 @@ function rolloutReceipt(instance: string, path: string, source?: string): Rollou
     malformed: 0, oversized: 0, cutoffLines: 0, cutoffBytes: 0 };
 }
 
-const awaitingMetadata: RolloutAdmission = {
-  $: "Gate", status: "awaiting_metadata", session: "", parent: "", boundary: 0, inherited: 0, unassigned: 0, keep: false,
-};
-
 function identifier(value: unknown) {
   try { return token(value); }
   catch { return ""; }
@@ -125,7 +121,7 @@ export async function inspectRollout(path: string, instance: string, rules: Sour
   }
   let calls = policy.empty_rollout_calls();
   let meta = policy.empty_rollout_metadata();
-  let admission = awaitingMetadata;
+  let admission = policy.rollout_admission();
   let clocks = { $: "Clocks" as const, first: point(0), last: point(0) };
   let readFailed = false;
   try {

@@ -931,21 +931,43 @@ def call_id_chars(id: String) -> Bool:
 def valid_call_id(+id: String) -> Bool:
   Bool.and(Bool.not(String.eq(id, "")), call_id_chars(id))
 
-def rollout_metadata(meta: RolloutMetadata, +envelope: String, +kind: String, +id: String,
+type RolloutEnvelope is Data:
+  SessionMetadata{}
+  ResponseItem{}
+  OtherEnvelope{}
+
+def record_envelope(route: RolloutEnvelope, meta: RolloutMetadata, +envelope: String, +kind: String, +id: String,
   +observed_session: String, line: U32, observed: Point) -> MetadataStep:
-  match meta envelope:
-    case RolloutMetadata{+session, malformed, previous, markers} "session_meta":
+  match route meta:
+    case SessionMetadata{} RolloutMetadata{+session, malformed, previous, markers}:
       MetadataStep{RolloutMetadata{observed_session, malformed, "", markers},
         Bool.pick(String, rollout_session(session, observed_session), "", "conflict")}
-    case RolloutMetadata{+session, malformed, +previous, markers} "response_item":
+    case ResponseItem{} RolloutMetadata{+session, malformed, +previous, markers}:
       +valid_id = valid_call_id(id)
       record_response(rollout_event(kind), Bool.not(String.eq(session, "")), valid_id, kind, line, observed, previous,
         RolloutMetadata{session, malformed, model_wait_input(previous, envelope, kind, Bool.pick(String, valid_id, id, "")), markers})
-    case RolloutMetadata{session, malformed, previous, markers} _:
+    case OtherEnvelope{} RolloutMetadata{session, malformed, previous, markers}:
       MetadataStep{RolloutMetadata{session, malformed, model_wait_input(previous, envelope, kind, id), markers}, ""}
 
+def rollout_metadata(meta: RolloutMetadata, +envelope: String, kind: String, id: String,
+  observed_session: String, line: U32, observed: Point) -> MetadataStep:
+  route = Bool.pick(RolloutEnvelope, String.eq(envelope, "session_meta"), SessionMetadata{},
+    Bool.pick(RolloutEnvelope, String.eq(envelope, "response_item"), ResponseItem{}, OtherEnvelope{}))
+  record_envelope(route, meta, envelope, kind, id, observed_session, line, observed)
+
+type RolloutPhase is Data:
+  AwaitingMetadata{}
+  SingleSource{}
+  ForkSource{}
+  InvalidMetadata{}
+  UnprovenFork{}
+  ConflictingMetadata{}
+
 type RolloutAdmission is Data:
-  Gate{status: String, session: String, parent: String, boundary: U32, inherited: U32, unassigned: U32, keep: Bool}
+  Gate{phase: RolloutPhase, session: String, parent: String, boundary: U32, inherited: U32, unassigned: U32, keep: Bool}
+
+def rollout_admission() -> RolloutAdmission:
+  Gate{AwaitingMetadata{}, "", "", 0, 0, 0, False{}}
 
 def rollout_file_status(available: Bool, regular: Bool, empty: Bool, oversized: Bool) -> String:
   Bool.pick(String, available,
@@ -955,14 +977,14 @@ def rollout_file_status(available: Bool, regular: Bool, empty: Bool, oversized: 
 def rollout_header(+id: String, +parent: String, fork: String, shared: String, +boundary: U32, line: U32, ordinal_ok: Bool,
   +unassigned: U32) -> RolloutAdmission:
   match id boundary:
-    case "" _: Gate{"invalid_metadata", "", "", 0, 0, unassigned, False{}}
-    case _ 0: Gate{"single", id, "", 0, 0, unassigned, False{}}
+    case "" _: Gate{InvalidMetadata{}, "", "", 0, 0, unassigned, False{}}
+    case _ 0: Gate{SingleSource{}, id, "", 0, 0, unassigned, False{}}
     case _ _:
       valid = Bool.and(ordinal_ok, Bool.and(U32.is_eq(line, 1), U32.is_gt(boundary, 1)))
       linked = Bool.and(String.eq(parent, fork), Bool.and(String.eq(parent, shared),
         Bool.and(Bool.not(String.eq(parent, "")), Bool.not(String.eq(parent, id)))))
-      Bool.pick(RolloutAdmission, Bool.and(valid, linked), Gate{"fork", id, parent, boundary, 0, unassigned, False{}},
-        Gate{"unproven_fork", "", "", 0, 0, unassigned, False{}})
+      Bool.pick(RolloutAdmission, Bool.and(valid, linked), Gate{ForkSource{}, id, parent, boundary, 0, unassigned, False{}},
+        Gate{UnprovenFork{}, "", "", 0, 0, unassigned, False{}})
 
 def rollout_fork_line(+session: String, +parent: String, +boundary: U32, +inherited: U32, +unassigned: U32,
   +line: U32, ordinal_ok: Bool, +meta: Bool, id: String, shared: String, declares_fork: Bool) -> RolloutAdmission:
@@ -971,9 +993,9 @@ def rollout_fork_line(+session: String, +parent: String, +boundary: U32, +inheri
   +before = U32.is_le(line, boundary)
   valid = Bool.and(ordinal_ok, header_ok)
   Bool.pick(RolloutAdmission, valid,
-    Gate{"fork", session, parent, boundary, Bool.pick(U32, before, U32.inc(inherited), inherited), unassigned,
+    Gate{ForkSource{}, session, parent, boundary, Bool.pick(U32, before, U32.inc(inherited), inherited), unassigned,
       Bool.not(before)},
-    Gate{"unproven_fork", session, parent, boundary, inherited, unassigned, False{}})
+    Gate{UnprovenFork{}, session, parent, boundary, inherited, unassigned, False{}})
 
 def add_if(+count: U32, test: Bool) -> U32:
   Bool.pick(U32, test, U32.inc(count), count)
@@ -981,26 +1003,28 @@ def add_if(+count: U32, test: Bool) -> U32:
 def rollout_line(state: RolloutAdmission, +meta: Bool, +id: String, parent: String, fork: String, shared: String,
   +boundary: U32, line: U32, ordinal_ok: Bool, decoded: Bool) -> RolloutAdmission:
   match state:
-    case Gate{"awaiting_metadata", _, _, _, _, +unassigned, _}:
+    case Gate{AwaitingMetadata{}, _, _, _, _, +unassigned, _}:
       Bool.pick(RolloutAdmission, meta, rollout_header(id, parent, fork, shared, boundary, line, ordinal_ok, unassigned),
-        Gate{"awaiting_metadata", "", "", 0, 0, add_if(unassigned, decoded), False{}})
-    case Gate{"single", +session, _, _, _, +unassigned, _}:
+        Gate{AwaitingMetadata{}, "", "", 0, 0, add_if(unassigned, decoded), False{}})
+    case Gate{SingleSource{}, +session, _, _, _, +unassigned, _}:
       same = Bool.and(String.eq(id, session), U32.is_eq(boundary, 0))
       Bool.pick(RolloutAdmission, Bool.and(meta, Bool.not(same)),
-        Gate{"conflicting_metadata", session, "", 0, 0, unassigned, False{}},
-        Gate{"single", session, "", 0, 0, unassigned, Bool.not(meta)})
-    case Gate{"fork", session, source_parent, start, inherited, unassigned, _}:
+        Gate{ConflictingMetadata{}, session, "", 0, 0, unassigned, False{}},
+        Gate{SingleSource{}, session, "", 0, 0, unassigned, Bool.not(meta)})
+    case Gate{ForkSource{}, session, source_parent, start, inherited, unassigned, _}:
       rollout_fork_line(session, source_parent, start, inherited, unassigned, line, ordinal_ok, meta, id, shared, U32.is_ne(boundary, 0))
     case _: state
 
 def rollout_status(state: RolloutAdmission, lines: U32, complete_read: Bool) -> String:
   match state complete_read:
     case _ False{}: "read_failed"
-    case Gate{"single", _, _, _, _, _, _} True{}: "admitted"
-    case Gate{"fork", _, _, boundary, _, _, _} True{}:
+    case Gate{SingleSource{}, _, _, _, _, _, _} True{}: "admitted"
+    case Gate{ForkSource{}, _, _, boundary, _, _, _} True{}:
       Bool.pick(String, U32.is_gt(lines, boundary), "admitted_fork_suffix", "unproven_fork")
-    case Gate{"awaiting_metadata", _, _, _, _, _, _} True{}: "missing_metadata"
-    case Gate{status, _, _, _, _, _, _} True{}: status
+    case Gate{AwaitingMetadata{}, _, _, _, _, _, _} True{}: "missing_metadata"
+    case Gate{InvalidMetadata{}, _, _, _, _, _, _} True{}: "invalid_metadata"
+    case Gate{UnprovenFork{}, _, _, _, _, _, _} True{}: "unproven_fork"
+    case Gate{ConflictingMetadata{}, _, _, _, _, _, _} True{}: "conflicting_metadata"
 
 type RolloutQuality is Data:
   Quality{missing_start: U32, missing_end: U32, missing_async_end: U32, ambiguous_calls: U32,
