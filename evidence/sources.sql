@@ -108,3 +108,22 @@ SELECT DISTINCT thread.instance, thread.thread_id, thread.status, thread.created
 FROM t3_threads thread
 JOIN t3_pr_links link USING (instance, thread_id)
 WHERE link.owning = 1 AND link.state = 'open' AND thread.settled = 0;
+
+CREATE TABLE IF NOT EXISTS codex_rollout_imports (
+  instance TEXT NOT NULL, source_key TEXT NOT NULL, status TEXT NOT NULL, session_id TEXT,
+  parent_thread_id TEXT, history_start_ordinal INTEGER, file_bytes INTEGER, read_bytes INTEGER NOT NULL, complete_lines INTEGER NOT NULL,
+  inherited_lines INTEGER NOT NULL, unassigned_lines INTEGER NOT NULL,
+  malformed_lines INTEGER NOT NULL, oversized_lines INTEGER NOT NULL,
+  cutoff_lines INTEGER NOT NULL, cutoff_bytes INTEGER NOT NULL,
+  PRIMARY KEY (instance, source_key)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS codex_rollout_quality (
+  instance TEXT NOT NULL, session_id TEXT NOT NULL, source_key TEXT NOT NULL,
+  first_observed_ms INTEGER, last_observed_ms INTEGER,
+  missing_start INTEGER NOT NULL, missing_end INTEGER NOT NULL, missing_async_end INTEGER NOT NULL,
+  ambiguous_calls INTEGER NOT NULL, mix_candidates INTEGER NOT NULL, mix_receipts INTEGER NOT NULL,
+  mixed_calls INTEGER NOT NULL, mixed_without_receipt INTEGER NOT NULL,
+  PRIMARY KEY (instance, session_id),
+  FOREIGN KEY (instance, session_id) REFERENCES codex_rollouts
+) STRICT;

@@ -1,12 +1,13 @@
 import { saveAttempt, saveAttempts, type ActionAttempt } from "./actions.ts";
 import { saveDelivery, type PullRequest, type ReleaseEvidence } from "./delivery.ts";
-import { saveRollout, saveThread, type RolloutEvidence, type ThreadEvidence } from "./sources.ts";
+import { saveRejectedRollout, saveRollout, saveThread, type RolloutEvidence, type RolloutImport, type ThreadEvidence } from "./sources.ts";
 
 export type EvidenceBatch =
   | { source: "github-actions"; attempt: ActionAttempt }
   | { source: "github-actions-window"; attempts: ActionAttempt[] }
   | { source: "github-delivery"; pullRequest: PullRequest; release?: ReleaseEvidence }
   | { source: "codex"; rollout: RolloutEvidence }
+  | { source: "codex-rejected"; receipt: RolloutImport }
   | { source: "t3"; thread: ThreadEvidence };
 
 export function loadEvidence(database: string, batch: EvidenceBatch) {
@@ -15,6 +16,7 @@ export function loadEvidence(database: string, batch: EvidenceBatch) {
     case "github-actions-window": return saveAttempts(database, batch.attempts);
     case "github-delivery": return saveDelivery(database, batch.pullRequest, batch.release);
     case "codex": return saveRollout(database, batch.rollout);
+    case "codex-rejected": return saveRejectedRollout(database, batch.receipt);
     case "t3": return saveThread(database, batch.thread);
   }
 }

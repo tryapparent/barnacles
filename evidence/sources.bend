@@ -490,3 +490,160 @@ def count_owner(state: Owners, owning: Bool, s: U32, ms: U32) -> Owners:
     case Owners{0, previous_s, previous_ms} True{}: Owners{1, s, ms}
     case Owners{count, previous_s, previous_ms} True{}: Owners{U32.inc(count), 0, 0}
     case _ False{}: state
+
+type RolloutAdmission is Data:
+  Gate{status: String, session: String, parent: String, boundary: U32, inherited: U32, unassigned: U32, keep: Bool}
+
+def rollout_file_status(available: Bool, regular: Bool, empty: Bool, oversized: Bool) -> String:
+  Bool.pick(String, available,
+    Bool.pick(String, regular, Bool.pick(String, empty, "empty", Bool.pick(String, oversized, "oversized", "scan")), "not_regular"),
+    "unavailable")
+
+def rollout_header(+id: String, +parent: String, fork: String, shared: String, +boundary: U32, line: U32, ordinal_ok: Bool,
+  +unassigned: U32) -> RolloutAdmission:
+  match id boundary:
+    case "" _: Gate{"invalid_metadata", "", "", 0, 0, unassigned, False{}}
+    case _ 0: Gate{"single", id, "", 0, 0, unassigned, False{}}
+    case _ _:
+      valid = Bool.and(ordinal_ok, Bool.and(U32.is_eq(line, 1), U32.is_gt(boundary, 1)))
+      linked = Bool.and(String.eq(parent, fork), Bool.and(String.eq(parent, shared),
+        Bool.and(Bool.not(String.eq(parent, "")), Bool.not(String.eq(parent, id)))))
+      Bool.pick(RolloutAdmission, Bool.and(valid, linked), Gate{"fork", id, parent, boundary, 0, unassigned, False{}},
+        Gate{"unproven_fork", "", "", 0, 0, unassigned, False{}})
+
+def rollout_fork_line(+session: String, +parent: String, +boundary: U32, +inherited: U32, +unassigned: U32,
+  +line: U32, ordinal_ok: Bool, +meta: Bool, id: String, shared: String, declares_fork: Bool) -> RolloutAdmission:
+  embedded = U32.is_eq(line, 2)
+  header_ok = Bool.pick(Bool, embedded, Bool.and(meta, Bool.and(String.eq(id, parent), Bool.and(String.eq(shared, parent), Bool.not(declares_fork)))), Bool.not(meta))
+  +before = U32.is_le(line, boundary)
+  valid = Bool.and(ordinal_ok, header_ok)
+  Bool.pick(RolloutAdmission, valid,
+    Gate{"fork", session, parent, boundary, Bool.pick(U32, before, U32.inc(inherited), inherited), unassigned,
+      Bool.not(before)},
+    Gate{"unproven_fork", session, parent, boundary, inherited, unassigned, False{}})
+
+def add_if(+count: U32, test: Bool) -> U32:
+  Bool.pick(U32, test, U32.inc(count), count)
+
+def rollout_line(state: RolloutAdmission, +meta: Bool, +id: String, parent: String, fork: String, shared: String,
+  +boundary: U32, line: U32, ordinal_ok: Bool, decoded: Bool) -> RolloutAdmission:
+  match state:
+    case Gate{"awaiting_metadata", _, _, _, _, +unassigned, _}:
+      Bool.pick(RolloutAdmission, meta, rollout_header(id, parent, fork, shared, boundary, line, ordinal_ok, unassigned),
+        Gate{"awaiting_metadata", "", "", 0, 0, add_if(unassigned, decoded), False{}})
+    case Gate{"single", +session, _, _, _, +unassigned, _}:
+      same = Bool.and(String.eq(id, session), U32.is_eq(boundary, 0))
+      Bool.pick(RolloutAdmission, Bool.and(meta, Bool.not(same)),
+        Gate{"conflicting_metadata", session, "", 0, 0, unassigned, False{}},
+        Gate{"single", session, "", 0, 0, unassigned, Bool.not(meta)})
+    case Gate{"fork", session, source_parent, start, inherited, unassigned, _}:
+      rollout_fork_line(session, source_parent, start, inherited, unassigned, line, ordinal_ok, meta, id, shared, U32.is_ne(boundary, 0))
+    case _: state
+
+def rollout_status(state: RolloutAdmission, lines: U32, complete_read: Bool) -> String:
+  match state complete_read:
+    case _ False{}: "read_failed"
+    case Gate{"single", _, _, _, _, _, _} True{}: "admitted"
+    case Gate{"fork", _, _, boundary, _, _, _} True{}:
+      Bool.pick(String, U32.is_gt(lines, boundary), "admitted_fork_suffix", "unproven_fork")
+    case Gate{"awaiting_metadata", _, _, _, _, _, _} True{}: "missing_metadata"
+    case Gate{status, _, _, _, _, _, _} True{}: status
+
+type RolloutQuality is Data:
+  Quality{missing_start: U32, missing_end: U32, missing_async_end: U32, ambiguous_calls: U32,
+    mix_candidates: U32, mix_receipts: U32, mixed_calls: U32, mixed_without_receipt: U32}
+
+def is_mix(candidate: CommandMix) -> Bool:
+  match candidate:
+    case Mix{_, _, _, _}: True{}
+    case NoMix{}: False{}
+
+def has_multiple_categories(parts: List<&2, String>) -> Bool:
+  match parts:
+    case _ <> _ <> _: True{}
+    case _: False{}
+
+def rollout_call_quality(state: RolloutQuality, start: Point, finish: Point, launched: Bool, async_end: Point,
+  ambiguous: Bool, categories: String, candidate: CommandMix, +received: Bool) -> RolloutQuality:
+  match state:
+    case Quality{starts, ends, async_ends, conflicts, candidates, receipts, groups, gaps}:
+      +mixed = has_multiple_categories(String.split(categories, '+'))
+      Quality{add_if(starts, Bool.not(has_time(start))), add_if(ends, Bool.not(has_time(finish))),
+        add_if(async_ends, Bool.and(launched, Bool.not(has_time(async_end)))), add_if(conflicts, ambiguous),
+        add_if(candidates, is_mix(candidate)), add_if(receipts, received),
+        add_if(groups, mixed), add_if(gaps, Bool.and(mixed, Bool.not(received)))}
+
+def rollout_admitted(+status: String) -> Bool:
+  Bool.or(String.eq(status, "admitted"), String.eq(status, "admitted_fork_suffix"))
+
+type RolloutClocks is Data:
+  Clocks{first: Point, last: Point}
+
+def rollout_clock(clocks: RolloutClocks, +at: Point) -> RolloutClocks:
+  match clocks:
+    case Clocks{+first, +last}:
+      Clocks{Bool.pick(Point, Bool.or(Bool.not(has_time(at)), time_order(first, at)), first, at),
+        Bool.pick(Point, time_order(last, at), at, Bool.pick(Point, has_time(last), last, at))}
+
+def rollout_pairing_gaps(malformed: U32, oversized: U32, cutoff: U32, unassigned: U32) -> U32:
+  U32.add(U32.add(malformed, oversized), U32.add(cutoff, unassigned))
+
+def delivery_thread_link(owner_count: U32, link_count: U32, start: Point, opened: Point) -> String:
+  match owner_count link_count:
+    case 0 0: "no_link"
+    case 0 _: "no_owning_link"
+    case 1 _: Bool.pick(String, time_order(start, opened), "verified", "thread_clock_conflict")
+    case _ _: "ambiguous_owner"
+
+def proof_matches_merge(+proof_merge: String, current_merge: String) -> Bool:
+  Bool.and(Bool.not(String.eq(proof_merge, "")), String.eq(proof_merge, current_merge))
+
+def delivery_release_link(selected: Bool, has_proof: Bool, matching_merge: Bool) -> String:
+  match selected has_proof matching_merge:
+    case True{} _ _: "verified"
+    case False{} False{} _: "no_release_proof"
+    case False{} True{} True{}: "release_unverified"
+    case False{} True{} False{}: "no_proof_for_current_merge"
+
+def delivery_endpoint(at: Point) -> String:
+  Bool.pick(String, has_time(at), "observed", "missing")
+
+def delivery_stage(+start: Point, +end: Point) -> String:
+  Bool.pick(String, has_time(start),
+    Bool.pick(String, has_time(end), Bool.pick(String, time_order(start, end), "observed", "clock_conflict"), "missing_end"),
+    Bool.pick(String, has_time(end), "missing_start", "missing_both"))
+
+def delivery_thread_window(+created: Point, +window_start: Point) -> String:
+  Bool.pick(String, Bool.and(has_time(created), has_time(window_start)),
+    Bool.pick(String, time_order(window_start, created), "at_or_after_window_start", "before_window_start"), "unknown")
+
+def delivery_thread_stage(link: String, start: Point, end: Point) -> String:
+  Bool.pick(String, String.eq(link, "thread_clock_conflict"), "clock_conflict", delivery_stage(start, end))
+
+type DeliveryClocks is Data:
+  DeliveryTimes{thread_started: Point, first_commit: Point, pr_opened: Point, first_ci: Point,
+    first_review: Point, pr_merged: Point, release_dispatched: Point, published: Point, access_checked: Point}
+
+type DeliveryEndpoints is Data:
+  Endpoints{thread_started: String, first_commit: String, pr_opened: String, first_ci: String,
+    first_review: String, pr_merged: String, release_dispatched: String, published: String, access_checked: String}
+
+type DeliveryStages is Data:
+  Stages{thread_to_commit: String, commit_to_open: String, open_to_first_ci: String, first_ci_to_merge: String,
+    merge_to_dispatch: String, dispatch_to_publication: String, open_to_merge: String, merge_to_publication: String,
+    thread_to_publication: String, publication_to_access_check: String}
+
+def delivery_endpoints(clocks: DeliveryClocks) -> DeliveryEndpoints:
+  match clocks:
+    case DeliveryTimes{thread, commit, opened, ci, review, merge, dispatch, published, checked}:
+      Endpoints{delivery_endpoint(thread), delivery_endpoint(commit), delivery_endpoint(opened),
+        delivery_endpoint(ci), delivery_endpoint(review), delivery_endpoint(merge), delivery_endpoint(dispatch),
+        delivery_endpoint(published), delivery_endpoint(checked)}
+
+def delivery_stages(clocks: DeliveryClocks, +thread_link: String) -> DeliveryStages:
+  match clocks:
+    case DeliveryTimes{+thread, +commit, +opened, +ci, review, +merge, +dispatch, +published, checked}:
+      Stages{delivery_thread_stage(thread_link, thread, commit), delivery_stage(commit, opened),
+        delivery_stage(opened, ci), delivery_stage(ci, merge), delivery_stage(merge, dispatch),
+        delivery_stage(dispatch, published), delivery_stage(opened, merge), delivery_stage(merge, published),
+        delivery_thread_stage(thread_link, thread, published), delivery_stage(published, checked)}
