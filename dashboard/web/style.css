@@ -131,8 +131,16 @@ h2, figcaption { font-size: 17px; line-height: 1.24; }
   isolation: isolate;
   container-type: inline-size;
   z-index: 1;
-  border-block: 1px solid var(--rule);
-  background: var(--brand-primary);
+  border-block-end: 1px solid var(--rule);
+  background: #02070d;
+}
+
+.harbor-title {
+  position: absolute;
+  z-index: 2;
+  padding: 20px 24px;
+  pointer-events: none;
+  text-shadow: 0 1px 4px #02070d;
 }
 
 .fleet-water {
@@ -140,7 +148,7 @@ h2, figcaption { font-size: 17px; line-height: 1.24; }
   inset: 0 0 auto;
   z-index: -1;
   width: 100%;
-  height: 100%;
+  height: var(--water-height);
   image-rendering: pixelated;
 }
 
@@ -190,22 +198,6 @@ h2, figcaption { font-size: 17px; line-height: 1.24; }
 }
 
 .fleet-ship-callout > span + span { color: var(--quiet); }
-
-.fleet-celestial {
-  position: absolute;
-  left: var(--sky-x, 50%);
-  top: calc(var(--water-height) * var(--sky-y, .13));
-  width: clamp(13px, 2.3vw, 24px);
-  aspect-ratio: 1;
-  border-radius: 50%;
-  transform: translate(-50%, -50%);
-  background: #e4d3a4;
-}
-.fleet-celestial[data-light="night"] {
-  background: #dceaff;
-  mask-image: radial-gradient(circle at 74% 28%, transparent 0 49%, #000 52%);
-}
-.fleet-celestial:not([data-light]) { display: none; }
 
 .board {
   display: grid;
@@ -563,7 +555,7 @@ h2, figcaption { font-size: 17px; line-height: 1.24; }
   .panel { padding: 18px 17px 20px; }
   .panel:nth-child(odd) { border-inline-end: 0; }
   .panel:not(:last-child) { border-block-end: 1px solid var(--rule); }
-  .masthead { padding: 16px 17px; }
+  .masthead, .harbor-title { padding: 16px 17px; }
   .fleet-heading { padding-inline: 17px; }
   .shipped-count { font-size: 68px; }
   .delivery { padding-inline: 17px; }
@@ -579,7 +571,9 @@ h2, figcaption { font-size: 17px; line-height: 1.24; }
 }
 
 @media (forced-colors: active) {
-  .fleet-window { display: none; }
+  .fleet-window { height: auto; }
+  .harbor-title { position: static; }
+  .fleet-water, .fleet-ship { display: none; }
   .gauge svg, .operation-map { display: none; }
   .gauge .readout { position: static; display: block; translate: none; }
   .plot-line { stroke: CanvasText; }
@@ -653,6 +647,7 @@ summary { cursor: pointer; }
 }
 .filter-form > label, .filter-field { display: grid; gap: 4px; min-width: 0; }
 .review-info > span:nth-child(2) { justify-self: end; }
+.review-info > .scope { grid-column: 1 / -1; margin-top: 5px; }
 
 .fleet-manifest, .fleet-empty {
   font-size: 12px;

@@ -389,30 +389,36 @@ function App() {
       document.getElementById(hash.slice(1))?.scrollIntoView();
     }
   }, [review]);
+  const settingsToggle = settingsPath && <button type="button" className="settings-toggle" aria-expanded={showSettings}
+    aria-controls={showSettings ? "poll-settings" : undefined}
+    onClick={() => setShowSettings((open) => !open)}>Settings</button>;
   return <main className="review">
-    <header className="masthead">
-      <h1>Shipping review</h1>
+    {!review && <header className="masthead">
+      <h1>Barnacles</h1>
       <div className="scope">
-        {review && <span>{review.repository} · Linux Main x86_64</span>}
-        <a href="#process-timing">Process timings</a>
         <a href={path}>Review API JSON</a>
-        {settingsPath && <button type="button" className="settings-toggle" aria-expanded={showSettings}
-          aria-controls={showSettings ? "poll-settings" : undefined}
-          onClick={() => setShowSettings((open) => !open)}>Settings</button>}
+        {settingsToggle}
       </div>
-    </header>
+    </header>}
+    {review && <Fleet fleet={review.fleet} onSelect={select}>
+      <div className="review-info">
+        <span>{dayLabel(review.window.from)}–{dayLabel(review.window.to)} UTC</span>
+        <span>Snapshot · <time dateTime={review.snapshotAt}>{utcLabel(review.snapshotAt)}</time></span>
+        <Filters review={review} />
+        <div className="scope">
+          <span>{review.repository} · Linux Main x86_64</span>
+          <a href={path}>Review API JSON</a>
+          {settingsToggle}
+          <a href="#process-timing">Process timings</a>
+        </div>
+      </div>
+    </Fleet>}
     {showSettings && settingsPath && <PollSettings path={settingsPath} />}
     {result.state === "loading" && <div className="page-message"><p role="status">Loading prepared evidence…</p></div>}
     {result.state === "error" && <div className="page-message" role="alert"><p>{result.message}</p>
       <div className="detail-links"><Button onClick={retry}>Retry review</Button><a href="/">Reset filters</a></div>
     </div>}
     {review && <>
-      <div className="review-info">
-        <span>{dayLabel(review.window.from)}–{dayLabel(review.window.to)} UTC</span>
-        <span>Snapshot · <time dateTime={review.snapshotAt}>{utcLabel(review.snapshotAt)}</time></span>
-        <Filters review={review} />
-      </div>
-      <Fleet fleet={review.fleet} onSelect={select} />
       <Overview review={review} />
       <DailyStages days={review.shipments.dailyStages} window={review.window} />
       <DeliveryTimeline key={review.snapshotAt} review={review} selection={selection} />
