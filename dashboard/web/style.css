@@ -145,17 +145,23 @@ h2, figcaption { font-size: 17px; line-height: 1.24; }
 
 .fleet-ship {
   position: absolute;
-  z-index: 1;
   border: 1px solid transparent;
   text-decoration: none;
 }
-.fleet-ship:hover { border-color: var(--accent); z-index: 3; }
+.fleet-ship::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  z-index: 3;
+}
+
+.fleet-ship:hover { border-color: var(--accent); }
 .fleet-ship:focus-visible { outline-offset: 0; }
-.fleet-ship:focus-visible:not(:hover) { z-index: 2; }
 
 .fleet-ship-tooltip {
   --label-edge: 4.75rem;
   position: absolute;
+  z-index: 1;
   top: 100%;
   left: clamp(calc(50% + var(--label-edge) - var(--ship-x)), 50%,
     calc(50% + 100cqw - var(--label-edge) - var(--ship-x)));
@@ -169,6 +175,7 @@ h2, figcaption { font-size: 17px; line-height: 1.24; }
 .fleet-ship:is(:hover, :focus-visible):not([data-tooltip-dismissed]) .fleet-ship-tooltip {
   visibility: visible;
 }
+.fleet-ship:hover .fleet-ship-tooltip { z-index: 2; }
 
 .fleet-ship-callout {
   display: grid;
