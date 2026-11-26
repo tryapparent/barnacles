@@ -7,7 +7,7 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 const owners = ["collector", "evidence", "dashboard", "tooling"] as const;
 const permissions: Record<string, ReadonlySet<string>> = {
   collector: new Set(["evidence/index.ts", "tooling/bend.ts"]),
-  dashboard: new Set(["evidence/index.ts"]),
+  dashboard: new Set(["evidence/read.ts"]),
   evidence: new Set(["tooling/bend.ts"]),
   tooling: new Set(),
 };
@@ -49,9 +49,10 @@ try {
           }
           const value = specifier?.type === "string" ? specifier.text.slice(1, -1) : "";
           const target = value.startsWith(".") ? posix.normalize(posix.join(dirname(path), value)) : "";
+          const syntheticFixtureWriter = path === "dashboard/prepare.test.ts" && target === "evidence/index.ts";
           if (value && !value.includes("\\") && !value.startsWith("/") && !value.startsWith("#") && !value.startsWith("file:") &&
               !/^barnacles(?:\/|$)/.test(value) &&
-              (!target || target.split("/")[0] === owner || permissions[owner].has(target))) continue;
+              (!target || target.split("/")[0] === owner || permissions[owner].has(target) || syntheticFixtureWriter)) continue;
           console.error(`${path}:${node.startPosition.row + 1} cannot import ${specifier?.text ?? "an unknown module"}. Use the owner's public entry point.`);
           violations++;
         }

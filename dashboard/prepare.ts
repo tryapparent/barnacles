@@ -1,6 +1,6 @@
 import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { repository, writeSnapshot } from "../evidence/index.ts";
+import { repository, writeSnapshot } from "../evidence/read.ts";
 import { dashboards } from "./panels.ts";
 import { encodeTrace } from "./trace.ts";
 

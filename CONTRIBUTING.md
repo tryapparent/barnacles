@@ -10,7 +10,7 @@ Open a scoped pull request with the change, verification, and remaining acceptan
 
 Run `npm ci --ignore-scripts` followed by `npm run verify` from a fresh checkout. The same command runs in the hosted workflow on pull requests and on landed main. Verification builds the pinned Bend2 policy, runs integration tests with synthetic evidence, and checks owner imports. It uses a private temporary job directory and needs network access for the compiler. Use `npm run verify -- collector`, `npm run verify -- evidence`, `npm run verify -- dashboard`, or `npm run test:hooks` for focused feedback.
 
-TypeScript code in Collector and Dashboard uses the public `evidence/index.ts` interface. Evidence and Collector may use the independent `tooling/bend.ts` compiler bootstrap. The boundary check covers static imports and re-exports, including type imports, and literal module loads in the owner directories. Generated policy loads go through the compiler bootstrap.
+Collector loads evidence through `evidence/index.ts`. Dashboard reads it through `evidence/read.ts`. Its verification fixture can use the loader to seed a synthetic database. Evidence and Collector may use the independent `tooling/bend.ts` compiler bootstrap. The boundary check covers static imports and re-exports, including type imports, and literal module loads in the owner directories. Generated policy loads go through the compiler bootstrap.
 
 ## Commit hook
 

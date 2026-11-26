@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { TraceProjection } from "../evidence/index.ts";
+import type { TraceProjection } from "../evidence/read.ts";
 
 function id(length: number, ...parts: string[]) {
   return createHash("sha256").update(JSON.stringify(parts)).digest("hex").slice(0, length);
