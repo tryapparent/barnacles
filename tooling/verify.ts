@@ -27,6 +27,11 @@ try {
       .map((file) => join(directory, file)).sort();
   });
   if (!tests.length) throw Error("No tests found for the selected scopes");
+  if (scopes.includes("dashboard")) {
+    const harbor = join(job, "harbor");
+    execFileSync("npm", ["run", "build:harbor", "--", "--outDir", harbor], { cwd, env, stdio: "inherit" });
+    Object.assign(env, { BARNACLES_WEB_BUILD: harbor });
+  }
   execFileSync(process.execPath, ["--test", ...tests], { cwd, env, stdio: "inherit" });
 } catch (error) {
   const status = (error as { status?: number }).status;

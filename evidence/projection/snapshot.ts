@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { closeSync, openSync } from "node:fs";
+import { closeSync, copyFileSync, openSync } from "node:fs";
 import { DatabaseSync, type SQLInputValue, type SQLOutputValue } from "node:sqlite";
 import { buildPolicies, buildPolicy, loadPolicy } from "../../tooling/bend.ts";
 import { readDelivery } from "../delivery/delivery.ts";
@@ -43,7 +43,33 @@ type Estimator = {
   model_estimates(model: unknown): List<{ name: string; supported: boolean; seconds: number; error: number;
     total: number; samples: number }>;
 };
-type Metrics = TracePolicy & TimingPolicy & {
+type ReviewFact = {
+  $: "ReviewPR"; pr: number; release: boolean; thread: number; commit: number; opened: number; ci: number;
+  merged: number; dispatch: number; publication: number; access: number; linked: boolean; cycle_ms: number;
+};
+type ReviewItem = { $: "Item"; pr: number; order: number; changed: number; stage: string;
+  milestones: List<{ key: string; phase: string; observed: number; elapsed: CycleStage }> };
+type ReviewWindow = { $: "ReviewRange"; from: number; to: number; fleet_from: number } | { $: "InvalidRange" };
+type ReviewPolicy = {
+  review_fact(pr: number, release: boolean, thread: number, commit: number, opened: number, ci: number,
+    merged: number, dispatch: number, publication: number, access: number, linked: boolean, cycle: number): ReviewFact;
+  review_prefer(prior: boolean, candidate: boolean): boolean;
+  review_window(snapshot: number, from: number, to: number, hasFrom: boolean, hasTo: boolean): ReviewWindow;
+  review_page_valid(limit: number, offset: number): boolean;
+  review_clock_options(): List<string>;
+  review_timing_window(): string;
+  review_count_facts(facts: List<ReviewFact>): number;
+  review_clock_valid(clock: string): boolean;
+  review_operation_matches(selection: string, all: boolean, name: string): boolean;
+  review_item(fact: ReviewFact, asOf: number): ReviewItem;
+  review_report(facts: List<ReviewFact>, from: number, to: number, fleetFrom: number, limit: number, offset: number): {
+    $: "ReviewReport"; total: number; next_offset: number; max_measured_ms: number; deliveries: List<ReviewItem>;
+    fleet: List<ReviewItem>; verified: Shipping;
+    weeks: List<{ start: number; sample: Shipping }>;
+  };
+  mean: TimingPolicy["mean"];
+};
+type Metrics = TracePolicy & TimingPolicy & ReviewPolicy & {
   record_release(sample: Shipping, linked: boolean, elapsedMs: number): Shipping;
   visible_release(channel: string, published: number): boolean;
   empty_session_timing(): SessionTiming;
@@ -182,7 +208,8 @@ function writeActionsWait(source: DatabaseSync, view: DatabaseSync, repo: string
 }
 
 export async function writeSnapshot(input: string, output: string, scratch: string, repo: string, cutoff: number,
-  writeTrace: (key: string, trace: TraceProjection) => string, actionsWaitWindow?: ActionWaitWindow, timingCutoff = cutoff * 1000) {
+  writeTrace: (key: string, trace: TraceProjection) => string, actionsWaitWindow?: ActionWaitWindow,
+  timingCutoff = cutoff * 1000, reviewPolicyOutput?: string) {
   const [sources, metricModule, modelModule, waitModule] = await buildPolicies(scratch, [
     [sourcePolicy, "sources.mjs"],
     [new URL("./metrics.bend", import.meta.url), "metrics.mjs"],
@@ -210,6 +237,11 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
         cycle_seconds REAL, pr_seconds REAL, url TEXT);
       CREATE TABLE delivery_milestones(pr INTEGER, ordinal INTEGER, name TEXT, observed_ms INTEGER, elapsed_seconds REAL,
         PRIMARY KEY (pr, ordinal));
+      CREATE TABLE review_metadata(repository TEXT NOT NULL);
+      CREATE TABLE review_prs(pr INTEGER PRIMARY KEY, release INTEGER NOT NULL, thread INTEGER,
+        first_commit INTEGER, opened INTEGER, ci INTEGER, merged INTEGER, dispatch INTEGER, publication INTEGER,
+        access INTEGER, linked INTEGER NOT NULL, cycle_ms INTEGER NOT NULL, ci_run INTEGER,
+        dispatch_run INTEGER, release_id INTEGER);
       CREATE TABLE delivery_stages(ordinal INTEGER PRIMARY KEY, name TEXT, mean_seconds REAL, observed INTEGER, missing INTEGER);
       CREATE TABLE work(pr INTEGER, status TEXT, created INTEGER, url TEXT);
       CREATE TABLE category_estimates(name TEXT, seconds REAL, total REAL, error REAL, samples INTEGER);
@@ -247,16 +279,30 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
       stageStats.set(stage.head.name, empty);
     }
     let delivery = emptyShipping;
+    view.prepare("INSERT INTO review_metadata VALUES (?)").run(repo);
+    const review = view.prepare("INSERT OR REPLACE INTO review_prs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    const preparedReviews = new Map<number, boolean>();
     for (const row of prs) {
       timing.observe("Releases", millis(row.published_at));
       timing.receive("Releases", millis(row.checked_at));
-      if (!metrics.visible_release(String(row.channel ?? ""), Number(row.published_at ?? 0))) continue;
+      const targetRelease = metrics.visible_release(String(row.channel ?? ""), Number(row.published_at ?? 0));
       const number = Number(row.pr_number);
-      release.run(number, row.opened_at, row.merged_at, row.published_at, row.checked_at,
-        row.thread_to_release_seconds, row.pr_to_release_seconds, url(number));
       const clocks = [Number(row.thread_started_ms ?? 0), millis(row.first_commit_at), millis(row.opened_at),
         millis(row.first_ci_at), millis(row.merged_at), millis(row.release_dispatched_at),
-        millis(row.published_at), millis(row.checked_at)];
+        millis(row.published_at), millis(row.checked_at)] as const;
+      const params = [row.thread_to_release_seconds !== null, Math.round((row.thread_to_release_seconds ?? 0) * 1000)] as const;
+      const prepared = preparedReviews.get(number);
+      if (prepared === undefined || metrics.review_prefer(prepared, targetRelease)) {
+        const fact = metrics.review_fact(number, targetRelease, ...clocks, ...params);
+        review.run(fact.pr, Number(fact.release), fact.thread || null, fact.commit || null, fact.opened || null,
+          fact.ci || null, fact.merged || null, fact.dispatch || null, fact.publication || null, fact.access || null,
+          Number(fact.linked), fact.cycle_ms, row.first_ci_run, fact.dispatch ? row.release_run : null,
+          fact.publication ? row.release_id : null);
+        preparedReviews.set(number, fact.release);
+      }
+      if (!targetRelease) continue;
+      release.run(number, row.opened_at, row.merged_at, row.published_at, row.checked_at,
+        row.thread_to_release_seconds, row.pr_to_release_seconds, url(number));
       const elapsed = new Map<number, CycleStage>();
       for (let stage = stagesFor(clocks[0], clocks[1], clocks[2], clocks[3], clocks[4], clocks[5], clocks[6],
         row.thread_to_release_seconds !== null); stage.$ === "Con"; stage = stage.tail) {
@@ -268,7 +314,6 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
         const part = index ? elapsed.get(index) : undefined;
         milestone.run(number, index, milestoneNames[index], clock || null, part?.$ === "Measured" ? part.ms / 1000 : null);
       });
-      const params = [row.thread_to_release_seconds !== null, Math.round((row.thread_to_release_seconds ?? 0) * 1000)] as const;
       delivery = metrics.record_release(delivery, ...params);
       const week = metrics.week(Number(row.published_at));
       weeks.set(week, metrics.record_release(weeks.get(week) ?? emptyShipping, ...params));
@@ -419,6 +464,7 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
     writeActionsWait(source, view, repo,
       actionsWaitWindow ? { $: "Window", ...actionsWaitWindow } : waits.report_window(timingCutoff), waits);
     view.exec("COMMIT");
+    if (reviewPolicyOutput) copyFileSync(metricModule, reviewPolicyOutput);
     const from = Math.min(priorWeek, ...weeks.keys());
     const manifest = { formatVersion: snapshotFormatVersion, generation: randomUUID(), createdAt: new Date().toISOString(),
       coverage: { from, to: cutoff, timingCutoffMs: timingCutoff, pullRequests: prs.length,
@@ -429,4 +475,147 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
     source.close();
     view.close();
   }
+}
+
+type ReviewInput = {
+  from?: number; to?: number; clock: string; operation?: string; limit: number; offset: number;
+};
+type ReviewRow = Record<string, SQLOutputValue>;
+const utc = (time: number) => new Date(time).toISOString();
+const observedUtc = (time: number) => time ? utc(time) : null;
+
+function decodeReview(row: ReviewRow): ReviewFact {
+  return {
+    $: "ReviewPR", pr: Number(row.pr), release: row.release === 1, thread: Number(row.thread),
+    commit: Number(row.first_commit), opened: Number(row.opened), ci: Number(row.ci), merged: Number(row.merged),
+    dispatch: Number(row.dispatch), publication: Number(row.publication), access: Number(row.access),
+    linked: row.linked === 1, cycle_ms: Number(row.cycle_ms),
+  };
+}
+
+const reviewContext = "linux-main-x86_64";
+
+function encodeReviewReference(item: ReviewItem, repo: string, asOf: number) {
+  return {
+    number: item.pr, stage: item.stage, lastObservedAt: observedUtc(item.changed),
+    detailPath: `/api/v1/pull-requests/${item.pr}?asOf=${encodeURIComponent(utc(asOf))}`,
+    pullRequestUrl: `https://github.com/${repo}/pull/${item.pr}`,
+  };
+}
+
+function encodeReviewItem(item: ReviewItem, repo: string, asOf: number) {
+  return {
+    ...encodeReviewReference(item, repo, asOf),
+    milestones: rows(item.milestones).map(({ key, phase, observed, elapsed }) => ({
+      key, phase, observedAt: observedUtc(observed), elapsedMillis: elapsed.$ === "Measured" ? elapsed.ms : null,
+    })),
+  };
+}
+
+function reviewProvenance(key: string, row: ReviewRow, repo: string) {
+  const pullRequest = `https://github.com/${repo}/pull/${row.pr}`;
+  const run = (id: SQLOutputValue) => id ? `https://github.com/${repo}/actions/runs/${id}` : null;
+  const release = row.release_id ? `https://api.github.com/repos/${repo}/releases/${row.release_id}` : null;
+  const sources: Record<string, { source: string; url: string | null }> = {
+    "thread-started": { source: "t3-owning-thread-link", url: null },
+    "first-commit": { source: "github-pull-request-commits", url: `${pullRequest}/commits` },
+    "pr-opened": { source: "github-pull-request", url: pullRequest },
+    "first-ci": { source: "github-actions", url: run(row.ci_run) },
+    merged: { source: "github-pull-request", url: pullRequest },
+    dispatched: { source: "github-actions", url: run(row.dispatch_run) },
+    published: { source: "github-release", url: release },
+    "access-verified": { source: "verified-release-asset-check", url: release },
+  };
+  return sources[key];
+}
+
+export async function openShippingReview(directory: string) {
+  const database = `${directory}/dashboard.sqlite`;
+  const policy: ReviewPolicy = await loadPolicy(`${directory}/review-policy.mjs`);
+
+  function read<T>(query: (db: DatabaseSync, repo: string, coverage: ReviewRow) => T): T {
+    const db = new DatabaseSync(database, { readOnly: true });
+    try {
+      db.exec("BEGIN");
+      const metadata = db.prepare("SELECT repository FROM review_metadata").get();
+      const coverage = db.prepare("SELECT * FROM coverage").get();
+      if (!metadata || !coverage) throw Error("Missing prepared review metadata");
+      return query(db, String(metadata.repository), coverage);
+    } finally {
+      db.close();
+    }
+  }
+
+  read(() => undefined);
+
+  return {
+    shipping(input: ReviewInput) {
+      if (!policy.review_clock_valid(input.clock)) return { error: "invalid_clock" } as const;
+      if (!policy.review_page_valid(input.limit, input.offset)) return { error: "invalid_page" } as const;
+      return read((db, repo, coverage) => {
+        const snapshotAt = Number(coverage.snapshot) * 1000;
+        const window = policy.review_window(snapshotAt, input.from ?? 0, input.to ?? 0,
+          input.from !== undefined, input.to !== undefined);
+        if (window.$ === "InvalidRange") return { error: "invalid_window" } as const;
+        const records = db.prepare("SELECT * FROM review_prs").all();
+        const facts = records.reduceRight<List<ReviewFact>>(
+          (tail, row) => ({ $: "Con", head: decodeReview(row), tail }), { $: "Nil" });
+        const report = policy.review_report(facts, window.from, window.to, window.fleet_from, input.limit, input.offset);
+        const timingWindow = policy.review_timing_window();
+        const operationRows = db.prepare("SELECT * FROM operation_totals WHERE window = ? AND clock = ? ORDER BY rank")
+          .all(timingWindow, input.clock);
+        const week = db.prepare("SELECT cycle_count, mean_seconds FROM weeks WHERE week = ?");
+        const weekCoverage = (start: number) => {
+          const row = week.get(start);
+          return { startsAt: utc(start * 1000), attributedShipments: row?.cycle_count ?? 0, meanSeconds: row?.mean_seconds ?? null };
+        };
+        return {
+          repository: repo, surface: reviewContext, snapshotAt: utc(snapshotAt),
+          window: { from: utc(window.from), to: utc(window.to) },
+          snapshotCoverage: { observedPullRequests: policy.review_count_facts(facts),
+            verifiedShipments: coverage.shipped, attributedShipments: coverage.linked },
+          cycleComparison: { scope: "latest-two-completed-snapshot-weeks", direction: coverage.direction,
+            deltaSeconds: coverage.delta_seconds, prior: weekCoverage(Number(coverage.prior_week)),
+            recent: weekCoverage(Number(coverage.recent_week)) },
+          shipments: {
+            verified: report.verified.shipped, attributed: report.verified.cycles.count,
+            weekly: rows(report.weeks).map(({ start, sample }) => ({ startsAt: utc(start * 1000), verified: sample.shipped,
+              attributed: sample.cycles.count, meanCycleSeconds: seconds(policy.mean(sample.cycles)) })),
+          },
+          operations: {
+            scope: "snapshot", window: timingWindow, clock: input.clock, operation: input.operation ?? null,
+            clockOptions: rows(policy.review_clock_options()), operationOptions: operationRows.map(({ operation }) => operation),
+            items: operationRows.filter(({ operation }) =>
+              policy.review_operation_matches(input.operation ?? "", input.operation === undefined, String(operation)))
+              .map(({ operation, count, mean_seconds, total_seconds, unmeasured, has_area }) => ({
+                operation, measuredSpans: count, meanSeconds: mean_seconds, totalSeconds: total_seconds,
+                unmeasuredSpans: unmeasured, hasArea: has_area === 1,
+              })),
+          },
+          fleet: { from: utc(window.fleet_from), to: utc(window.to),
+            items: rows(report.fleet).map((row) => encodeReviewReference(row, repo, window.to)) },
+          deliveries: { total: report.total, limit: input.limit, offset: input.offset, nextOffset: report.next_offset || null,
+            maxMeasuredMillis: report.max_measured_ms,
+            items: rows(report.deliveries).map((row) => encodeReviewItem(row, repo, window.to)) },
+        };
+      });
+    },
+    pullRequest(number: number, asOf?: number) {
+      return read((db, repo, coverage) => {
+        const snapshotAt = Number(coverage.snapshot) * 1000;
+        const window = policy.review_window(snapshotAt, 0, asOf ?? 0, false, asOf !== undefined);
+        if (window.$ === "InvalidRange") return { error: "invalid_window" } as const;
+        const record = db.prepare("SELECT * FROM review_prs WHERE pr = ?").get(number);
+        if (!record) return { error: "pull_request_not_observed" } as const;
+        const detail = policy.review_item(decodeReview(record), window.to);
+        if (detail.stage === "unknown") return { error: "pull_request_not_observed" } as const;
+        const item = encodeReviewItem(detail, repo, window.to);
+        return {
+          repository: repo, surface: reviewContext, snapshotAt: utc(snapshotAt), asOf: utc(window.to), ...item,
+          milestones: item.milestones.map((milestone) => ({ ...milestone,
+            provenance: milestone.observedAt ? reviewProvenance(milestone.key, record, repo) : null })),
+        };
+      });
+    },
+  };
 }
