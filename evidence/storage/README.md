@@ -1,0 +1,9 @@
+# Evidence write admission
+
+[Admission policy](admission.bend) checks the incoming revision against the existing row inside the SQLite write transaction. Equal revisions replay. T3 rejects older snapshots, Codex rejects shorter rollouts, and delivery rejects older PR snapshots. GitHub Actions rejects a changed SHA, either clock moving backward, or an attempt leaving completed status.
+
+[The host adapter](actions.ts) passes two unsigned words for each JavaScript number. The pinned Bend2 host interface supports U32, F32 and nonnegative Nat host numbers up to 2^53. Two words preserve the full number ordering, including adjacent revision clocks in Unix milliseconds. Bend2 compares the words and returns the admission decision. The host executes the corresponding SQL writes. Primary keys make exact release observation duplicates idempotent. T3 runs persist across snapshots while PR links are replaced with the latest link set. Codex replaces the rollout's subordinate records as a unit.
+
+[Delivery report policy](../delivery/report.bend) retains the first qualifying release per channel, ordered by publication time, verification time, observation identity and dispatch time. It keeps channels in first-observed order and emits an unreleased row if none qualify. Legacy reads fetch the release, its identified asset check and its sibling checks. Bend2 requires exactly one check and a matching asset for a legacy proof. It also derives owners and elapsed times and preserves unknown clocks.
+
+Run `npm run verify -- evidence` to compile both policies and exercise SQLite with synthetic replays, rejection cases and legacy release rows.

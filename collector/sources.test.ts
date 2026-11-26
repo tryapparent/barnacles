@@ -4,9 +4,9 @@ import { appendFileSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
+import { sourcePolicy, admissionPolicy, deliveryPolicy, type AdmissionPolicy, type DeliveryPolicy, deliveryReport, loadEvidence, waitReport, watchOverlaps, type PullRequest, type ReleaseEvidence, type RolloutEvidence, type SourcePolicy, type ThreadEvidence } from "../evidence/index.ts";
+import { buildPolicies, loadPolicy } from "../tooling/bend.ts";
 import { fileURLToPath } from "node:url";
-import { sourcePolicy, deliveryReport, loadEvidence, waitReport, watchOverlaps, type PullRequest, type ReleaseEvidence, type RolloutEvidence, type SourcePolicy, type ThreadEvidence } from "../evidence/index.ts";
-import { buildPolicy, loadPolicy } from "../tooling/bend.ts";
 import { pullRequest, releaseEvidence } from "./github/delivery.ts";
 import { inspectRollout, readRollout } from "./codex/rollout.ts";
 import { t3Snapshot } from "./t3.ts";
@@ -16,7 +16,10 @@ test("compiled Bend2 source decisions through the SQLite import path", async () 
   assert.ok(root);
   const job = mkdtempSync(join(root, "sources-test-"));
   try {
-    const policy = await loadPolicy<SourcePolicy>(await buildPolicy(job, sourcePolicy, "sources.mjs"));
+    const [sourceFile, admissionFile, deliveryFile] = await buildPolicies(job, [[sourcePolicy, "sources.mjs"], [admissionPolicy, "admission.mjs"], [deliveryPolicy, "delivery.mjs"]]);
+    const policy = await loadPolicy<SourcePolicy>(sourceFile);
+    const admission = await loadPolicy<AdmissionPolicy>(admissionFile);
+    const reportPolicy = await loadPolicy<DeliveryPolicy>(deliveryFile);
     const time = (s: string) => `2026-01-01T12:00:${s}Z`;
     const repo = "synthetic/example";
     const merged = "a".repeat(40);
@@ -69,35 +72,71 @@ test("compiled Bend2 source decisions through the SQLite import path", async () 
     };
     const path = join(job, "evidence.sqlite");
     const saveDelivery = (pullRequest: PullRequest, release?: ReleaseEvidence) =>
-      loadEvidence(path, { source: "github-delivery", pullRequest, release });
-    const saveRollout = (rollout: RolloutEvidence) => loadEvidence(path, { source: "codex", rollout });
-    const saveThread = (thread: ThreadEvidence) => loadEvidence(path, { source: "t3", thread });
+      loadEvidence(path, { source: "github-delivery", pullRequest, release }, admission);
+    const saveRollout = (rollout: RolloutEvidence) => loadEvidence(path, { source: "codex", rollout }, admission);
+    const saveThread = (thread: ThreadEvidence) => loadEvidence(path, { source: "t3", thread }, admission);
     const pr = pullRequest(repo, 9, policy, read, true);
     assert.equal(pr.firstCommit?.sha, merged);
     assert.equal(pr.firstReview?.id, 7);
     assert.deepEqual(pr.firstCI, { id: 102, at: Date.parse(time("07")) / 1000 });
+    const alternateRuns = (replace: (inventory: { total_count: number; workflow_runs: unknown[] }) => unknown) =>
+      (path: string) => path.includes("/actions/runs?") ? replace(read(path) as { total_count: number; workflow_runs: unknown[] }) : read(path);
+    assert.equal(pullRequest(repo, 9, policy, alternateRuns((runs) => ({ ...runs, total_count: 5 })), true).firstCI, null);
+    assert.equal(pullRequest(repo, 9, policy, alternateRuns((runs) => ({
+      total_count: 2, workflow_runs: [runs.workflow_runs[0], runs.workflow_runs[0]],
+    })), true).firstCI, null);
+    const repeatedCommits = (path: string) => {
+      if (!path.includes("/commits?")) return read(path);
+      const [first] = read(path) as object[];
+      return [first, first];
+    };
+    const incomplete = pullRequest(repo, 9, policy, repeatedCommits, true);
+    assert.equal(incomplete.commitsComplete, false);
+    assert.equal(incomplete.firstCommit, null);
+    assert.equal(incomplete.firstCI, null);
+    const explicit = (path: string) => path.includes("/commits?") ? [] : alternateRuns((runs) => ({
+      total_count: 1, workflow_runs: [{ ...(runs.workflow_runs[0] as object), head_repository: { id: 77 },
+        pull_requests: [{ number: 9, base: { repo: { id: 4 } } }] }],
+    }))(path);
+    assert.equal(pullRequest(repo, 9, policy, (path) => path.includes("/commits?") ? [] : read(path), true).firstCI, null);
+    assert.equal(pullRequest(repo, 9, policy, explicit, true).firstCI?.id, 102);
+    const repeatedAssets = (path: string) => {
+      if (!path.includes("/releases/")) return read(path);
+      const release = read(path) as { assets: unknown[] };
+      return { ...release, assets: [...release.assets, ...release.assets] };
+    };
+    const noProbe = releaseEvidence(pr, tag, policy, repeatedAssets, () => assert.fail("Ambiguous assets must not be probed"));
+    assert.equal(noProbe.assetId, null);
+    assert.equal(noProbe.shipped, false);
+    const repeatedDispatch = (path: string) => {
+      if (!path.includes("/actions/workflows/verification.yml/runs?")) return read(path);
+      const releaseRuns = read(path) as { workflow_runs: unknown[] };
+      return { total_count: 2, workflow_runs: [...releaseRuns.workflow_runs, ...releaseRuns.workflow_runs] };
+    };
+    const available = () => ({ http: 206, bytes: 1, range: true });
+    assert.equal(releaseEvidence(pr, tag, policy, repeatedDispatch, available, true).dispatch, null);
     const failure = releaseEvidence(pr, tag, policy, read, () => ({ http: 206, bytes: 1, range: false }));
     saveDelivery(pr, failure);
-    const unverified = deliveryReport(path, policy)[0];
+    const unverified = deliveryReport(path, reportPolicy)[0];
     assert.equal(unverified.pr_to_release_seconds, null);
     assert.equal(unverified.coverage.release_link, "release_unverified");
     assert.equal(unverified.coverage.endpoints.published, "missing");
     assert.equal(unverified.coverage.stages.merge_to_publication, "missing_end");
     const proof = releaseEvidence(pr, tag, policy, read, () => ({ http: 206, bytes: 1, range: true }), true);
     saveDelivery(pr, proof);
-    assert.equal(deliveryReport(path, policy)[0].first_ci_run, 102);
-    assert.equal(deliveryReport(path, policy)[0].release_run, 205);
+    assert.equal(deliveryReport(path, reportPolicy)[0].first_ci_run, 102);
+    assert.equal(deliveryReport(path, reportPolicy)[0].release_run, 205);
     saveDelivery(pr, { ...proof, id: 1, published: proof.published! + 1 });
     saveDelivery(pr, { ...proof, id: 12 });
-    assert.equal(deliveryReport(path, policy)[0].release_id, 2);
-    assert.equal(deliveryReport(path, policy)[0].pr_to_release_seconds, 5);
-    assert.equal(deliveryReport(path, policy)[0].thread_to_release_seconds, null);
+    assert.equal(deliveryReport(path, reportPolicy)[0].release_id, 2);
+    assert.equal(deliveryReport(path, reportPolicy)[0].pr_to_release_seconds, 5);
+    assert.equal(deliveryReport(path, reportPolicy)[0].thread_to_release_seconds, null);
 
     const thread = t3Snapshot(snapshot, policy);
     assert.equal(thread.origin, "manual_t3");
     saveThread(thread);
     saveThread(thread);
-    const delivered = deliveryReport(path, policy)[0];
+    const delivered = deliveryReport(path, reportPolicy)[0];
     assert.equal(delivered.thread_to_release_seconds, 8.875);
     assert.equal(delivered.coverage.thread_link, "verified");
     assert.equal(delivered.coverage.release_link, "verified");
@@ -105,16 +144,16 @@ test("compiled Bend2 source decisions through the SQLite import path", async () 
     assert.equal(delivered.coverage.active_thread_work, "unknown");
     assert.equal(delivered.coverage.landed_ci_lineage, "unknown");
     assert.equal(delivered.coverage.human_blocking, "unknown");
-    assert.equal(policy.delivery_thread_window({ $: "Time", s: Date.parse(time("01")) / 1000, ms: 125 },
+    assert.equal(reportPolicy.delivery_thread_window({ $: "Time", s: Date.parse(time("01")) / 1000, ms: 125 },
       { $: "Time", s: Date.parse(time("02")) / 1000, ms: 0 }), "before_window_start");
     saveThread({ ...thread, id: "thread-2" });
-    const ambiguousOwner = deliveryReport(path, policy)[0];
+    const ambiguousOwner = deliveryReport(path, reportPolicy)[0];
     assert.equal(ambiguousOwner.thread_to_release_seconds, null);
     assert.equal(ambiguousOwner.coverage.thread_link, "ambiguous_owner");
     assert.equal(ambiguousOwner.coverage.stages.thread_to_commit, "missing_start");
     saveThread({ ...thread, id: "thread-2", pullRequests: [] });
     saveThread({ ...thread, created: Date.parse(time("08")) });
-    const badClock = deliveryReport(path, policy)[0];
+    const badClock = deliveryReport(path, reportPolicy)[0];
     assert.equal(badClock.coverage.thread_link, "thread_clock_conflict");
     assert.equal(badClock.coverage.stages.thread_to_publication, "clock_conflict");
     assert.equal(badClock.thread_to_release_seconds, null);
@@ -212,6 +251,32 @@ test("compiled Bend2 source decisions through the SQLite import path", async () 
     assert.equal(ambiguous.quality?.mix_candidates, 2);
     assert.equal(ambiguous.quality?.mixed_without_receipt, 3);
 
+    appendFileSync(rollout, [
+      event("13.500", { type: "custom_tool_call", name: "exec", call_id: "substitution",
+        input: 'text(await tools.exec_command({cmd:"cat $(git status)"}));' }),
+      event("13.600", { type: "custom_tool_call", name: "exec", call_id: "wrong-binding",
+        input: 'const r = await tools.exec_command({cmd:"git status"}); text(other);' }),
+      event("13.700", receipt("substitution", 0)),
+      event("13.800", receipt("wrong-binding", 0)),
+      event("14", receipt("eligible", 0)),
+      event("15", receipt("unseen", 0)),
+      event("10", { type: "function_call", call_id: "unseen", name: "apply_patch" }),
+      event("16", receipt("invalid identifier", 0)),
+      event("17", { type: "reasoning" }),
+    ].map((line) => JSON.stringify(line)).join("\n") + "\n{malformed\n");
+    const broken = await readRollout(rollout, "codex-test", policy);
+    assert.equal(broken.malformed, 2);
+    assert.equal(broken.markers.at(-1)?.resultCall, undefined);
+    assert.equal(broken.markers.at(-1)?.at, Date.parse(time("17")));
+    assert.equal(broken.orphans, 1);
+    assert.equal(broken.calls.at(-1)?.id, "unseen");
+    assert.equal(broken.calls.at(-1)?.end, null);
+    for (const call of ["eligible", "substitution", "wrong-binding"]) {
+      const rejected = broken.calls.find(({ id }) => id === call);
+      assert.ok(rejected);
+      assert.equal(rejected.mix, undefined);
+    }
+
     const damaged = join(job, "damaged.jsonl");
     writeFileSync(damaged, JSON.stringify({ type: "session_meta", payload: { id: "valid" } }) + "\n" +
       "{invalid}\n" + "x".repeat(8 * 1024 * 1024 + 1) + "\n" +
@@ -295,7 +360,7 @@ test("rollout CLI keeps fork lineage, rejects unproven input, and preserves repl
   }
 });
 
-test("nested wait receipts, recycled handles and exact watcher overlap through the source importer", async () => {
+test("nested wait receipts, recycled handles and exact watcher overlap through the source importer", async (t) => {
   const root = process.env.BARNACLES_TEST_DIRECTORY;
   assert.ok(root);
   const job = mkdtempSync(join(root, "waits-test-"));
@@ -382,6 +447,18 @@ test("nested wait receipts, recycled handles and exact watcher overlap through t
       result(52, "contradictory-poll", body({ session_id: 47 })),
       poll(53, "ambiguous-poll", 47),
       result(54, "ambiguous-poll", body({ exit_code: 0 })),
+      call(55, "before-barrier", "exec_command", { cmd: "git status" }),
+      result(56, "before-barrier", body({ session_id: 48 })),
+      script(57, "barrier-without-result", "text(await tools.write_stdin({session_id:load('unknown')}));"),
+      poll(58, "after-barrier", 48),
+      result(59, "after-barrier", body({ exit_code: 0 })),
+      call(60, "duplicate-receipt", "exec_command", { cmd: "git status" }),
+      result(61, "duplicate-receipt", "unstructured first result"),
+      result(62, "duplicate-receipt", body({ session_id: 49 })),
+      script(63, "loop-launch", 'for(let i=0;i<2;i++){const r=await tools.exec_command({cmd:"git status"});if(!r.session_id){text(r);break;}}'),
+      result(64, "loop-launch", wrapped({ session_id: 50 })),
+      call(65, "pipeline", "exec_command", { cmd: watcher(1).replace(" > /private/log 2>&1", " | cat") }),
+      result(66, "pipeline", body({ session_id: 51 })),
     ];
     writeFileSync(rollout, entries.map((item) => JSON.stringify(item)).join("\n") + "\n");
     const importer = (args: string[]) => execFileSync(process.execPath, [
@@ -389,8 +466,10 @@ test("nested wait receipts, recycled handles and exact watcher overlap through t
     ], { encoding: "utf8", env: { ...process.env, TMPDIR: job } });
     assert.equal(JSON.parse(importer(["rollout", "test-instance", rollout])).status, "admitted");
     const path = join(job, "evidence.sqlite");
-    const policy = await loadPolicy<SourcePolicy>(await buildPolicy(job, sourcePolicy, "test-sources.mjs"));
-    const saveRollout = (rollout: RolloutEvidence) => loadEvidence(path, { source: "codex", rollout });
+    const [sourceFile, admissionFile] = await buildPolicies(job, [[sourcePolicy, "test-sources.mjs"], [admissionPolicy, "admission.mjs"]]);
+    const policy = await loadPolicy<SourcePolicy>(sourceFile);
+    const admission = await loadPolicy<AdmissionPolicy>(admissionFile);
+    const saveRollout = (rollout: RolloutEvidence) => loadEvidence(path, { source: "codex", rollout }, admission);
     const report = waitReport(path, "test-session", null);
     assert.deepEqual(report.waits.map((row) => [row.call_id, row.cell_status, row.process_status]), [
       ["wait-launch", "linked_cell", "process_opened"],
@@ -422,6 +501,18 @@ test("nested wait receipts, recycled handles and exact watcher overlap through t
     ]), [["launch-a", "launch-b", epoch + 12000, epoch + 15000]]);
     assert.equal(watchOverlaps(path, policy, policy.watch_identity("synthetic/example", "12345678901", sha, "2")).overlaps.length, 0);
     const data = await readRollout(rollout, "test-instance", policy);
+    const observations = data.waitAttribution!.observations;
+    const polls = observations.filter(({ call }) => ["poll-a", "poll-b", "poll-c"].includes(call));
+    assert.deepEqual(polls.map(({ call, resultCall }) => [call, resultCall]), [
+      ["poll-c", "poll-c"], ["poll-b", "poll-b"], ["poll-a", "terminal-a"],
+    ]);
+    const observation = (call: string) => observations.find((row) => row.call === call)!;
+    assert.equal(observation("barrier-without-result").resultLine, null);
+    assert.equal(observation("after-barrier").fact.status, "ambiguous_process_handle");
+    assert.equal(observation("duplicate-receipt").fact.receipt.$, "MissingReceipt");
+    assert.equal(observation("duplicate-receipt").handle, null);
+    assert.equal(observation("loop-launch").fact.status, "unsupported_process_wrapper");
+    assert.equal(observation("pipeline").fact.watch.$, "NoWatch");
     assert.ok(!JSON.stringify(data).includes("private process output"));
     assert.ok(!JSON.stringify(data).includes("/private/"));
     saveRollout(data);
@@ -444,5 +535,23 @@ test("nested wait receipts, recycled handles and exact watcher overlap through t
     assert.equal(incomplete.coverage[0].malformed_count, 1);
     assert.equal(incomplete.waits[0].cell_status, "incomplete_rollout");
     assert.equal(watchOverlaps(path, policy, key).observations, 0);
+
+    await t.test("orders 12,000 results without consuming the JavaScript stack", async () => {
+      const large = join(job, "large-rollout.jsonl");
+      const count = 12_000;
+      const starts = Array.from({ length: count }, (_, index) =>
+        call(1, `ordered-${index}`, "exec_command", { cmd: "git status" }));
+      const results = Array.from({ length: count }, (_, index) =>
+        result(2, `ordered-${count - 1 - index}`, body({ session_id: index + 1 })));
+      writeFileSync(large, [{ type: "session_meta", payload: { id: "large-session" } }, ...starts, ...results]
+        .map((item) => JSON.stringify(item)).join("\n") + "\n");
+      const ordered = (await readRollout(large, "test-instance", policy)).waitAttribution!.observations;
+      assert.equal(ordered.length, count);
+      for (const [index, row] of ordered.entries()) {
+        assert.equal(row.call, `ordered-${count - 1 - index}`);
+        assert.equal(row.handle, String(index + 1));
+        assert.equal(row.fact.status, "process_opened");
+      }
+    });
   } finally { rmSync(job, { recursive: true, force: true }); }
 });
