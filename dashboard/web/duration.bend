@@ -9,5 +9,5 @@ def elapsed_label(ms: Nat, negative: Bool, signed: Bool) -> String:
   +hours = Nat.mod(Nat.div(minutes, 60n), 24n)
   +remainder = Nat.mod(minutes, 60n)
   +sign = Bool.pick(String, signed, Bool.pick(String, negative, "−", "+"), "")
-  Bool.pick(String, Nat.is_eq(minutes, 0n), "0M",
-    String.append(sign, String.append(part(days, "D"), String.append(part(hours, "H"), part(remainder, "M")))))
+  Bool.pick(String, Nat.is_eq(minutes, 0n), "0m",
+    String.append(sign, String.append(part(days, "d"), String.append(part(hours, "h"), part(remainder, "m")))))
