@@ -6,12 +6,19 @@ const git = (args: string[], input?: string) => execFileSync("git", args, {
 });
 
 async function check() {
-  const staged = git(["write-tree"]).toString().trim();
-  let base: string;
-  try {
-    base = git(["rev-parse", "--verify", "HEAD^{tree}"]).toString().trim();
-  } catch {
-    base = git(["hash-object", "-t", "tree", "-w", "--stdin"], "").toString().trim();
+  const [from, to, ...extra] = process.argv.slice(2);
+  if (extra.length || Boolean(from) !== Boolean(to) ||
+      (from && ![from, to].every((value) => /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value)))) {
+    throw Error("Expected two Git object IDs, or no arguments to check the index");
+  }
+  const staged = to ?? git(["write-tree"]).toString().trim();
+  let base = from;
+  if (!base) {
+    try {
+      base = git(["rev-parse", "--verify", "HEAD^{tree}"]).toString().trim();
+    } catch {
+      base = git(["hash-object", "-t", "tree", "-w", "--stdin"], "").toString().trim();
+    }
   }
   const fields = new TextDecoder("utf-8", { fatal: true }).decode(
     git(["diff", "--raw", "--no-abbrev", "-z", "-M50%", base, staged, "--"]),
@@ -39,15 +46,15 @@ async function check() {
         allowance.set(comment, count - 1);
       }
     } catch (error) {
-      console.error(`pre-commit: ${JSON.stringify(path)} — ${error instanceof Error ? error.message : error}`);
+      console.error(`comment check: ${JSON.stringify(path)} — ${error instanceof Error ? error.message : error}`);
       failed = true;
     }
   }
-  if (git(["write-tree"]).toString().trim() !== staged) throw Error("Git index changed during the comment check");
+  if (!to && git(["write-tree"]).toString().trim() !== staged) throw Error("Git index changed during the comment check");
   if (failed) process.exitCode = 1;
 }
 
 check().catch((error: Error) => {
-  console.error(`pre-commit: ${error.message}`);
+  console.error(`comment check: ${error.message}`);
   process.exitCode = 1;
 });
