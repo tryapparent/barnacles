@@ -141,6 +141,7 @@ h2, figcaption { font-size: 17px; line-height: 1.24; }
   position: relative;
   width: min(100%, 240px);
   margin: 14px auto 12px;
+  container-type: inline-size;
 }
 
 .gauge svg { width: 100%; display: block; }
@@ -164,11 +165,12 @@ h2, figcaption { font-size: 17px; line-height: 1.24; }
 
 .readout {
   position: absolute;
-  inset-block-start: 26%;
+  inset-block-start: 47%;
   inset-inline: 0;
+  translate: 0 -50%;
   text-align: center;
   color: var(--red);
-  font-size: clamp(42px, 8vw, 58px);
+  font-size: min(clamp(42px, 8vw, 58px), calc(104cqi / var(--label-length)));
   line-height: 1;
 }
 
@@ -398,7 +400,15 @@ h2, figcaption { font-size: 17px; line-height: 1.24; }
   background-position-x: calc(var(--swell, 0) * 2px);
   mask-image: linear-gradient(105deg, transparent, #000 calc(72% + var(--swell, 0) * 24%));
 }
-.stage-segment > span { display: none; margin: 3px 5px 0; font-size: 12px; line-height: 1.35; white-space: nowrap; }
+.stage-segment > span {
+  display: none;
+  margin: 3px 5px 0;
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 @container (min-width: 43px) {
   .stage-segment > span { display: block; }
@@ -458,7 +468,7 @@ h2, figcaption { font-size: 17px; line-height: 1.24; }
 @media (forced-colors: active) {
   .fleet-window { display: none; }
   .gauge svg, .operation-map { display: none; }
-  .gauge .readout { position: static; display: block; }
+  .gauge .readout { position: static; display: block; translate: none; }
   .plot-line { stroke: CanvasText; }
   .stage-segment, .stage-key li::before, .waterfall-fill { border: 1px solid CanvasText; }
   .stage-segment::after { display: none; }
@@ -592,7 +602,7 @@ summary { cursor: pointer; }
   font-size: 13px;
   color: var(--quiet);
 }
-.gauge[data-direction="unknown"] .readout { color: var(--quiet); font-size: clamp(24px,6vw,31px); top: 35%; }
+.gauge[data-direction="unknown"] .readout { color: var(--quiet); font-size: clamp(24px,6vw,31px); top: 35%; translate: none; }
 .gauge[data-direction="steady"] .readout { color: var(--ink); }
 
 .table-scroll { width: 100%; overflow-x: auto; margin-block: 8px; }

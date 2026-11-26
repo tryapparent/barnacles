@@ -93,16 +93,18 @@ export const stageLabel = (key: string) => stages.find(([stage]) => key === stag
 export const milestoneLabel = (key: string) => milestoneLabels[key] ?? key;
 export const countLabel = (value: number) => value.toLocaleString();
 
-export function wholeMinutes(milliseconds: number) {
-  return milliseconds < 30_000 ? "<1 m" : countLabel(Math.round(milliseconds / 60_000)) + " m";
+type DurationPolicy = {
+  elapsed_label(milliseconds: number, negative: boolean, signed: boolean): string;
+  process_label(microseconds: number): string;
+};
+const policy = import.meta.glob<DurationPolicy>("./duration.bend", { eager: true, import: "default" })["./duration.bend"];
+
+export function durationMillis(milliseconds: number, signed = false) {
+  return policy.elapsed_label(Math.trunc(Math.abs(milliseconds)), milliseconds < 0, signed);
 }
 
-export function duration(seconds: number | null) {
-  if (seconds === null) return "Unknown";
-  const value = Math.abs(seconds);
-  const format = (number: number, unit: string) => number.toLocaleString(undefined, { maximumFractionDigits: 1 }) + " " + unit;
-  if (value >= 86400) return format(value / 86400, "d");
-  if (value >= 3600) return format(value / 3600, "h");
-  if (value >= 60) return format(value / 60, "m");
-  return format(value, "s");
+export function duration(seconds: number | null, signed = false) {
+  return seconds === null ? "Unknown" : durationMillis(seconds * 1000, signed);
 }
+
+export const processMillis = (microseconds: number) => policy.process_label(microseconds);
