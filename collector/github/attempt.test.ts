@@ -292,6 +292,19 @@ test("polling captures changing attempts and excludes unverifiable releases", as
       [root + "/actions/runs/20/attempts/1/jobs?per_page=100&page=1"]: { total_count: 0, jobs: [] },
     };
     assert.deepEqual(invoke(initial), { pullRequestsScanned: 1, workflowRunsScanned: 1, releasesScanned: 0, failed: 0 });
+    const titled = { ...pr, title: "Add release notes" };
+    const current = {
+      ...initial,
+      [root + "/pulls?state=all&sort=updated&direction=desc&per_page=30"]: [titled],
+      [root + "/pulls/17"]: titled,
+    };
+    assert.equal(invoke(current).failed, 0);
+    const titles = new DatabaseSync(database, { readOnly: true });
+    try {
+      assert.equal(titles.prepare("SELECT title FROM github_pr_titles WHERE pr_number=17").get()?.title, titled.title);
+    } finally {
+      titles.close();
+    }
     const completed = { ...run, status: "completed", conclusion: "success", updated_at: merged };
     const mergedPr = { ...pr, state: "closed", merged: true, merged_at: merged, merge_commit_sha: sha, updated_at: merged };
     const next = {

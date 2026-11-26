@@ -61,7 +61,10 @@ export function githubPollRows(path: string, repository: string) {
     db.exec("BEGIN");
     const table = db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?");
     const prs = table.get("github_prs") ? db.prepare(
-      "SELECT pr_number, merge_sha, updated_at FROM github_prs WHERE repository=?",
+      table.get("github_pr_titles")
+        ? `SELECT pr_number, merge_sha, updated_at, title FROM github_prs
+           LEFT JOIN github_pr_titles USING (repository, pr_number) WHERE repository=?`
+        : "SELECT pr_number, merge_sha, updated_at FROM github_prs WHERE repository=?",
     ).all(repository) : [];
     const attempts = table.get("action_attempts") ? db.prepare(
       "SELECT run_id, attempt, status, source_updated FROM action_attempts WHERE repository=?",

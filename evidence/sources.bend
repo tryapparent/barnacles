@@ -34,8 +34,17 @@ def link_state(value: String) -> String:
 def same_revision(merge_sha: String, release_sha: String) -> Bool:
   String.eq(merge_sha, release_sha)
 
-def poll_pr_needed(updated: U32, stored: U32) -> Bool:
-  U32.is_gt(updated, stored)
+def bounded_title(within_limit: Bool, value: String) -> String:
+  match within_limit:
+    case True{}: String.trim(value)
+    case False{}: ""
+
+def source_title(+value: String) -> String:
+  bounded_title(Nat.is_le(String.length(value), 512n), value)
+
+def poll_pr_needed(+updated: U32, +stored: U32, listed_title: String, saved_title: String) -> Bool:
+  Bool.or(U32.is_gt(updated, stored), Bool.and(U32.is_eq(updated, stored),
+    Bool.and(String.eq(saved_title, ""), Bool.not(String.eq(source_title(listed_title), "")))))
 
 def poll_attempt_needed(updated: U32, stored: U32, status: String) -> Bool:
   Bool.or(U32.is_gt(updated, stored), Bool.not(String.eq(status, "completed")))

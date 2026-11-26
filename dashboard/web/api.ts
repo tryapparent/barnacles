@@ -18,7 +18,7 @@ const milestoneLabels: Record<string, string> = {
 export type Milestone = { key: string; phase: Stage; observedAt: string | null; elapsedMillis: number | null;
   provenance?: { source: string; url: string | null } | null };
 export type Vessel = { number: number; stage: Stage; lastObservedAt: string; detailPath: string; pullRequestUrl: string };
-export type Delivery = Vessel & { milestones: Milestone[] };
+export type Delivery = Vessel & { title?: string | null; milestones: Milestone[] };
 export type ProcessCapture = {
   startedAt: string; durationMicros: number | null; observedMicros: number; unfinished: number;
   spans: { id: number; parent: number; depth: number; name: string; start: number; end: number; elapsed: number }[];

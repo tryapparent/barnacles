@@ -718,6 +718,10 @@ type ReviewItem is Data:
 def review_at(+clock: Nat, as_of: Nat) -> Nat:
   Bool.pick(Nat, Nat.is_le(clock, as_of), clock, 0n)
 
+def review_title(thread: Nat, cutoff: Nat, +thread_title: String, pr_title: String) -> String:
+  Bool.pick(String, Bool.and(Nat.is_lt(0n, review_at(thread, cutoff)), Bool.not(String.eq(thread_title, ""))),
+    thread_title, pr_title)
+
 def review_first(+first: Nat, second: Nat) -> Nat:
   Bool.pick(Nat, Nat.is_eq(first, 0n), second, first)
 

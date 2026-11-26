@@ -28,7 +28,7 @@ test("compiled Bend2 source decisions through the SQLite import path", async () 
     const snapshot = {
       instance: "t3-test",
       thread: { threadId: "thread-1", createdAt: time("01.125"), updatedAt: time("30"),
-        status: "completed", createdBy: "user", creationSource: "web" },
+        status: "completed", createdBy: "user", creationSource: "web", title: "  Review the release timeline  " },
       recentRuns: [{ runId: "run-1", requestedAt: time("02"), startedAt: time("03") }],
       links: { nextCursor: null, pullRequests: [
         { host: "github.com", repository: repo, number: 9, source: "created", state: "merged" },
@@ -139,6 +139,7 @@ test("compiled Bend2 source decisions through the SQLite import path", async () 
     const delivered = deliveryReport(path, reportPolicy)[0];
     assert.equal(delivered.thread_to_release_seconds, 8.875);
     assert.equal(delivered.coverage.thread_link, "verified");
+    assert.equal(delivered.thread_title, "Review the release timeline");
     assert.equal(delivered.coverage.release_link, "verified");
     assert.equal(delivered.coverage.stages.thread_to_commit, "observed");
     assert.equal(delivered.coverage.active_thread_work, "unknown");
@@ -150,11 +151,13 @@ test("compiled Bend2 source decisions through the SQLite import path", async () 
     const ambiguousOwner = deliveryReport(path, reportPolicy)[0];
     assert.equal(ambiguousOwner.thread_to_release_seconds, null);
     assert.equal(ambiguousOwner.coverage.thread_link, "ambiguous_owner");
+    assert.equal(ambiguousOwner.thread_title, null);
     assert.equal(ambiguousOwner.coverage.stages.thread_to_commit, "missing_start");
     saveThread({ ...thread, id: "thread-2", pullRequests: [] });
     saveThread({ ...thread, created: Date.parse(time("08")) });
     const badClock = deliveryReport(path, reportPolicy)[0];
     assert.equal(badClock.coverage.thread_link, "thread_clock_conflict");
+    assert.equal(badClock.thread_title, null);
     assert.equal(badClock.coverage.stages.thread_to_publication, "clock_conflict");
     assert.equal(badClock.thread_to_release_seconds, null);
     assert.throws(() => t3Snapshot({ ...snapshot, links: { ...snapshot.links, nextCursor: "more" } }, policy),

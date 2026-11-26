@@ -110,7 +110,8 @@ export type SourcePolicy = {
   link_state(state: string): string;
   merged_at(opened: number, merged: number, confirmed: boolean): number;
   linux_main_source(tag: string): string;
-  poll_pr_needed(updated: number, stored: number): boolean;
+  source_title(value: string): string;
+  poll_pr_needed(updated: number, stored: number, listedTitle: string, savedTitle: string): boolean;
   poll_attempt_needed(updated: number, stored: number, status: string): boolean;
   poll_release_source(tag: string, published: number, draft: boolean): string;
   poll_release_recorded(shipped: boolean, stored: string, source: string): boolean;
@@ -123,6 +124,7 @@ export type SourcePolicy = {
 };
 
 export type ThreadEvidence = {
+  title?: string;
   instance: string; id: string; created: number; updated: number; status: string; origin: string;
   settled: boolean;
   runs: { id: string; requested: number | null; started: number | null; completed: number | null; status: string }[];
@@ -173,6 +175,9 @@ export function saveThread(path: string, data: ThreadEvidence, policy: Admission
     requireAdmission(policy.thread_admission(snapshot(before?.updated_ms as number | undefined), revision(data.updated)));
     db.prepare("INSERT OR REPLACE INTO t3_threads VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
       ...key, data.created, data.updated, data.status, data.origin, Number(data.settled), data.runs.length);
+    if (data.title) {
+      db.prepare("INSERT OR REPLACE INTO t3_thread_titles VALUES (?, ?, ?)").run(...key, data.title);
+    }
     const runs = db.prepare("INSERT OR REPLACE INTO t3_runs VALUES (?, ?, ?, ?, ?, ?, ?)");
     for (const run of data.runs) runs.run(...key, run.id, run.requested, run.started, run.completed, run.status);
     db.prepare("DELETE FROM t3_pr_links WHERE instance=? AND thread_id=?").run(...key);

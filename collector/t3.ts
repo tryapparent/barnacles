@@ -31,6 +31,7 @@ export function t3Snapshot(input: unknown, rules: SourcePolicy): ThreadEvidence 
       source, state: policy.link_state(str(link.state)), owning: policy.owns_pr(source) };
   });
   return { instance: token(snapshot.instance), id: token(thread.threadId), created, updated,
+    title: policy.source_title(str(thread.title)),
     status: policy.thread_status(str(thread.status)), origin: policy.origin(str(thread.createdBy), str(thread.creationSource)),
     settled: thread.settled === true, runs, pullRequests };
 }
