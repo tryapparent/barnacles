@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFile, execFileSync, spawn } from "node:child_process";
+import { once } from "node:events";
+import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
+import { promisify } from "node:util";
 import {
   loadEvidence, type ActionAttempt, type PullRequest, type ReleaseEvidence, type RolloutEvidence, type ThreadEvidence,
 } from "../evidence/index.ts";
@@ -450,4 +452,105 @@ test("timing windows clip spans, count overlap once and preserve unknown clocks"
         "No observed timestamps");
     } finally { db.close(); }
   } finally { rmSync(job, { recursive: true, force: true }); }
+});
+
+test("shipping API preserves historical and partial evidence and reads a replacement snapshot", async () => {
+  const parent = process.env.BARNACLES_TEST_DIRECTORY;
+  assert.ok(parent, "Set BARNACLES_TEST_DIRECTORY to a private job directory");
+  const job = mkdtempSync(join(parent, "review-api-"));
+  const source = join(job, "evidence.sqlite");
+  const snapshot = join(job, "snapshot");
+  const replacement = join(job, "replacement");
+  const repo = "synthetic/harbor";
+  const at = Math.floor(Date.now() / 1000) - 60;
+  const iso = (seconds: number) => new Date(seconds * 1000).toISOString();
+  const time = (seconds: number) => encodeURIComponent(iso(seconds));
+  const save = (pullRequest: PullRequest, release?: ReleaseEvidence) =>
+    loadEvidence(source, { source: "github-delivery", pullRequest, release });
+  const prepare = (path: string) =>
+    promisify(execFile)(process.execPath, ["dashboard/prepare.ts", source, path, repo], { timeout: 60_000 });
+  let server: ReturnType<typeof spawn> | undefined;
+  let stopped: Promise<unknown> | undefined;
+  try {
+    const shipped: PullRequest = {
+      repository: repo, number: 101, state: "merged", opened: at - 800, merged: at - 600, mergeSha: "a".repeat(40),
+      firstCommit: { sha: "b".repeat(40), at: at - 900 }, firstCI: { id: 11, at: at - 750 },
+      firstReview: null, commitsComplete: true, reviewsComplete: false, updated: at - 600,
+    };
+    const proof: ReleaseEvidence = {
+      id: 21, tag: "synthetic-release", source: shipped.mergeSha!, tagMatches: true, channel: "linux-main-x86_64",
+      published: at - 400, assetId: 13, checked: at - 300, http: 206, bytes: 32,
+      accessible: true, ancestry: "equal", shipped: true, dispatch: { id: 12, at: at - 500 },
+    };
+    const open: PullRequest = { ...shipped, number: 202, state: "open", opened: at - 100,
+      merged: null, mergeSha: null, firstCommit: null, firstCI: null, updated: at - 100 };
+    save(shipped, proof);
+    save(shipped, { ...proof, channel: "other-surface", id: 22, tag: "other-surface-release" });
+    save(open);
+    loadEvidence(source, { source: "t3", thread: {
+      instance: "synthetic", id: "owner-101", created: (at - 1000) * 1000, updated: at * 1000,
+      status: "completed", origin: "manual_t3", settled: true, runs: [],
+      pullRequests: [{ repository: repo, number: 101, source: "created", state: "merged", owning: true }],
+    } });
+    await prepare(snapshot);
+    server = spawn(process.execPath, ["dashboard/prepare.ts", "--serve", snapshot, "0"], { stdio: ["ignore", "pipe", "pipe"] });
+    server.stderr?.resume();
+    stopped = once(server, "exit");
+    const [announcement] = await once(server.stdout!, "data", { signal: AbortSignal.timeout(10_000) });
+    const base = /http:\/\/127\.0\.0\.1:\d+/.exec(String(announcement))?.[0];
+    assert.ok(base);
+    const call = (route: string, init?: RequestInit) => fetch(base + route, { signal: AbortSignal.timeout(10_000), ...init });
+    const get = async (route: string, expected = 200) => {
+      const result = await call(route);
+      assert.equal(result.status, expected, route);
+      assert.equal(result.headers.get("cache-control"), "no-store");
+      return result.json();
+    };
+
+    assert.equal((await get("/api/v1")).endpoints.shipping.path, "/api/v1/shipping");
+    const report = await get("/api/v1/shipping?limit=1");
+    assert.deepEqual(report.snapshotCoverage, { observedPullRequests: 2, verifiedShipments: 1, attributedShipments: 1 });
+    assert.equal(report.shipments.weekly[0].meanCycleSeconds, 600);
+    assert.deepEqual(report.fleet.items.map((item: { number: number; stage: string }) => [item.number, item.stage]),
+      [[202, "pr-opened"], [101, "access-verified"]]);
+    assert.equal(report.deliveries.nextOffset, 1);
+    assert.deepEqual(report.operations.items, []);
+    const page = await get("/api/v1/shipping?limit=1&offset=1");
+    assert.equal(page.deliveries.nextOffset, null);
+    const detail = await get(page.deliveries.items[0].detailPath);
+    assert.equal(detail.milestones[0].observedAt, iso(at - 1000));
+    assert.equal(detail.milestones[3].provenance.url, "https://github.com/synthetic/harbor/actions/runs/11");
+    assert.equal(detail.milestones[7].elapsedMillis, 100_000);
+
+    const historical = await get("/api/v1/shipping?to=" + time(at - 399));
+    assert.equal(historical.shipments.verified, 0);
+    assert.deepEqual(historical.shipments.weekly, []);
+    assert.equal(historical.fleet.items[0].stage, "published");
+    assert.equal(historical.deliveries.items[0].milestones[7].observedAt, null);
+    assert.equal((await get("/api/v1/pull-requests/202?asOf=" + time(at - 399), 404)).error.code,
+      "pull_request_not_observed");
+    const partial = await get("/api/v1/pull-requests/202");
+    assert.deepEqual(partial.milestones[0], {
+      key: "thread-started", phase: "pre-commit", observedAt: null, elapsedMillis: null, provenance: null,
+    });
+    assert.equal(partial.milestones[2].elapsedMillis, null);
+    assert.deepEqual((await get("/api/v1/shipping?to=" + time(at - 1001))).fleet.items, []);
+    assert.equal((await get("/api/v1/shipping?from=2026-02-30", 400)).error.code, "invalid_request");
+    assert.equal((await get("/api/v1/shipping?limit=0", 400)).error.code, "invalid_page");
+    assert.equal((await get("/api/v1/shipping?clock=estimate", 400)).error.code, "invalid_clock");
+    assert.equal((await get("/api/v1/shipping?from=1970-01-01", 400)).error.code, "invalid_window");
+    assert.equal((await call("/api/v1/shipping", { method: "POST" })).status, 405);
+
+    save({ ...open, state: "merged", merged: at - 50, mergeSha: "c".repeat(40), updated: at - 50 });
+    await prepare(replacement);
+    renameSync(join(replacement, "dashboard.sqlite"), join(snapshot, "dashboard.sqlite"));
+    const refreshed = await get("/api/v1/pull-requests/202");
+    assert.equal(refreshed.stage, "merged");
+    assert.equal(refreshed.milestones[4].observedAt, iso(at - 50));
+    assert.equal(refreshed.milestones[4].elapsedMillis, null);
+  } finally {
+    server?.kill();
+    if (stopped) await stopped;
+    rmSync(job, { recursive: true, force: true });
+  }
 });

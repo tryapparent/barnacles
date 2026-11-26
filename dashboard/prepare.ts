@@ -1,6 +1,8 @@
 import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { once } from "node:events";
+import { createServer, type ServerResponse } from "node:http";
 import { dirname, join, resolve } from "node:path";
-import { repository, snapshotFormatVersion, writeSnapshot } from "../evidence/read.ts";
+import { openShippingReview, repository, snapshotFormatVersion, writeSnapshot } from "../evidence/read.ts";
 import { dashboards } from "./panels.ts";
 import { encodeTrace } from "./trace.ts";
 
@@ -20,8 +22,8 @@ function validateSnapshot(directory: string) {
   }
 }
 
-async function main() {
-  const [input, output, requestedRepository, asOf, ...extra] = process.argv.slice(2);
+async function prepare(args: string[]) {
+  const [input, output, requestedRepository, asOf, ...extra] = args;
   if (input === "--validate" && output && !requestedRepository) {
     validateSnapshot(output);
     return;
@@ -49,7 +51,7 @@ async function main() {
           const { traceId, payload } = encodeTrace(key, trace);
           writeSync(payloads, JSON.stringify(payload) + "\n");
           return traceId;
-        }, undefined, timingCutoff);
+        }, undefined, timingCutoff, join(staging, "review-policy.mjs"));
       const provision = join(staging, "dashboards");
       mkdirSync(provision);
       for (const [name, config] of Object.entries(dashboards(range, repo))) {
@@ -67,7 +69,119 @@ async function main() {
   }
 }
 
-main().catch((error: Error) => {
+class InvalidRequest extends Error {}
+
+const errors = {
+  invalid_window: "Use an ordered UTC range of at most 366 days. Its start must be at or before the effective cutoff.",
+  invalid_clock: "Choose Tool envelopes, Async cells, CI queue, CI execution, or CI steps.",
+  invalid_page: "Use a limit from 1 to 100 and an offset from 0 to 1000000.",
+  pull_request_not_observed: "No milestone for this pull request was observed by the requested cutoff.",
+};
+
+function json(response: ServerResponse, status: number, body: unknown) {
+  response.writeHead(status, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
+  });
+  response.end(JSON.stringify(body));
+}
+
+function error(response: ServerResponse, status: number, code: string, message: string) {
+  json(response, status, { error: { code, message } });
+}
+
+function queryParams(search: URLSearchParams, names: string[]) {
+  const parameters = new Map<string, string>();
+  for (const [name, value] of search) {
+    if (!names.includes(name) || parameters.has(name) || !value.trim() || value.length > 250) {
+      throw new InvalidRequest("Use each documented query parameter at most once with a non-empty value.");
+    }
+    parameters.set(name, value);
+  }
+  return parameters;
+}
+
+function utcTime(value?: string) {
+  if (value === undefined) return undefined;
+  const match = /^(\d{4}-\d{2}-\d{2})(?:T(\d{2}:\d{2}:\d{2})(?:\.(\d{1,3}))?Z)?$/.exec(value);
+  if (!match) throw new InvalidRequest("Use YYYY-MM-DD or a UTC timestamp ending in Z.");
+  const expected = `${match[1]}T${match[2] ?? "00:00:00"}.${(match[3] ?? "").padEnd(3, "0")}Z`;
+  const time = Date.parse(expected);
+  if (!Number.isFinite(time) || time < 0 || new Date(time).toISOString() !== expected) {
+    throw new InvalidRequest("Use a valid UTC date on or after 1970-01-01.");
+  }
+  return time;
+}
+
+function natural(value: string, label: string) {
+  const number = Number(value);
+  if (!/^\d+$/.test(value) || !Number.isSafeInteger(number)) throw new InvalidRequest(`${label} must be a non-negative integer.`);
+  return number;
+}
+
+async function serve(args: string[]) {
+  const [directory, requestedPort = "3031", ...extra] = args;
+  if (!directory || extra.length) throw Error("Usage: node dashboard/prepare.ts --serve SNAPSHOT_DIRECTORY [PORT]");
+  const port = natural(requestedPort, "Port");
+  if (port > 65535) throw Error("Port must be at most 65535");
+  if (!existsSync(join(directory, "review-policy.mjs"))) throw Error("Run dashboard/prepare.ts to build a review API snapshot first.");
+  const review = await openShippingReview(resolve(directory));
+  const server = createServer((request, response) => {
+    const address = server.address();
+    const localPort = typeof address === "object" && address ? address.port : port;
+    if (request.headers.host !== `127.0.0.1:${localPort}` && request.headers.host !== `localhost:${localPort}`) {
+      return error(response, 403, "invalid_host", "Use the loopback address shown when the API starts.");
+    }
+    if (request.method !== "GET") {
+      response.setHeader("Allow", "GET");
+      return error(response, 405, "method_not_allowed", "This API accepts GET requests.");
+    }
+    try {
+      if (!request.url?.startsWith("/")) throw new InvalidRequest("Use a documented API path.");
+      const url = new URL(`http://127.0.0.1${request.url}`);
+      if (url.pathname === "/api/v1") {
+        queryParams(url.searchParams, []);
+        return json(response, 200, {
+          version: 1,
+          endpoints: {
+            shipping: { path: "/api/v1/shipping", parameters: ["from", "to", "clock", "operation", "limit", "offset"] },
+            pullRequest: { path: "/api/v1/pull-requests/{number}", parameters: ["asOf"] },
+          },
+          timeFormat: "UTC ISO 8601 (YYYY-MM-DD or timestamp ending in Z)",
+        });
+      }
+      const pr = /^\/api\/v1\/pull-requests\/(\d+)$/.exec(url.pathname);
+      let result;
+      if (url.pathname === "/api/v1/shipping") {
+        const params = queryParams(url.searchParams, ["from", "to", "clock", "operation", "limit", "offset"]);
+        result = review.shipping({ from: utcTime(params.get("from")), to: utcTime(params.get("to")),
+          clock: params.get("clock") ?? "Tool envelopes", operation: params.get("operation"),
+          limit: natural(params.get("limit") ?? "25", "Limit"), offset: natural(params.get("offset") ?? "0", "Offset") });
+      } else if (pr) {
+        const params = queryParams(url.searchParams, ["asOf"]);
+        result = review.pullRequest(natural(pr[1], "Pull request number"), utcTime(params.get("asOf")));
+      } else {
+        return error(response, 404, "not_found", "See /api/v1 for available endpoints.");
+      }
+      if (result.error) {
+        return error(response, result.error === "pull_request_not_observed" ? 404 : 400, result.error, errors[result.error]);
+      }
+      return json(response, 200, result);
+    } catch (failure) {
+      if (failure instanceof InvalidRequest) return error(response, 400, "invalid_request", failure.message);
+      return error(response, 503, "snapshot_unavailable", "The prepared evidence snapshot could not be read.");
+    }
+  });
+  server.listen(port, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (address && typeof address !== "string") console.log(`Barnacles API http://127.0.0.1:${address.port}/api/v1`);
+}
+
+const args = process.argv.slice(2);
+const action = args[0] === "--serve" ? serve(args.slice(1)) : prepare(args);
+action.catch((error: Error) => {
   console.error(error.message);
   process.exitCode = 1;
 });

@@ -32,6 +32,8 @@ npm run demo
 npm run verify
 ```
 
+The [Shipping review API](dashboard/api.md) serves the prepared evidence to browser clients and agents.
+
 The [Actions import](collector/README.md#run-the-actions-import) and the [T3, Codex, and GitHub delivery imports](collector/README.md#import-t3-codex-and-github-delivery) write local SQLite evidence. Use the delivery report to inspect verified releases and thread-to-release coverage. The [local Grafana dashboards](dashboard/provisioning/README.md) visualize shipping, recorded time, and rollout spans.
 
 The root [Compose project](compose.yaml) assembles the local dashboard deployment. After preparing a snapshot, run `dashboard/run.sh "$job/grafana"`. The [Dashboard deployment guide](dashboard/enablement/deploy/README.md) covers independent Grafana updates and snapshot rollback.

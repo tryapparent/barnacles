@@ -400,3 +400,173 @@ def summarize_window(groups: WindowGroups) -> WindowSummary:
     case WindowGroups{clocks, ops, flows, totals, mixed}:
       WindowSummary{rank_window_rows(clocks), rank_window_rows(ops), rank_window_rows(flows),
         rank_window_rows(totals), rank_window_rows(mixed)}
+
+type ReviewFact is Data:
+  ReviewPR{pr: Nat, release: Bool, thread: Nat, commit: Nat, opened: Nat, ci: Nat, merged: Nat,
+    dispatch: Nat, publication: Nat, access: Nat, linked: Bool, cycle_ms: Nat}
+
+def review_fact(pr: Nat, +release: Bool, thread: Nat, commit: Nat, opened: Nat, ci: Nat, merged: Nat,
+  dispatch: Nat, publication: Nat, access: Nat, linked: Bool, cycle_ms: Nat) -> ReviewFact:
+  ReviewPR{pr, release, thread, commit, opened, ci, merged, Bool.pick(Nat, release, dispatch, 0n),
+    Bool.pick(Nat, release, publication, 0n), Bool.pick(Nat, release, access, 0n), linked, cycle_ms}
+
+def review_prefer(prior_release: Bool, proposed_release: Bool) -> Bool:
+  Bool.and(Bool.not(prior_release), proposed_release)
+
+type ReviewWindow is Data:
+  ReviewRange{from: Nat, to: Nat, fleet_from: Nat}
+  InvalidRange{}
+
+def review_window(+snapshot: Nat, from: Nat, to: Nat, has_from: Bool, has_to: Bool) -> ReviewWindow:
+  +end = Bool.pick(Nat, has_to, Nat.min(snapshot, to), snapshot)
+  +start = Bool.pick(Nat, has_from, from, Nat.sub(end, 2592000000n))
+  +ordered = Bool.and(Nat.is_lt(0n, end), Nat.is_le(start, end))
+  Bool.pick(ReviewWindow, Bool.and(ordered, Nat.is_le(Nat.sub(end, start), Nat.mul(366n, 86400000n))),
+    ReviewRange{start, end, Nat.max(start, Nat.sub(end, 86400000n))}, InvalidRange{})
+
+def review_page_valid(+limit: Nat, offset: Nat) -> Bool:
+  Bool.and(Bool.and(Nat.is_lt(0n, limit), Nat.is_le(limit, 100n)), Nat.is_le(offset, 1000000n))
+
+def review_clock_options() -> List<&2, String>:
+  ["Tool envelopes", "Async cells", "CI queue", "CI execution", "CI steps"]
+
+def review_clock_in(+clock: String, allowed: List<&2, String>) -> Bool:
+  match allowed:
+    case []: False{}
+    case head <> rest: Bool.or(String.eq(clock, head), review_clock_in(clock, rest))
+
+def review_clock_valid(clock: String) -> Bool:
+  review_clock_in(clock, review_clock_options())
+
+def review_operation_matches(selection: String, all: Bool, name: String) -> Bool:
+  Bool.or(all, String.eq(selection, name))
+
+type ReviewMoment is Data:
+  Event{key: String, phase: String, observed: Nat, elapsed: CycleStage}
+
+type ReviewItem is Data:
+  Item{pr: Nat, order: Nat, changed: Nat, stage: String, milestones: List<&2, ReviewMoment>}
+
+def review_at(+clock: Nat, as_of: Nat) -> Nat:
+  Bool.pick(Nat, Nat.is_le(clock, as_of), clock, 0n)
+
+def review_first(+first: Nat, second: Nat) -> Nat:
+  Bool.pick(Nat, Nat.is_eq(first, 0n), second, first)
+
+def review_stage(+observed: Nat, name: String, fallback: String) -> String:
+  Bool.pick(String, Nat.is_eq(observed, 0n), fallback, name)
+
+def review_item(fact: ReviewFact, +as_of: Nat) -> ReviewItem:
+  match fact:
+    case ReviewPR{pr, release, thread, commit, opened, ci, merged, dispatch, publication, access, linked, cycle_ms}:
+      +t = review_at(thread, as_of)
+      +c = review_at(commit, as_of)
+      +o = review_at(opened, as_of)
+      +i = review_at(ci, as_of)
+      +m = review_at(merged, as_of)
+      +d = review_at(dispatch, as_of)
+      +p = review_at(publication, as_of)
+      +a = review_at(access, as_of)
+      +early = Nat.max(t, c)
+      +before_merge = Nat.max(early, Nat.max(o, i))
+      +after_merge = Nat.max(m, Nat.max(d, Nat.max(p, a)))
+      +stage = review_stage(a, "access-verified", review_stage(p, "published", review_stage(d, "dispatched",
+        review_stage(m, "merged", review_stage(i, "first-ci", review_stage(o, "pr-opened",
+          review_stage(early, "pre-commit", "unknown")))))))
+      Item{pr, review_first(t, review_first(o, c)), Nat.max(before_merge, after_merge), stage,
+        [Event{"thread-started", "pre-commit", t, Missing{}},
+         Event{"first-commit", "pre-commit", c, cycle_stage(t, c)},
+         Event{"pr-opened", "pr-opened", o, cycle_stage(c, o)},
+         Event{"first-ci", "first-ci", i, cycle_stage(o, i)},
+         Event{"merged", "merged", m, cycle_stage(i, m)},
+         Event{"dispatched", "dispatched", d, cycle_stage(m, d)},
+         Event{"published", "published", p, cycle_stage(d, p)},
+         Event{"access-verified", "access-verified", a, cycle_stage(p, a)}]}
+
+def review_newest(left: ReviewItem, right: ReviewItem) -> Bool:
+  match left right:
+    case Item{+p, +a, c, s, ms} Item{+q, +b, d, t, ns}:
+      Bool.or(Nat.is_lt(b, a), Bool.and(Nat.is_eq(a, b), Nat.is_le(q, p)))
+
+def review_in_range(+at: Nat, from: Nat, to: Nat) -> Bool:
+  Bool.and(Nat.is_lt(0n, at), Bool.and(Nat.is_le(from, at), Nat.is_le(at, to)))
+
+type ReviewWeek is Data:
+  ReviewBucket{start: Nat, sample: ShippingSample}
+
+type ReviewFold is Data:
+  ReviewAccum{deliveries: List<&2, ReviewItem>, fleet: List<&2, ReviewItem>, verified: ShippingSample,
+    weeks: Map<&2, ReviewWeek>}
+
+def review_empty_shipments() -> ShippingSample:
+  Delivery{0n, Stats{0n, 0n, 0n}}
+
+def review_week_add(found: Map<&2, ReviewWeek> & ReviewWeek, key: String, linked: Bool, cycle_ms: Nat) ->
+  Map<&2, ReviewWeek>:
+  match found:
+    case Tuple{weeks, ReviewBucket{start, sample}}:
+      Map.set(&2, ReviewWeek, weeks, key, ReviewBucket{start, record_release(sample, linked, cycle_ms)})
+
+def review_add_shipment(published: Nat, +linked: Bool, +cycle: Nat, accum: ReviewFold) -> ReviewFold:
+  match accum:
+    case ReviewAccum{deliveries, fleet, verified, weeks}:
+      +bucket = week(Nat.div(published, 1000n))
+      +key = Nat.show(bucket)
+      ReviewAccum{deliveries, fleet, record_release(verified, linked, cycle),
+        review_week_add(Map.get(ReviewWeek, ReviewBucket{bucket, review_empty_shipments()}, weeks, key), key, linked, cycle)}
+
+def review_count_shipment(include: Bool, published: Nat, linked: Bool, cycle: Nat, accum: ReviewFold) -> ReviewFold:
+  match include:
+    case False{}: accum
+    case True{}: review_add_shipment(published, linked, cycle, accum)
+
+def review_ship(fact: ReviewFact, from: Nat, +to: Nat, accum: ReviewFold) -> ReviewFold:
+  match fact:
+    case ReviewPR{pr, release, t, c, o, i, m, d, +p, +a, linked, cycle}:
+      review_count_shipment(Bool.and(release, Bool.and(review_in_range(p, from, to),
+        Bool.and(interval_valid(p, a), Nat.is_le(a, to)))), p, linked, cycle, accum)
+
+def review_add_item(+item: ReviewItem, +from: Nat, +fleet_from: Nat, accum: ReviewFold) -> ReviewFold:
+  match item accum:
+    case Item{pr, order, +when, stage, milestones} ReviewAccum{+deliveries, +fleet, verified, weeks}:
+      ReviewAccum{
+        Bool.pick(List<&2, ReviewItem>, Bool.and(Nat.is_lt(0n, when), Nat.is_le(from, when)), item <> deliveries, deliveries),
+        Bool.pick(List<&2, ReviewItem>, Bool.and(Nat.is_lt(0n, when), Nat.is_le(fleet_from, when)), item <> fleet, fleet),
+        verified, weeks}
+
+def review_collect(facts: List<&2, ReviewFact>, +from: Nat, +to: Nat, +fleet_from: Nat, accum: ReviewFold) -> ReviewFold:
+  match facts:
+    case []: accum
+    case +head <> tail:
+      review_collect(tail, from, to, fleet_from, review_add_item(review_item(head, to), from, fleet_from,
+        review_ship(head, from, to, accum)))
+
+def review_weeks(weeks: List<&2, Sigma<&2, &2, String, _ => ReviewWeek>>) -> List<&2, ReviewWeek>:
+  match weeks:
+    case []: []
+    case Tuple{key, value} <> rest: value <> review_weeks(rest)
+
+def review_week_before(a: ReviewWeek, b: ReviewWeek) -> Bool:
+  match a b:
+    case ReviewBucket{left, ignored} ReviewBucket{right, also_ignored}: Nat.is_le(left, right)
+
+type ReviewResult is Data:
+  ReviewReport{total: Nat, next_offset: Nat, deliveries: List<&2, ReviewItem>, fleet: List<&2, ReviewItem>,
+    verified: ShippingSample, weeks: List<&2, ReviewWeek>}
+
+def review_count_facts(facts: List<&2, ReviewFact>) -> Nat:
+  List.length(&2, ReviewFact, facts)
+
+def review_page(accum: ReviewFold, +limit: Nat, +offset: Nat) -> ReviewResult:
+  match accum:
+    case ReviewAccum{+deliveries, fleet, verified, weeks}:
+      +total = List.length(&2, ReviewItem, deliveries)
+      +next = Nat.add(offset, limit)
+      ReviewReport{total, Bool.pick(Nat, Nat.is_lt(next, total), next, 0n),
+        List.take(&2, ReviewItem, List.drop(&2, ReviewItem, List.sort(~ReviewItem, ~review_newest, deliveries), offset), limit),
+        List.sort(~ReviewItem, ~review_newest, fleet), verified,
+        List.sort(~ReviewWeek, ~review_week_before, review_weeks(Map.to_list(&2, ReviewWeek, weeks)))}
+
+def review_report(facts: List<&2, ReviewFact>, from: Nat, to: Nat, fleet_from: Nat, limit: Nat, offset: Nat) -> ReviewResult:
+  review_page(review_collect(facts, from, to, fleet_from,
+    ReviewAccum{[], [], review_empty_shipments(), Map.new(&2, ReviewWeek)}), limit, offset)
