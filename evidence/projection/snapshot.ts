@@ -52,6 +52,8 @@ type ReviewItem = { $: "Item"; pr: number; order: number; changed: number; stage
   milestones: List<{ key: string; phase: string; observed: number; elapsed: CycleStage }> };
 type ReviewWindow = { $: "ReviewRange"; from: number; to: number; fleet_from: number } | { $: "InvalidRange" };
 type MapTile = { index: number; millis: number; grouped: number; children: List<MapTile> };
+type CategoryInput = { $: "CategoryInput"; workflow: number; operation: string; detail: string; millis: number };
+type CategoryTile = { label: string; millis: number; children: unknown };
 type MapEntry = {
   label: string; totalSeconds: number; index: number; grouped: number; children: MapEntry[];
 };
@@ -65,6 +67,11 @@ type ReviewPolicy = {
   review_timing_window(): string;
   review_count_facts(facts: List<ReviewFact>): number;
   review_clock_valid(clock: string): boolean;
+  review_ci_clock?(clock: string): boolean;
+  review_ci_steps?(clock: string): boolean;
+  review_category_tree?(inputs: List<CategoryInput>, mixed: List<CategoryInput>, clock: string, selection: string, all: boolean): unknown;
+  review_mixed_input?(detail: string, millis: number): CategoryInput;
+  review_category_tiles?(tree: unknown): List<CategoryTile>;
   review_operation_map?(weights: List<number>): List<MapTile>;
   review_operation_matches(selection: string, all: boolean, name: string): boolean;
   review_item(fact: ReviewFact, asOf: number): ReviewItem;
@@ -509,7 +516,7 @@ function reviewProvenance(key: string, row: ReviewRow, repo: string) {
 
 function encodeOperationMap(policy: NonNullable<ReviewPolicy["review_operation_map"]>,
   entries: Pick<MapEntry, "label" | "index" | "children">[], weights: number[]): MapEntry[] {
-  const input = weights.reduceRight<List<number>>((tail, head) => ({ $: "Con", head, tail }), { $: "Nil" });
+  const input = toBendList(weights);
   const encode = (tiles: List<MapTile>): MapEntry[] => rows(tiles).map(({ index, millis, grouped, children }) => ({
     ...(grouped ? { label: "Other", index: 0, children: encode(children) } : entries[index]),
     totalSeconds: millis / 1000, grouped,
@@ -517,9 +524,46 @@ function encodeOperationMap(policy: NonNullable<ReviewPolicy["review_operation_m
   return encode(policy(input));
 }
 
-const operationHour = new Intl.DateTimeFormat("en-GB", {
-  timeZone: "UTC", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
-});
+function toBendList<T>(values: T[]): List<T> {
+  return values.reduceRight<List<T>>((tail, head) => ({ $: "Con", head, tail }), { $: "Nil" });
+}
+
+function encodeCategories(policy: ReviewPolicy, tree: unknown): MapEntry[] {
+  const tiles = rows(policy.review_category_tiles!(tree));
+  return encodeOperationMap(policy.review_operation_map!, tiles.map(({ label, children }, index) => ({
+    label, index, children: encodeCategories(policy, children),
+  })), tiles.map(({ millis }) => millis));
+}
+
+function categoryMap(db: DatabaseSync, policy: ReviewPolicy, window: string, clock: string, selection: string | undefined,
+  totals: ReviewRow[]) {
+  if (!policy.review_category_tree || !policy.review_ci_clock || !policy.review_ci_steps || !policy.review_mixed_input ||
+      !policy.review_category_tiles || !policy.review_operation_map) return undefined;
+  const millis = (row: ReviewRow) => Math.round(Number(row.total_seconds) * 1000);
+  const clockRows = db.prepare("SELECT workflow, operation, total_seconds FROM timing WHERE window = ? AND clock = ?");
+  let inputs: CategoryInput[];
+  let mixed: CategoryInput[] = [];
+  if (policy.review_ci_steps(clock)) {
+    if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE name = 'step_job_totals'").get()) return undefined;
+    inputs = db.prepare("SELECT workflow, operation, job, total_millis FROM step_job_totals WHERE window = ?").all(window)
+      .map(({ workflow, operation, job, total_millis }) => ({
+        $: "CategoryInput", workflow: Number(workflow), operation: String(operation), detail: String(job), millis: Number(total_millis),
+      }));
+  } else if (policy.review_ci_clock(clock)) {
+    inputs = clockRows.all(window, clock).map((row) => ({
+      $: "CategoryInput", workflow: Number(row.workflow), operation: String(row.operation),
+      detail: String(row.operation), millis: millis(row),
+    }));
+  } else {
+    inputs = totals.map((row) => ({
+      $: "CategoryInput", workflow: 0, operation: String(row.operation), detail: "", millis: millis(row),
+    }));
+    mixed = db.prepare("SELECT operation, total_seconds FROM mixed_groups WHERE window = ? AND clock = ?").all(window, clock)
+      .map((row) => policy.review_mixed_input!(String(row.operation), millis(row)));
+  }
+  return encodeCategories(policy, policy.review_category_tree(toBendList(inputs), toBendList(mixed), clock,
+    selection ?? "", selection === undefined));
+}
 
 export async function openShippingReview(directory: string) {
   const database = `${directory}/dashboard.sqlite`;
@@ -568,15 +612,7 @@ export async function openShippingReview(directory: string) {
         const selectedOperations = operationRows.flatMap((row, index) =>
           policy.review_operation_matches(input.operation ?? "", input.operation === undefined, String(row.operation))
             ? [{ row, index }] : []);
-        const mapPolicy = policy.review_operation_map;
-        const hourRows = db.prepare("SELECT 1 FROM sqlite_schema WHERE name = 'operation_hours'").get() &&
-          db.prepare("SELECT hour, total_millis FROM operation_hours WHERE window = ? AND clock = ? AND operation = ? ORDER BY rank");
-        const operationMap = mapPolicy && encodeOperationMap(mapPolicy, selectedOperations.map(({ row, index }) => {
-          const hours = hourRows ? hourRows.all(timingWindow, input.clock, row.operation) : [];
-          return { label: String(row.operation), index, children: encodeOperationMap(mapPolicy,
-            hours.map(({ hour }) => ({ label: operationHour.format(Number(hour) * 3600000) + " UTC", index, children: [] })),
-            hours.map(({ total_millis }) => Number(total_millis))) };
-        }), selectedOperations.map(({ row }) => Math.round(Number(row.total_seconds) * 1000)));
+        const map = categoryMap(db, policy, timingWindow, input.clock, input.operation, operationRows);
         const week = db.prepare("SELECT cycle_count, mean_seconds FROM weeks WHERE week = ?");
         const weekCoverage = (start: number) => {
           const row = week.get(start);
@@ -604,7 +640,7 @@ export async function openShippingReview(directory: string) {
           operations: {
             scope: "snapshot", window: timingWindow, clock: input.clock, operation: input.operation ?? null,
             clockOptions: rows(policy.review_clock_options()), operationOptions: operationRows.map(({ operation }) => operation),
-            map: operationMap,
+            map, mapKind: map && "categories",
             items: selectedOperations.map(({ row: { operation, count, mean_seconds, total_seconds, unmeasured, has_area } }) => ({
                 operation, measuredSpans: count, meanSeconds: mean_seconds, totalSeconds: total_seconds,
                 unmeasuredSpans: unmeasured, hasArea: has_area === 1,
