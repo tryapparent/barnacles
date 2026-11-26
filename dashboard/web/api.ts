@@ -29,6 +29,7 @@ export type Operation = { operation: string; measuredSpans: number; meanSeconds:
   unmeasuredSpans: number; hasArea: boolean };
 export type OperationTile = { label: string; totalSeconds: number; index: number; grouped: number; children: OperationTile[] };
 export type Week = { startsAt: string; verified: number; attributed: number; meanCycleSeconds: number | null };
+export type DeliveryChart = { from: string; days: DeliveryDay[] };
 export type DeliveryDay = { startsAt: string; verified: number;
   stages: { phase: Stage; measured: number; meanSeconds: number | null }[] };
 export type ComparisonWeek = { startsAt: string; attributedShipments: number; meanSeconds: number | null };
@@ -36,7 +37,7 @@ export type Review = {
   repository: string; surface: string; snapshotAt: string; window: { from: string; to: string };
   snapshotCoverage: { observedPullRequests: number; verifiedShipments: number; attributedShipments: number };
   cycleComparison: { deltaSeconds: number | null; direction: string; prior: ComparisonWeek; recent: ComparisonWeek };
-  shipments: { verified: number; attributed: number; weekly: Week[]; dailyStages?: DeliveryDay[] };
+  shipments: { verified: number; attributed: number; weekly: Week[]; dailyChart?: DeliveryChart };
   operations: { window: string; clock: string; operation: string | null; clockOptions: string[];
     operationOptions: string[]; items: Operation[]; map?: OperationTile[] };
   fleet: { from: string; to: string; items: Vessel[] };

@@ -112,6 +112,7 @@ up to 366 days. The response includes both `snapshotAt` and its effective
 | `cycleComparison` | The comparison of the latest two completed UTC weeks at snapshot time, with direction, signed delta, and each week's measured mean and sample count. An insufficient comparison has a null delta. |
 | `shipments` | PRs with publication inside the selected window and verified access by its cutoff. Weekly buckets use Mondays in UTC. A missing bucket means the selected sample supplied no verified shipment for that week. |
 | `shipments.dailyStages` | The same verified PRs grouped by UTC publication day, newest first. Each consecutive stage reports its measured PR count and mean seconds. A null mean indicates missing coverage. Older prepared review policies omit this field. |
+| `shipments.dailyChart` | Chart start and verified publication days within the latest 31 UTC dates of the effective window. Earlier prepared review policies omit this field. |
 | `operations` | Ranked elapsed times ending at the snapshot cutoff, using the default 24-hour reporting window. Available clocks and operation names are included. Cumulative spans can overlap. |
 | `fleet` | PRs with a milestone in the last 24 hours of the effective window, or the whole window if shorter. Each PR has one current stage, a last observed time, and a detail link. |
 | `deliveries` | PRs with a milestone inside the effective window, ordered newest start first with observed PR clocks as a fallback. Each item has the ordered milestone list and a detail link. |
@@ -138,9 +139,9 @@ for all rows of the selected clock, or use an exact name from
 Use `limit` (1–100, default 25) and `offset` (default 0) to page through
 deliveries. Advance using `deliveries.nextOffset`, which is null at the end.
 The harbor's **Mean delivery stages by day** chart uses the full shipment
-selection across all pages. The date axis spans the selected UTC window and
-leaves gaps on dates without verified shipments. Select a column to view
-its stage means and coverage. Narrow screens scroll within the chart.
+selection across all pages for the latest 31 UTC dates in the selected window.
+Days with verified shipments take equal space. Select a column to view its
+stage means and coverage. Narrow screens scroll within the chart.
 Each mean uses PRs with both stage clocks in order. The stack shows the sum
 of the stage means, whose sample counts can differ. The access check is shown
 as its own interval after publication.
