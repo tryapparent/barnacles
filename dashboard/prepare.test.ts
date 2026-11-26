@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { request as httpRequest } from "node:http";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
@@ -667,16 +668,21 @@ test("shipping API preserves historical and partial evidence and reads a replace
     const settingsPath = (await get("/api/v1")).pollingSettings;
     assert.equal(settingsPath, "/settings/polling");
     assert.deepEqual(await get(settingsPath), { minutes: 15 });
-    const update = (value: string, origin: string, user = proxyUser) =>
-      call(settingsPath + "?" + new URLSearchParams({ minutes: value }), {
+    const update = (value: string, origin: string, user = proxyUser) => new Promise<number | undefined>((resolve, reject) => {
+      const req = httpRequest(base + settingsPath + "?" + new URLSearchParams({ minutes: value }), {
         method: "PUT", headers: { Host: "harbor.example.invalid:8443", "Tailscale-User-Login": user, Origin: origin },
+      }, (response) => {
+        response.resume();
+        resolve(response.statusCode);
       });
+      req.once("error", reject).setTimeout(10_000, () => req.destroy(Error("Polling settings request timed out"))).end();
+    });
     const origin = "https://harbor.example.invalid:8443";
-    assert.equal((await update("5", "https://other.example.invalid")).status, 403);
-    assert.equal((await update("5", origin, "guest@example.invalid")).status, 403);
-    assert.equal((await update("0", origin)).status, 400);
+    assert.equal(await update("5", "https://other.example.invalid"), 403);
+    assert.equal(await update("5", origin, "guest@example.invalid"), 403);
+    assert.equal(await update("0", origin), 400);
     assert.deepEqual(await get(settingsPath), { minutes: 15 });
-    assert.equal((await update("5", origin)).status, 200);
+    assert.equal(await update("5", origin), 200);
     assert.equal(readFileSync(settings, "utf8"), "5\n");
     assert.deepEqual(await get(settingsPath), { minutes: 5 });
     const report = await get("/api/v1/shipping?limit=1");
