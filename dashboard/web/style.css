@@ -15,6 +15,7 @@
   --red: #f47768;
   --amber: #f2b826;
   --green: #65c392;
+  --operation-other: #bcbec2;
   --pixel: "Geist Pixel", ui-monospace, monospace;
 }
 
@@ -56,6 +57,43 @@ h2, figcaption { font-size: 17px; line-height: 1.24; }
   color: var(--quiet);
   font-size: 12px;
 }
+
+.settings-toggle {
+  align-self: baseline;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.poll-settings {
+  display: grid;
+  gap: 10px;
+  padding: 16px clamp(17px, 3vw, 24px);
+  border-block-end: 1px solid var(--rule);
+}
+
+.poll-form, .poll-error {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  max-width: 38ch;
+  font-size: 13px;
+}
+
+.poll-controls {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.poll-controls input { width: 10ch; }
+.poll-form [role="status"]:empty { display: none; }
 
 .sample { color: var(--ink); }
 
@@ -549,10 +587,42 @@ summary { cursor: pointer; }
 .fleet-prs { display: flex; flex-wrap: wrap; gap: 2px 16px; margin-block: 3px 8px; }
 .fleet-prs a { display: block; padding-block: 4px; }
 
+.operation-scope {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 2px 12px;
+  margin-block: 8px 4px;
+  color: var(--quiet);
+  font-size: 12px;
+}
+.operation-scope h3 {
+  margin: 0;
+  font: inherit;
+  overflow-wrap: anywhere;
+}
+.operation-scope button, .operation-list button {
+  padding: 0;
+  min-height: 24px;
+  font: inherit;
+  color: var(--ink);
+  text-align: start;
+  text-decoration: underline;
+  text-underline-offset: .2em;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+.operation-list { list-style: none; margin: 0; padding: 0; color: var(--quiet); font-size: 12px; }
+.operation-list [data-compact="false"] { display: none; }
+.operation-list [data-compact="true"] { margin-block-start: 4px; }
+@media (forced-colors: active) {
+  .operation-list [data-compact="false"] { display: list-item; }
+}
 .operation-map {
   position: relative;
   height: 204px;
-  margin-block-start: 14px;
   isolation: isolate;
 }
 .operation-tile {
@@ -562,6 +632,14 @@ summary { cursor: pointer; }
   color: var(--surface);
   overflow: hidden;
   isolation: isolate;
+  padding: 0;
+  text-align: start;
+  font: inherit;
+}
+button.operation-tile { cursor: zoom-in; display: flex; align-items: flex-start; }
+button.operation-tile:is(:hover, :focus-visible) {
+  outline: 2px solid var(--surface);
+  outline-offset: -5px;
 }
 .operation-dither {
   z-index: -1;

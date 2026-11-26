@@ -36,6 +36,24 @@ JSON as an agent. Review filters and PR detail links are encoded in the URL.
 The page shows the snapshot timestamp and supports keyboard navigation and
 reduced motion.
 
+### GitHub polling settings
+
+Set `BARNACLES_POLL_SETTINGS` to the same absolute file path in the Harbor and
+[collector processes](../collector/README.md#poll-github-for-harbor). Keep the
+file in a private writable directory outside the snapshot. Harbor shows
+**Settings → GitHub polling** when this path is configured. The interval
+defaults to **15 minutes** and accepts whole minutes from 1 to 1440. Saving
+updates the schedule without restarting either process. The interval is shared
+by users of the same Harbor instance.
+
+When polling is configured, an open Shipping review checks for a fresh snapshot
+every 30 seconds while the tab is visible and no PR is selected. The browser
+reads only the local Harbor API. A selected PR keeps its evidence view stable.
+
+`GET /settings/polling` returns the saved interval as `{"minutes":15}`.
+Harbor saves via `PUT /settings/polling?minutes=15` with a same-origin check
+and the same access controls as the review API.
+
 For a private Tailscale Serve deployment, set `BARNACLES_PROXY_HOST` to the
 exact Serve hostname and port as sent in the HTTP Host header, and
 `BARNACLES_PROXY_USER` to the authorized Tailscale login. This keeps the app
@@ -102,6 +120,21 @@ up to 366 days. The response includes both `snapshotAt` and its effective
 | `operations` | Ranked elapsed times ending at the snapshot cutoff, using the default 24-hour reporting window. Available clocks and operation names are included. Cumulative spans can overlap. |
 | `fleet` | PRs with a milestone in the last 24 hours of the effective window, or the whole window if shorter. Each PR has one current stage, a last observed time, and a detail link. |
 | `deliveries` | PRs with a milestone inside the effective window, ordered newest start first with observed PR clocks as a fallback. Each item has the ordered milestone list and a detail link. |
+
+**Where time went** shows up to four named tiles per level. The largest
+always appears. The remaining named tiles each represent at least one
+twelfth of the current level's time. A gray **Other** tile combines the
+remaining measured time and opens its constituent groups. A named operation
+opens a breakdown by UTC start hour. Each measured span contributes its
+full clipped duration to the hour containing its clipped start, so durations
+can overlap or extend beyond the displayed hour. Untimed spans remain in
+**Recorded operations** and have no chart area. Use the back control above
+the chart to move up a level.
+
+The additive `operations.map` field contains the visible tiles for the
+selected clock and operation. Each tile includes its cumulative seconds,
+palette index, grouped item count and children. Older prepared policies
+omit this field. Reprepare the snapshot to enable drill-down.
 
 The operation clock defaults to `Tool envelopes`. Other clocks are
 `Async cells`, `CI queue`, `CI execution`, and `CI steps`. Omit `operation`

@@ -4,10 +4,12 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
+import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { buildAdmissionPolicy, loadEvidence } from "../../evidence/index.ts";
+import { buildAdmissionPolicy, loadEvidence, sourcePolicy, type SourcePolicy } from "../../evidence/index.ts";
 import { buildPolicy, loadPolicy } from "../../tooling/bend.ts";
 import { collectAttempt, collectWindow, type ClockPolicy } from "./attempt.ts";
+import { pollGitHub } from "./delivery.ts";
 
 test("Bend2 clocks reach SQLite through the exact-attempt importer", async () => {
   const parent = process.env.BARNACLES_TEST_DIRECTORY;
@@ -244,6 +246,86 @@ if (url.searchParams.has("created")) {
     }
     assert.deepEqual(capture(), { sourceAvailable: true, missingBeforeCapture: 1, captured: 1 });
     assert.deepEqual(capture(), { sourceAvailable: true, missingBeforeCapture: 0, captured: 0 });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("polling captures changing attempts and excludes unverifiable releases", async () => {
+  const parent = process.env.BARNACLES_TEST_DIRECTORY;
+  assert.ok(parent, "Set BARNACLES_TEST_DIRECTORY to a private job directory");
+  const directory = mkdtempSync(join(parent, "poll-github-"));
+  const repo = "synthetic/example";
+  const root = `repos/${repo}`;
+  const database = join(directory, "evidence.sqlite");
+  const sha = "a".repeat(40);
+  const tag = `linux-main-v2-${sha}`;
+  const time = (ago: number) => new Date(Date.now() - ago * 1000).toISOString().replace(/\.\d+Z$/, "Z");
+  const opened = time(600);
+  const merged = time(400);
+  const published = time(200);
+  const pr = { number: 17, base: { repo: { full_name: repo } }, state: "open", commits: 0,
+    created_at: opened, updated_at: opened, merged: false };
+  const run = { id: 20, run_attempt: 1, head_sha: sha, workflow_id: 21, status: "queued",
+    created_at: opened, updated_at: opened };
+  const release = { id: 22, tag_name: tag, draft: false, published_at: published,
+    assets: [{ id: 23, name: "Synthetic-linux-x86_64.AppImage", state: "uploaded", size: 50 }] };
+  try {
+    const policy = await loadPolicy<SourcePolicy>(await buildPolicy(directory, sourcePolicy, "sources.mjs"));
+    const admission = await buildAdmissionPolicy(directory);
+    const clocks = await loadPolicy<ClockPolicy>(
+      await buildPolicy(directory, new URL("./clocks.bend", import.meta.url), "clocks.mjs"));
+    const invoke = (responses: Record<string, unknown>, accessible = true) => pollGitHub(database, repo, policy, clocks, admission,
+      (path) => {
+        if (!Object.hasOwn(responses, path)) throw Error("Missing fixture response");
+        return responses[path];
+      },
+      () => accessible ? { http: 206, bytes: 1, range: true } : { http: 404, bytes: 0, range: false });
+    const initial = {
+      [root + "/pulls?state=all&sort=updated&direction=desc&per_page=30"]: [pr],
+      [root + "/actions/runs?per_page=30"]: { workflow_runs: [run] },
+      [root + "/releases?per_page=20"]: [],
+      [root + "/pulls/17"]: pr,
+      [root + "/pulls/17/commits?per_page=100"]: [],
+      [root + "/pulls/17/reviews?per_page=100"]: [],
+      [root + "/actions/runs/20/attempts/1"]: run,
+      [root + "/actions/runs/20/attempts/1/jobs?per_page=100&page=1"]: { total_count: 0, jobs: [] },
+    };
+    assert.deepEqual(invoke(initial), { pullRequestsScanned: 1, workflowRunsScanned: 1, releasesScanned: 0, failed: 0 });
+    const completed = { ...run, status: "completed", conclusion: "success", updated_at: merged };
+    const mergedPr = { ...pr, state: "closed", merged: true, merged_at: merged, merge_commit_sha: sha, updated_at: merged };
+    const next = {
+      ...initial,
+      [root + "/pulls?state=all&sort=updated&direction=desc&per_page=30"]: [mergedPr],
+      [root + "/actions/runs?per_page=30"]: { workflow_runs: [completed] },
+      [root + "/releases?per_page=20"]: [release],
+      [root + "/pulls/17"]: mergedPr,
+      [root + "/actions/runs/20/attempts/1"]: completed,
+      [root + "/releases/tags/" + tag]: release,
+      [root + "/git/ref/tags/" + tag]: { object: { type: "commit", sha } },
+    };
+    const read = () => {
+      const db = new DatabaseSync(database, { readOnly: true });
+      try {
+        return [
+          db.prepare("SELECT status FROM action_attempts WHERE run_id=20").get()?.status,
+          db.prepare("SELECT MAX(shipped) AS shipped FROM github_release_observations").get()?.shipped,
+        ];
+      } finally {
+        db.close();
+      }
+    };
+    assert.deepEqual(read(), ["queued", null]);
+    assert.equal(invoke(next, false).failed, 0);
+    assert.deepEqual(read(), ["completed", 0]);
+    await sleep(1100);
+    assert.equal(invoke(next).failed, 0);
+    assert.deepEqual(read(), ["completed", 1]);
+    const listings = Object.fromEntries(Object.entries(next).filter(([path]) =>
+      path.endsWith("per_page=30") || path.endsWith("per_page=20")));
+    assert.equal(invoke(listings).failed, 0);
+    assert.throws(() => invoke({}), /Missing fixture/);
+    assert.deepEqual(read(), ["completed", 1]);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
