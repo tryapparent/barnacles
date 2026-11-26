@@ -354,7 +354,7 @@ function App() {
       </div>
       <Fleet fleet={review.fleet} onSelect={select} />
       <Overview review={review} />
-      <DailyStages days={review.shipments.dailyStages} />
+      <DailyStages days={review.shipments.dailyStages} window={review.window} />
       <DeliveryTimeline key={review.snapshotAt} review={review} selection={selection} />
     </>}
   </main>;

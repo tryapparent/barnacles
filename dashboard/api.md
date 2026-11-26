@@ -136,7 +136,9 @@ for all rows of the selected clock, or use an exact name from
 Use `limit` (1–100, default 25) and `offset` (default 0) to page through
 deliveries. Advance using `deliveries.nextOffset`, which is null at the end.
 The harbor's **Mean delivery stages by day** chart uses the full shipment
-selection across all pages. Open a day to view stage means and their coverage.
+selection across all pages. The date axis spans the selected UTC window and
+leaves gaps on dates without verified shipments. Select a column to view
+its stage means and coverage. Narrow screens scroll within the chart.
 Each mean uses PRs with both stage clocks in order. The stack shows the sum
 of the stage means, whose sample counts can differ. The access check is shown
 as its own interval after publication.

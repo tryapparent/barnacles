@@ -326,46 +326,83 @@ export function StageKey() {
     <li key={key} className={`stage-${color}`}>{label}</li>)}</ul>;
 }
 
-export function DailyStages({ days }: { days: DeliveryDay[] | undefined }) {
-  const longest = Math.max(0, ...(days ?? []).map(({ stages }) =>
-    stages.reduce((total, stage) => total + (stage.meanSeconds ?? 0), 0)));
-  const step = longest >= 3600 ? 1800 : longest >= 60 ? 30 : 1;
-  const scale = Math.max(2, Math.ceil(longest / (2 * step))) * 2 * step;
+const dayMillis = 86_400_000;
+const fullDayLabel = new Intl.DateTimeFormat(undefined, { timeZone: "UTC", dateStyle: "long" });
+
+function DailyValues({ day }: { day: DeliveryDay }) {
+  return <table className="daily-values">
+    <caption>{dayLabel(day.startsAt)} · {countLabel(day.verified)} verified</caption>
+    <thead><tr><th scope="col">Stage</th><th scope="col">Mean</th><th scope="col">Measured</th></tr></thead>
+    <tbody>{stages.map(([phase, label, color]) => {
+      const sample = day.stages.find((stage) => stage.phase === phase);
+      return <tr key={phase}><th scope="row" className={`stage-${color}`}>{label}</th>
+        <td>{duration(sample?.meanSeconds ?? null)}</td>
+        <td>{countLabel(sample?.measured ?? 0)} / {countLabel(day.verified)}</td></tr>;
+    })}</tbody>
+  </table>;
+}
+
+function DailyColumns({ days, window }: { days: DeliveryDay[]; window: Review["window"] }) {
+  const [selected, setSelected] = useState<string | null>(null);
+  const first = Date.parse(window.from.slice(0, 10));
+  const last = Date.parse(window.to.slice(0, 10));
+  const count = (last - first) / dayMillis + 1;
+  const stacks = days.map((day) => ({
+    day, height: day.stages.reduce((total, stage) => total + (stage.meanSeconds ?? 0), 0),
+  }));
+  const byDate = new Map(stacks.map((stack) => [stack.day.startsAt, stack]));
+  const detail = selected === null ? undefined : byDate.get(selected)?.day;
+  const longest = Math.max(...stacks.map(({ height }) => height));
+  const step = longest >= 3600 ? 1800 : 60;
+  const scale = Math.max(1, Math.ceil(longest / (2 * step))) * 2 * step;
+  return <>
+    <p className="fine daily-intro">Publication day (UTC). Gaps have no verified shipments in this window.
+      Select a column for stage means and counts.</p>
+    <StageKey />
+    <div className="daily-figure">
+      <div className="daily-axis" aria-hidden="true">
+        <span>{duration(scale)}</span><span>{duration(scale / 2)}</span><span>{duration(0)}</span>
+      </div>
+      <div className="daily-scroll" role="region" aria-label="Daily duration columns" tabIndex={0}>
+        <div className="daily-columns" data-dense={count > 5} style={{ "--daily-count": count } as CSSProperties}>
+          {Array.from({ length: count }, (_, index) => {
+            const timestamp = first + index * dayMillis;
+            const date = new Date(timestamp).toISOString();
+            const stack = byDate.get(date);
+            const pressed = selected === date;
+            const label = fullDayLabel.format(timestamp);
+            const tick = count <= 5 || index === count - 1 || (index % 5 === 0 && index < count - 3);
+            return <div key={date} className="daily-slot">
+              {stack ? <button type="button" className="daily-column" aria-pressed={pressed}
+                aria-label={`${label}, ${countLabel(stack.day.verified)} verified`} aria-controls="daily-stage-values"
+                title={`${label} · ${countLabel(stack.day.verified)} verified`}
+                onClick={() => setSelected(pressed ? null : date)}>
+                {stack.height > 0 ? <span className="daily-stack" aria-hidden="true"
+                  style={{ height: `${100 * stack.height / scale}%` }}>
+                  {stages.map(([phase, name, color]) => {
+                    const mean = stack.day.stages.find((stage) => stage.phase === phase)?.meanSeconds;
+                    return mean ? <span key={phase} className={`daily-segment stage-${color}`}
+                      style={{ height: `${100 * mean / stack.height}%` }} title={`${name} · ${duration(mean)}`} /> : null;
+                  })}
+                </span> : <span className="daily-zero" aria-hidden="true"
+                  title={stack.day.stages.some(({ meanSeconds }) => meanSeconds === 0) ? `${duration(0)} measured` : "Stage times unknown"} />}
+              </button> : <span className="daily-gap" title={`${label} · No verified shipments`} />}
+              {tick && <time className="daily-tick" dateTime={date} aria-hidden="true">{dayLabel(date)}</time>}
+            </div>;
+          })}
+        </div>
+      </div>
+    </div>
+    <div id="daily-stage-values">{detail && <DailyValues day={detail} />}</div>
+  </>;
+}
+
+export function DailyStages({ days, window }: { days: DeliveryDay[] | undefined; window: Review["window"] }) {
   return <section className="delivery daily-chart" aria-labelledby="daily-title">
     <h2 id="daily-title">Mean delivery stages by day</h2>
     {days === undefined ? <p className="fine">Daily stage data needs a refreshed evidence snapshot.</p> :
-      !days.length ? <p className="fine">No verified shipments in this review window.</p> : <>
-        <p className="fine daily-intro">By publication day (UTC). Each stage averages the PRs with both clocks. Open a day for counts and times.</p>
-        <StageKey />
-        {longest > 0 && <div className="daily-axis" aria-hidden="true">
-          <span>{duration(0)}</span><span>{duration(scale / 2)}</span><span>{duration(scale)}</span>
-        </div>}
-        {days.map((day) => <details key={day.startsAt} className="daily-row">
-          <summary>
-            <span className="daily-label"><time dateTime={day.startsAt}>{dayLabel(day.startsAt)}</time>
-              <span>{countLabel(day.verified)} verified</span></span>
-            <span className="daily-bar" aria-hidden="true">
-              {day.stages.every(({ meanSeconds }) => meanSeconds === null) ? <span>Unknown</span> :
-                day.stages.every(({ meanSeconds }) => !meanSeconds) ? <span>{duration(0)}</span> :
-                  stages.map(([phase, label, color]) => {
-                    const mean = day.stages.find((stage) => stage.phase === phase)?.meanSeconds;
-                    return mean ? <span key={phase} className={`daily-segment stage-${color}`}
-                      style={{ width: `${100 * mean / scale}%` }} title={`${label} · ${duration(mean)}`} /> : null;
-                  })}
-            </span>
-          </summary>
-          <table className="daily-values">
-            <caption className="sr-only">Stage means for {dayLabel(day.startsAt)}</caption>
-            <thead><tr><th scope="col">Stage</th><th scope="col">Mean</th><th scope="col">Measured</th></tr></thead>
-            <tbody>{stages.map(([phase, label, color]) => {
-              const sample = day.stages.find((stage) => stage.phase === phase);
-              return <tr key={phase}><th scope="row" className={`stage-${color}`}>{label}</th>
-                <td>{duration(sample?.meanSeconds ?? null)}</td>
-                <td>{countLabel(sample?.measured ?? 0)} / {countLabel(day.verified)}</td></tr>;
-            })}</tbody>
-          </table>
-        </details>)}
-      </>}
+      days.length ? <DailyColumns days={days} window={window} /> :
+        <p className="fine">No verified shipments in this review window.</p>}
   </section>;
 }
 
