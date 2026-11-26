@@ -11,5 +11,6 @@
     "types": ["vite/client"],
     "skipLibCheck": true
   },
-  "include": ["*.ts", "*.tsx", "visual"]
+  "include": ["*.ts", "*.tsx", "visual"],
+  "exclude": ["vite.config.ts"]
 }
