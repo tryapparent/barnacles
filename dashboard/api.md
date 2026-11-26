@@ -71,9 +71,11 @@ and reduced-motion behavior as the rest of the scene.
 
 The reference images for the two working shores are the [Clyde shipyard archive](https://i.rcahms.gov.uk/canmore/x/SC01268607.jpg)
 and the [Historic England Whitby archive](https://historicengland.org.uk/images-books/photos/item/AA63/04965).
-The canvas draws at most four ships per stage for readability. The Fleet
-manifest lists every observed PR with a link to its evidence. Vessel size uses
-depth perspective because the evidence source does not retain PR diff sizes.
+The canvas draws at most four ships per stage for readability. Hover over a ship
+or tab to it to see its PR number and current stage. Press Escape to dismiss the
+label. Select the ship to open its PR evidence. The Fleet manifest lists every
+observed PR with a link to its evidence. Vessel size uses depth perspective
+because the evidence source does not retain PR diff sizes.
 The shore artwork uses the same silver highlights and blue-black shadows as
 the ships, with softer tones in the distance and lower exposure at night.
 
