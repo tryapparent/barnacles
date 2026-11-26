@@ -41,17 +41,19 @@ while read -r local_ref local_oid remote_ref remote_oid; do
   [ -n "$changed" ] || continue
   hook_tests=''
   collector_tests=''
+  dashboard_tests=''
   while IFS= read -r path; do
     case "$path" in
       *.md|LICENSE|*/APPARENT-LICENSE) ;;
       .githooks/*) hook_tests=yes ;;
-      collector/*|evidence/*) collector_tests=yes ;;
-      *) hook_tests=yes; collector_tests=yes ;;
+      collector/*|evidence/*) collector_tests=yes; dashboard_tests=yes ;;
+      dashboard/*) dashboard_tests=yes ;;
+      *) hook_tests=yes; collector_tests=yes; dashboard_tests=yes ;;
     esac
   done <<PATHS
 $changed
 PATHS
-  [ -n "$hook_tests$collector_tests" ] || continue
+  [ -n "$hook_tests$collector_tests$dashboard_tests" ] || continue
 
   scratch=$(mktemp -d "/tmp/apparent-dev-barnacles-push-XXXXXX")
   mkdir "$scratch/source"
@@ -71,6 +73,12 @@ PATHS
     if [ -n "$collector_tests" ]; then
       printf 'pre-push: checking collector tests at %s\n' "$head" >&2
       node --test collector/github/attempt.test.ts collector/sources.test.ts
+    fi
+    if [ -n "$dashboard_tests" ]; then
+      if [ -f dashboard/prepare.test.ts ]; then
+        printf 'pre-push: checking dashboard snapshot at %s\n' "$head" >&2
+        node --test dashboard/prepare.test.ts
+      fi
     fi
   )
   rm -rf "$scratch"

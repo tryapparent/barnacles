@@ -18,6 +18,6 @@ T3 metadata + local Codex rollouts + GitHub delivery evidence
 - [Evidence](evidence/README.md) defines record identities, release attribution, and metrics.
 - [Dashboard](dashboard/README.md) describes the planned Grafana surface and drilldown.
 
-The [Actions import](collector/README.md#run-the-actions-import) and the [T3, Codex, and GitHub delivery imports](collector/README.md#import-t3-codex-and-github-delivery) write local SQLite evidence. Use the delivery report to inspect verified releases and thread-to-release coverage. Grafana provisioning is a follow-up.
+The [Actions import](collector/README.md#run-the-actions-import) and the [T3, Codex, and GitHub delivery imports](collector/README.md#import-t3-codex-and-github-delivery) write local SQLite evidence. Use the delivery report to inspect verified releases and thread-to-release coverage. The [local Grafana dashboards](dashboard/provisioning/README.md) visualize shipping, recorded time, and rollout spans.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md). Barnacles is licensed under [MIT](LICENSE).
