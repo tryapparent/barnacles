@@ -12,11 +12,14 @@ type Ratio = { numerator: number; denominator: number };
 const seconds = ({ numerator, denominator }: Ratio) => denominator ? numerator / denominator / 1000 : null;
 type Stats = { $: "Stats"; count: number; total: number; missing: number };
 type Shipping = { $: "Delivery"; shipped: number; cycles: Stats };
+type CycleStage = { $: "Measured"; ms: number } | { $: "Missing" };
 type Metrics = TracePolicy & {
   record_release(sample: Shipping, linked: boolean, elapsedMs: number): Shipping;
   visible_release(channel: string, published: number): boolean;
   codex_clock(clock: string): string;
   record_interval(sample: Stats, start: number, end: number): Stats;
+  cycle_stage(start: number, end: number): CycleStage;
+  count_cycle_stage(sample: Stats, stage: CycleStage): Stats;
   mean(sample: Stats): Ratio;
   week(epoch: number): number;
   previous_week(epoch: number): number;
@@ -47,6 +50,9 @@ function writeSnapshot(input: string, output: string, otlp: string, repo: string
       CREATE TABLE weeks(week INTEGER, shipped INTEGER, cycle_count INTEGER, mean_seconds REAL);
       CREATE TABLE releases(pr INTEGER, opened INTEGER, merged INTEGER, published INTEGER, verified INTEGER,
         cycle_seconds REAL, pr_seconds REAL, url TEXT);
+      CREATE TABLE delivery_milestones(pr INTEGER, ordinal INTEGER, name TEXT, observed_ms INTEGER, elapsed_seconds REAL,
+        PRIMARY KEY (pr, ordinal));
+      CREATE TABLE delivery_stages(ordinal INTEGER PRIMARY KEY, name TEXT, mean_seconds REAL, observed INTEGER, missing INTEGER);
       CREATE TABLE work(pr INTEGER, status TEXT, created INTEGER, url TEXT);
       CREATE TABLE timing(clock TEXT, workflow INTEGER, operation TEXT, count INTEGER,
         mean_seconds REAL, total_seconds REAL, unmeasured INTEGER, rank INTEGER);
@@ -63,17 +69,36 @@ function writeSnapshot(input: string, output: string, otlp: string, repo: string
     const prs = table("github_prs") ? deliveryReport(input, policy).filter((row) => row.repository === repo) : [];
     const weeks = new Map<number, Shipping>();
     const release = view.prepare("INSERT INTO releases VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+    const milestone = view.prepare("INSERT INTO delivery_milestones VALUES (?, ?, ?, ?, ?)");
+    const milestoneNames = ["Thread started", "First commit", "PR opened", "First PR CI", "PR merged", "Release dispatched", "Shipped", "Access verified"];
+    const stageNames = ["Thread → commit", "Commit → PR open", "PR open → first CI", "First CI → merge", "Merge → dispatch",
+      "Dispatch → ship", "PR open → merge", "Merge → ship", "Thread → ship"];
+    const stageStats = stageNames.map(() => empty);
     let delivery = emptyShipping;
     for (const row of prs) {
       if (!metrics.visible_release(String(row.channel ?? ""), Number(row.published_at ?? 0))) continue;
       const number = Number(row.pr_number);
       release.run(number, row.opened_at, row.merged_at, row.published_at, row.checked_at,
         row.thread_to_release_seconds, row.pr_to_release_seconds, url(number));
+      const clocks = [Number(row.thread_started_ms ?? 0), millis(row.first_commit_at), millis(row.opened_at),
+        millis(row.first_ci_at), millis(row.merged_at), millis(row.release_dispatched_at),
+        millis(row.published_at), millis(row.checked_at)];
+      const stages = clocks.slice(1, -1).map((clock, index) => metrics.cycle_stage(clocks[index], clock));
+      const elapsed = [{ $: "Missing" } as const, ...stages, { $: "Missing" } as const];
+      clocks.forEach((clock, index) => {
+        const part = elapsed[index];
+        milestone.run(number, index, milestoneNames[index], clock || null, part.$ === "Measured" ? part.ms / 1000 : null);
+      });
+      stages.push(metrics.cycle_stage(clocks[2], clocks[4]), metrics.cycle_stage(clocks[4], clocks[6]),
+        metrics.cycle_stage(row.thread_to_release_seconds === null ? 0 : clocks[0], clocks[6]));
+      stages.forEach((part, index) => { stageStats[index] = metrics.count_cycle_stage(stageStats[index], part); });
       const params = [row.thread_to_release_seconds !== null, Math.round((row.thread_to_release_seconds ?? 0) * 1000)] as const;
       delivery = metrics.record_release(delivery, ...params);
       const week = metrics.week(Number(row.published_at));
       weeks.set(week, metrics.record_release(weeks.get(week) ?? emptyShipping, ...params));
     }
+    const stageInsert = view.prepare("INSERT INTO delivery_stages VALUES (?, ?, ?, ?, ?)");
+    stageStats.forEach((stats, index) => stageInsert.run(index, stageNames[index], seconds(metrics.mean(stats)), stats.count, stats.missing));
     const weekInsert = view.prepare("INSERT INTO weeks VALUES (?, ?, ?, ?)");
     for (const [week, { shipped, cycles }] of weeks) {
       weekInsert.run(week, shipped, cycles.count, seconds(metrics.mean(cycles)));

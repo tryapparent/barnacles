@@ -25,6 +25,10 @@ export type SourcePolicy = {
   call_record(state: unknown): CallRecord;
   pick_milestone(best: Milestone, next: Milestone): Milestone;
   pick_review(best: Milestone, next: Milestone, opened: number): Milestone;
+  pr_ci_start(event: string, status: string, conclusion: string, attempt: number, matched: boolean,
+    opened: number, started: number, merged: number): boolean;
+  publishing_run(event: string, conclusion: string, created: number, published: number, updated: number,
+    sourceMatches: boolean, runMatches: boolean): boolean;
   commit_complete(expected: number, observed: number): boolean;
   keep_commit(complete: boolean, milestone: Milestone): boolean;
   pick_release(best: ReleaseOrder, next: ReleaseOrder, eligible: boolean): ReleaseOrder;
@@ -70,6 +74,7 @@ export type RolloutEvidence = {
 export type PullRequest = {
   repository: string; number: number; opened: number; merged: number | null;
   mergeSha: string | null; state: string; firstCommit: { sha: string; at: number } | null;
+  firstCI?: { id: number; at: number } | null;
   firstReview: { id: number; at: number } | null; commitsComplete: boolean; reviewsComplete: boolean;
   updated: number;
 };
@@ -78,6 +83,7 @@ export type ReleaseEvidence = {
   id: number; tag: string; source: string; tagMatches: boolean; channel: string;
   published: number | null; assetId: number | null; checked: number;
   http: number | null; bytes: number | null; accessible: boolean; ancestry: string; shipped: boolean;
+  dispatch?: { id: number; at: number } | null;
 };
 
 const schema = readFileSync(new URL("./sources.sql", import.meta.url), "utf8");
@@ -145,10 +151,18 @@ export function saveDelivery(path: string, pr: PullRequest, release?: ReleaseEvi
       pr.repository, pr.number, pr.state, pr.opened, pr.merged, pr.mergeSha,
       pr.firstCommit?.at ?? null, pr.firstCommit?.sha ?? null, Number(pr.commitsComplete),
       pr.firstReview?.at ?? null, pr.firstReview?.id ?? null, Number(pr.reviewsComplete), pr.updated);
+    if (pr.firstCI) {
+      db.prepare("INSERT OR REPLACE INTO github_pr_ci VALUES (?, ?, ?, ?)")
+        .run(pr.repository, pr.number, pr.firstCI.id, pr.firstCI.at);
+    }
     if (!release) return;
     const key = [pr.repository, release.id, release.channel] as const;
     db.prepare("INSERT OR REPLACE INTO github_releases VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
       ...key, release.tag, release.source, Number(release.tagMatches), release.published, release.assetId);
+    if (release.dispatch) {
+      db.prepare("INSERT OR REPLACE INTO github_release_dispatch VALUES (?, ?, ?, ?, ?)")
+        .run(...key, release.dispatch.id, release.dispatch.at);
+    }
     db.prepare("INSERT OR REPLACE INTO github_asset_checks VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
       ...key, release.checked, release.assetId, release.http, release.bytes, Number(release.accessible));
     db.prepare("INSERT OR REPLACE INTO github_release_proofs VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
@@ -177,9 +191,14 @@ export function deliveryReport(path: string, policy: SourcePolicy) {
       SELECT owning, created_ms FROM t3_pr_links JOIN t3_threads USING (instance, thread_id)
       WHERE repository = ? AND pr_number = ?
     `);
+    const ci = db.prepare("SELECT 1 FROM sqlite_schema WHERE name='github_pr_ci'").get()
+      ? db.prepare("SELECT run_id, started_at FROM github_pr_ci WHERE repository=? AND pr_number=?") : null;
+    const dispatch = db.prepare("SELECT 1 FROM sqlite_schema WHERE name='github_release_dispatch'").get()
+      ? db.prepare("SELECT run_id, created_at FROM github_release_dispatch WHERE repository=? AND release_id=? AND channel=?") : null;
     const none: ReleaseOrder = { $: "Release", published: 0xffffffff, checked: 0xffffffff, id: "", index: 0 };
     return pullRequests.flatMap(({ merge_sha, ...pr }) => {
       const key = [pr.repository, pr.pr_number] as const;
+      const firstCI = ci?.get(...key);
       const groups = Map.groupBy(candidates.all(...key), (release) => release.channel);
       const selected = [];
       for (const releases of groups.values()) {
@@ -197,8 +216,11 @@ export function deliveryReport(path: string, policy: SourcePolicy) {
         const opened = Number(pr.opened_at);
         const published = Number(release?.published_at ?? 0);
         const cycle = policy.thread_to_release(owner.count, owner.s, owner.ms, opened, published);
+        const run = release && dispatch?.get(pr.repository, release.release_id, release.channel);
         return {
           ...pr, channel: release?.channel ?? null, published_at: release?.published_at ?? null,
+          first_ci_at: firstCI?.started_at ?? null, first_ci_run: firstCI?.run_id ?? null,
+          release_dispatched_at: run?.created_at ?? null, release_run: run?.run_id ?? null,
           checked_at: release?.checked_at ?? null, ancestry: release?.ancestry ?? null,
           release_id: release?.release_id ?? null, asset_id: release?.asset_id ?? null,
           owner_count: owner.count, thread_started_ms: owner.s ? owner.s * 1000 + owner.ms : null,

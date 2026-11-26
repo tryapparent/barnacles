@@ -23,12 +23,13 @@ test("dashboard derives a covered comparison and preserves missing source covera
       const sha = String(pr).repeat(40);
       saveDelivery(source, {
         repository: repo, number: pr, state: "merged", opened: published - 1000,
-        merged: published - 500, mergeSha: sha, firstCommit: null, firstReview: null,
-        commitsComplete: false, reviewsComplete: false, updated: published,
+        merged: published - 500, mergeSha: sha, firstCommit: { sha, at: published - (pr === 1 ? 1500 : 700) },
+        firstCI: pr === 1 ? { id: 3, at: published - 980 } : null, firstReview: null,
+        commitsComplete: true, reviewsComplete: false, updated: published,
       }, {
         id: pr, tag: `linux-main-v2-${sha}`, source: sha, tagMatches: true, channel: "linux-main-x86_64",
         published, assetId: pr, checked: published + 1, http: 206, bytes: 1,
-        accessible: true, ancestry: "equal", shipped: true,
+        accessible: true, ancestry: "equal", shipped: true, dispatch: pr === 1 ? { id: 4, at: published - 200 } : null,
       });
       saveThread(source, {
         instance: "synthetic", id: `thread-${pr}`, created: (published - cycle) * 1000,
@@ -58,6 +59,12 @@ test("dashboard derives a covered comparison and preserves missing source covera
     try {
       const summary = db.prepare("SELECT shipped, linked, direction, delta_seconds FROM coverage").get();
       assert.deepEqual(Object.values(summary!), [2, 2, "Gardening", 3600]);
+      assert.deepEqual(db.prepare("SELECT mean_seconds, observed, missing FROM delivery_stages ORDER BY ordinal").all().map(Object.values),
+        [[2500, 2, 0], [500, 1, 1], [20, 1, 1], [480, 1, 1], [300, 1, 1], [200, 1, 1],
+          [500, 2, 0], [500, 2, 0], [3600, 2, 0]]);
+      assert.deepEqual(db.prepare("SELECT name, elapsed_seconds FROM delivery_milestones WHERE pr=2 ORDER BY ordinal").all().map(Object.values),
+        [["Thread started", null], ["First commit", 4700], ["PR opened", null], ["First PR CI", null],
+          ["PR merged", null], ["Release dispatched", null], ["Shipped", null], ["Access verified", null]]);
       assert.equal(db.prepare("SELECT count(*) AS n FROM time_map").get()?.n, 2);
       assert.equal(db.prepare("SELECT count(*) AS n FROM trace WHERE ended IS NULL").get()?.n, 1);
       assert.deepEqual(db.prepare("SELECT started, ended, measured FROM trace_windows ORDER BY session").all().map(Object.values),

@@ -19,7 +19,56 @@ function probe(url: string, size: number) {
   }
 }
 
-export function pullRequest(repo: string, number: number, policy: SourcePolicy, read = readGitHub): PullRequest {
+function workflowRuns(path: string, read: typeof readGitHub) {
+  let response: Record<string, unknown>;
+  try { response = row(read(path)); }
+  catch { return []; }
+  if (!Array.isArray(response.workflow_runs) || response.workflow_runs.length > 100 ||
+      response.total_count !== response.workflow_runs.length) return [];
+  return response.workflow_runs.map(row);
+}
+
+function firstPRCI(repo: string, pr: Record<string, unknown>, commits: unknown[], complete: boolean,
+  opened: number, merged: number | null, policy: SourcePolicy, read: typeof readGitHub) {
+  if (!merged || !pr.head) return null;
+  const head = row(pr.head);
+  const baseRepo = row(row(pr.base).repo);
+  const branch = str(head.ref);
+  if (!branch || baseRepo.id === undefined) return null;
+  const period = [opened, merged].map((clock) => new Date(clock * 1000).toISOString().replace(".000Z", "Z")).join("..");
+  const query = new URLSearchParams({ event: "pull_request", branch, created: period, per_page: "100" });
+  const revisions = new Set(commits.map((commit) => str(row(commit).sha)));
+  const first = workflowRuns(`repos/${repo}/actions/runs?${query}`, read).reduce<Milestone>((best, run) => {
+    if (!Array.isArray(run.pull_requests)) return best;
+    const prLinks = run.pull_requests.map(row);
+    const explicit = prLinks.some((link) => link.number === pr.number && link.base &&
+      row(link.base).repo && row(row(link.base).repo).id === baseRepo.id);
+    const headRepoId = head.repo ? row(head.repo).id : null;
+    const runRepoId = run.repository ? row(run.repository).id : null;
+    const runHeadRepoId = run.head_repository ? row(run.head_repository).id : null;
+    const revision = str(run.head_sha);
+    const sameBranch = Boolean(prLinks.length === 0 && complete && runRepoId === baseRepo.id &&
+      headRepoId && headRepoId === runHeadRepoId && run.head_branch === branch &&
+      revision && revisions.has(revision));
+    const at = seconds(run.run_started_at);
+    return policy.pr_ci_start(str(run.event), str(run.status), str(run.conclusion), Number(run.run_attempt ?? 0),
+      explicit || sameBranch, opened, at, merged)
+      ? policy.pick_milestone(best, { $: "Milestone", id: String(positiveInt(run.id)), at }) : best;
+  }, { $: "Milestone", id: "", at: 0xffffffff });
+  return first.id ? { id: Number(first.id), at: first.at } : null;
+}
+
+function releaseDispatch(root: string, source: string, published: number, policy: SourcePolicy, read: typeof readGitHub) {
+  const query = new URLSearchParams({ head_sha: source, event: "workflow_dispatch", per_page: "100" });
+  const runs = workflowRuns(`${root}/actions/workflows/verification.yml/runs?${query}`, read).filter((run) => {
+    const identity = /^main · source ([0-9a-f]{40}) · candidate run ([1-9]\d*)(?: ·|$)/.exec(str(run.display_title));
+    return policy.publishing_run(str(run.event), str(run.conclusion), seconds(run.created_at), published,
+      seconds(run.updated_at), policy.same_revision(identity?.[1] ?? "", source), identity?.[2] === String(run.id));
+  });
+  return runs.length === 1 ? { id: positiveInt(runs[0].id), at: seconds(runs[0].created_at) } : null;
+}
+
+export function pullRequest(repo: string, number: number, policy: SourcePolicy, read = readGitHub, includeCI = false): PullRequest {
   const name = repository(repo);
   const path = `repos/${name}/pulls/${positiveInt(number)}`;
   const pr = row(read(path));
@@ -53,12 +102,13 @@ export function pullRequest(repo: string, number: number, policy: SourcePolicy, 
     repository: name, number, opened, merged, mergeSha: merged ? sha(pr.merge_commit_sha) : null,
     state: policy.link_state(merged ? "merged" : str(pr.state)),
     firstCommit, commitsComplete, firstReview, reviewsComplete: reviews.length < 100,
+    firstCI: includeCI ? firstPRCI(name, pr, commits, commitsComplete, opened, merged, policy, read) : null,
     updated: seconds(pr.updated_at),
   };
 }
 
 export function releaseEvidence(pr: PullRequest, tag: string, policy: SourcePolicy,
-  read = readGitHub, access = probe): ReleaseEvidence {
+  read = readGitHub, access = probe, includeDispatch = false): ReleaseEvidence {
   const source = sha(policy.linux_main_source(str(tag)));
   const root = `repos/${pr.repository}`;
   const release = row(read(`${root}/releases/tags/${tag}`));
@@ -86,11 +136,12 @@ export function releaseEvidence(pr: PullRequest, tag: string, policy: SourcePoli
     ? access(url, positiveInt(asset.size)) : { http: 0, bytes: 0, range: false };
   const checked = Math.floor(Date.now() / 1000);
   const accessible = policy.asset_access(proof.http, proof.bytes, proof.range);
+  const shipped = policy.shipping(pr.merged ?? 0, published, checked,
+    ancestry === "equal" || ancestry === "ancestor", accessible);
   return {
     id: positiveInt(release.id), tag, source, tagMatches, channel: "linux-main-x86_64",
     published: published || null, assetId: asset ? positiveInt(asset.id) : null,
     checked, http: proof.http || null, bytes: proof.http ? proof.bytes : null, accessible, ancestry,
-    shipped: policy.shipping(pr.merged ?? 0, published, checked,
-      ancestry === "equal" || ancestry === "ancestor", accessible),
+    shipped, dispatch: includeDispatch && shipped ? releaseDispatch(root, source, published, policy, read) : null,
   };
 }

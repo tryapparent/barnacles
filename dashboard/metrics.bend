@@ -17,6 +17,18 @@ def unavailable(sample: Sample) -> Sample:
 def record_interval(+sample: Sample, +start: Nat, +end: Nat) -> Sample:
   Bool.pick(Sample, interval_valid(start, end), record(sample, Nat.sub(end, start)), unavailable(sample))
 
+type CycleStage is Data:
+  Measured{ms: Nat}
+  Missing{}
+
+def cycle_stage(+start: Nat, +finish: Nat) -> CycleStage:
+  Bool.pick(CycleStage, interval_valid(start, finish), Measured{Nat.sub(finish, start)}, Missing{})
+
+def count_cycle_stage(+sample: Sample, stage: CycleStage) -> Sample:
+  match stage:
+    case Measured{ms}: record(sample, ms)
+    case Missing{}: unavailable(sample)
+
 type Ratio is Data:
   Fraction{numerator: Nat, denominator: Nat}
 
