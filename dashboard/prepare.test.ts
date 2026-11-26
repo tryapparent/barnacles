@@ -107,6 +107,8 @@ test("dashboard derives a covered comparison and preserves missing source covera
       const overview = db.prepare(`SELECT operation, count, mean_seconds, total_seconds, unmeasured, has_area
         FROM operation_totals WHERE clock=? ORDER BY rank`);
       assert.deepEqual(overview.all("CI execution").map(Object.values), [["Build", 2, 10, 20, 0, 1]]);
+      assert.deepEqual(db.prepare(`SELECT workflow FROM workflows WHERE clock='CI execution' ORDER BY rank`).all().map(Object.values),
+        [[1], [2]]);
       assert.deepEqual(overview.all("CI queue").map(Object.values), [["Build", 2, 1.5, 3, 0, 1]]);
       assert.deepEqual(overview.all("Async cells").map(Object.values),
         [["Mixed", 1, 0.6, 0.6, 0, 1], ["Unknown", 0, null, null, 1, 0]]);

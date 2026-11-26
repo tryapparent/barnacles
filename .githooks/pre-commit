@@ -5,4 +5,5 @@ if ! command -v node >/dev/null || [ ! -d "$root/node_modules/web-tree-sitter" ]
   printf '%s\n' 'pre-commit: install Node 22.18+ and run npm ci --ignore-scripts.' >&2
   exit 1
 fi
-exec node "$root/.githooks/check-comments.ts"
+node "$root/.githooks/check-comments.ts"
+exec node "$root/.githooks/check-bend-paths.ts"

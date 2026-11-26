@@ -1,0 +1,62 @@
+{
+  "Source I/O and provider codecs": [
+    "collector/github/attempt.ts",
+    "collector/github/delivery.ts",
+    "collector/import-actions.ts",
+    "collector/import-sources.ts",
+    "collector/rollout-syntax.ts",
+    "collector/rollout.ts",
+    "collector/t3.ts",
+    "collector/wire.ts"
+  ],
+  "SQLite I/O, runtime entrypoints, and Bend2 interface types": [
+    "evidence/actions.sql",
+    "evidence/actions.ts",
+    "evidence/delivery.ts",
+    "evidence/index.ts",
+    "evidence/intervals.ts",
+    "evidence/load.ts",
+    "evidence/read.ts",
+    "evidence/report-actions.ts",
+    "evidence/repository.ts",
+    "evidence/snapshot.ts",
+    "evidence/sources.sql",
+    "evidence/sources.ts",
+    "evidence/timing.ts",
+    "evidence/trace.ts"
+  ],
+  "Grafana and Tempo provisioning, serialization, and runtime": [
+    "dashboard/load-tempo.ts",
+    "dashboard/panels.ts",
+    "dashboard/prepare.ts",
+    "dashboard/provisioning/dashboards/barnacles.yml",
+    "dashboard/provisioning/datasources/barnacles.yml",
+    "dashboard/provisioning/tempo.yml",
+    "dashboard/run.sh",
+    "dashboard/trace.ts"
+  ],
+  "Node, Git, compiler, and verification tooling": [
+    ".githooks/bend-exceptions.json",
+    ".githooks/check-bend-paths.ts",
+    ".githooks/check-comments.ts",
+    ".githooks/comment-syntax.ts",
+    ".githooks/comments.test.ts",
+    ".githooks/pre-commit",
+    ".githooks/pre-push",
+    ".githooks/push.test.ts",
+    ".githooks/snapshot.ts",
+    ".github/workflows/verify.yml",
+    "package-lock.json",
+    "package.json",
+    "tooling/bend.ts",
+    "tooling/check-boundaries.ts",
+    "tooling/verify.ts"
+  ],
+  "Synthetic integration fixtures and demo": [
+    "collector/github/attempt.test.ts",
+    "collector/sources.test.ts",
+    "dashboard/prepare.test.ts",
+    "evidence/delivery.test.ts",
+    "examples/demo.ts"
+  ]
+}

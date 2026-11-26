@@ -3,9 +3,10 @@ import { DatabaseSync, type SQLInputValue, type SQLOutputValue } from "node:sqli
 import { buildPolicies, loadPolicy } from "../tooling/bend.ts";
 import { readDelivery } from "./delivery.ts";
 import { sourcePolicy, type List, type SourcePolicy } from "./sources.ts";
-import { collectTiming, empty, millis, seconds, type Stats, type TimingPolicy } from "./timing.ts";
+import { collectTiming, empty, millis, rows, seconds, type Stats, type TimingPolicy } from "./timing.ts";
 import { projectTrace, type TracePolicy, type TraceProjection, type SpanRow } from "./trace.ts";
 
+type SessionTiming = { $: "SessionTiming"; envelopes: Stats; cells: Stats };
 type Shipping = { $: "Delivery"; shipped: number; cycles: Stats };
 type CycleStage = { $: "Measured"; ms: number } | { $: "Missing" };
 type Estimator = {
@@ -17,8 +18,9 @@ type Estimator = {
 type Metrics = TracePolicy & TimingPolicy & {
   record_release(sample: Shipping, linked: boolean, elapsedMs: number): Shipping;
   visible_release(channel: string, published: number): boolean;
+  empty_session_timing(): SessionTiming;
+  session_timing_observe(state: SessionTiming, clock: string, start: number, end: number): SessionTiming;
   rollout_clean(malformed: number, orphans: number): boolean;
-  observed_category(categories: string): { $: "Category"; name: string } | { $: "MixedCommand"; name: string; group: string };
   trace_preference(asyncSpans: number, reasoningEvents: number): boolean;
   trace_preferred(ended: number, mixed: boolean, otherEnded: number, otherMixed: boolean): boolean;
   delivery_stages(thread: number, commit: number, opened: number, ci: number, merged: number,
@@ -193,47 +195,47 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
           start: row.started_ms as number | null, end: row.ended_ms as number | null }));
         const events = (bySession.get(key) ?? []).map((row) => ({ line: Number(row.source_line), at: Number(row.observed_ms),
           resultAt: Number(row.result_at ?? 0), resultCallLine: Number(row.result_call_line ?? 0) }));
-        const clocks = new Map([["Tool envelopes", empty], ["Async cells", empty]]);
+        let clocks = metrics.empty_session_timing();
         for (const row of observations) {
           const clock = metrics.interval_clock(row.clock);
           const start = row.start ?? 0;
           const end = row.end ?? 0;
-          const category = metrics.observed_category(row.categories);
-          timing.add(row, 0, category.name, category.$ === "MixedCommand" ? category.group : undefined);
-          clocks.set(clock, metrics.record_interval(clocks.get(clock) ?? empty, start, end));
+          timing.observeCodex(row, row.categories);
+          clocks = metrics.session_timing_observe(clocks, row.clock, start, end);
           insert.run(session, row.line, metrics.trace_operation(row.clock, row.tool, row.command, row.categories),
             clock, row.start, row.end);
         }
-        let ordinal = 0;
-        for (const [clock, stats] of clocks) coverage.run(session, ordinal++, clock, stats.count, stats.missing);
-        coverage.run(session, ordinal, "Reasoning events", events.length, null);
+        coverage.run(session, 0, "Tool envelopes", clocks.envelopes.count, clocks.envelopes.missing);
+        coverage.run(session, 1, "Async cells", clocks.cells.count, clocks.cells.missing);
+        coverage.run(session, 2, "Reasoning events", events.length, null);
         for (const event of events) mark.run(session, event.line, event.at);
         const rollout = rollouts.get(key);
         const trace = projectTrace(observations, events, metrics.rollout_clean(
           Number(rollout?.malformed_count ?? 1), Number(rollout?.orphan_count ?? 1)), metrics);
         const traceId = trace ? writeTrace(key, trace) : null;
         windows.run(session, traceId, trace?.bounds.from ?? null, trace?.bounds.to ?? null, trace?.spans.length ?? 0);
-        const mixed = metrics.trace_preference(clocks.get("Async cells")?.count ?? 0, events.length);
+        const mixed = metrics.trace_preference(clocks.cells.count, events.length);
         if (trace && traceId && metrics.trace_preferred(trace.bounds.to, mixed, defaultTrace?.to ?? 0, defaultTrace?.mixed ?? false)) {
           defaultTrace = { session, from: trace.bounds.from, to: trace.bounds.to, traceId, mixed };
         }
       }
     }
+    const ranked = timing.result();
     const timingInsert = view.prepare("INSERT INTO timing VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-    timing.operations().forEach((row, rank) =>
+    rows(ranked.operations).forEach((row, rank) =>
       timingInsert.run(row.clock, row.workflow, row.operation, row.stats.count,
         seconds(metrics.mean(row.stats)), row.stats.total / 1000, row.stats.missing, rank));
     const workflowInsert = view.prepare("INSERT INTO workflows VALUES (?, ?, ?, ?, ?, ?, ?)");
-    timing.workflows().forEach((row, rank) =>
+    rows(ranked.workflows).forEach((row, rank) =>
       workflowInsert.run(row.clock, row.workflow, row.stats.total / 1000,
         row.stats.count, seconds(metrics.mean(row.stats)), row.stats.missing, rank));
     const overviewInsert = view.prepare("INSERT INTO operation_totals VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-    const operations = timing.operationTotals();
+    const operations = rows(ranked.totals);
     operations.forEach((row, rank) =>
       overviewInsert.run(row.clock, row.operation, row.stats.count, seconds(metrics.mean(row.stats)),
         seconds(metrics.measured_total(row.stats)), row.stats.missing, Number(metrics.operation_area(row.stats)), rank));
     const mixInsert = view.prepare("INSERT INTO mixed_groups VALUES (?, ?, ?, ?, ?, ?, ?)");
-    timing.mixedGroups().forEach((row, rank) =>
+    rows(ranked.mixed).forEach((row, rank) =>
       mixInsert.run(row.clock, row.operation, row.stats.count, seconds(metrics.mean(row.stats)),
         seconds(metrics.measured_total(row.stats)), row.stats.missing, rank));
 

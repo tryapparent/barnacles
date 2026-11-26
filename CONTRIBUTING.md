@@ -23,6 +23,8 @@ npm run hooks:install
 
 Use Node 22.18 or later. The installer selects the tracked hook directory in the current worktree. The hook runs offline and compares parsed comments in the staged Git tree to the current HEAD. Existing comments may remain or be deleted. A detected rename can carry an existing comment to the new path. A copy receives no allowance.
 
+The Bend2 path check reads the exception registry from the staged tree. New implementation paths, including rename and copy destinations, must use `.bend` or appear in [the exact-path registry](.githooks/bend-exceptions.json). Markdown and license files are allowed. Existing-file repairs remain possible. For a new host exception, get an explicit decision and record the concrete Bend2 limitation beside the owning code. Review changes inside approved paths for misplaced behavior. The push hook repeats the check against the committed tree.
+
 The check covers Bend2, JS and TS, shell, SQLite, YAML, JSON and JSONC, CSS, HTML and its supported embedded code, Markdown HTML comments, Git patterns, and several other common source formats. It treats recognized shebangs as executable syntax and ignores comment-like text in strings, regexes, and documentation examples. Plain text, license text, and recognized media files carry no code comment syntax. Unsupported changed formats and parse errors require a supported parser.
 
 Run the focused tests with `npm run test:hooks`. The hook adapts Apparent's staged snapshot and comment comparison approach. The [donor MIT notice](collector/APPARENT-LICENSE) covers adapted code.

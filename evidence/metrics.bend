@@ -177,3 +177,90 @@ def delivery_stages(+thread: Nat, +commit: Nat, +opened: Nat, +ci: Nat, +merged:
     Stage{0, "PR open → merge", cycle_stage(opened, merged)} <>
     Stage{0, "Merge → ship", cycle_stage(merged, published)} <>
     Stage{0, "Thread → ship", Bool.pick(CycleStage, linked, cycle_stage(thread, published), Missing{})} <> []
+
+type TimingRow is Data:
+  Timing{key: String, clock: String, workflow: Nat, operation: String, stats: Sample}
+
+type TimingGroups is Data:
+  Groups{operations: Map<&2, TimingRow>, workflows: Map<&2, TimingRow>,
+         totals: Map<&2, TimingRow>, mixed: Map<&2, TimingRow>}
+
+type TimingResult is Data:
+  Result{operations: List<&2, TimingRow>, workflows: List<&2, TimingRow>,
+         totals: List<&2, TimingRow>, mixed: List<&2, TimingRow>}
+
+def empty_timing() -> TimingGroups:
+  Groups{Map.new(&2, TimingRow), Map.new(&2, TimingRow), Map.new(&2, TimingRow), Map.new(&2, TimingRow)}
+
+def timing_record_found(found: Map<&2, TimingRow> & TimingRow, start: Nat, end: Nat) -> Map<&2, TimingRow>:
+  match found:
+    case (table, Timing{+key, clock, workflow, operation, stats}):
+      Map.set(&2, TimingRow, table, key, Timing{key, clock, workflow, operation, record_interval(stats, start, end)})
+
+def timing_record(groups: Map<&2, TimingRow>, +key: String, clock: String, workflow: Nat, operation: String,
+                  start: Nat, end: Nat) -> Map<&2, TimingRow>:
+  timing_record_found(Map.get(TimingRow, Timing{key, clock, workflow, operation, Stats{0n, 0n, 0n}}, groups, key), start, end)
+
+def timing_key(clock: String, workflow: Nat) -> String:
+  String.append(clock, String.append(",", Nat.show(workflow)))
+
+def timing_group_key(clock: String, operation: String) -> String:
+  String.append(clock, String.append(",", operation))
+
+def timing_mixed_choice(skip: Bool, mixed: Map<&2, TimingRow>, +clock: String, +group: String, start: Nat, end: Nat) ->
+    Map<&2, TimingRow>:
+  match skip:
+    case True{}: mixed
+    case False{}: timing_record(mixed, timing_group_key(clock, group), clock, 0n, group, start, end)
+
+def timing_add_mixed(mixed: Map<&2, TimingRow>, +clock: String, +group: String, start: Nat, end: Nat) ->
+    Map<&2, TimingRow>:
+  timing_mixed_choice(String.eq(group, ""), mixed, clock, group, start, end)
+
+def timing_add(groups: TimingGroups, +clock: String, +workflow: Nat, +name: String, group: String,
+               +start: Nat, +end: Nat) -> TimingGroups:
+  match groups:
+    case Groups{ops, flows, totals, +mixed}:
+      +prefix = timing_key(clock, workflow)
+      Groups{timing_record(ops, timing_group_key(prefix, name), clock, workflow, name, start, end),
+        timing_record(flows, prefix, clock, workflow, "", start, end),
+        timing_record(totals, timing_group_key(clock, name), clock, 0n, name, start, end),
+        timing_add_mixed(mixed, clock, group, start, end)}
+
+def timing_observe(groups: TimingGroups, raw_clock: String, workflow: Nat, name: String, start: Nat, end: Nat) ->
+    TimingGroups:
+  timing_add(groups, interval_clock(raw_clock), workflow, name, "", start, end)
+
+def timing_codex_category(groups: TimingGroups, raw_clock: String, category: Operation, start: Nat, end: Nat) -> TimingGroups:
+  match category:
+    case Category{name}: timing_observe(groups, raw_clock, 0n, name, start, end)
+    case MixedCommand{name, group}: timing_add(groups, interval_clock(raw_clock), 0n, name, group, start, end)
+
+def timing_codex(groups: TimingGroups, raw_clock: String, categories: String, start: Nat, end: Nat) -> TimingGroups:
+  timing_codex_category(groups, raw_clock, observed_category(categories), start, end)
+
+def timing_before(left: TimingRow, right: TimingRow) -> Bool:
+  match left right:
+    case Timing{a, ac, aw, ao, Stats{an, x, am}} Timing{b, bc, bw, bo, Stats{bn, y, bm}}:
+      ranks_before(x, a, y, b)
+
+def timing_rank(groups: Map<&2, TimingRow>) -> List<&2, TimingRow>:
+  List.sort(~TimingRow, ~timing_before, Map.values(&2, TimingRow, groups))
+
+def timing_result(groups: TimingGroups) -> TimingResult:
+  match groups:
+    case Groups{ops, flows, totals, mixed}:
+      Result{timing_rank(ops), timing_rank(flows), timing_rank(totals), timing_rank(mixed)}
+
+type SessionTiming is Data:
+  SessionTiming{envelopes: Sample, cells: Sample}
+
+def empty_session_timing() -> SessionTiming:
+  SessionTiming{Stats{0n, 0n, 0n}, Stats{0n, 0n, 0n}}
+
+def session_timing_observe(state: SessionTiming, clock: String, +start: Nat, +end: Nat) -> SessionTiming:
+  match state:
+    case SessionTiming{+envelopes, +cells}:
+      Bool.pick(SessionTiming, String.eq(clock, "async_cell"),
+        SessionTiming{envelopes, record_interval(cells, start, end)},
+        SessionTiming{record_interval(envelopes, start, end), cells})

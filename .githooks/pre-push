@@ -36,6 +36,7 @@ while read -r local_ref local_oid remote_ref remote_oid; do
     exit 1
   fi
   node .githooks/check-comments.ts "$base" "$head"
+  node .githooks/check-bend-paths.ts "$base" "$head"
 
   changed=$(git diff --name-only --no-renames "$base" "$head" --)
   [ -n "$changed" ] || continue

@@ -1,42 +1,32 @@
 import type { DatabaseSync, SQLOutputValue } from "node:sqlite";
+import type { List } from "./sources.ts";
 import type { IntervalClock, ObservedInterval } from "./intervals.ts";
 
 type Ratio = { numerator: number; denominator: number };
 export const seconds = ({ numerator, denominator }: Ratio) => denominator ? numerator / denominator / 1000 : null;
 export type Stats = { $: "Stats"; count: number; total: number; missing: number };
-type Timing = { clock: string; workflow: number; operation: string; stats: Stats };
-export const epochMillis = (time: SQLOutputValue) => time === null ? null : Number(time) * 1000;
+export type Timing = { clock: string; workflow: number; operation: string; stats: Stats };
+const epochMillis = (time: SQLOutputValue) => time === null ? null : Number(time) * 1000;
 export const millis = (time: SQLOutputValue) => epochMillis(time) ?? 0;
 
 export type TimingPolicy = {
   interval_clock(clock: IntervalClock): string;
-  record_interval(sample: Stats, start: number, end: number): Stats;
   mean(sample: Stats): Ratio;
   operation_area(sample: Stats): boolean;
   measured_total(sample: Stats): Ratio;
-  ranks_before(total: number, key: string, otherTotal: number, otherKey: string): boolean;
+  empty_timing(): unknown;
+  timing_observe(state: unknown, clock: IntervalClock, workflow: number, name: string, start: number, end: number): unknown;
+  timing_codex(state: unknown, clock: IntervalClock, categories: string, start: number, end: number): unknown;
+  timing_result(state: unknown): { operations: List<Timing>; workflows: List<Timing>; totals: List<Timing>; mixed: List<Timing> };
 };
 
 export const empty: Stats = { $: "Stats", count: 0, total: 0, missing: 0 };
 
 export function collectTiming(source: DatabaseSync, repo: string, metrics: TimingPolicy) {
   const all = (sql: string) => source.prepare(sql).all(repo);
-  const timing = new Map<string, Timing>();
-  const workflow = new Map<string, Timing>();
-  const operations = new Map<string, Timing>();
-  const mixes = new Map<string, Timing>();
-  function add(interval: ObservedInterval, id: number, operation: string, group?: string) {
-    const { start, end } = interval;
-    const clock = metrics.interval_clock(interval.clock);
-    function record(collection: Map<string, Timing>, key: string, name: string) {
-      const row = collection.get(key) ?? { clock, workflow: id, operation: name, stats: empty };
-      row.stats = metrics.record_interval(row.stats, start ?? 0, end ?? 0);
-      collection.set(key, row);
-    }
-    record(timing, JSON.stringify([clock, id, operation]), operation);
-    record(workflow, JSON.stringify([clock, id]), operation);
-    record(operations, JSON.stringify([clock, operation]), operation);
-    if (group !== undefined) record(mixes, JSON.stringify([clock, group]), group);
+  let state = metrics.empty_timing();
+  function add({ clock, start, end }: ObservedInterval, id: number, operation: string) {
+    state = metrics.timing_observe(state, clock, id, operation, start ?? 0, end ?? 0);
   }
   if (source.prepare("SELECT 1 FROM sqlite_schema WHERE name=?").get("action_jobs")) {
     for (const row of all(`
@@ -60,16 +50,16 @@ export function collectTiming(source: DatabaseSync, repo: string, metrics: Timin
         Number(row.workflow_id), String(row.label));
     }
   }
-  const compare = <T>(left: [string, T], right: [string, T], total: (data: T) => number) =>
-    Number(metrics.ranks_before(total(right[1]), right[0], total(left[1]), left[0])) -
-    Number(metrics.ranks_before(total(left[1]), left[0], total(right[1]), right[0]));
-  const ranked = (collection: Map<string, Timing>) =>
-    [...collection].sort((a, b) => compare(a, b, (row) => row.stats.total)).map(([, row]) => row);
   return {
-    add,
-    operations: () => ranked(timing),
-    workflows: () => ranked(workflow),
-    operationTotals: () => ranked(operations),
-    mixedGroups: () => ranked(mixes),
+    observeCodex({ clock, start, end }: ObservedInterval, categories: string) {
+      state = metrics.timing_codex(state, clock, categories, start ?? 0, end ?? 0);
+    },
+    result: () => metrics.timing_result(state),
   };
+}
+
+export function rows<T>(list: List<T>): T[] {
+  const result: T[] = [];
+  for (let row = list; row.$ === "Con"; row = row.tail) result.push(row.head);
+  return result;
 }

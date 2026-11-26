@@ -43,6 +43,7 @@ test("pre-push routes the outgoing commit and blocks failed verification", () =>
     }
     write(".gitattributes", "collector/github/attempt.test.ts export-ignore\n");
     write(".githooks/check-comments.ts", "process.exit(0)\n");
+    write(".githooks/check-bend-paths.ts", "process.exit(0)\n");
     write("README.md", "Baseline\n");
     write("package.json", '{"name":"push-fixture","version":"1.0.0","scripts":{"verify":"node tooling/verify.ts"}}\n');
     write("package-lock.json", '{"name":"push-fixture","version":"1.0.0","lockfileVersion":3,"packages":{}}\n');
