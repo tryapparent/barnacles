@@ -62,8 +62,8 @@ export async function readRollout(path: string, instance: string, policy: Source
   let malformed = 0;
   try {
     const info = await file.stat();
-    if (!info.isFile() || info.size === 0 || info.size > 64 * 1024 * 1024) {
-      throw Error("Expected one retained Codex rollout file of at most 64 MiB");
+    if (!info.isFile() || info.size === 0 || info.size > 128 * 1024 * 1024) {
+      throw Error("Expected one retained Codex rollout file of at most 128 MiB");
     }
     const lines = createInterface({ input: file.createReadStream({ end: info.size - 1, autoClose: false }),
       crlfDelay: Infinity });

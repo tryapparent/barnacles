@@ -78,6 +78,15 @@ def visible_release(surface: String, published: Nat) -> Bool:
 def codex_clock(clock: String) -> String:
   Bool.pick(String, String.eq(clock, "async_cell"), "Async cells", "Tool envelopes")
 
+def trace_preference(async_spans: Nat, reasoning_events: Nat) -> Bool:
+  Bool.and(Bool.not(Nat.is_eq(async_spans, 0n)), Bool.not(Nat.is_eq(reasoning_events, 0n)))
+
+def trace_preferred(+ended: Nat, mixed: Bool, +other_ended: Nat, +other_mixed: Bool) -> Bool:
+  Bool.and(Bool.not(Nat.is_eq(ended, 0n)),
+    Bool.pick(Bool, mixed,
+      Bool.or(Bool.not(other_mixed), Nat.is_lt(other_ended, ended)),
+      Bool.and(Bool.not(other_mixed), Nat.is_lt(other_ended, ended))))
+
 def trace_label(+tool: String, +command: String) -> String:
   Bool.pick(String, String.eq(command, ""), tool, String.append(tool, String.append(" · ", command)))
 
