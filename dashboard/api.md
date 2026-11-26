@@ -81,8 +81,8 @@ The browser presentation uses React, Vite, Canvas and SVG. TypeScript decodes
 API responses and renders the shared evidence. The Harbor build compiles
 the Bend2 duration formatter with the pinned compiler. Harbor rounds elapsed
 times to the nearest minute before splitting them into days, hours and
-minutes. Labels omit zero units and separators, for example `37M`, `1H`,
-`1H1M`, `1D` and `1D1H1M`. Values that round to zero display `0M`.
+minutes. Labels omit zero units and separators, for example `37m`, `1h`,
+`1h1m`, `1d` and `1d1h1m`. Values that round to zero display `0m`.
 The API retains its original precision and UTC timestamps.
 
 The local Button and
@@ -143,7 +143,9 @@ for all rows of the selected clock, or use an exact name from
 Use `limit` (1–100, default 25) and `offset` (default 0) to page through
 deliveries. Advance using `deliveries.nextOffset`, which is null at the end.
 The harbor's **Mean delivery stages by day** chart uses the full shipment
-selection across all pages. Open a day to view stage means and their coverage.
+selection across all pages. The date axis spans the selected UTC window and
+leaves gaps on dates without verified shipments. Select a column to view
+its stage means and coverage. Narrow screens scroll within the chart.
 Each mean uses PRs with both stage clocks in order. The stack shows the sum
 of the stage means, whose sample counts can differ. The access check is shown
 as its own interval after publication.
