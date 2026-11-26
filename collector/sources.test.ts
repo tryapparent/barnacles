@@ -77,6 +77,42 @@ test("compiled Bend2 source decisions through the SQLite import path", async () 
     assert.equal(pr.firstCommit?.sha, merged);
     assert.equal(pr.firstReview?.id, 7);
     assert.deepEqual(pr.firstCI, { id: 102, at: Date.parse(time("07")) / 1000 });
+    const alternateRuns = (replace: (inventory: { total_count: number; workflow_runs: unknown[] }) => unknown) =>
+      (path: string) => path.includes("/actions/runs?") ? replace(read(path) as { total_count: number; workflow_runs: unknown[] }) : read(path);
+    assert.equal(pullRequest(repo, 9, policy, alternateRuns((runs) => ({ ...runs, total_count: 5 })), true).firstCI, null);
+    assert.equal(pullRequest(repo, 9, policy, alternateRuns((runs) => ({
+      total_count: 2, workflow_runs: [runs.workflow_runs[0], runs.workflow_runs[0]],
+    })), true).firstCI, null);
+    const repeatedCommits = (path: string) => {
+      if (!path.includes("/commits?")) return read(path);
+      const [first] = read(path) as object[];
+      return [first, first];
+    };
+    const incomplete = pullRequest(repo, 9, policy, repeatedCommits, true);
+    assert.equal(incomplete.commitsComplete, false);
+    assert.equal(incomplete.firstCommit, null);
+    assert.equal(incomplete.firstCI, null);
+    const explicit = (path: string) => path.includes("/commits?") ? [] : alternateRuns((runs) => ({
+      total_count: 1, workflow_runs: [{ ...(runs.workflow_runs[0] as object), head_repository: { id: 77 },
+        pull_requests: [{ number: 9, base: { repo: { id: 4 } } }] }],
+    }))(path);
+    assert.equal(pullRequest(repo, 9, policy, (path) => path.includes("/commits?") ? [] : read(path), true).firstCI, null);
+    assert.equal(pullRequest(repo, 9, policy, explicit, true).firstCI?.id, 102);
+    const repeatedAssets = (path: string) => {
+      if (!path.includes("/releases/")) return read(path);
+      const release = read(path) as { assets: unknown[] };
+      return { ...release, assets: [...release.assets, ...release.assets] };
+    };
+    const noProbe = releaseEvidence(pr, tag, policy, repeatedAssets, () => assert.fail("Ambiguous assets must not be probed"));
+    assert.equal(noProbe.assetId, null);
+    assert.equal(noProbe.shipped, false);
+    const repeatedDispatch = (path: string) => {
+      if (!path.includes("/actions/workflows/verification.yml/runs?")) return read(path);
+      const releaseRuns = read(path) as { workflow_runs: unknown[] };
+      return { total_count: 2, workflow_runs: [...releaseRuns.workflow_runs, ...releaseRuns.workflow_runs] };
+    };
+    const available = () => ({ http: 206, bytes: 1, range: true });
+    assert.equal(releaseEvidence(pr, tag, policy, repeatedDispatch, available, true).dispatch, null);
     const failure = releaseEvidence(pr, tag, policy, read, () => ({ http: 206, bytes: 1, range: false }));
     saveDelivery(pr, failure);
     assert.equal(deliveryReport(path, reportPolicy)[0].pr_to_release_seconds, null);
@@ -186,6 +222,31 @@ test("compiled Bend2 source decisions through the SQLite import path", async () 
     ].map((line) => JSON.stringify(line)).join("\n") + "\n");
     const ambiguous = await readRollout(rollout, "codex-test", policy);
     assert.equal(ambiguous.calls.find(({ id }) => id === "launch")?.asyncEnd, null);
+    appendFileSync(rollout, [
+      event("13.500", { type: "custom_tool_call", name: "exec", call_id: "substitution",
+        input: 'text(await tools.exec_command({cmd:"cat $(git status)"}));' }),
+      event("13.600", { type: "custom_tool_call", name: "exec", call_id: "wrong-binding",
+        input: 'const r = await tools.exec_command({cmd:"git status"}); text(other);' }),
+      event("13.700", receipt("substitution", 0)),
+      event("13.800", receipt("wrong-binding", 0)),
+      event("14", receipt("eligible", 0)),
+      event("15", receipt("unseen", 0)),
+      event("10", { type: "function_call", call_id: "unseen", name: "apply_patch" }),
+      event("16", receipt("invalid identifier", 0)),
+      event("17", { type: "reasoning" }),
+    ].map((line) => JSON.stringify(line)).join("\n") + "\n{malformed\n");
+    const partial = await readRollout(rollout, "codex-test", policy);
+    assert.equal(partial.malformed, 2);
+    assert.equal(partial.markers.at(-1)?.resultCall, undefined);
+    assert.equal(partial.markers.at(-1)?.at, Date.parse(time("17")));
+    assert.equal(partial.orphans, 1);
+    assert.equal(partial.calls.at(-1)?.id, "unseen");
+    assert.equal(partial.calls.at(-1)?.end, null);
+    for (const call of ["eligible", "substitution", "wrong-binding"]) {
+      const rejected = partial.calls.find(({ id }) => id === call);
+      assert.ok(rejected);
+      assert.equal(rejected.mix, undefined);
+    }
   } finally {
     rmSync(job, { recursive: true, force: true });
   }

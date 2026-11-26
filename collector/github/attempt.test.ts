@@ -69,6 +69,19 @@ test("Bend2 clocks reach SQLite through the exact-attempt importer", async () =>
     assert.throws(() => collectAttempt({ ...identity, sha: "b".repeat(40) }, policy, read), /identity/);
     assert.throws(() => collectAttempt(identity, policy, (path) => path.includes("/jobs?")
       ? { total_count: 1, jobs: [{ ...allocated, run_attempt: 1 }] } : run), /job identity/);
+    const pages = Array.from({ length: 100 }, (_, index) => ({ ...allocated, id: 2 ** 32 + index, steps: [] }));
+    const secondPage = { ...allocated, id: 2 ** 32 + 100, steps: [] };
+    const pagedRead = (path: string, total: number, pageTwo: unknown[]) => {
+      if (!path.includes("/jobs?")) return run;
+      return path.endsWith("page=1") ? { total_count: 101, jobs: pages } : { total_count: total, jobs: pageTwo };
+    };
+    const paged = collectAttempt(identity, policy, (path) => pagedRead(path, 101, [secondPage]));
+    assert.deepEqual(paged.jobs.map(({ id }) => id), [...pages, secondPage].map(({ id }) => id));
+    assert.throws(() => collectAttempt(identity, policy, (path) => pagedRead(path, 101, [pages[0]])), /Duplicate GitHub job ID/);
+    assert.throws(() => collectAttempt(identity, policy, (path) => pagedRead(path, 102, [secondPage])), /changing GitHub job inventory/);
+    assert.throws(() => collectAttempt(identity, policy, (path) => pagedRead(path, 101, [])), /Partial GitHub job inventory/);
+    assert.throws(() => collectAttempt(identity, policy, (path) => path.includes("/jobs?")
+      ? { total_count: 1, jobs: [{ ...allocated, steps: [allocated.steps[0], allocated.steps[0]] }] } : run), /Duplicate GitHub step number/);
     const withoutJobAttempt = collectAttempt(identity, policy, (path) => path.includes("/jobs?")
       ? { total_count: 1, jobs: [{ ...allocated, run_attempt: undefined }] } : run);
     assert.equal(withoutJobAttempt.jobs.length, 1);

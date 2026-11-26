@@ -68,3 +68,56 @@ def attempt_matches(run: String, attempt: String, sha: String, expected_run: Str
 def job_matches(run: String, attempt: String, sha: String, expected_run: String, expected_attempt: String, expected_sha: String, missing_attempt: Bool) -> Bool:
   Bool.and(String.eq(run, expected_run), Bool.and(String.eq(sha, expected_sha),
     Bool.or(missing_attempt, String.eq(attempt, expected_attempt))))
+
+type IdInventory is Data:
+  Ids{count: U32, seen: Map<&2, Bool>}
+  Repeated{}
+
+def insert_unique(id: String, count: U32, found: Map<&2, Bool> & Bool) -> IdInventory:
+  match found:
+    case Tuple{seen, True{}}: Repeated{}
+    case Tuple{seen, False{}}: Ids{U32.inc(count), Map.set(&2, Bool, seen, id, True{})}
+
+def add_id(inventory: IdInventory, +id: String) -> IdInventory:
+  match inventory:
+    case Ids{count, seen}: insert_unique(id, count, Map.has(&2, Bool, seen, id))
+    case Repeated{}: Repeated{}
+
+def unique_result(inventory: IdInventory) -> Bool:
+  match inventory:
+    case Ids{count, seen}: True{}
+    case Repeated{}: False{}
+
+def unique_steps(ids: List<&2, String>) -> Bool:
+  unique_result(List.foldl(~&2, ~String, ~IdInventory, ~(state => id => add_id(state, id)), ids, Ids{0, Map.new(&2, Bool)}))
+
+type Inventory is Data:
+  More{expected: String, count: U32, seen: Map<&2, Bool>}
+  Complete{}
+  Invalid{}
+  Duplicate{}
+  Partial{}
+
+def empty_inventory() -> Inventory:
+  More{"", 0, Map.new(&2, Bool)}
+
+def page_result(ids: IdInventory, expected: String, +total: U32, page: U32, size: U32) -> Inventory:
+  match ids:
+    case Repeated{}: Duplicate{}
+    case Ids{+count, seen}:
+      Bool.pick(Inventory, U32.is_eq(count, total), Complete{},
+        Bool.pick(Inventory, Bool.or(U32.is_ge(page, 10), Bool.or(U32.is_eq(size, 0), U32.is_gt(count, total))),
+          Partial{}, More{expected, count, seen}))
+
+def valid_job_page(previous: Inventory, +expected: String, size: U32, array_seen: Bool) -> Bool:
+  match previous:
+    case More{+old, count, seen}:
+      Bool.and(array_seen, Bool.and(U32.is_le(size, 100),
+        Bool.and(Bool.not(String.eq(expected, "")), Bool.or(String.eq(old, ""), String.eq(old, expected)))))
+    case _: False{}
+
+def job_page(previous: Inventory, expected: String, total: U32, page: U32, size: U32, ids: List<&2, String>) -> Inventory:
+  match previous:
+    case More{+old, count, seen}:
+      page_result(List.foldl(~&2, ~String, ~IdInventory, ~(state => id => add_id(state, id)), ids, Ids{count, seen}), expected, total, page, size)
+    case _: Invalid{}

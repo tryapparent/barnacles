@@ -1,12 +1,11 @@
 import { createRequire } from "node:module";
 import { Language, Parser, type Node } from "web-tree-sitter";
 import type { List, ShellCommand, ToolInvocation } from "../../evidence/index.ts";
+import { bendList as list } from "../wire.ts";
 
 const require = createRequire(import.meta.url);
 const maxText = 64 * 1024;
 const nil = { $: "Nil" } as const;
-const list = <T>(items: T[]): List<T> =>
-  items.reduceRight<List<T>>((tail, head) => ({ $: "Con", head, tail }), nil);
 
 async function parser(module: string) {
   const language = await Language.load(require.resolve(module));
@@ -82,36 +81,53 @@ function shellCommand(node: Node): ShellCommand {
     args: list(node.childrenForFieldName("argument").map(shellWord)) };
 }
 
-function andSeries(node: Node): Node[] {
-  if (node.type === "command") {
-    return Array.from(nodes(node)).some((part) => ["command_substitution", "process_substitution"].includes(part.type))
-      ? [] : [node];
+type ShellSyntax = { $: "OtherShell" }
+  | { $: "ShellLiteral"; command: ShellCommand; nested_kinds: List<string> }
+  | { $: "ShellBinary"; operators: List<string>; left: ShellSyntax; right: ShellSyntax };
+type PrintedScript = {
+  $: "PrintedScript"; statements: number; last_kind: string; printer: string; print_args: number;
+  declaration_kind: string; bindings: number; binding_kind: string; argument_kind: string;
+  binding_name: string; argument_name: string; awaited_kind: string; callee: string; call_args: number;
+};
+export type SyntaxPolicy = {
+  printed_execution(script: PrintedScript): boolean;
+  sequential_shell(statements: number, syntax: ShellSyntax): List<ShellCommand>;
+};
+
+function shellSyntax(node: Node | undefined): ShellSyntax {
+  if (node?.type === "command") {
+    return { $: "ShellLiteral", command: shellCommand(node), nested_kinds: list(Array.from(nodes(node), (part) => part.type)) };
   }
-  if (node.type !== "list" || node.children.some((part) => !part.isNamed && part.type !== "&&")) return [];
-  const parts = node.namedChildren.map(andSeries);
-  return parts.length === 2 && parts.every((part) => part.length) ? parts.flat() : [];
+  if (node?.type === "list" && node.namedChildCount === 2) {
+    const [left, right] = node.namedChildren;
+    return { $: "ShellBinary", operators: list(node.children.filter((part) => !part.isNamed).map((part) => part.type)),
+      left: shellSyntax(left), right: shellSyntax(right) };
+  }
+  return { $: "OtherShell" };
 }
 
-function printedCommand(root: Node): string {
+function printedCommand(root: Node, policy: SyntaxPolicy): string {
   const statements = root.namedChildren.filter((node) => node.type !== "comment");
-  const print = statements.at(-1)?.namedChild(0);
+  const last = statements.at(-1);
+  const print = last?.namedChild(0);
   const printArgs = print?.childForFieldName("arguments");
-  if (statements.at(-1)?.type !== "expression_statement" ||
-      print?.childForFieldName("function")?.text !== "text" || printArgs?.namedChildCount !== 1) return "";
-  const arg = printArgs.namedChild(0);
-  let awaited = arg;
-  if (statements.length === 2) {
-    const declaration = statements[0];
-    const binding = declaration.namedChild(0);
-    const name = binding?.childForFieldName("name");
-    if (declaration.type !== "lexical_declaration" || declaration.namedChildCount !== 1 ||
-        name?.type !== "identifier" || arg?.type !== "identifier" || name.text !== arg.text) return "";
-    awaited = binding?.childForFieldName("value") ?? null;
-  } else if (statements.length !== 1) return "";
+  const arg = printArgs?.namedChild(0);
+  const declaration = statements[0];
+  const binding = declaration?.namedChild(0);
+  const name = binding?.childForFieldName("name");
+  const awaited = statements.length === 2 ? binding?.childForFieldName("value") : arg;
   const call = awaited?.namedChild(0);
   const args = call?.childForFieldName("arguments");
-  if (awaited?.type !== "await_expression" || call?.childForFieldName("function")?.text !== "tools.exec_command") return "";
-  return args?.namedChildCount === 1 ? propertyCmd(args.namedChild(0)) : "";
+  const facts: PrintedScript = {
+    $: "PrintedScript", statements: statements.length, last_kind: last?.type ?? "",
+    printer: print?.childForFieldName("function")?.text ?? "", print_args: printArgs?.namedChildCount ?? 0,
+    declaration_kind: declaration?.type ?? "", bindings: declaration?.namedChildCount ?? 0,
+    binding_kind: name?.type ?? "", argument_kind: arg?.type ?? "",
+    binding_name: name?.text ?? "", argument_name: arg?.type === "identifier" ? arg.text : "",
+    awaited_kind: awaited?.type ?? "", callee: call?.childForFieldName("function")?.text ?? "",
+    call_args: args?.namedChildCount ?? 0,
+  };
+  return policy.printed_execution(facts) ? propertyCmd(args?.namedChild(0)) : "";
 }
 
 async function loadParsers() {
@@ -122,7 +138,7 @@ async function loadParsers() {
   ] as const);
 }
 
-export async function rolloutSyntax() {
+export async function rolloutSyntax(policy: SyntaxPolicy) {
   const [js, bash] = await (parsers ??= loadParsers());
   const shell = (input: unknown) => decode<ShellCommand>(bash, input, (root) =>
     Array.from(nodes(root)).flatMap((node) => node.type === "command" ? [shellCommand(node)] : []));
@@ -130,11 +146,15 @@ export async function rolloutSyntax() {
   return {
     direct: (input: unknown) => shell(argumentCmd(input)),
     sequential: (input: unknown): List<ShellCommand> => {
-      const decoded = decode<string>(js, input, (root) => [printedCommand(root)]);
-      return decode<ShellCommand>(bash, decoded.$ === "Con" ? decoded.head : "", (root) => {
-        const statements = root.namedChildren.filter((node) => node.type !== "comment");
-        return statements.length === 1 ? andSeries(statements[0]).map(shellCommand) : [];
-      });
+      const decoded = decode<string>(js, input, (root) => [printedCommand(root, policy)]);
+      const command = decoded.$ === "Con" ? decoded.head : "";
+      if (!command || command.length > maxText) return nil;
+      const tree = bash.parse(command);
+      try {
+        if (!tree || tree.rootNode.hasError) return nil;
+        const statements = tree.rootNode.namedChildren.filter((node) => node.type !== "comment");
+        return policy.sequential_shell(statements.length, shellSyntax(statements[0]));
+      } finally { tree?.delete(); }
     },
     wrapped: (input: unknown) => decode<ToolInvocation>(js, input, (root) => {
       const invocations: ToolInvocation[] = [];

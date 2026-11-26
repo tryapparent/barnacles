@@ -1,10 +1,18 @@
 import { execFileSync } from "node:child_process";
 
-import type { ActionAttempt, AttemptIdentity } from "../../evidence/index.ts";
+import type { ActionAttempt, AttemptIdentity, List } from "../../evidence/index.ts";
+import { bendList } from "../wire.ts";
+
 type Json = Record<string, unknown>;
 type MatchIdentity = (run: string, attempt: string, sha: string,
   expectedRun: string, expectedAttempt: string, expectedSha: string) => boolean;
+type Inventory = { $: "More" | "Complete" | "Invalid" | "Duplicate" | "Partial" };
+
 export type ClockPolicy = {
+  empty_inventory: () => Inventory;
+  valid_job_page: (previous: Inventory, expected: string, size: number, arraySeen: boolean) => boolean;
+  job_page: (previous: Inventory, expected: string, total: number, page: number, size: number, ids: List<string>) => Inventory;
+  unique_steps: (ids: List<string>) => boolean;
   attempt_matches: MatchIdentity;
   job_matches: (...args: [...Parameters<MatchIdentity>, missingAttempt: boolean]) => boolean;
   job_clocks: (created: number, started: number, completed: number, status: string,
@@ -73,12 +81,9 @@ function normalizeJob(job: Json, policy: ClockPolicy) {
     typeof job.runner_id === "number" && job.runner_id > 0, job.runner_id === 0,
   );
   if (!Array.isArray(job.steps)) throw new Error("Missing GitHub job steps array");
-  const seen = new Set<number>();
   const steps = job.steps.map((item) => {
     const step = object(item);
     const number = positiveInt(step.number);
-    if (seen.has(number)) throw new Error("Duplicate GitHub step number");
-    seen.add(number);
     const start = clock(step.started_at);
     const end = clock(step.completed_at);
     const status = policy.source_status(wireText(step.status));
@@ -87,6 +92,9 @@ function normalizeJob(job: Json, policy: ClockPolicy) {
     return { number, label: policy.step_label(wireText(step.name)), status, conclusion,
       start: known ? start : null, end: known ? end : null };
   });
+  if (!policy.unique_steps(bendList(steps.map(({ number }) => String(number))))) {
+    throw new Error("Duplicate GitHub step number");
+  }
   return {
     id, label: policy.job_label(wireText(job.name)), status, conclusion, created: created || null,
     priorExecution: prior_execution, queueEnd: queue_end || null,
@@ -106,17 +114,17 @@ export function collectAttempt(identity: AttemptIdentity, policy: ClockPolicy, r
   if (!policy.attempt_matches(wireId(run.id), wireId(run.run_attempt), wireText(run.head_sha), ...expected)) {
     throw new Error("GitHub attempt identity does not match the request");
   }
-  const jobs = new Map<number, ReturnType<typeof normalizeJob>>();
-  let total: number | undefined;
-  for (let page = 1; page <= 10; page++) {
+  const jobs: ReturnType<typeof normalizeJob>[] = [];
+  let inventory = policy.empty_inventory();
+  for (let page = 1; inventory.$ === "More"; page++) {
     const response = object(read(`${path}/jobs?per_page=100&page=${page}`));
     const count = response.total_count;
-    if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0 ||
-        (total !== undefined && count !== total) || !Array.isArray(response.jobs) || response.jobs.length > 100) {
+    const expectedCount = typeof count === "number" && Number.isSafeInteger(count) && count >= 0 ? String(count) : "";
+    const rows = Array.isArray(response.jobs) ? response.jobs : undefined;
+    if (!policy.valid_job_page(inventory, expectedCount, rows?.length ?? 0, rows !== undefined)) {
       throw new Error("Invalid or changing GitHub job inventory");
     }
-    total = count;
-    for (const item of response.jobs) {
+    const decoded = rows!.map((item) => {
       const job = object(item);
       if (!policy.job_matches(
         wireId(job.run_id), wireId(job.run_attempt), wireText(job.head_sha), ...expected,
@@ -124,19 +132,20 @@ export function collectAttempt(identity: AttemptIdentity, policy: ClockPolicy, r
       )) {
         throw new Error("GitHub job identity does not match the attempt");
       }
-      const normalized = normalizeJob(job, policy);
-      if (jobs.has(normalized.id)) throw new Error("Duplicate GitHub job ID");
-      jobs.set(normalized.id, normalized);
-    }
-    if (jobs.size === total) {
+      return normalizeJob(job, policy);
+    });
+    inventory = policy.job_page(inventory, expectedCount, Math.min(Number(count), 0xffffffff), page,
+      decoded.length, bendList(decoded.map(({ id }) => String(id))));
+    if (inventory.$ === "Duplicate") throw new Error("Duplicate GitHub job ID");
+    jobs.push(...decoded);
+    if (inventory.$ === "Complete") {
       return {
         ...identity, workflowId: positiveInt(run.workflow_id), status: policy.source_status(wireText(run.status)),
         conclusion: policy.source_conclusion(wireText(run.conclusion)), createdAt: clock(run.created_at) || null,
         startedAt: clock(run.run_started_at) || null, sourceUpdated: clock(run.updated_at),
-        observedAt: Math.floor(Date.now() / 1000), jobs: [...jobs.values()],
+        observedAt: Math.floor(Date.now() / 1000), jobs,
       };
     }
-    if (jobs.size > total || response.jobs.length === 0) break;
   }
   throw new Error("Partial GitHub job inventory. No evidence was written.");
 }
