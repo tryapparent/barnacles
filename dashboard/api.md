@@ -74,8 +74,8 @@ The browser presentation uses React, Vite, Canvas and SVG. TypeScript decodes
 API responses and renders the shared evidence. The Harbor build compiles
 the Bend2 duration formatter with the pinned compiler. Harbor rounds elapsed
 times to the nearest minute before splitting them into days, hours and
-minutes. Labels omit zero units and separators, for example `37M`, `1H`,
-`1H1M`, `1D` and `1D1H1M`. Values that round to zero display `0M`.
+minutes. Labels omit zero units and separators, for example `37m`, `1h`,
+`1h1m`, `1d` and `1d1h1m`. Values that round to zero display `0m`.
 The API retains its original precision and UTC timestamps.
 
 The local Button and
