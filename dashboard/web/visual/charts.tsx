@@ -15,8 +15,7 @@ function Gauge({ comparison }: { comparison: Review["cycleComparison"] }) {
   const bound = Math.max(20, Math.ceil(Math.abs(deltaSeconds ?? 0) / 3600 / 10) * 10);
   const amount = Math.abs(deltaSeconds ?? 0) / (bound * 3600);
   const negative = comparison.direction === "Gardening";
-  const signed = deltaSeconds === null ? "Unknown" :
-    deltaSeconds === 0 ? "0 s" : (deltaSeconds > 0 ? "+" : "−") + duration(deltaSeconds);
+  const label = duration(deltaSeconds, true);
   const segmentCount = 15;
   const blocks = Array.from({ length: segmentCount }, (_, index) => {
     const start = index * 6 + .65;
@@ -41,9 +40,9 @@ function Gauge({ comparison }: { comparison: Review["cycleComparison"] }) {
         </pattern></defs>
         {blocks}<path className="center-tick" d="M120 2v24" />
       </svg>
-      <span className="readout">{signed}</span>
+      <span className="readout" style={{ "--label-length": label.length } as CSSProperties}>{label}</span>
       <div className="scale" aria-hidden="true">
-        <span>+{bound} h</span><span>0</span><span>−{bound} h</span>
+        <span>{duration(bound * 3600, true)}</span><span>{duration(0)}</span><span>{duration(-bound * 3600, true)}</span>
         <span>Gardening</span><span /><span>Shipping</span>
       </div>
     </div>
@@ -289,7 +288,7 @@ export function DailyStages({ days }: { days: DeliveryDay[] | undefined }) {
         <p className="fine daily-intro">By publication day (UTC). Each stage averages the PRs with both clocks. Open a day for counts and times.</p>
         <StageKey />
         {longest > 0 && <div className="daily-axis" aria-hidden="true">
-          <span>0 s</span><span>{duration(scale / 2)}</span><span>{duration(scale)}</span>
+          <span>{duration(0)}</span><span>{duration(scale / 2)}</span><span>{duration(scale)}</span>
         </div>}
         {days.map((day) => <details key={day.startsAt} className="daily-row">
           <summary>
@@ -297,7 +296,7 @@ export function DailyStages({ days }: { days: DeliveryDay[] | undefined }) {
               <span>{countLabel(day.verified)} verified</span></span>
             <span className="daily-bar" aria-hidden="true">
               {day.stages.every(({ meanSeconds }) => meanSeconds === null) ? <span>Unknown</span> :
-                day.stages.every(({ meanSeconds }) => !meanSeconds) ? <span>0 s</span> :
+                day.stages.every(({ meanSeconds }) => !meanSeconds) ? <span>{duration(0)}</span> :
                   stages.map(([phase, label, color]) => {
                     const mean = day.stages.find((stage) => stage.phase === phase)?.meanSeconds;
                     return mean ? <span key={phase} className={`daily-segment stage-${color}`}

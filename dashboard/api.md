@@ -71,7 +71,14 @@ The shore artwork uses the same silver highlights and blue-black shadows as
 the ships, with softer tones in the distance and lower exposure at night.
 
 The browser presentation uses React, Vite, Canvas and SVG. TypeScript decodes
-API responses and renders the shared evidence. The local Button and
+API responses and renders the shared evidence. The Harbor build compiles
+the Bend2 duration formatter with the pinned compiler. Harbor rounds elapsed
+times to the nearest minute before splitting them into days, hours and
+minutes. Labels omit zero units and separators, for example `37M`, `1H`,
+`1H1M`, `1D` and `1D1H1M`. Values that round to zero display `0M`.
+The API retains its original precision and UTC timestamps.
+
+The local Button and
 NativeSelect adapt the [shadcn registry](https://ui.shadcn.com/docs/components/native-select)
 under its [MIT license](web/assets/SHADCN-LICENSE). The gauge adapts the
 [dithercn dial](https://dithercn.dev/docs/charts/gauge) under its
