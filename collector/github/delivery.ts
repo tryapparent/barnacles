@@ -96,10 +96,10 @@ function releaseDispatch(root: string, source: string, published: number, policy
 
 export function pullRequest(repo: string, number: number, source: SourcePolicy, read = readGitHub, includeCI = false): PullRequest {
   const policy = source as DeliveryPolicy;
-  const name = repository(repo);
+  const name = repository(repo, policy);
   const path = `repos/${name}/pulls/${positiveInt(number)}`;
   const pr = row(read(path));
-  if (!policy.pr_identity(githubId(pr.number), String(number), repository(row(row(pr.base).repo).full_name), name)) {
+  if (!policy.pr_identity(githubId(pr.number), String(number), repository(row(row(pr.base).repo).full_name, policy), name)) {
     throw Error("GitHub pull request identity mismatch");
   }
   const opened = seconds(pr.created_at);

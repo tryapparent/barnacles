@@ -1,6 +1,6 @@
 import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { repository, writeSnapshot } from "../evidence/read.ts";
+import { writeSnapshot } from "../evidence/read.ts";
 import { dashboards } from "./panels.ts";
 
 async function main() {
@@ -8,7 +8,6 @@ async function main() {
   if (!input || !output || !requestedRepository || extra.length) {
     throw Error("Usage: node dashboard/prepare.ts EVIDENCE_SQLITE NEW_OUTPUT_DIRECTORY OWNER/REPO [AS_OF_UTC]");
   }
-  const repo = repository(requestedRepository);
   const timingCutoff = asOf === undefined ? Math.floor(Date.now() / 1000) * 1000 : Date.parse(asOf);
   if (!Number.isFinite(timingCutoff) || timingCutoff < 86400000 || (asOf !== undefined &&
       new Date(timingCutoff).toISOString() !== asOf.replace(/(T\d{2}:\d{2}:\d{2})Z$/, "$1.000Z"))) {
@@ -23,7 +22,7 @@ async function main() {
     const scratch = mkdtempSync(join(staging, "build-"));
     const payloads = openSync(join(staging, "tempo.ndjson"), "wx", 0o600);
     try {
-      const range = await writeSnapshot(resolve(input), join(staging, "dashboard.sqlite"), scratch, repo,
+      const range = await writeSnapshot(resolve(input), join(staging, "dashboard.sqlite"), scratch, requestedRepository,
         cutoff, (_key, _trace, encode) => {
           const { trace_id, payload_bytes } = encode();
           writeSync(payloads, payload_bytes + "\n", null, "latin1");
@@ -31,7 +30,7 @@ async function main() {
         }, undefined, timingCutoff);
       const provision = join(staging, "dashboards");
       mkdirSync(provision);
-      for (const [name, config] of Object.entries(dashboards(range, repo))) {
+      for (const [name, config] of Object.entries(dashboards(range, range.repository))) {
         writeFileSync(join(provision, name + ".json"), JSON.stringify(config), { flag: "wx" });
       }
     } finally {

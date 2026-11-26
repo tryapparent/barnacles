@@ -16,6 +16,7 @@ type WindowSummary = { clocks: List<WindowRow>; operations: List<WindowRow>; wor
 type TimingSelector = { workflow: string; operation: string };
 
 export type TimingPolicy = {
+  repository_name(value: string): string;
   observe_timestamp(bounds: Bounds, at: number): Bounds;
   source_position(bounds: Bounds, latest: number): string;
   empty_window_spans(): unknown;

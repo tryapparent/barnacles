@@ -1,7 +1,7 @@
-export function repository(value: unknown): string {
-  if (typeof value !== "string" || value.length > 128 || !/^[\w.-]+\/[\w.-]+$/.test(value) ||
-      value.split("/").some((part) => part === "." || part === "..")) {
-    throw Error("Expected owner/repository");
-  }
-  return value.toLowerCase();
+export type RepositoryPolicy = { repository_name(value: string): string };
+
+export function repository(value: unknown, policy: RepositoryPolicy): string {
+  const name = typeof value === "string" ? policy.repository_name(value) : "";
+  if (!name) throw Error("Expected owner/repository");
+  return name;
 }

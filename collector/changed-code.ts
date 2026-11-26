@@ -9,6 +9,7 @@ import { bendList, bendValues } from "./wire.ts";
 type PathCount = { $: "ChangedPath"; path: string; commits: number };
 type Scan = { $: "Scan"; count: number; more: boolean };
 type Policy = {
+  repository_name(value: string): string;
   start_scan(): Scan;
   shallow_boundaries(ids: List<string>): unknown;
   scan_commit(state: Scan, limit: number, commit: string, paths: List<string>, boundaries: unknown): Scan;
@@ -46,8 +47,6 @@ async function main() {
   if (!directory || !repository || extra.length || !/^\d{1,5}$/.test(limit) || maxCommits < 1 || maxCommits > 10_000) {
     throw Error("Usage: changed-code.ts JOB_DIRECTORY REPOSITORY [REVISION [MAX_COMMITS (1–10000)]] [--save-as OWNER/REPO]");
   }
-  const saveAs = values["save-as"] === undefined ? null : repositoryKey(values["save-as"]);
-
   const git = (...args: string[]) => execFileSync("git", ["--no-replace-objects", ...args], {
     cwd: repository,
     env: { ...process.env, GIT_ALLOW_PROTOCOL: "" },
@@ -56,20 +55,20 @@ async function main() {
     maxBuffer: 32 * 1024 * 1024,
     stdio: ["ignore", "pipe", "pipe"],
   });
-  const tip = git("rev-parse", "--verify", "--end-of-options", `${revision}^{commit}`).trim();
-  const shallow = git("rev-parse", "--is-shallow-repository").trim() === "true";
-  const boundaries = shallow
-    ? readFileSync(Buffer.from(git("rev-parse", "--path-format=absolute", "--git-path", "shallow").trimEnd(),
-      "latin1"), "utf8").split("\n")
-    : [];
-  const history = git("log", "--no-merges", "--root", "--topo-order", `--max-count=${maxCommits + 1}`,
-    "--no-decorate", "--no-notes", "--no-show-signature", "--no-color", "--no-relative", "--no-renames",
-    "--no-ext-diff", "--no-textconv", "--ignore-submodules=none", "--name-only", "-z", "--format=tformat:%x00%H", tip, "--");
-
   const scratch = mkdtempSync(join(resolve(directory), "build-"));
   try {
     const output = await buildPolicy(scratch, new URL("../evidence/changed-code.bend", import.meta.url), "changed-code.mjs");
     const policy: Policy = await loadPolicy(output);
+    const saveAs = values["save-as"] === undefined ? null : repositoryKey(values["save-as"], policy);
+    const tip = git("rev-parse", "--verify", "--end-of-options", `${revision}^{commit}`).trim();
+    const shallow = git("rev-parse", "--is-shallow-repository").trim() === "true";
+    const boundaries = shallow
+      ? readFileSync(Buffer.from(git("rev-parse", "--path-format=absolute", "--git-path", "shallow").trimEnd(),
+        "latin1"), "utf8").split("\n")
+      : [];
+    const history = git("log", "--no-merges", "--root", "--topo-order", `--max-count=${maxCommits + 1}`,
+      "--no-decorate", "--no-notes", "--no-show-signature", "--no-color", "--no-relative", "--no-renames",
+      "--no-ext-diff", "--no-textconv", "--ignore-submodules=none", "--name-only", "-z", "--format=tformat:%x00%H", tip, "--");
     const boundaryIndex = policy.shallow_boundaries(bendList(boundaries));
     let scan = policy.start_scan();
     for (const { commit, paths } of decodeLog(history)) {

@@ -1,4 +1,5 @@
 import Base
+import ./repository.bend as Repository
 
 def ordered(+start: U32, end: U32) -> Bool:
   Bool.and(U32.is_ne(start, 0), U32.is_le(start, end))
@@ -1110,24 +1111,8 @@ def all_hex(chars: List<&2, Char>) -> Bool:
     case +head <> tail:
       Bool.and(Bool.or(Char.is_digit(head), String.contains("abcdef", String.from_list([head]))), all_hex(tail))
 
-def repository_chars(chars: List<&2, Char>) -> Bool:
-  match chars:
-    case []: True{}
-    case +head <> tail:
-      Bool.and(Bool.or(Char.is_alpha(head), Bool.or(Char.is_digit(head),
-        String.contains("_.-", String.from_list([head])))), repository_chars(tail))
-
-def repository_part(+word: String) -> Bool:
-  Bool.and(Bool.not(String.is_empty(word)), Bool.and(Bool.not(String.eq(word, ".")),
-    Bool.and(Bool.not(String.eq(word, "..")), repository_chars(String.to_list(word)))))
-
-def valid_repository(parts: List<&2, String>) -> Bool:
-  match parts:
-    case [owner, name]: Bool.and(repository_part(owner), repository_part(name))
-    case _: False{}
-
 def watch_identity(+repo: String, +run: String, +sha: String, +attempt: String) -> WatchIdentity:
-  Bool.pick(WatchIdentity, Bool.and(valid_repository(String.split(repo, '/')), Bool.and(decimal(run),
+  Bool.pick(WatchIdentity, Bool.and(Repository.valid(repo), Bool.and(decimal(run),
     Bool.and(decimal(attempt), Bool.and(Nat.is_eq(String.length(sha), 40n), all_hex(String.to_list(sha)))))),
     ExactWatch{String.to_lower(repo), run, sha, attempt}, NoWatch{})
 
@@ -1676,3 +1661,53 @@ def watch_overlap(first: Observer, second: Observer, +a_start: Point, +a_end: Po
   +end = Bool.pick(Point, time_order(a_end, b_end), a_end, b_end)
   Bool.pick(WatchOverlap, Bool.and(independent_observers(first, second),
     Bool.and(time_order(start, end), Bool.not(time_order(end, start)))), Overlap{start, end}, NoOverlap{})
+
+def repository_name(value: String) -> String:
+  Repository.normalized(value)
+
+type WatchPoll is Data:
+  Poll{index: Nat, observer: Observer, start: Point, end: Point}
+
+type IndexedOverlap is Data:
+  IndexedOverlap{first: Nat, second: Nat, start: Point, end: Point}
+
+type OverlapScan is Data:
+  OverlapScan{active: List<&2, WatchPoll>, newest: List<&2, IndexedOverlap>}
+
+def add_overlap(first: Nat, second: Nat, overlap: WatchOverlap, newest: List<&2, IndexedOverlap>) -> List<&2, IndexedOverlap>:
+  match overlap:
+    case NoOverlap{}: newest
+    case Overlap{start, end}: IndexedOverlap{first, second, start, end} <> newest
+
+def retain_poll(keep: Bool, +previous: WatchPoll, current: WatchPoll, state: OverlapScan) -> OverlapScan:
+  match keep previous current state:
+    case True{} Poll{first, a, a_start, a_end} Poll{second, b, b_start, b_end} OverlapScan{active, newest}:
+      OverlapScan{previous <> active, add_overlap(first, second, watch_overlap(a, b, a_start, a_end, b_start, b_end), newest)}
+    case _ _ _ _: state
+
+def compare_poll(state: OverlapScan, +previous: WatchPoll, +current: WatchPoll) -> OverlapScan:
+  match previous current:
+    case Poll{first, a, a_start, a_end} Poll{second, b, b_start, b_end}:
+      retain_poll(time_order(b_start, a_end), previous, current, state)
+
+def keep_current(state: OverlapScan, current: WatchPoll) -> OverlapScan:
+  match state:
+    case OverlapScan{active, newest}: OverlapScan{List.reverse(&2, WatchPoll, current <> active), newest}
+
+def compare_active(active: List<&2, WatchPoll>, +current: WatchPoll, state: OverlapScan) -> OverlapScan:
+  match active:
+    case []: state
+    case previous <> tail: compare_active(tail, current, compare_poll(state, previous, current))
+
+def sweep_poll(state: OverlapScan, +current: WatchPoll) -> OverlapScan:
+  match state:
+    case OverlapScan{active, newest}:
+      keep_current(compare_active(active, current, OverlapScan{[], newest}), current)
+
+def ordered_overlaps(state: OverlapScan) -> List<&2, IndexedOverlap>:
+  match state:
+    case OverlapScan{active, newest}: List.reverse(&2, IndexedOverlap, newest)
+
+def watch_overlaps(polls: List<&2, WatchPoll>) -> List<&2, IndexedOverlap>:
+  ordered_overlaps(List.foldl(~&2, ~WatchPoll, ~OverlapScan, ~(scan => current => sweep_poll(scan, current)),
+    polls, OverlapScan{[], []}))

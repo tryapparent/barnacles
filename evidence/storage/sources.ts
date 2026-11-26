@@ -33,6 +33,8 @@ type ProcessFact = {
 };
 type WaitCell = { $: "NotWait" } | { $: "WaitCell"; status: string; owner: string };
 type Observer = { $: "Observer"; session: string; launch: string };
+type WatchPoll = { $: "Poll"; index: number; observer: Observer; start: Point; end: Point };
+type IndexedOverlap = { first: number; second: number; start: Point; end: Point };
 type ProcessObservation = {
   call: string; resultCall: string | null; resultLine: number | null; handle: string | null;
   fact: ProcessFact; observer: WatchIdentity; start: number | null; end: number | null;
@@ -53,6 +55,7 @@ type RolloutQuality = {
 type RolloutClocks = { $: "Clocks"; first: Point; last: Point };
 
 export type SourcePolicy = {
+  repository_name(value: string): string;
   rollout_file_status(available: boolean, regular: boolean, empty: boolean, oversized: boolean): string;
   rollout_line(state: RolloutAdmission, meta: boolean, id: string, parent: string, fork: string, shared: string,
     boundary: number, line: number, ordinalOk: boolean, decoded: boolean): RolloutAdmission;
@@ -87,8 +90,7 @@ export type SourcePolicy = {
   valid_process_result(clean: boolean, ambiguous: boolean, start: Point, end: Point): boolean;
   watch_identity(repository: string, run: string, sha: string, attempt: string): WatchIdentity;
   time_order(first: Point, last: Point): boolean;
-  watch_overlap(first: Observer, second: Observer, firstStart: Point, firstEnd: Point, secondStart: Point, secondEnd: Point):
-    { $: "NoOverlap" } | { $: "Overlap"; start: Point; end: Point };
+  watch_overlaps(polls: List<WatchPoll>): List<IndexedOverlap>;
   call_record(state: unknown): CallRecord;
   pick_milestone(best: Milestone, next: Milestone): Milestone;
   pick_review(best: Milestone, next: Milestone, opened: number): Milestone;
@@ -306,22 +308,16 @@ export function watchOverlaps(path: string, policy: SourcePolicy, workflow: Extr
       WHERE repository=? AND run_id=? AND head_sha=? AND attempt=? AND poll_started_ms IS NOT NULL
       ORDER BY poll_started_ms, instance, session_id, call_id`)
       .all(workflow.repository, workflow.run_id, workflow.head_sha, workflow.attempt) : [];
-    const intervals = observations.map((row) => ({
-      row, start: point(Number(row.poll_started_ms)), end: point(Number(row.poll_result_ms)),
-      observer: { $: "Observer", session: String(row.session_id), launch: String(row.process_launch_call_id) } as const,
-    }));
+    const intervals = observations.reduceRight<List<WatchPoll>>((tail, row, index) => ({
+      $: "Con", tail, head: {
+        $: "Poll", index, start: point(Number(row.poll_started_ms)), end: point(Number(row.poll_result_ms)),
+        observer: { $: "Observer", session: String(row.session_id), launch: String(row.process_launch_call_id) },
+      },
+    }), { $: "Nil" });
     const overlaps = [];
-    let active: typeof intervals = [];
-    for (const current of intervals) {
-      active = active.filter((previous) => policy.time_order(current.start, previous.end));
-      for (const previous of active) {
-        const overlap = policy.watch_overlap(previous.observer, current.observer,
-          previous.start, previous.end, current.start, current.end);
-        if (overlap.$ === "Overlap") overlaps.push({
-          first: previous.row, second: current.row, started_ms: millis(overlap.start), ended_ms: millis(overlap.end),
-        });
-      }
-      active.push(current);
+    for (let sequence = policy.watch_overlaps(intervals); sequence.$ === "Con"; sequence = sequence.tail) {
+      const { first, second, start, end } = sequence.head;
+      overlaps.push({ first: observations[first], second: observations[second], started_ms: millis(start), ended_ms: millis(end) });
     }
     return { workflow, observations: observations.length, overlaps };
   } finally {

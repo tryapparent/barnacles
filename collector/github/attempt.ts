@@ -9,6 +9,7 @@ type Json = Record<string, unknown>;
 type MatchIdentity = (run: string, attempt: string, sha: string,
   expectedRun: string, expectedAttempt: string, expectedSha: string) => boolean;
 export type ClockPolicy = {
+  valid_repository(value: string): boolean;
   empty_inventory(): Inventory;
   valid_job_page(previous: Inventory, expected: string, size: number, arraySeen: boolean): boolean;
   job_page(previous: Inventory, expected: string, total: number, page: number, size: number, ids: List<string>): Inventory;
@@ -86,10 +87,8 @@ export function wireCount(value: unknown): number {
   return value;
 }
 
-export function checkRepository(repository: string) {
-  if (!/^[\w.-]+\/[\w.-]+$/.test(repository) || repository.split("/").some((part) => part === "." || part === "..")) {
-    throw new Error("Expected owner/repository");
-  }
+export function checkRepository(repository: string, policy: ClockPolicy) {
+  if (!policy.valid_repository(repository)) throw Error("Expected owner/repository");
 }
 
 export function fullSha(value: unknown): string {
@@ -168,7 +167,7 @@ function readJobs(path: string, policy: ClockPolicy, read: typeof readGitHub) {
 
 export function collectAttempt(identity: AttemptIdentity, policy: ClockPolicy, read = readGitHub): ActionAttempt {
   const { repository, runId, attempt, sha } = identity;
-  checkRepository(repository);
+  checkRepository(repository, policy);
   fullSha(sha);
   positiveInt(runId);
   positiveInt(attempt);
@@ -211,7 +210,7 @@ export function collectAttempt(identity: AttemptIdentity, policy: ClockPolicy, r
 
 export function collectWindow(repository: string, from: string, to: string, maxPages: number, maxAttempts: number,
   policy: ClockPolicy, read = readGitHub) {
-  checkRepository(repository);
+  checkRepository(repository, policy);
   const start = clock(from);
   const end = clock(to);
   if (!policy.window_valid(start, end, wireCount(maxPages), wireCount(maxAttempts))) {

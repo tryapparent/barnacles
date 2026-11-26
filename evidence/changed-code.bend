@@ -1,4 +1,5 @@
 import Base
+import ./repository.bend as Repository
 
 type PathCount is Data:
   ChangedPath{path: String, commits: U32}
@@ -75,3 +76,6 @@ def scan_commit(+scan: HistoryScan, limit: U32, commit: String, paths: List<&2, 
 def scan_paths(scan: HistoryScan) -> List<&2, PathCount>:
   match scan:
     case Scan{count, more, counts}: top_paths(counts)
+
+def repository_name(value: String) -> String:
+  Repository.normalized(value)

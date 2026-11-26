@@ -79,9 +79,9 @@ Bend2, and encode rows and JSON for consumers. The raw trace read uses the
 existing `codex_spans` storage view. The Actions and T3 reads resolve foreign
 keys to retrieve recorded workflow and thread fields. The dashboard adapter
 keeps Grafana provisioning and parameter binding in `dashboard/panels.ts` and
-the OTLP JSON adapter in `dashboard/trace.ts`. Bend2 supplies the trace ID
-inputs, span order, hierarchy, names, attributes, events, and decimal
-nanosecond clocks. The adapter applies SHA-256 and the OTLP JSON field layout.
+writes the OTLP NDJSON from `dashboard/prepare.ts`. Bend2 applies SHA-256,
+builds the OTLP JSON fields, and produces UTF-8 bytes with the existing stable
+trace IDs. [OTLP policy](../evidence/projection/otlp.bend).
 
 Run `npm run verify -- evidence dashboard` to exercise the compiled policies
 through snapshot preparation and the Actions report CLI with synthetic evidence.

@@ -7,12 +7,13 @@ import { collectTiming, rows, seconds, type TimingPolicy } from "./projection/ti
 async function main() {
   const [file, name, ...extra] = process.argv.slice(2);
   if (!file || !name || extra.length) throw Error("Usage: node evidence/report-actions.ts EVIDENCE_SQLITE OWNER/REPO");
-  const repo = repository(name);
-  const db = new DatabaseSync(file, { readOnly: true });
   const scratch = mkdtempSync("/tmp/apparent-dev-barnacles-actions-report-");
+  let db: DatabaseSync | undefined;
   try {
-    const file = await buildPolicy(scratch, new URL("./projection/metrics.bend", import.meta.url), "metrics.mjs");
-    const metrics: TimingPolicy = await loadPolicy(file);
+    const module = await buildPolicy(scratch, new URL("./projection/metrics.bend", import.meta.url), "metrics.mjs");
+    const metrics: TimingPolicy = await loadPolicy(module);
+    const repo = repository(name, metrics);
+    db = new DatabaseSync(file, { readOnly: true });
     db.exec("BEGIN");
     const report = rows(collectTiming(db, repo, metrics).result().operations).map(({ clock, operation, workflow, stats }) => ({
       workflow_id: workflow, clock, operation, count: stats.count, mean_seconds: seconds(metrics.mean(stats)),
@@ -20,7 +21,7 @@ async function main() {
     }));
     console.log(JSON.stringify(report, null, 2));
   } finally {
-    db.close();
+    db?.close();
     rmSync(scratch, { recursive: true, force: true });
   }
 }

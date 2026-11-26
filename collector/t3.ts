@@ -27,7 +27,7 @@ export function t3Snapshot(input: unknown, rules: SourcePolicy): ThreadEvidence 
     const link = row(value);
     if (!policy.github_link(str(link.host))) throw Error("Only github.com T3 links are supported");
     const source = policy.link_source(str(link.source));
-    return { repository: repository(link.repository), number: positiveInt(link.number),
+    return { repository: repository(link.repository, policy), number: positiveInt(link.number),
       source, state: policy.link_state(str(link.state)), owning: policy.owns_pr(source) };
   });
   return { instance: token(snapshot.instance), id: token(thread.threadId), created, updated,

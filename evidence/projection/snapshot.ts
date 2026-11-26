@@ -1,3 +1,4 @@
+import { repository } from "../repository.ts";
 import { closeSync, openSync } from "node:fs";
 import { DatabaseSync, type SQLInputValue, type SQLOutputValue } from "node:sqlite";
 import { buildPolicies, buildPolicy, loadPolicy } from "../../tooling/bend.ts";
@@ -176,7 +177,7 @@ function writeActionsWait(source: DatabaseSync, view: DatabaseSync, repo: string
   }
 }
 
-export async function writeSnapshot(input: string, output: string, scratch: string, repo: string, cutoff: number,
+export async function writeSnapshot(input: string, output: string, scratch: string, requestedRepository: string, cutoff: number,
   writeTrace: TraceWriter, actionsWaitWindow?: ActionWaitWindow, timingCutoff = cutoff * 1000) {
   const [deliveryModule, metricModule, modelModule, traceModule, otlpModule, waitModule] = await buildPolicies(scratch, [
     [deliveryPolicy, "delivery.mjs"],
@@ -188,6 +189,7 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
   ]);
   const policy = await loadPolicy<DeliveryPolicy>(deliveryModule);
   const metrics: Metrics = await loadPolicy(metricModule);
+  const repo = repository(requestedRepository, metrics);
   const tracePolicy: TracePolicy = await loadPolicy(traceModule);
   const otlp: OtlpPolicy = await loadPolicy(otlpModule);
   const estimator: Estimator = await loadPolicy(modelModule);
@@ -312,7 +314,7 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
       actionsWaitWindow ? { $: "Window", ...actionsWaitWindow } : waits.report_window(timingCutoff), waits);
     view.exec("COMMIT");
     return { from: summary.from, to: cutoff, defaultTrace: traces.defaultTrace, traceSessions: traces.traceSessions,
-      timingCutoff, rolloutCount: traces.rolloutCount, changedCode };
+      timingCutoff, rolloutCount: traces.rolloutCount, changedCode, repository: repo };
   } finally {
     source.close();
     view.close();

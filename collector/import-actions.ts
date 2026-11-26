@@ -25,7 +25,7 @@ async function main() {
     const policy = await loadPolicy<ClockPolicy>(source);
     const database = join(resolve(directory), "evidence.sqlite");
     if (waitMode) {
-      checkRepository(repository);
+      checkRepository(repository, policy);
       const start = clock(args[0]);
       const end = clock(args[1]);
       const limit = positiveInt(args[2]);

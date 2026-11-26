@@ -1,4 +1,5 @@
 import Base
+import ../../evidence/repository.bend as Repository
 
 type JobClocks is Data:
   Clocks{queue_end: U32, execution_end: U32, prior_execution: Bool}
@@ -196,3 +197,6 @@ def job_page(previous: Inventory, expected: String, total: U32, page: U32, size:
     case More{+old, count, seen}:
       page_result(List.foldl(~&2, ~String, ~IdInventory, ~(state => id => add_id(state, id)), ids, Ids{count, seen}), expected, total, page, size)
     case _: Invalid{}
+
+def valid_repository(value: String) -> Bool:
+  Repository.valid(value)

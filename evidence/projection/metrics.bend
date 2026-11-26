@@ -1,4 +1,5 @@
 import Base
+import ../repository.bend as Repository
 
 type Sample is Data:
   Stats{count: Nat, total: Nat, missing: Nat}
@@ -617,3 +618,6 @@ def measured_union(occupancy: Occupancy) -> Ratio:
   match occupancy:
     case Occupied{Stats{count, total, missing}, union, latest_end, unplaced}:
       Fraction{union, Nat.min(1n, count)}
+
+def repository_name(value: String) -> String:
+  Repository.normalized(value)
