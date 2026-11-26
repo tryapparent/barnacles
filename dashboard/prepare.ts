@@ -1,11 +1,31 @@
-import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { repository, writeSnapshot } from "../evidence/read.ts";
+import { repository, snapshotFormatVersion, writeSnapshot } from "../evidence/read.ts";
 import { dashboards } from "./panels.ts";
 import { encodeTrace } from "./trace.ts";
 
+function validateSnapshot(directory: string) {
+  const path = join(directory, "snapshot.json");
+  if (!statSync(path, { throwIfNoEntry: false })?.isFile()) {
+    throw Error("Missing snapshot manifest. Prepare a new dashboard snapshot.");
+  }
+  const manifest = JSON.parse(readFileSync(path, "utf8"));
+  if (manifest?.formatVersion !== snapshotFormatVersion) {
+    throw Error(`Unsupported snapshot format. Prepare a version ${snapshotFormatVersion} snapshot.`);
+  }
+  for (const file of ["dashboard.sqlite", "tempo.ndjson", "dashboards/shipping.json"]) {
+    if (!statSync(join(directory, file), { throwIfNoEntry: false })?.isFile()) {
+      throw Error(`Incomplete snapshot: missing ${file}.`);
+    }
+  }
+}
+
 async function main() {
   const [input, output, requestedRepository, asOf, ...extra] = process.argv.slice(2);
+  if (input === "--validate" && output && !requestedRepository) {
+    validateSnapshot(output);
+    return;
+  }
   if (!input || !output || !requestedRepository || extra.length) {
     throw Error("Usage: node dashboard/prepare.ts EVIDENCE_SQLITE NEW_OUTPUT_DIRECTORY OWNER/REPO [AS_OF_UTC]");
   }

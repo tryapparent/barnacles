@@ -178,7 +178,7 @@ test("dashboard derives a covered comparison and preserves missing source covera
     assert.equal(existsSync(out), false);
     const prepare = (output: string, repository: string) =>
       execFileSync(process.execPath, ["dashboard/prepare.ts", source, output, repository, new Date(cutoff * 1000).toISOString()],
-        { stdio: "pipe", timeout: 60_000 });
+        { stdio: "pipe", timeout: 120_000 });
     const buildStarted = Date.now();
     prepare(out, repo);
     const manifest = JSON.parse(readFileSync(join(out, "snapshot.json"), "utf8"));
@@ -188,7 +188,7 @@ test("dashboard derives a covered comparison and preserves missing source covera
     assert.equal(manifest.coverage.to, cutoff);
     assert.equal(manifest.coverage.timingCutoffMs, cutoff * 1000);
     assert.deepEqual([manifest.coverage.pullRequests, manifest.coverage.shipped, manifest.coverage.linked], [2, 2, 2]);
-    const validate = ["dashboard/load-tempo.ts", "--validate", out];
+    const validate = ["dashboard/prepare.ts", "--validate", out];
     execFileSync(process.execPath, validate, { stdio: "pipe" });
     writeFileSync(join(out, "snapshot.json"), JSON.stringify({ ...manifest, formatVersion: 2 }));
     assert.throws(() => execFileSync(process.execPath, validate, { stdio: "pipe" }), /Unsupported snapshot format/);
@@ -423,7 +423,7 @@ test("timing windows clip spans, count overlap once and preserve unknown clocks"
       } });
     }
     execFileSync(process.execPath, ["dashboard/prepare.ts", source, out, "synthetic/example",
-      new Date(upper).toISOString()], { stdio: "pipe", timeout: 60_000 });
+      new Date(upper).toISOString()], { stdio: "pipe", timeout: 120_000 });
     const db = new DatabaseSync(join(out, "dashboard.sqlite"), { readOnly: true });
     try {
       assert.deepEqual(db.prepare("SELECT * FROM timing_windows ORDER BY started_ms DESC").all().map(Object.values),

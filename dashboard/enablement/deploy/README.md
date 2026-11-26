@@ -13,7 +13,7 @@ dashboard/run.sh "$snapshot" config
 dashboard/run.sh "$snapshot"
 ```
 
-`run.sh` provides the snapshot bind paths and container user, validates the snapshot format before touching the services, recreates Tempo with empty temporary storage, and checks that trace replay succeeds before activating Grafana. Grafana binds to localhost port 3030 by default. The launcher prints Grafana readiness once its health check passes. Trace queries can be temporarily unavailable while refreshing. Keep snapshots immutable and serialize updates within the same Compose project.
+`run.sh` provides the snapshot bind paths and container user, validates the snapshot format before touching the services, recreates Tempo with empty temporary storage, and checks that the one-shot replay job succeeds before activating Grafana. Tempo and replay use the Compose network. Grafana binds to localhost port 3030 by default. The launcher prints Grafana readiness once its health check passes. Trace queries can be temporarily unavailable while refreshing. Keep snapshots immutable and serialize updates within the same Compose project.
 
 If refresh fails during replay or Grafana startup, run `dashboard/run.sh "$previous_snapshot"` to replay and restore the previous generation. A failed snapshot build is safe to retry into a new directory. Use `COMPOSE_PROJECT_NAME` and `BARNACLES_PORT` to isolate a smoke deployment from a running installation.
 

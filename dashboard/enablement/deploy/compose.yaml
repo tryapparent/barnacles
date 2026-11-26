@@ -4,11 +4,21 @@ services:
     command: [-target=all, -config.file=/etc/tempo.yml]
     tmpfs:
       - /var/tempo:uid=10001,gid=10001,mode=0700
-    ports:
-      - "127.0.0.1::3200"
-      - "127.0.0.1::4318"
     volumes:
       - ../../provisioning/tempo.yml:/etc/tempo.yml:ro
+  tempo-replay:
+    image: node:22.23.0-bookworm-slim@sha256:d9f850096136edbc402debdd8729579a288aac64574ada0ff4db26b6ae58b0b2
+    profiles: [maintenance]
+    user: "${BARNACLES_GRAFANA_UID}:${BARNACLES_GRAFANA_GID}"
+    command: [node, /barnacles/load-tempo.ts, /barnacles/tempo.ndjson, "tempo:3200", "tempo:4318"]
+    volumes:
+      - ../../load-tempo.ts:/barnacles/load-tempo.ts:ro
+      - type: bind
+        source: ${BARNACLES_SNAPSHOT_DIR:?Run dashboard/run.sh with a prepared snapshot}/tempo.ndjson
+        target: /barnacles/tempo.ndjson
+        read_only: true
+        bind:
+          create_host_path: false
   grafana:
     image: ${BARNACLES_GRAFANA_IMAGE:-grafana/grafana:12.3.0@sha256:70d9599b186ce287be0d2c5ba9a78acb2e86c1a68c9c41449454d0fc3eeb84e8}
     user: "${BARNACLES_GRAFANA_UID:?Run dashboard/run.sh}:${BARNACLES_GRAFANA_GID:?Run dashboard/run.sh}"

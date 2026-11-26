@@ -1,39 +1,17 @@
-import { createReadStream, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
 import { setTimeout } from "node:timers/promises";
-import { snapshotFormatVersion } from "../evidence/read.ts";
 
-function validateSnapshot(directory: string) {
-  const path = join(directory, "snapshot.json");
-  if (!statSync(path, { throwIfNoEntry: false })?.isFile()) {
-    throw Error("Missing snapshot manifest. Prepare a new dashboard snapshot.");
-  }
-  const manifest = JSON.parse(readFileSync(path, "utf8"));
-  if (manifest?.formatVersion !== snapshotFormatVersion) {
-    throw Error(`Unsupported snapshot format. Prepare a version ${snapshotFormatVersion} snapshot.`);
-  }
-  for (const file of ["dashboard.sqlite", "tempo.ndjson", "dashboards/shipping.json"]) {
-    if (!statSync(join(directory, file), { throwIfNoEntry: false })?.isFile()) {
-      throw Error(`Incomplete snapshot: missing ${file}.`);
-    }
-  }
-}
-
-function localUrl(address: string, path: string) {
-  if (!/^127\.0\.0\.1:[0-9]{1,5}$/.test(address)) throw Error("Expected a local Tempo port");
+function localUrl(address: string, path: string, service: string) {
+  if (address !== service && !/^127\.0\.0\.1:[0-9]{1,5}$/.test(address)) throw Error("Expected a local Tempo endpoint");
   return new URL(path, `http://${address}`);
 }
 
 async function main() {
   const [file, query, ingest, ...extra] = process.argv.slice(2);
-  if (file === "--validate" && query && !ingest && !extra.length) {
-    validateSnapshot(query);
-    return;
-  }
   if (!file || !query || !ingest || extra.length) throw Error("Usage: load-tempo.ts OTLP_NDJSON QUERY_ADDRESS INGEST_ADDRESS");
-  const ready = localUrl(query, "/ready");
-  const endpoint = localUrl(ingest, "/v1/traces");
+  const ready = localUrl(query, "/ready", "tempo:3200");
+  const endpoint = localUrl(ingest, "/v1/traces", "tempo:4318");
   const deadline = Date.now() + 45_000;
   for (;;) {
     const response = await fetch(ready, { signal: AbortSignal.timeout(2000), redirect: "error" }).catch(() => null);

@@ -27,7 +27,7 @@ case $action in
   down) compose down ;;
   config) compose config ;;
   grafana)
-    node "$root/load-tempo.ts" --validate "$BARNACLES_SNAPSHOT_DIR"
+    node "$root/prepare.ts" --validate "$BARNACLES_SNAPSHOT_DIR"
     current=$(compose ps -a -q grafana)
     if [ -z "$current" ] ||
       [ "$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/barnacles/dashboard.sqlite"}}{{.Source}}{{end}}{{end}}' "$current")" != "$BARNACLES_SNAPSHOT_DIR/dashboard.sqlite" ]; then
@@ -37,9 +37,9 @@ case $action in
     compose up -d --no-deps --wait --wait-timeout 100 grafana
     ;;
   up)
-    node "$root/load-tempo.ts" --validate "$BARNACLES_SNAPSHOT_DIR"
+    node "$root/prepare.ts" --validate "$BARNACLES_SNAPSHOT_DIR"
     compose up -d --no-deps --force-recreate tempo
-    node "$root/load-tempo.ts" "$BARNACLES_SNAPSHOT_DIR/tempo.ndjson" "$(compose port tempo 3200)" "$(compose port tempo 4318)"
+    compose run --rm -T --no-deps tempo-replay
     compose up -d --no-deps --wait --wait-timeout 100 grafana
     ;;
   *)
