@@ -10,6 +10,11 @@ Barnacles is a public MIT-licensed project for observing how coding-agent work r
 
 Keep the dependency direction from collector to evidence and from dashboard to evidence views. Keep source clients and credentials out of evidence queries and dashboards. Put commands and focused verification instructions in the owning directory as they become runnable.
 
+## Harbor hosting on Clanker
+
+- Reuse the existing Harbor systemd service and its canonical Tailscale Serve URL for every authorized deployment. Follow the [Harbor deployment guide](dashboard/enablement/deploy/README.md#harbor-on-clanker) to find the live URL and promote or roll back a release.
+- Keep branch and release-candidate checks on loopback. Adding or changing a Serve route requires explicit authorization for that routing change.
+
 ## Bend2 is the implementation language
 
 - Use Bend2 by default for authored code. Implement all Barnacles product behavior in Bend2. This includes pairing, correlation, filtering, classification, validation of evidence, state updates, selection and ranking, attribution, and metric calculations. Apply this rule to new code and migrate the complete decision when changing existing behavior.

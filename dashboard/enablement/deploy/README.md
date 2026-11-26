@@ -1,5 +1,32 @@
 # Dashboard deployment
 
+## Harbor on Clanker
+
+Clanker runs Harbor and its evidence poller as enabled systemd user services. The
+existing Tailscale Serve route is the permanent Harbor URL. To find it, read the
+loopback port from Harbor's `ExecStart` and match that port to its proxy target
+in Serve. Keep the private URL in host configuration.
+
+```sh
+systemctl --user show barnacles-harbor.service -p WorkingDirectory -p ExecStart
+tailscale serve status
+```
+
+For an authorized deployment, stage the reviewed source, built frontend and
+matching prepared snapshot together in a new release directory. Verify the
+candidate locally on a separate loopback port. Stop that temporary process
+after the check.
+
+Record the previous target of the deployment's `current` symlink. Stop
+`barnacles-harbor-poller.service`, then `barnacles-harbor.service`. Atomically
+replace the symlink with one pointing at the staged release, then start Harbor
+and its poller. Reuse the existing service ports, Serve route, identity settings
+and persistent collector state. Verify the dashboard, an asset and
+`/api/v1/shipping?limit=1` through the same authorized tailnet URL. If the
+release fails, repeat the switch with the previous target and verify again.
+
+## Grafana and Tempo
+
 The repository root names and assembles one Compose project. Dashboard owns the Grafana and Tempo services, provisioning, replay, smoke tests, and recovery. Evidence owns the [snapshot contract](../../../evidence/README.md#published-dashboard-snapshot). Collector remains a host-side CLI for selected source inputs and credentials. A recurring import job can join through its own Compose include.
 
 The two Compose files are exact-path Bend2 exceptions because Compose consumes declarative YAML for service wiring. Snapshot preparation still uses the compiled Evidence policy.
