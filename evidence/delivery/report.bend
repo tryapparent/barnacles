@@ -118,3 +118,79 @@ def at_least_one(rows: List<&2, ReportRow>) -> List<&2, ReportRow>:
 
 def report_rows(groups: Groups, opened: U32, owners: Owners) -> List<&2, ReportRow>:
   at_least_one(proved_rows(groups, opened, owners))
+
+type Point is Data:
+  Time{s: U32, ms: U32}
+
+def interval_ms(+start_s: U32, start_ms: U32, +end_s: U32, end_ms: U32) -> Bool:
+  Bool.and(ordered(start_s, end_s),
+    Bool.or(U32.is_lt(start_s, end_s), U32.is_le(start_ms, end_ms)))
+
+def time_order(first: Point, last: Point) -> Bool:
+  match first last:
+    case Time{a, am} Time{b, bm}: interval_ms(a, am, b, bm)
+
+def has_time(point: Point) -> Bool:
+  match point:
+    case Time{s, ms}: U32.is_ne(s, 0)
+
+
+def delivery_thread_link(owner_count: U32, link_count: U32, start: Point, opened: Point) -> String:
+  match owner_count link_count:
+    case 0 0: "no_link"
+    case 0 _: "no_owning_link"
+    case 1 _: Bool.pick(String, time_order(start, opened), "verified", "thread_clock_conflict")
+    case _ _: "ambiguous_owner"
+
+def proof_matches_merge(+proof_merge: String, current_merge: String) -> Bool:
+  Bool.and(Bool.not(String.eq(proof_merge, "")), String.eq(proof_merge, current_merge))
+
+def delivery_release_link(selected: Bool, has_proof: Bool, matching_merge: Bool) -> String:
+  match selected has_proof matching_merge:
+    case True{} _ _: "verified"
+    case False{} False{} _: "no_release_proof"
+    case False{} True{} True{}: "release_unverified"
+    case False{} True{} False{}: "no_proof_for_current_merge"
+
+def delivery_endpoint(at: Point) -> String:
+  Bool.pick(String, has_time(at), "observed", "missing")
+
+def delivery_stage(+start: Point, +end: Point) -> String:
+  Bool.pick(String, has_time(start),
+    Bool.pick(String, has_time(end), Bool.pick(String, time_order(start, end), "observed", "clock_conflict"), "missing_end"),
+    Bool.pick(String, has_time(end), "missing_start", "missing_both"))
+
+def delivery_thread_window(+created: Point, +window_start: Point) -> String:
+  Bool.pick(String, Bool.and(has_time(created), has_time(window_start)),
+    Bool.pick(String, time_order(window_start, created), "at_or_after_window_start", "before_window_start"), "unknown")
+
+def delivery_thread_stage(link: String, start: Point, end: Point) -> String:
+  Bool.pick(String, String.eq(link, "thread_clock_conflict"), "clock_conflict", delivery_stage(start, end))
+
+type DeliveryClocks is Data:
+  DeliveryTimes{thread_started: Point, first_commit: Point, pr_opened: Point, first_ci: Point,
+    first_review: Point, pr_merged: Point, release_dispatched: Point, published: Point, access_checked: Point}
+
+type DeliveryEndpoints is Data:
+  Endpoints{thread_started: String, first_commit: String, pr_opened: String, first_ci: String,
+    first_review: String, pr_merged: String, release_dispatched: String, published: String, access_checked: String}
+
+type DeliveryStages is Data:
+  Stages{thread_to_commit: String, commit_to_open: String, open_to_first_ci: String, first_ci_to_merge: String,
+    merge_to_dispatch: String, dispatch_to_publication: String, open_to_merge: String, merge_to_publication: String,
+    thread_to_publication: String, publication_to_access_check: String}
+
+def delivery_endpoints(clocks: DeliveryClocks) -> DeliveryEndpoints:
+  match clocks:
+    case DeliveryTimes{thread, commit, opened, ci, review, merge, dispatch, published, checked}:
+      Endpoints{delivery_endpoint(thread), delivery_endpoint(commit), delivery_endpoint(opened),
+        delivery_endpoint(ci), delivery_endpoint(review), delivery_endpoint(merge), delivery_endpoint(dispatch),
+        delivery_endpoint(published), delivery_endpoint(checked)}
+
+def delivery_stages(clocks: DeliveryClocks, +thread_link: String) -> DeliveryStages:
+  match clocks:
+    case DeliveryTimes{+thread, +commit, +opened, +ci, review, +merge, +dispatch, +published, checked}:
+      Stages{delivery_thread_stage(thread_link, thread, commit), delivery_stage(commit, opened),
+        delivery_stage(opened, ci), delivery_stage(ci, merge), delivery_stage(merge, dispatch),
+        delivery_stage(dispatch, published), delivery_stage(opened, merge), delivery_stage(merge, published),
+        delivery_thread_stage(thread_link, thread, published), delivery_stage(published, checked)}

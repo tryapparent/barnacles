@@ -1,6 +1,6 @@
 import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
 import { requireAdmission, revision, snapshot, type AdmissionPolicy } from "../storage/actions.ts";
-import { writeSources, type List } from "../storage/sources.ts";
+import { writeSources, type List, type Point } from "../storage/sources.ts";
 
 type Elapsed = { $: "Duration"; seconds: number; subtract_ms: number } | { $: "Unknown" };
 type Owners = { $: "Owners"; count: number; s: number; ms: number };
@@ -10,7 +10,20 @@ type Proof = { $: "Proof"; channel: string; index: number; shipped: boolean; mer
   source: string; dispatch: number; provenance: Provenance };
 type ReportRow = { $: "ReportRow"; index: number; pr: Elapsed; thread: Elapsed };
 
+type DeliveryEndpoint = "thread_started" | "first_commit" | "pr_opened" | "first_ci" | "first_review" |
+  "pr_merged" | "release_dispatched" | "published" | "access_checked";
+type DeliveryStage = "thread_to_commit" | "commit_to_open" | "open_to_first_ci" | "first_ci_to_merge" |
+  "merge_to_dispatch" | "dispatch_to_publication" | "open_to_merge" | "merge_to_publication" |
+  "thread_to_publication" | "publication_to_access_check";
+export type DeliveryClocks = { $: "DeliveryTimes" } & Record<DeliveryEndpoint, Point>;
+
 export type DeliveryPolicy = {
+  delivery_thread_link(ownerCount: number, linkCount: number, start: Point, opened: Point): string;
+  proof_matches_merge(proofMerge: string, currentMerge: string): boolean;
+  delivery_release_link(selected: boolean, hasProof: boolean, matchingMerge: boolean): string;
+  delivery_endpoints(clocks: DeliveryClocks): { $: "Endpoints" } & Record<DeliveryEndpoint, string>;
+  delivery_stages(clocks: DeliveryClocks, threadLink: string): { $: "Stages" } & Record<DeliveryStage, string>;
+  delivery_thread_window(created: Point, windowStart: Point): string;
   empty_groups(): unknown;
   empty_owners(): Owners;
   observe_owner(owners: Owners, owning: boolean, seconds: number, millis: number): Owners;
@@ -60,6 +73,27 @@ export function saveDelivery(path: string, pr: PullRequest, release: ReleaseEvid
       release.http ?? 0, release.bytes ?? 0, Number(release.accessible), release.ancestry, Number(release.shipped),
       release.dispatch?.id ?? 0, release.dispatch?.at ?? 0);
   });
+}
+
+function point(ms: number): Point {
+  return { $: "Time", s: Math.floor(ms / 1000), ms: ms % 1000 };
+}
+
+function deliveryCoverage(policy: DeliveryPolicy, clocks: DeliveryClocks, threadLink: string, releaseLink: string) {
+  const { $: _endpointTag, ...endpoints } = policy.delivery_endpoints(clocks);
+  const { $: _stageTag, ...stages } = policy.delivery_stages(clocks, threadLink);
+  return {
+    thread_link: threadLink,
+    release_link: releaseLink,
+    thread_clock_kind: "creation_to_milestone_elapsed",
+    active_thread_work: "unknown",
+    landed_ci_lineage: "unknown",
+    rollout_delivery_lineage: "unknown",
+    human_blocking: "unknown",
+    critical_path: "unknown",
+    endpoints,
+    stages,
+  };
 }
 
 export function deliveryReport(path: string, policy: DeliveryPolicy) {
@@ -128,20 +162,39 @@ export function readDelivery(db: DatabaseSync, policy: DeliveryPolicy, repositor
       observe(row, { $: "Legacy", checks });
     }
     let owner = policy.empty_owners();
-    for (const row of owners.all(...key)) {
+    const links = owners.all(...key);
+    for (const row of links) {
       const ms = Number(row.created_ms);
       owner = policy.observe_owner(owner, row.owning === 1, Math.floor(ms / 1000), ms % 1000);
     }
     const rows = [];
     for (let row = policy.report_rows(groups, Number(pr.opened_at), owner); row.$ === "Con"; row = row.tail) {
       const release = candidates[row.head.index - 1];
+      const opened = Number(pr.opened_at);
+      const published = Number(release?.published_at ?? 0);
+      const threadStart: Point = { $: "Time", s: owner.s, ms: owner.ms };
+      const threadLink = policy.delivery_thread_link(owner.count, links.length, threadStart, point(opened * 1000));
+      const releaseLink = policy.delivery_release_link(release !== undefined, candidates.length > 0,
+        candidates.some((proof) => policy.proof_matches_merge(String(proof.merge_sha ?? ""), String(merge_sha ?? ""))));
+      const coverage = deliveryCoverage(policy, {
+        $: "DeliveryTimes",
+        thread_started: threadStart,
+        first_commit: point(Number(pr.first_commit_at ?? 0) * 1000),
+        pr_opened: point(opened * 1000),
+        first_ci: point(Number(firstCI?.started_at ?? 0) * 1000),
+        first_review: point(Number(pr.first_review_at ?? 0) * 1000),
+        pr_merged: point(Number(pr.merged_at ?? 0) * 1000),
+        release_dispatched: point(Number(release?.dispatched_at ?? 0) * 1000),
+        published: point(published * 1000),
+        access_checked: point(Number(release?.checked_at ?? 0) * 1000),
+      }, threadLink, releaseLink);
       rows.push({
         ...pr, channel: release?.channel ?? null, published_at: release?.published_at ?? null,
         first_ci_at: firstCI?.started_at ?? null, first_ci_run: firstCI?.run_id ?? null,
         release_dispatched_at: release?.dispatched_at || null, release_run: release?.dispatch_run || null,
         checked_at: release?.checked_at ?? null, ancestry: release?.ancestry ?? null,
         release_id: release?.release_id ?? null, asset_id: release?.asset_id ?? null,
-        owner_count: owner.count, thread_started_ms: owner.s ? owner.s * 1000 + owner.ms : null,
+        coverage, owner_count: owner.count, thread_started_ms: owner.s ? owner.s * 1000 + owner.ms : null,
         pr_to_release_seconds: secondsFromElapsed(row.head.pr),
         thread_to_release_seconds: secondsFromElapsed(row.head.thread),
       });

@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
-import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { appendFileSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { sourcePolicy, admissionPolicy, deliveryPolicy, type AdmissionPolicy, type DeliveryPolicy, deliveryReport, loadEvidence, type PullRequest, type ReleaseEvidence, type RolloutEvidence, type SourcePolicy, type ThreadEvidence } from "../evidence/index.ts";
 import { buildPolicies, loadPolicy } from "../tooling/bend.ts";
+import { fileURLToPath } from "node:url";
 import { pullRequest, releaseEvidence } from "./github/delivery.ts";
-import { readRollout } from "./codex/rollout.ts";
+import { inspectRollout, readRollout } from "./codex/rollout.ts";
 import { t3Snapshot } from "./t3.ts";
 
 test("compiled Bend2 source decisions through the SQLite import path", async () => {
@@ -115,7 +117,11 @@ test("compiled Bend2 source decisions through the SQLite import path", async () 
     assert.equal(releaseEvidence(pr, tag, policy, repeatedDispatch, available, true).dispatch, null);
     const failure = releaseEvidence(pr, tag, policy, read, () => ({ http: 206, bytes: 1, range: false }));
     saveDelivery(pr, failure);
-    assert.equal(deliveryReport(path, reportPolicy)[0].pr_to_release_seconds, null);
+    const unverified = deliveryReport(path, reportPolicy)[0];
+    assert.equal(unverified.pr_to_release_seconds, null);
+    assert.equal(unverified.coverage.release_link, "release_unverified");
+    assert.equal(unverified.coverage.endpoints.published, "missing");
+    assert.equal(unverified.coverage.stages.merge_to_publication, "missing_end");
     const proof = releaseEvidence(pr, tag, policy, read, () => ({ http: 206, bytes: 1, range: true }), true);
     saveDelivery(pr, proof);
     assert.equal(deliveryReport(path, reportPolicy)[0].first_ci_run, 102);
@@ -130,9 +136,27 @@ test("compiled Bend2 source decisions through the SQLite import path", async () 
     assert.equal(thread.origin, "manual_t3");
     saveThread(thread);
     saveThread(thread);
-    assert.equal(deliveryReport(path, reportPolicy)[0].thread_to_release_seconds, 8.875);
+    const delivered = deliveryReport(path, reportPolicy)[0];
+    assert.equal(delivered.thread_to_release_seconds, 8.875);
+    assert.equal(delivered.coverage.thread_link, "verified");
+    assert.equal(delivered.coverage.release_link, "verified");
+    assert.equal(delivered.coverage.stages.thread_to_commit, "observed");
+    assert.equal(delivered.coverage.active_thread_work, "unknown");
+    assert.equal(delivered.coverage.landed_ci_lineage, "unknown");
+    assert.equal(delivered.coverage.human_blocking, "unknown");
+    assert.equal(reportPolicy.delivery_thread_window({ $: "Time", s: Date.parse(time("01")) / 1000, ms: 125 },
+      { $: "Time", s: Date.parse(time("02")) / 1000, ms: 0 }), "before_window_start");
     saveThread({ ...thread, id: "thread-2" });
-    assert.equal(deliveryReport(path, reportPolicy)[0].thread_to_release_seconds, null);
+    const ambiguousOwner = deliveryReport(path, reportPolicy)[0];
+    assert.equal(ambiguousOwner.thread_to_release_seconds, null);
+    assert.equal(ambiguousOwner.coverage.thread_link, "ambiguous_owner");
+    assert.equal(ambiguousOwner.coverage.stages.thread_to_commit, "missing_start");
+    saveThread({ ...thread, id: "thread-2", pullRequests: [] });
+    saveThread({ ...thread, created: Date.parse(time("08")) });
+    const badClock = deliveryReport(path, reportPolicy)[0];
+    assert.equal(badClock.coverage.thread_link, "thread_clock_conflict");
+    assert.equal(badClock.coverage.stages.thread_to_publication, "clock_conflict");
+    assert.equal(badClock.thread_to_release_seconds, null);
     assert.throws(() => t3Snapshot({ ...snapshot, links: { ...snapshot.links, nextCursor: "more" } }, policy),
       /Incomplete T3/);
 
@@ -222,6 +246,11 @@ test("compiled Bend2 source decisions through the SQLite import path", async () 
     ].map((line) => JSON.stringify(line)).join("\n") + "\n");
     const ambiguous = await readRollout(rollout, "codex-test", policy);
     assert.equal(ambiguous.calls.find(({ id }) => id === "launch")?.asyncEnd, null);
+    assert.equal(ambiguous.quality?.missing_async_end, 1);
+    assert.equal(ambiguous.quality?.mix_receipts, 1);
+    assert.equal(ambiguous.quality?.mix_candidates, 2);
+    assert.equal(ambiguous.quality?.mixed_without_receipt, 3);
+
     appendFileSync(rollout, [
       event("13.500", { type: "custom_tool_call", name: "exec", call_id: "substitution",
         input: 'text(await tools.exec_command({cmd:"cat $(git status)"}));' }),
@@ -235,18 +264,97 @@ test("compiled Bend2 source decisions through the SQLite import path", async () 
       event("16", receipt("invalid identifier", 0)),
       event("17", { type: "reasoning" }),
     ].map((line) => JSON.stringify(line)).join("\n") + "\n{malformed\n");
-    const partial = await readRollout(rollout, "codex-test", policy);
-    assert.equal(partial.malformed, 2);
-    assert.equal(partial.markers.at(-1)?.resultCall, undefined);
-    assert.equal(partial.markers.at(-1)?.at, Date.parse(time("17")));
-    assert.equal(partial.orphans, 1);
-    assert.equal(partial.calls.at(-1)?.id, "unseen");
-    assert.equal(partial.calls.at(-1)?.end, null);
+    const broken = await readRollout(rollout, "codex-test", policy);
+    assert.equal(broken.malformed, 2);
+    assert.equal(broken.markers.at(-1)?.resultCall, undefined);
+    assert.equal(broken.markers.at(-1)?.at, Date.parse(time("17")));
+    assert.equal(broken.orphans, 1);
+    assert.equal(broken.calls.at(-1)?.id, "unseen");
+    assert.equal(broken.calls.at(-1)?.end, null);
     for (const call of ["eligible", "substitution", "wrong-binding"]) {
-      const rejected = partial.calls.find(({ id }) => id === call);
+      const rejected = broken.calls.find(({ id }) => id === call);
       assert.ok(rejected);
       assert.equal(rejected.mix, undefined);
     }
+
+    const damaged = join(job, "damaged.jsonl");
+    writeFileSync(damaged, JSON.stringify({ type: "session_meta", payload: { id: "valid" } }) + "\n" +
+      "{invalid}\n" + "x".repeat(8 * 1024 * 1024 + 1) + "\n" +
+      JSON.stringify(event("04", { type: "function_call", name: "exec_command", call_id: "after-gap" })) + "\n" +
+      JSON.stringify(event("05", { type: "function_call_output", call_id: "after-gap" })));
+    const { data: partial, receipt: diagnostic } = await inspectRollout(damaged, "codex-test", policy);
+    assert.equal(partial?.calls[0].line, 4);
+    assert.equal(partial?.calls[0].end, null);
+    assert.equal(partial?.quality?.missing_end, 1);
+    assert.equal(diagnostic.malformed, 1);
+    assert.equal(diagnostic.oversized, 1);
+    assert.equal(diagnostic.cutoffLines, 1);
+    assert.ok(diagnostic.cutoffBytes > 0);
+    assert.equal(diagnostic.lines, 4);
+  } finally {
+    rmSync(job, { recursive: true, force: true });
+  }
+});
+
+test("rollout CLI keeps fork lineage, rejects unproven input, and preserves replay", () => {
+  const root = process.env.BARNACLES_TEST_DIRECTORY;
+  assert.ok(root);
+  const job = mkdtempSync(join(root, "fork-test-"));
+  try {
+    const input = join(job, "synthetic.jsonl");
+    const time = "2026-01-01T12:00:00Z";
+    const meta = (payload: object) => ({ type: "session_meta", payload });
+    const item = (type: string, call_id: string) => ({ type: "response_item", timestamp: time,
+      payload: { type, call_id, name: "exec_command" } });
+    const fork = [
+      meta({ id: "child", session_id: "parent", parent_thread_id: "parent", forked_from_id: "parent",
+        subagent_history_start_ordinal: 4 }),
+      meta({ id: "parent", session_id: "parent" }),
+      item("function_call", "inherited-only"),
+      item("function_call", "shared-call"),
+      item("function_call_output", "inherited-only"),
+      item("function_call", "shared-call"),
+      item("function_call_output", "shared-call"),
+    ];
+    const write = (records: object[]) =>
+      writeFileSync(input, records.map((record, ordinal) => JSON.stringify({ ordinal, ...record })).join("\n") + "\n");
+    const cli = (command: string, ...args: string[]) => spawnSync(process.execPath,
+      [fileURLToPath(new URL("./import-sources.ts", import.meta.url)), job, command, ...args], { encoding: "utf8" });
+    write(fork);
+    for (let replay = 0; replay < 2; replay++) {
+      const result = cli("rollout", "synthetic", input, "fork-file");
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(JSON.parse(result.stdout).status, "admitted_fork_suffix");
+    }
+    write([...fork, { ...item("function_call", "bad-ordinal"), ordinal: 10 }]);
+    const unproven = cli("rollout", "synthetic", input, "unproven-file");
+    assert.equal(unproven.status, 1);
+    assert.match(unproven.stderr, /unproven_fork/);
+    write([meta({ id: "one" }), item("function_call", "discarded"), meta({ id: "two" })]);
+    const conflict = cli("rollout", "synthetic", input, "conflicting-file");
+    assert.equal(conflict.status, 1);
+    assert.match(conflict.stderr, /conflicting_metadata/);
+    truncateSync(input, 128 * 1024 * 1024 + 1);
+    const oversized = cli("rollout", "synthetic", input, "oversized-file");
+    assert.equal(oversized.status, 1);
+    assert.match(oversized.stderr, /oversized/);
+    const result = cli("rollout-coverage");
+    assert.equal(result.status, 0, result.stderr);
+    const coverage = JSON.parse(result.stdout);
+    assert.deepEqual(coverage.imports.map(({ source_key, status, inherited_lines, read_bytes }) =>
+      [source_key, status, inherited_lines, read_bytes > 0]), [
+      ["conflicting-file", "conflicting_metadata", 0, true],
+      ["fork-file", "admitted_fork_suffix", 3, true],
+      ["oversized-file", "oversized", 0, false],
+      ["unproven-file", "unproven_fork", 3, true],
+    ]);
+    assert.deepEqual(coverage.sessions.map(({ session_id, source_key, orphan_count }) =>
+      [session_id, source_key, orphan_count]), [["child", "fork-file", 1]]);
+    const db = new DatabaseSync(join(job, "evidence.sqlite"), { readOnly: true });
+    try {
+      assert.deepEqual(db.prepare("SELECT session_id, call_id, source_line FROM codex_calls").all().map(Object.values),
+        [["child", "shared-call", 6]]);
+    } finally { db.close(); }
   } finally {
     rmSync(job, { recursive: true, force: true });
   }

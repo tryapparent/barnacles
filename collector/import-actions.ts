@@ -2,23 +2,34 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { admissionPolicy, loadEvidence, type AdmissionPolicy } from "../evidence/index.ts";
 import { buildPolicies, loadPolicy } from "../tooling/bend.ts";
-import { collectAttempt, positiveInt, type ClockPolicy } from "./github/attempt.ts";
+import { collectAttempt, collectWindow, positiveInt, type ClockPolicy } from "./github/attempt.ts";
 
 async function main() {
-  const [directory, repository, run, number, sha, ...extra] = process.argv.slice(2);
-  if (!directory || !repository || !run || !number || !sha || extra.length) {
-    throw new Error("Usage: node collector/import-actions.ts JOB_DIRECTORY OWNER/REPO RUN_ID ATTEMPT EXPECTED_SHA");
+  const [directory, repository, mode, ...args] = process.argv.slice(2);
+  const windowMode = mode === "--window";
+  if (!directory || !repository || !mode || args.length !== (windowMode ? 4 : 2)) {
+    throw new Error([
+      "Usage: node collector/import-actions.ts JOB_DIRECTORY OWNER/REPO RUN_ID ATTEMPT EXPECTED_SHA",
+      "   or: node collector/import-actions.ts JOB_DIRECTORY OWNER/REPO --window FROM TO MAX_PAGES MAX_ATTEMPTS",
+    ].join("\n"));
   }
-  const identity = { repository, runId: positiveInt(run), attempt: positiveInt(number), sha };
   const scratch = mkdtempSync(join(resolve(directory), "build-"));
   try {
-    const [source, admissionFile] = await buildPolicies(scratch, [[new URL("./github/clocks.bend", import.meta.url), "clocks.mjs"], [admissionPolicy, "admission.mjs"]]);
+    const [source, admissionFile] = await buildPolicies(scratch, [
+      [new URL("./github/clocks.bend", import.meta.url), "clocks.mjs"],
+      [admissionPolicy, "admission.mjs"],
+    ]);
     const admission = await loadPolicy<AdmissionPolicy>(admissionFile);
     const policy = await loadPolicy<ClockPolicy>(source);
-    const evidence = collectAttempt(identity, policy);
     const database = join(resolve(directory), "evidence.sqlite");
-    loadEvidence(database, { source: "github-actions", attempt: evidence }, admission);
-    console.log(`Imported attempt ${evidence.attempt} with ${evidence.jobs.length} jobs into evidence.sqlite`);
+    const { attempts, coverage } = windowMode
+      ? collectWindow(repository, args[0], args[1], positiveInt(args[2]), positiveInt(args[3]), policy)
+      : { attempts: [collectAttempt({
+        repository, runId: positiveInt(mode), attempt: positiveInt(args[0]), sha: args[1],
+      }, policy)], coverage: null };
+    loadEvidence(database, { source: "github-actions-window", attempts }, admission);
+    console.log(coverage ? JSON.stringify(coverage)
+      : `Imported attempt ${attempts[0].attempt} with ${attempts[0].jobs.length} jobs into evidence.sqlite`);
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }

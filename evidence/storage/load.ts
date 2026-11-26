@@ -1,7 +1,7 @@
 import { buildPolicy, loadPolicy } from "../../tooling/bend.ts";
-import { admissionPolicy, saveAttempt, type ActionAttempt, type AdmissionPolicy } from "./actions.ts";
+import { admissionPolicy, saveAttempt, saveAttempts, type ActionAttempt, type AdmissionPolicy } from "./actions.ts";
 import { saveDelivery, type PullRequest, type ReleaseEvidence } from "../delivery/delivery.ts";
-import { saveRollout, saveThread, writeSources, type RolloutEvidence, type ThreadEvidence } from "./sources.ts";
+import { saveRejectedRollout, saveRollout, saveThread, writeSources, type RolloutEvidence, type RolloutImport, type ThreadEvidence } from "./sources.ts";
 
 export type ChangedCodeFile = ({ path: string } | { pathBytesBase64: string }) & { commits: number };
 type ChangedCodeReport = {
@@ -20,8 +20,10 @@ export async function buildAdmissionPolicy(directory: string): Promise<Admission
 
 export type EvidenceBatch =
   | { source: "github-actions"; attempt: ActionAttempt }
+  | { source: "github-actions-window"; attempts: ActionAttempt[] }
   | { source: "github-delivery"; pullRequest: PullRequest; release?: ReleaseEvidence }
   | { source: "codex"; rollout: RolloutEvidence }
+  | { source: "codex-rejected"; receipt: RolloutImport }
   | { source: "git-change-scan"; repository: string; report: ChangedCodeReport }
   | { source: "t3"; thread: ThreadEvidence };
 
@@ -41,6 +43,8 @@ function saveChangedCode(database: string, repository: string, report: ChangedCo
 
 export function loadEvidence(database: string, batch: EvidenceBatch, policy: AdmissionPolicy) {
   switch (batch.source) {
+    case "github-actions-window": return saveAttempts(database, batch.attempts, policy);
+    case "codex-rejected": return saveRejectedRollout(database, batch.receipt);
     case "github-actions": return saveAttempt(database, batch.attempt, policy);
     case "github-delivery": return saveDelivery(database, batch.pullRequest, batch.release, policy);
     case "codex": return saveRollout(database, batch.rollout, policy);

@@ -776,17 +776,17 @@ def model_sample(mix: CommandMix, receipt: Receipt, finish: Point, ambiguous: Bo
     case _ _: NoSample{}
 
 type RolloutRecord is Data:
-  RolloutRecord{id: String, record: CallRecord, link: CellLink, sample: ModelSample}
+  RolloutRecord{id: String, record: CallRecord, link: CellLink, candidate: CommandMix, sample: ModelSample}
 
 type RolloutSummary is Data:
   Summary{orphans: U32, records: List<&2, RolloutRecord>}
 
-def summarize_call(id: String, +record: CallRecord, link: CellLink, mix: CommandMix, receipt: Receipt,
+def summarize_call(id: String, +record: CallRecord, link: CellLink, +mix: CommandMix, receipt: Receipt,
   summary: RolloutSummary) -> RolloutSummary:
   match record summary:
     case Ignored{extra} Summary{orphans, records}: Summary{U32.add(orphans, extra), records}
     case Observed{extra, line, tool, command, categories, start, finish, launched, ambiguous} Summary{orphans, records}:
-      Summary{U32.add(orphans, extra), RolloutRecord{id, record, link, model_sample(mix, receipt, finish, ambiguous)} <> records}
+      Summary{U32.add(orphans, extra), RolloutRecord{id, record, link, mix, model_sample(mix, receipt, finish, ambiguous)} <> records}
 
 def summarize_saved(id: String, link: CellLink, summary: RolloutSummary, saved: RolloutCall) -> RolloutSummary:
   match saved:
@@ -896,6 +896,10 @@ def rollout_bad_line(meta: RolloutMetadata) -> RolloutMetadata:
     case RolloutMetadata{session, malformed, previous, markers}:
       RolloutMetadata{session, U32.inc(malformed), previous, markers}
 
+def rollout_clear_result(meta: RolloutMetadata, session: String) -> RolloutMetadata:
+  match meta:
+    case RolloutMetadata{old, malformed, previous, markers}: RolloutMetadata{session, malformed, "", markers}
+
 def rollout_markers(meta: RolloutMetadata) -> List<&2, ReasoningMarker>:
   match meta:
     case RolloutMetadata{session, malformed, previous, markers}: List.reverse(&2, ReasoningMarker, markers)
@@ -936,3 +940,100 @@ def rollout_metadata(meta: RolloutMetadata, +envelope: String, +kind: String, +i
         RolloutMetadata{session, malformed, model_wait_input(previous, envelope, kind, Bool.pick(String, valid_id, id, "")), markers})
     case RolloutMetadata{session, malformed, previous, markers} _:
       MetadataStep{RolloutMetadata{session, malformed, model_wait_input(previous, envelope, kind, id), markers}, ""}
+
+type RolloutAdmission is Data:
+  Gate{status: String, session: String, parent: String, boundary: U32, inherited: U32, unassigned: U32, keep: Bool}
+
+def rollout_file_status(available: Bool, regular: Bool, empty: Bool, oversized: Bool) -> String:
+  Bool.pick(String, available,
+    Bool.pick(String, regular, Bool.pick(String, empty, "empty", Bool.pick(String, oversized, "oversized", "scan")), "not_regular"),
+    "unavailable")
+
+def rollout_header(+id: String, +parent: String, fork: String, shared: String, +boundary: U32, line: U32, ordinal_ok: Bool,
+  +unassigned: U32) -> RolloutAdmission:
+  match id boundary:
+    case "" _: Gate{"invalid_metadata", "", "", 0, 0, unassigned, False{}}
+    case _ 0: Gate{"single", id, "", 0, 0, unassigned, False{}}
+    case _ _:
+      valid = Bool.and(ordinal_ok, Bool.and(U32.is_eq(line, 1), U32.is_gt(boundary, 1)))
+      linked = Bool.and(String.eq(parent, fork), Bool.and(String.eq(parent, shared),
+        Bool.and(Bool.not(String.eq(parent, "")), Bool.not(String.eq(parent, id)))))
+      Bool.pick(RolloutAdmission, Bool.and(valid, linked), Gate{"fork", id, parent, boundary, 0, unassigned, False{}},
+        Gate{"unproven_fork", "", "", 0, 0, unassigned, False{}})
+
+def rollout_fork_line(+session: String, +parent: String, +boundary: U32, +inherited: U32, +unassigned: U32,
+  +line: U32, ordinal_ok: Bool, +meta: Bool, id: String, shared: String, declares_fork: Bool) -> RolloutAdmission:
+  embedded = U32.is_eq(line, 2)
+  header_ok = Bool.pick(Bool, embedded, Bool.and(meta, Bool.and(String.eq(id, parent), Bool.and(String.eq(shared, parent), Bool.not(declares_fork)))), Bool.not(meta))
+  +before = U32.is_le(line, boundary)
+  valid = Bool.and(ordinal_ok, header_ok)
+  Bool.pick(RolloutAdmission, valid,
+    Gate{"fork", session, parent, boundary, Bool.pick(U32, before, U32.inc(inherited), inherited), unassigned,
+      Bool.not(before)},
+    Gate{"unproven_fork", session, parent, boundary, inherited, unassigned, False{}})
+
+def add_if(+count: U32, test: Bool) -> U32:
+  Bool.pick(U32, test, U32.inc(count), count)
+
+def rollout_line(state: RolloutAdmission, +meta: Bool, +id: String, parent: String, fork: String, shared: String,
+  +boundary: U32, line: U32, ordinal_ok: Bool, decoded: Bool) -> RolloutAdmission:
+  match state:
+    case Gate{"awaiting_metadata", _, _, _, _, +unassigned, _}:
+      Bool.pick(RolloutAdmission, meta, rollout_header(id, parent, fork, shared, boundary, line, ordinal_ok, unassigned),
+        Gate{"awaiting_metadata", "", "", 0, 0, add_if(unassigned, decoded), False{}})
+    case Gate{"single", +session, _, _, _, +unassigned, _}:
+      same = Bool.and(String.eq(id, session), U32.is_eq(boundary, 0))
+      Bool.pick(RolloutAdmission, Bool.and(meta, Bool.not(same)),
+        Gate{"conflicting_metadata", session, "", 0, 0, unassigned, False{}},
+        Gate{"single", session, "", 0, 0, unassigned, Bool.not(meta)})
+    case Gate{"fork", session, source_parent, start, inherited, unassigned, _}:
+      rollout_fork_line(session, source_parent, start, inherited, unassigned, line, ordinal_ok, meta, id, shared, U32.is_ne(boundary, 0))
+    case _: state
+
+def rollout_status(state: RolloutAdmission, lines: U32, complete_read: Bool) -> String:
+  match state complete_read:
+    case _ False{}: "read_failed"
+    case Gate{"single", _, _, _, _, _, _} True{}: "admitted"
+    case Gate{"fork", _, _, boundary, _, _, _} True{}:
+      Bool.pick(String, U32.is_gt(lines, boundary), "admitted_fork_suffix", "unproven_fork")
+    case Gate{"awaiting_metadata", _, _, _, _, _, _} True{}: "missing_metadata"
+    case Gate{status, _, _, _, _, _, _} True{}: status
+
+type RolloutQuality is Data:
+  Quality{missing_start: U32, missing_end: U32, missing_async_end: U32, ambiguous_calls: U32,
+    mix_candidates: U32, mix_receipts: U32, mixed_calls: U32, mixed_without_receipt: U32}
+
+def is_mix(candidate: CommandMix) -> Bool:
+  match candidate:
+    case Mix{_, _, _, _}: True{}
+    case NoMix{}: False{}
+
+def has_multiple_categories(parts: List<&2, String>) -> Bool:
+  match parts:
+    case _ <> _ <> _: True{}
+    case _: False{}
+
+def rollout_call_quality(state: RolloutQuality, start: Point, finish: Point, launched: Bool, async_end: Point,
+  ambiguous: Bool, categories: String, candidate: CommandMix, +received: Bool) -> RolloutQuality:
+  match state:
+    case Quality{starts, ends, async_ends, conflicts, candidates, receipts, groups, gaps}:
+      +mixed = has_multiple_categories(String.split(categories, '+'))
+      Quality{add_if(starts, Bool.not(has_time(start))), add_if(ends, Bool.not(has_time(finish))),
+        add_if(async_ends, Bool.and(launched, Bool.not(has_time(async_end)))), add_if(conflicts, ambiguous),
+        add_if(candidates, is_mix(candidate)), add_if(receipts, received),
+        add_if(groups, mixed), add_if(gaps, Bool.and(mixed, Bool.not(received)))}
+
+def rollout_admitted(+status: String) -> Bool:
+  Bool.or(String.eq(status, "admitted"), String.eq(status, "admitted_fork_suffix"))
+
+type RolloutClocks is Data:
+  Clocks{first: Point, last: Point}
+
+def rollout_clock(clocks: RolloutClocks, +at: Point) -> RolloutClocks:
+  match clocks:
+    case Clocks{+first, +last}:
+      Clocks{Bool.pick(Point, Bool.or(Bool.not(has_time(at)), time_order(first, at)), first, at),
+        Bool.pick(Point, time_order(last, at), at, Bool.pick(Point, has_time(last), last, at))}
+
+def rollout_pairing_gaps(malformed: U32, oversized: U32, cutoff: U32, unassigned: U32) -> U32:
+  U32.add(U32.add(malformed, oversized), U32.add(cutoff, unassigned))
