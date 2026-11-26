@@ -6,6 +6,25 @@ Use built-in gauge, time-series, and table panels. Evaluate the [SQLite data sou
 
 The [local provisioning guide](provisioning/README.md) describes the pinned Grafana and Tempo setup, evidence coverage, and launch commands.
 
+## Operation timings
+
+The Shipping review opens on **Tool envelopes**. Use **Clock** to switch the
+treemap and ranked table to async cells, CI queue, CI job execution, or CI steps
+when that evidence is present. Tile area shows total recorded duration within
+the selected clock. The table shows measured span count, mean duration, and
+total for each operation. Select an operation to see its workflow and missing
+clocks in **Timing breakdown**.
+
+The snapshot builds `operation_totals` from the same rollout and Actions spans
+used by the detailed views. A single-category span keeps its category name.
+A mixed command contributes its elapsed duration once to **Mixed**. Select
+**Mixed** to see the submitted category groups and their whole-span durations.
+The waterfall retains the submitted category names for each span. CI job and step
+names can repeat across workflows, and the overview combines their counts and
+durations within each clock. Nested and overlapping spans are cumulative
+recorded time. The category model and estimated model-wait spans have their
+own displays.
+
 ## Codex waterfall
 
 Import a permitted rollout with `node collector/import-sources.ts "$job" rollout local-codex "$rollout"`.

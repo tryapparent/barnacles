@@ -12,7 +12,8 @@ export type TimingPolicy = {
   interval_clock(clock: IntervalClock): string;
   record_interval(sample: Stats, start: number, end: number): Stats;
   mean(sample: Stats): Ratio;
-  count_in_map(clock: string): boolean;
+  operation_area(sample: Stats): boolean;
+  measured_total(sample: Stats): Ratio;
   ranks_before(total: number, key: string, otherTotal: number, otherKey: string): boolean;
 };
 
@@ -22,18 +23,20 @@ export function collectTiming(source: DatabaseSync, repo: string, metrics: Timin
   const all = (sql: string) => source.prepare(sql).all(repo);
   const timing = new Map<string, Timing>();
   const workflow = new Map<string, Timing>();
-  const totals = new Map<string, Stats>();
-  function add(interval: ObservedInterval, id: number, operation: string) {
+  const operations = new Map<string, Timing>();
+  const mixes = new Map<string, Timing>();
+  function add(interval: ObservedInterval, id: number, operation: string, group?: string) {
     const { start, end } = interval;
     const clock = metrics.interval_clock(interval.clock);
-    const record = (stats: Stats) => metrics.record_interval(stats, start ?? 0, end ?? 0);
-    const operationKey = JSON.stringify([clock, id, operation]);
-    for (const [collection, key] of [[timing, operationKey], [workflow, JSON.stringify([clock, id])]] as const) {
-      const row = collection.get(key) ?? { clock, workflow: id, operation, stats: empty };
-      row.stats = record(row.stats);
+    function record(collection: Map<string, Timing>, key: string, name: string) {
+      const row = collection.get(key) ?? { clock, workflow: id, operation: name, stats: empty };
+      row.stats = metrics.record_interval(row.stats, start ?? 0, end ?? 0);
       collection.set(key, row);
     }
-    if (metrics.count_in_map(clock)) totals.set(clock, record(totals.get(clock) ?? empty));
+    record(timing, JSON.stringify([clock, id, operation]), operation);
+    record(workflow, JSON.stringify([clock, id]), operation);
+    record(operations, JSON.stringify([clock, operation]), operation);
+    if (group !== undefined) record(mixes, JSON.stringify([clock, group]), group);
   }
   if (source.prepare("SELECT 1 FROM sqlite_schema WHERE name=?").get("action_jobs")) {
     for (const row of all(`
@@ -60,10 +63,13 @@ export function collectTiming(source: DatabaseSync, repo: string, metrics: Timin
   const compare = <T>(left: [string, T], right: [string, T], total: (data: T) => number) =>
     Number(metrics.ranks_before(total(right[1]), right[0], total(left[1]), left[0])) -
     Number(metrics.ranks_before(total(left[1]), left[0], total(right[1]), right[0]));
+  const ranked = (collection: Map<string, Timing>) =>
+    [...collection].sort((a, b) => compare(a, b, (row) => row.stats.total)).map(([, row]) => row);
   return {
     add,
-    operations: () => [...timing].sort((a, b) => compare(a, b, (row) => row.stats.total)).map(([, row]) => row),
-    workflows: () => [...workflow].sort((a, b) => compare(a, b, (row) => row.stats.total)).map(([, row]) => row),
-    totals: () => [...totals].sort((a, b) => compare(a, b, (stats) => stats.total)),
+    operations: () => ranked(timing),
+    workflows: () => ranked(workflow),
+    operationTotals: () => ranked(operations),
+    mixedGroups: () => ranked(mixes),
   };
 }

@@ -17,7 +17,7 @@ async function main() {
     db.exec("BEGIN");
     const rows = collectTiming(db, repo, metrics).operations().map(({ clock, operation, workflow, stats }) => ({
       workflow_id: workflow, clock, operation, count: stats.count, mean_seconds: seconds(metrics.mean(stats)),
-      total_seconds: stats.total / 1000, unmeasured_count: stats.missing,
+      total_seconds: seconds(metrics.measured_total(stats)), unmeasured_count: stats.missing,
     }));
     console.log(JSON.stringify(rows, null, 2));
   } finally {

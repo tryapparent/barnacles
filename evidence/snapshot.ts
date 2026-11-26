@@ -18,7 +18,7 @@ type Metrics = TracePolicy & TimingPolicy & {
   record_release(sample: Shipping, linked: boolean, elapsedMs: number): Shipping;
   visible_release(channel: string, published: number): boolean;
   rollout_clean(malformed: number, orphans: number): boolean;
-  observed_category(categories: string): string;
+  observed_category(categories: string): { $: "Category"; name: string } | { $: "MixedCommand"; name: string; group: string };
   trace_preference(asyncSpans: number, reasoningEvents: number): boolean;
   trace_preferred(ended: number, mixed: boolean, otherEnded: number, otherMixed: boolean): boolean;
   delivery_stages(thread: number, commit: number, opened: number, ci: number, merged: number,
@@ -62,7 +62,10 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
       CREATE TABLE work(pr INTEGER, status TEXT, created INTEGER, url TEXT);
       CREATE TABLE timing(clock TEXT, workflow INTEGER, operation TEXT, count INTEGER,
         mean_seconds REAL, total_seconds REAL, unmeasured INTEGER, rank INTEGER);
-      CREATE TABLE time_map(clock TEXT, total_seconds REAL, rank INTEGER);
+      CREATE TABLE operation_totals(clock TEXT, operation TEXT, count INTEGER, mean_seconds REAL,
+        total_seconds REAL, unmeasured INTEGER, has_area INTEGER, rank INTEGER);
+      CREATE TABLE mixed_groups(clock TEXT, operation TEXT, count INTEGER, mean_seconds REAL,
+        total_seconds REAL, unmeasured INTEGER, rank INTEGER);
       CREATE TABLE category_estimates(name TEXT, seconds REAL, total REAL, error REAL, samples INTEGER);
       CREATE TABLE workflows(clock TEXT, workflow INTEGER, total_seconds REAL, count INTEGER,
         mean_seconds REAL, unmeasured INTEGER, rank INTEGER);
@@ -195,7 +198,8 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
           const clock = metrics.interval_clock(row.clock);
           const start = row.start ?? 0;
           const end = row.end ?? 0;
-          timing.add(row, 0, metrics.observed_category(row.categories));
+          const category = metrics.observed_category(row.categories);
+          timing.add(row, 0, category.name, category.$ === "MixedCommand" ? category.group : undefined);
           clocks.set(clock, metrics.record_interval(clocks.get(clock) ?? empty, start, end));
           insert.run(session, row.line, metrics.trace_operation(row.clock, row.tool, row.command, row.categories),
             clock, row.start, row.end);
@@ -223,13 +227,18 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
     timing.workflows().forEach((row, rank) =>
       workflowInsert.run(row.clock, row.workflow, row.stats.total / 1000,
         row.stats.count, seconds(metrics.mean(row.stats)), row.stats.missing, rank));
-    const mapInsert = view.prepare("INSERT INTO time_map VALUES (?, ?, ?)");
-    timing.totals().forEach(([clock, stats], rank) => {
-      if (stats.total) mapInsert.run(clock, stats.total / 1000, rank);
-    });
+    const overviewInsert = view.prepare("INSERT INTO operation_totals VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+    const operations = timing.operationTotals();
+    operations.forEach((row, rank) =>
+      overviewInsert.run(row.clock, row.operation, row.stats.count, seconds(metrics.mean(row.stats)),
+        seconds(metrics.measured_total(row.stats)), row.stats.missing, Number(metrics.operation_area(row.stats)), rank));
+    const mixInsert = view.prepare("INSERT INTO mixed_groups VALUES (?, ?, ?, ?, ?, ?, ?)");
+    timing.mixedGroups().forEach((row, rank) =>
+      mixInsert.run(row.clock, row.operation, row.stats.count, seconds(metrics.mean(row.stats)),
+        seconds(metrics.measured_total(row.stats)), row.stats.missing, rank));
 
     view.exec("COMMIT");
-    return { from: Math.min(priorWeek, ...weeks.keys()), to: cutoff, defaultTrace, traceSessions, rolloutCount };
+    return { from: Math.min(priorWeek, ...weeks.keys()), to: cutoff, defaultTrace, traceSessions, rolloutCount, operationCount: operations.length };
   } finally {
     source.close();
     view.close();

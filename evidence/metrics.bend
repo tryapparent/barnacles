@@ -58,8 +58,13 @@ def direction(recent: Sample, prior: Sample) -> Direction:
       Bool.pick(Direction, Bool.or(Nat.is_eq(rc, 0n), Nat.is_eq(pc, 0n)), Insufficient{},
         difference(Nat.mul(rt, pc), Nat.mul(pt, rc), Nat.mul(rc, pc)))
 
-def count_in_map(clock: String) -> Bool:
-  Bool.not(String.eq(clock, "CI steps"))
+def operation_area(sample: Sample) -> Bool:
+  match sample:
+    case Stats{count, total, missing}: Nat.is_lt(0n, total)
+
+def measured_total(sample: Sample) -> Ratio:
+  match sample:
+    case Stats{count, total, missing}: Fraction{total, Nat.min(1n, count)}
 
 def visible_open(owning: Bool, state: String, settled: Bool) -> Bool:
   Bool.and(owning, Bool.and(String.eq(state, "open"), Bool.not(settled)))
@@ -106,14 +111,19 @@ def trace_category_title(parts: List<&2, String>) -> String:
 def trace_span_name(clock: String, tool: String, command: String, categories: String) -> String:
   trace_operation(clock, tool, command, trace_category_title(String.split(categories, '+')))
 
-def observed_parts(parts: List<&2, String>) -> String:
-  match parts:
-    case []: "Unknown"
-    case head <> []: head
-    case head <> tail: "Mixed"
+type Operation is Data:
+  Category{name: String}
+  MixedCommand{name: String, group: String}
 
-def observed_category(+categories: String) -> String:
-  Bool.pick(String, String.eq(categories, ""), "Unknown", observed_parts(String.split(categories, '+')))
+def observed_parts(parts: List<&2, String>, categories: String) -> Operation:
+  match parts:
+    case []: Category{"Unknown"}
+    case head <> []: Category{head}
+    case head <> tail: MixedCommand{"Mixed", String.append("Mixed · ", categories)}
+
+def observed_category(+categories: String) -> Operation:
+  Bool.pick(Operation, String.eq(categories, ""), Category{"Unknown"},
+    observed_parts(String.split(categories, '+'), categories))
 
 type Focus is Data:
   Window{from: Nat, to: Nat}
