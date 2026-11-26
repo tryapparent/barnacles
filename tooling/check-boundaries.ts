@@ -12,6 +12,7 @@ type VerificationPolicy = {
   owner_grammar(extension: string): string;
   allowed_import(owner: string, path: string, callee: string, expression: string, value: string,
     target: string, targetOwner: string): boolean;
+  builds_harbor(scopes: BendList): boolean;
   select_suites(scopes: BendList): Suites;
   is_test(path: string): boolean;
 };
@@ -27,8 +28,11 @@ export async function loadVerification(directory: string) {
   return loadPolicy<VerificationPolicy>(output);
 }
 
-export function suiteDirectories(policy: VerificationPolicy, scopes: string[]): string[] {
-  const input = scopes.reduceRight<BendList>((tail, head) => ({ $: "Con", head, tail }), { $: "Nil" });
+export function verificationInput(scopes: string[]): BendList {
+  return scopes.reduceRight<BendList>((tail, head) => ({ $: "Con", head, tail }), { $: "Nil" });
+}
+
+export function suiteDirectories(policy: VerificationPolicy, input: BendList): string[] {
   const result = policy.select_suites(input);
   if (result.$ === "Invalid") {
     throw Error("Usage: npm run verify -- [hooks] [collector] [evidence] [dashboard]");

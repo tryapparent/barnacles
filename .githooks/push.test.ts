@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 
@@ -42,7 +42,7 @@ test("pre-push routes the outgoing commit and blocks failed verification", () =>
     for (const file of ["verify.ts", "check-directory-width.ts", "check-boundaries.ts", "bend.ts", "verification.bend"]) {
       copyFileSync(new URL("../tooling/" + file, import.meta.url), join(cwd, "tooling", file));
     }
-    write("dashboard/prepare.test.ts", "process.exit(0)\n");
+    write("dashboard/prepare.test.ts", "process.exit(process.env.BARNACLES_WEB_BUILD ? 0 : 1)\n");
     for (const file of ["pre-push", "snapshot.ts", "check-bend-paths.ts"]) {
       copyFileSync(new URL("./" + file, import.meta.url), join(cwd, ".githooks", file));
     }
@@ -54,9 +54,13 @@ test("pre-push routes the outgoing commit and blocks failed verification", () =>
       copyFileSync(new URL("./policy/" + file, import.meta.url), join(cwd, ".githooks/policy", file));
     }
     write("README.md", "Baseline\n");
-    for (const file of ["package.json", "package-lock.json"]) {
+    for (const file of ["package-lock.json"]) {
       copyFileSync(new URL("../" + file, import.meta.url), join(cwd, file));
     }
+    const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+    packageJson.scripts["build:harbor"] = "node tooling/build-harbor.ts";
+    write("package.json", JSON.stringify(packageJson));
+    write("tooling/build-harbor.ts", "process.exit(process.argv[2] === '--outDir' && process.argv[3] ? 0 : 1)\n");
     write("collector/github/attempt.test.ts", 'console.log("committed collector test")\n');
     write("collector/sources.test.ts", "process.exit(0)\n");
     pass("add", "README.md", "package.json", "package-lock.json", "collector", "dashboard", "evidence", "tooling", ".githooks", ".gitattributes");

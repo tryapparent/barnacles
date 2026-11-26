@@ -59,3 +59,8 @@ def allowed_import(owner: String, +path: String, callee: String, expression: Str
   Bool.or(Bool.and(String.eq(path, "tooling/bend.ts"),
       Bool.and(String.eq(callee, "import"), String.eq(expression, "pathToFileURL(path).href"))),
     ordinary_import(value, owner, path, target, target_owner))
+
+def builds_harbor(scopes: List<&2, String>) -> Bool:
+  match scopes:
+    case []: True{}
+    case first <> rest: List.any(~&2, ~String, ~(scope => String.eq(scope, "dashboard")), first <> rest)

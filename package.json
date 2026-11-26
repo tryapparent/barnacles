@@ -8,18 +8,32 @@
     "hooks:install": "node tooling/bend.ts --install-hooks",
     "test:hooks": "node tooling/verify.ts hooks",
     "verify": "node tooling/verify.ts",
-    "demo": "node examples/demo.ts"
+    "demo": "node examples/demo.ts",
+    "build:harbor": "tsc -p dashboard/web/tsconfig.json && vite build dashboard/web"
   },
   "devDependencies": {
     "@repomix/tree-sitter-wasms": "0.1.17",
+    "@types/react": "19.3.3",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.3.0",
     "@willbooster/tree-sitter-sql": "3.0.2",
     "@willbooster/web-tree-sitter": "23.0.1",
     "markdown-it": "15.0.3",
     "parse5": "8.1.1",
     "tree-sitter-bash": "0.25.1",
     "tree-sitter-wasms": "0.1.13",
+    "typescript": "7.0.2",
+    "vite": "8.4.0",
     "web-tree-sitter": "0.25.10",
     "yaml": "2.9.0"
   },
-  "type": "module"
+  "type": "module",
+  "dependencies": {
+    "@radix-ui/react-slot": "1.5.0",
+    "class-variance-authority": "0.7.1",
+    "clsx": "2.1.1",
+    "lucide-react": "1.81.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  }
 }
