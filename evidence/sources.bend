@@ -711,170 +711,6 @@ def choose_asset(assets: List<&2, ReleaseAsset>, published: U32, public_release:
 def range_matches(header: String, size: String) -> Bool:
   String.eq(header, String.append("content-range: bytes 0-0/", size))
 
-type Receipt is Data:
-  NoReceipt{}
-  Receipt{seconds: F32, code: U32, running: Bool}
-
-type RolloutCall is Data:
-  EmptyCall{}
-  SavedCall{call: CallState, mix: CommandMix, receipt: Receipt}
-
-type RolloutCalls is Data:
-  Calls{index: Map<&2, RolloutCall>, newest_first: List<&2, String>}
-
-def empty_rollout_calls() -> RolloutCalls:
-  Calls{Map.new(&2, RolloutCall), []}
-
-type CallEvent is Data:
-  Started{line: U32, tool: ToolContext, stamp: Point, target: String, mix: CommandMix}
-  Finished{line: U32, stamp: Point, yielded: String, completed: Bool, receipt: Receipt}
-
-def receipt_for(mix: CommandMix, +previous: Receipt, +received: Receipt) -> Receipt:
-  match mix received:
-    case NoMix{} _: previous
-    case _ NoReceipt{}: previous
-    case _ _: received
-
-def observe_call(current: RolloutCall, event: CallEvent) -> RolloutCall:
-  match current event:
-    case EmptyCall{} Started{line, tool, stamp, target, mix}:
-      SavedCall{start_call(Unseen{0}, line, tool, stamp, target), mix, NoReceipt{}}
-    case EmptyCall{} Finished{line, stamp, yielded, completed, receipt}:
-      SavedCall{finish_call(Unseen{0}, line, stamp, yielded, completed), NoMix{}, NoReceipt{}}
-    case SavedCall{call, old_mix, receipt} Started{line, tool, stamp, target, mix}:
-      SavedCall{start_call(call, line, tool, stamp, target), mix, receipt}
-    case SavedCall{call, +mix, previous} Finished{line, stamp, yielded, completed, received}:
-      SavedCall{finish_call(call, line, stamp, yielded, completed), mix, receipt_for(mix, previous, received)}
-
-def add_rollout_call(+id: String, event: CallEvent, order: List<&2, String>,
-  found: Map<&2, RolloutCall> & RolloutCall) -> RolloutCalls:
-  match found:
-    case Tuple{index, EmptyCall{}}:
-      Calls{Map.set(&2, RolloutCall, index, id, observe_call(EmptyCall{}, event)), id <> order}
-    case Tuple{index, saved}:
-      Calls{Map.set(&2, RolloutCall, index, id, observe_call(saved, event)), order}
-
-def rollout_call(calls: RolloutCalls, +id: String, event: CallEvent) -> RolloutCalls:
-  match calls:
-    case Calls{index, order}: add_rollout_call(id, event, order, Map.get(RolloutCall, EmptyCall{}, index, id))
-
-def accepts_model_script(name: String) -> Bool:
-  String.eq(name, "exec")
-
-def rollout_start(calls: RolloutCalls, id: String, line: U32, +name: String, stamp: Point, target: String,
-  direct: List<&2, ShellCommand>, wrapped: List<&2, ToolInvocation>, sequential: List<&2, ShellCommand>) -> RolloutCalls:
-  rollout_call(calls, id, Started{line, tool(name, direct, wrapped), stamp, target,
-    Bool.pick(CommandMix, accepts_model_script(name), command_mix(sequential), NoMix{})})
-
-def rollout_finish(calls: RolloutCalls, id: String, line: U32, stamp: Point, yielded: String, completed: Bool,
-  receipt: Receipt) -> RolloutCalls:
-  rollout_call(calls, id, Finished{line, stamp, yielded, completed, receipt})
-
-def add_cell(key: String, fact: CellFact, found: Map<&2, CellPair> & CellPair) -> Map<&2, CellPair>:
-  match found:
-    case Tuple{cells, pair}: Map.set(&2, CellPair, cells, key, add_cell_fact(pair, fact))
-
-def record_cell(+fact: CellFact, cells: Map<&2, CellPair>) -> Map<&2, CellPair>:
-  match fact:
-    case NoCell{}: cells
-    case Launch{+key, owner, yielded_at, yielded_line, valid}:
-      add_cell(key, fact, Map.get(CellPair, Pair{NoCell{}, NoCell{}, False{}}, cells, key))
-    case Terminal{+key, call_id, started_at, started_line, ended_at, valid}:
-      add_cell(key, fact, Map.get(CellPair, Pair{NoCell{}, NoCell{}, False{}}, cells, key))
-
-def collect_cells(calls: Map<&2, RolloutCall>, cells: Map<&2, CellPair>) -> Map<&2, CellPair>:
-  match calls:
-    case MTip{}: cells
-    case MLeaf{id, EmptyCall{}}: cells
-    case MLeaf{id, SavedCall{state, mix, receipt}}: record_cell(cell_fact(id, state), cells)
-    case MNode{position, lo, hi}: collect_cells(hi, collect_cells(lo, cells))
-
-def record_link(link: CellLink, links: Map<&2, CellLink>) -> Map<&2, CellLink>:
-  match link:
-    case Unlinked{}: links
-    case Linked{+owner, call_id, end}: Map.set(&2, CellLink, links, owner, Linked{owner, call_id, end})
-
-def collect_links(cells: Map<&2, CellPair>, +clean: Bool, links: Map<&2, CellLink>) -> Map<&2, CellLink>:
-  match cells:
-    case MTip{}: links
-    case MLeaf{key, pair}: record_link(cell_link(pair, clean), links)
-    case MNode{position, lo, hi}: collect_links(hi, clean, collect_links(lo, clean, links))
-
-def call_orphans(state: CallState) -> U32:
-  match state:
-    case Unseen{orphans}: orphans
-    case Seen{orphans, line, tool, start, finish, result_line, target, cell, terminal, ambiguous}: orphans
-
-def count_orphans(calls: Map<&2, RolloutCall>) -> U32:
-  match calls:
-    case MLeaf{id, SavedCall{state, mix, receipt}}: call_orphans(state)
-    case MNode{position, lo, hi}: U32.add(count_orphans(lo), count_orphans(hi))
-    case _: 0
-
-type ModelSample is Data:
-  NoSample{}
-  Sample{mix: CommandMix, seconds: F32}
-
-def model_sample(mix: CommandMix, receipt: Receipt, finish: Point, ambiguous: Bool) -> ModelSample:
-  match mix receipt:
-    case Mix{files, git, builds, pushes} Receipt{+seconds, code, running}:
-      Bool.pick(ModelSample, keep_mix_receipt(seconds, code, running, has_time(finish), ambiguous),
-        Sample{Mix{files, git, builds, pushes}, seconds}, NoSample{})
-    case _ _: NoSample{}
-
-type RolloutRecord is Data:
-  RolloutRecord{id: String, record: CallRecord, link: CellLink, candidate: CommandMix, sample: ModelSample}
-
-type RolloutSummary is Data:
-  Summary{orphans: U32, records: List<&2, RolloutRecord>, cells: Map<&2, CellPair>, clean: Bool}
-
-def add_record(id: String, +record: CallRecord, link: CellLink, +mix: CommandMix, receipt: Receipt,
-  records: List<&2, RolloutRecord>) -> List<&2, RolloutRecord>:
-  match record:
-    case Ignored{extra}: records
-    case Observed{extra, line, tool, command, categories, start, finish, result_line, launched, target, ambiguous}:
-      RolloutRecord{id, record, link, mix, model_sample(mix, receipt, finish, ambiguous)} <> records
-
-def add_saved(id: String, link: CellLink, records: List<&2, RolloutRecord>, saved: RolloutCall) -> List<&2, RolloutRecord>:
-  match saved:
-    case EmptyCall{}: records
-    case SavedCall{call, mix, receipt}: add_record(id, call_record(call), link, mix, receipt, records)
-
-def add_found(id: String, records: List<&2, RolloutRecord>, call_found: Map<&2, RolloutCall> & RolloutCall,
-  link_found: Map<&2, CellLink> & CellLink) -> List<&2, RolloutRecord>:
-  match call_found link_found:
-    case Tuple{calls, saved} Tuple{links, link}: add_saved(id, link, records, saved)
-
-def summarize_calls(ids: List<&2, String>, +calls: Map<&2, RolloutCall>, +links: Map<&2, CellLink>,
-  records: List<&2, RolloutRecord>) -> List<&2, RolloutRecord>:
-  match ids:
-    case []: records
-    case +id <> rest:
-      summarize_calls(rest, calls, links, add_found(id, records,
-        Map.get(RolloutCall, EmptyCall{}, calls, id), Map.get(CellLink, Unlinked{}, links, id)))
-
-def summarize_rollout(+orphans: U32, +clean: Bool, +cells: Map<&2, CellPair>, index: Map<&2, RolloutCall>,
-  order: List<&2, String>) -> RolloutSummary:
-  Summary{orphans, summarize_calls(order, index, collect_links(cells, clean, Map.new(&2, CellLink)), []), cells, clean}
-
-def finish_rollout_calls(calls: RolloutCalls, malformed: U32) -> RolloutSummary:
-  match calls:
-    case Calls{+index, order}:
-      +orphans = count_orphans(index)
-      summarize_rollout(orphans, clean_rollout(malformed, orphans), collect_cells(index, Map.new(&2, CellPair)), index, order)
-
-def lookup_wait(call_found: Map<&2, RolloutCall> & RolloutCall, cell_found: Map<&2, CellPair> & CellPair,
-  clean: Bool) -> WaitCell:
-  match call_found cell_found:
-    case Tuple{calls, SavedCall{state, mix, receipt}} Tuple{cells, pair}: wait_cell(state, pair, clean)
-    case _ _: NotWait{}
-
-def rollout_wait(calls: RolloutCalls, id: String, target: String, cells: Map<&2, CellPair>, clean: Bool) -> WaitCell:
-  match calls:
-    case Calls{index, order}:
-      lookup_wait(Map.get(RolloutCall, EmptyCall{}, index, id),
-        Map.get(CellPair, Pair{NoCell{}, NoCell{}, False{}}, cells, target), clean)
-
 def rollout_timestamp(original: Point, envelope: Point) -> Point:
   match original:
     case Time{0, 0}: envelope
@@ -887,22 +723,110 @@ def rollout_event(+kind: String) -> String:
   Bool.pick(String, Bool.or(String.eq(kind, "function_call"), String.eq(kind, "custom_tool_call")), "start",
     Bool.pick(String, tool_output(kind), "finish", ""))
 
-type PrintedScript is Data:
-  PrintedScript{statements: U32, last_kind: String, printer: String, print_args: U32,
-    declaration_kind: String, bindings: U32, binding_kind: String, argument_kind: String,
-    binding_name: String, argument_name: String, awaited_kind: String, callee: String, call_args: U32}
+def all_digits(chars: List<&2, Char>) -> Bool:
+  match chars:
+    case []: True{}
+    case head <> tail: Bool.and(Char.is_digit(head), all_digits(tail))
 
-def printed_execution(script: PrintedScript) -> Bool:
-  match script:
-    case PrintedScript{+statements, last_kind, printer, print_args, declaration_kind, bindings, binding_kind, argument_kind,
-                        binding_name, argument_name, awaited_kind, callee, call_args}:
-      bound = Bool.and(U32.is_eq(statements, 2), Bool.and(String.eq(declaration_kind, "lexical_declaration"),
-        Bool.and(U32.is_eq(bindings, 1), Bool.and(String.eq(binding_kind, "identifier"),
-          Bool.and(String.eq(argument_kind, "identifier"), String.eq(binding_name, argument_name))))))
-      Bool.and(String.eq(last_kind, "expression_statement"), Bool.and(String.eq(printer, "text"),
-        Bool.and(U32.is_eq(print_args, 1), Bool.and(Bool.or(U32.is_eq(statements, 1), bound),
-          Bool.and(String.eq(awaited_kind, "await_expression"),
-            Bool.and(String.eq(callee, "tools.exec_command"), U32.is_eq(call_args, 1)))))))
+def decimal(+value: String) -> Bool:
+  Bool.and(Bool.not(String.is_empty(value)), Bool.and(Bool.not(String.starts_with(value, "0")),
+    all_digits(String.to_list(value))))
+
+type PrintedOutput is Data:
+  PrintedOutput{statement: String, call: String, printer: String, args: U32, optional: Bool}
+
+def prints_result(output: PrintedOutput) -> Bool:
+  match output:
+    case PrintedOutput{"expression_statement", "call_expression", "text", 1, False{}}: True{}
+    case _: False{}
+
+type BindingSyntax is Data:
+  BindingSyntax{declaration: String, count: U32, kind: String, name: String}
+
+def bound_result(binding: BindingSyntax, kind: String, name: String) -> Bool:
+  match binding kind:
+    case BindingSyntax{"lexical_declaration", 1, "identifier", bound} "identifier": String.eq(bound, name)
+    case _ _: False{}
+
+def printed_process(+statements: U32, output: PrintedOutput, binding: BindingSyntax, kind: String, name: String) -> Bool:
+  Bool.and(prints_result(output), Bool.or(U32.is_eq(statements, 1),
+    Bool.and(U32.is_eq(statements, 2), bound_result(binding, kind, name))))
+
+def literal_kind(kind: String) -> Bool:
+  Bool.not(String.eq(label(kind, ["string", "template_string", "number", "true", "false", "null"]), "unknown"))
+
+def literal_fields(fields: List<&2, String>) -> Bool:
+  Bool.not(List.any(~&2, ~String, ~(kind => Bool.not(literal_kind(kind))), fields))
+
+def awaited_process(awaited: String, call: String, +callee: String, arity: U32, optional: Bool,
+  +fields: List<&2, String>, poll: Bool) -> Bool:
+  match awaited call arity optional:
+    case "await_expression" "call_expression" 1 False{}:
+      Bool.and(Bool.or(String.eq(callee, "tools.write_stdin"), Bool.and(Bool.not(poll), String.eq(callee, "tools.exec_command"))),
+        Bool.and(Bool.not(List.is_empty(&2, String, fields)), literal_fields(fields)))
+    case _ _ _ _: False{}
+
+def loop_digits(bounded: Bool, +value: String) -> Bool:
+  match bounded:
+    case True{}: Bool.or(String.eq(value, "0"), decimal(value))
+    case False{}: False{}
+
+def loop_count(kind: String, +value: String) -> Bool:
+  loop_digits(Bool.and(String.eq(kind, "number"), Nat.is_le(String.length(value), 3n)), value)
+
+def identifier_char(+char: Char) -> Bool:
+  Bool.or(Char.is_alpha(char), Bool.or(Char.is_digit(char), Char.is_eq(char, '_')))
+
+def identifier_rest(name: String, valid: Bool) -> Bool:
+  match name valid:
+    case _ False{}: False{}
+    case SNil{} True{}: True{}
+    case SCon{head, tail} True{}: identifier_rest(tail, identifier_char(head))
+
+def loop_index(name: String) -> Bool:
+  match name:
+    case SNil{}: False{}
+    case SCon{+head, rest}:
+      identifier_rest(rest, Bool.or(Char.is_alpha(head), Char.is_eq(head, '_')))
+
+def last_iteration(value: Maybe<&2, U32>) -> String:
+  match value:
+    case Some{0}: "-1"
+    case Some{count}: U32.show(U32.sub(count, 1))
+    case None{}: ""
+
+def loop_stop(+stop: String, index: String, ceiling: String, result: String) -> Bool:
+  +closed = String.concat(["(!", result, ".session_id"])
+  Bool.or(String.eq(stop, String.append(closed, ")")),
+    String.eq(stop, String.concat([closed, "||", index, "===", last_iteration(U32.read(ceiling)), ")"])))
+
+type PollLoop is Data:
+  PollLoop{kind: String, initial_kind: String, initial: String, ceiling_kind: String, ceiling: String,
+    condition: String, increment: String, body: String, statements: U32, branch: String, alternative: Bool,
+    stop: String, consequence: String, actions: U32, exit: String, exit_args: U32, output_kind: String, output_name: String}
+
+def loop_shape(+kind: String, body: String, statements: U32, branch: String, alternative: Bool,
+  consequence: String, actions: U32, exit: String, exit_args: U32) -> Bool:
+  Bool.and(String.eq(kind, "for_statement"), Bool.and(String.eq(body, "statement_block"),
+    Bool.and(U32.is_eq(statements, 2), Bool.and(String.eq(branch, "if_statement"), Bool.and(Bool.not(alternative),
+      Bool.and(String.eq(consequence, "statement_block"), Bool.and(U32.is_eq(actions, 2),
+        Bool.and(String.eq(exit, "break_statement"), U32.is_eq(exit_args, 0)))))))))
+
+def loop_bounds(initial_kind: String, initial: String, ceiling_kind: String, +ceiling: String,
+  condition: String, increment: String, +i: String) -> Bool:
+  Bool.and(loop_index(i), Bool.and(loop_count(initial_kind, initial), Bool.and(loop_count(ceiling_kind, ceiling),
+    Bool.and(String.eq(condition, String.concat([i, "<", ceiling])), String.eq(increment, String.append(i, "++"))))))
+
+def poll_loop(loop: PollLoop, index: BindingSyntax, +result: BindingSyntax, output: PrintedOutput) -> Bool:
+  match loop index:
+    case PollLoop{kind, initial_kind, initial, ceiling_kind, +ceiling, condition, increment,
+      body, statements, branch, alternative, stop, consequence, actions, exit, exit_args, output_kind, +printed}
+      BindingSyntax{"lexical_declaration", 1, "identifier", +i}:
+      Bool.and(prints_result(output), Bool.and(bound_result(result, output_kind, printed),
+        Bool.and(Bool.not(String.eq(i, printed)), Bool.and(loop_bounds(initial_kind, initial, ceiling_kind, ceiling, condition, increment, i),
+          Bool.and(loop_shape(kind, body, statements, branch, alternative, consequence, actions, exit, exit_args),
+            loop_stop(stop, i, ceiling, printed))))))
+    case _ _: False{}
 
 type ShellSyntax is Data:
   OtherShell{}
@@ -932,6 +856,30 @@ def sequential_commands(syntax: ShellSyntax) -> List<&2, ShellCommand>:
 
 def sequential_shell(statements: U32, syntax: ShellSyntax) -> List<&2, ShellCommand>:
   Bool.pick(List<&2, ShellCommand>, U32.is_eq(statements, 1), sequential_commands(syntax), [])
+
+type ExactShell is Data:
+  ExactShell{kind: String, command: ShellCommand, nested: List<&2, String>, redirects: List<&2, String>}
+
+def bad_shell_node(+kind: String) -> Bool:
+  Bool.or(substitution(kind), Bool.or(String.eq(kind, "variable_assignment"),
+    Bool.or(String.eq(kind, "heredoc_redirect"), String.eq(kind, "herestring_redirect"))))
+
+def bad_redirect(+text: String) -> Bool:
+  Bool.not(Bool.or(String.starts_with(text, ">"), Bool.or(String.starts_with(text, "1>"), String.starts_with(text, "2>"))))
+
+def exact_statements(statements: List<&2, ExactShell>, remaining: U32, kept: List<&2, ShellCommand>) -> List<&2, ShellCommand>:
+  match statements remaining:
+    case [] _: List.reverse(&2, ShellCommand, kept)
+    case _ 0: []
+    case ExactShell{"command", command, nested, redirects} <> tail _:
+      Bool.pick(List<&2, ShellCommand>,
+        Bool.or(List.any(~&2, ~String, ~(node => bad_shell_node(node)), nested), List.any(~&2, ~String, ~(redirect => bad_redirect(redirect)), redirects)),
+        [], exact_statements(tail, U32.sub(remaining, 1), command <> kept))
+    case _ _: []
+
+def exact_shell(separators: List<&2, String>, statements: List<&2, ExactShell>) -> List<&2, ShellCommand>:
+  Bool.pick(List<&2, ShellCommand>, List.any(~&2, ~String, ~(kind => Bool.not(String.eq(kind, ";"))), separators),
+    [], exact_statements(statements, 3, []))
 
 type ReasoningMarker is Data:
   Marker{line: U32, observed: Point, input: String}
@@ -1155,15 +1103,6 @@ def delivery_stages(clocks: DeliveryClocks, +thread_link: String) -> DeliverySta
 type WatchIdentity is Data:
   NoWatch{}
   ExactWatch{repository: String, run_id: String, head_sha: String, attempt: String}
-
-def all_digits(chars: List<&2, Char>) -> Bool:
-  match chars:
-    case []: True{}
-    case head <> tail: Bool.and(Char.is_digit(head), all_digits(tail))
-
-def decimal(+value: String) -> Bool:
-  Bool.and(Bool.not(String.is_empty(value)), Bool.and(Bool.not(String.starts_with(value, "0")),
-    all_digits(String.to_list(value))))
 
 def all_hex(chars: List<&2, Char>) -> Bool:
   match chars:
@@ -1411,6 +1350,314 @@ def observed_slot(+slot: ProcessSlot, barrier: U32) -> ProcessSlot:
 
 def valid_process_result(+clean: Bool, ambiguous: Bool, start: Point, end: Point) -> Bool:
   Bool.and(clean, Bool.and(Bool.not(ambiguous), time_order(start, end)))
+
+type ProcessObservation is Data:
+  ProcessObservation{call: String, result_call: String, result_line: U32, handle: String, fact: ProcessFact,
+    observer: WatchIdentity, start: Point, end: Point}
+
+type Receipt is Data:
+  NoReceipt{}
+  Receipt{seconds: F32, code: U32, running: Bool}
+
+type RolloutCall is Data:
+  EmptyCall{}
+  SavedCall{call: CallState, mix: CommandMix, receipt: Receipt, process: ProcessInput, result: ProcessReceipt,
+    direct: Bool}
+
+type RolloutCalls is Data:
+  Calls{index: Map<&2, RolloutCall>, newest_first: List<&2, String>}
+
+def empty_rollout_calls() -> RolloutCalls:
+  Calls{Map.new(&2, RolloutCall), []}
+
+type CallEvent is Data:
+  Started{line: U32, tool: ToolContext, stamp: Point, target: String, mix: CommandMix, process: ProcessInput,
+    direct: Bool}
+  Finished{line: U32, stamp: Point, yielded: String, completed: Bool, receipt: ProcessReceipt}
+
+def receipt_for(mix: CommandMix, +previous: Receipt, +received: Receipt) -> Receipt:
+  match mix received:
+    case NoMix{} _: previous
+    case _ NoReceipt{}: previous
+    case _ _: received
+
+def model_receipt(receipt: ProcessReceipt) -> Receipt:
+  match receipt:
+    case ExitReceipt{code, seconds}: Receipt{seconds, code, False{}}
+    case _: NoReceipt{}
+
+def first_result(state: CallState, previous: ProcessReceipt, received: ProcessReceipt) -> ProcessReceipt:
+  match state:
+    case Seen{_, _, _, _, _, 0, _, _, _, _}: received
+    case _: previous
+
+def first_process(state: CallState, previous: ProcessInput, next: ProcessInput) -> ProcessInput:
+  match state:
+    case Unseen{_}: next
+    case _: previous
+
+def observe_call(current: RolloutCall, event: CallEvent) -> RolloutCall:
+  match current event:
+    case EmptyCall{} Started{line, tool, stamp, target, mix, process, direct}:
+      SavedCall{start_call(Unseen{0}, line, tool, stamp, target), mix, NoReceipt{}, process, MissingReceipt{}, direct}
+    case EmptyCall{} Finished{line, stamp, yielded, completed, receipt}:
+      SavedCall{finish_call(Unseen{0}, line, stamp, yielded, completed), NoMix{}, NoReceipt{}, NoProcess{}, MissingReceipt{}, False{}}
+    case SavedCall{+call, old_mix, receipt, previous, result, seen_direct} Started{line, tool, stamp, target, mix, process, direct}:
+      SavedCall{start_call(call, line, tool, stamp, target), mix, receipt, first_process(call, previous, process),
+        result, Bool.or(seen_direct, direct)}
+    case SavedCall{+call, +mix, previous, process, result, direct} Finished{line, stamp, yielded, completed, +received}:
+      SavedCall{finish_call(call, line, stamp, yielded, completed), mix, receipt_for(mix, previous, model_receipt(received)),
+        process, first_result(call, result, received), direct}
+
+def add_rollout_call(+id: String, event: CallEvent, order: List<&2, String>,
+  found: Map<&2, RolloutCall> & RolloutCall) -> RolloutCalls:
+  match found:
+    case Tuple{index, EmptyCall{}}:
+      Calls{Map.set(&2, RolloutCall, index, id, observe_call(EmptyCall{}, event)), id <> order}
+    case Tuple{index, saved}:
+      Calls{Map.set(&2, RolloutCall, index, id, observe_call(saved, event)), order}
+
+def rollout_call(calls: RolloutCalls, +id: String, event: CallEvent) -> RolloutCalls:
+  match calls:
+    case Calls{index, order}: add_rollout_call(id, event, order, Map.get(RolloutCall, EmptyCall{}, index, id))
+
+def accepts_model_script(name: String) -> Bool:
+  String.eq(name, "exec")
+
+def direct_process(+name: String) -> Bool:
+  Bool.or(String.eq(name, "exec_command"), String.eq(name, "write_stdin"))
+
+def rollout_start(calls: RolloutCalls, id: String, line: U32, +name: String, stamp: Point, target: String,
+  direct: List<&2, ShellCommand>, +wrapped: List<&2, ToolInvocation>, sequential: List<&2, ShellCommand>,
+  exact: List<&2, ShellCommand>, handle: String, read_only: Bool) -> RolloutCalls:
+  +observed = tool(name, direct, wrapped)
+  rollout_call(calls, id, Started{line, observed, stamp, target,
+    Bool.pick(CommandMix, accepts_model_script(name), command_mix(sequential), NoMix{}),
+    process_input(name, exact, wrapped, handle, read_only, observed), direct_process(name)})
+
+def direct_call(found: Map<&2, RolloutCall> & RolloutCall) -> Bool:
+  match found:
+    case Tuple{_, SavedCall{_, _, _, _, _, direct}}: direct
+    case _: False{}
+
+def direct_result(calls: RolloutCalls, id: String) -> Bool:
+  match calls:
+    case Calls{index, order}: direct_call(Map.get(RolloutCall, EmptyCall{}, index, id))
+
+def rollout_finish(calls: RolloutCalls, id: String, line: U32, stamp: Point, yielded: String, completed: Bool,
+  receipt: ProcessReceipt) -> RolloutCalls:
+  rollout_call(calls, id, Finished{line, stamp, yielded, completed, receipt})
+
+def add_cell(key: String, fact: CellFact, found: Map<&2, CellPair> & CellPair) -> Map<&2, CellPair>:
+  match found:
+    case Tuple{cells, pair}: Map.set(&2, CellPair, cells, key, add_cell_fact(pair, fact))
+
+def record_cell(+fact: CellFact, cells: Map<&2, CellPair>) -> Map<&2, CellPair>:
+  match fact:
+    case NoCell{}: cells
+    case Launch{+key, owner, yielded_at, yielded_line, valid}:
+      add_cell(key, fact, Map.get(CellPair, Pair{NoCell{}, NoCell{}, False{}}, cells, key))
+    case Terminal{+key, call_id, started_at, started_line, ended_at, valid}:
+      add_cell(key, fact, Map.get(CellPair, Pair{NoCell{}, NoCell{}, False{}}, cells, key))
+
+def collect_cells(calls: Map<&2, RolloutCall>, cells: Map<&2, CellPair>) -> Map<&2, CellPair>:
+  match calls:
+    case MTip{}: cells
+    case MLeaf{id, EmptyCall{}}: cells
+    case MLeaf{id, SavedCall{state, mix, receipt, process, result, direct}}: record_cell(cell_fact(id, state), cells)
+    case MNode{position, lo, hi}: collect_cells(hi, collect_cells(lo, cells))
+
+def record_link(link: CellLink, links: Map<&2, CellLink>) -> Map<&2, CellLink>:
+  match link:
+    case Unlinked{}: links
+    case Linked{+owner, call_id, end}: Map.set(&2, CellLink, links, owner, Linked{owner, call_id, end})
+
+def collect_links(cells: Map<&2, CellPair>, +clean: Bool, links: Map<&2, CellLink>) -> Map<&2, CellLink>:
+  match cells:
+    case MTip{}: links
+    case MLeaf{key, pair}: record_link(cell_link(pair, clean), links)
+    case MNode{position, lo, hi}: collect_links(hi, clean, collect_links(lo, clean, links))
+
+def call_orphans(state: CallState) -> U32:
+  match state:
+    case Unseen{orphans}: orphans
+    case Seen{orphans, line, tool, start, finish, result_line, target, cell, terminal, ambiguous}: orphans
+
+def count_orphans(calls: Map<&2, RolloutCall>) -> U32:
+  match calls:
+    case MLeaf{id, SavedCall{state, mix, receipt, process, result, direct}}: call_orphans(state)
+    case MNode{position, lo, hi}: U32.add(count_orphans(lo), count_orphans(hi))
+    case _: 0
+
+type ModelSample is Data:
+  NoSample{}
+  Sample{mix: CommandMix, seconds: F32}
+
+def model_sample(mix: CommandMix, receipt: Receipt, finish: Point, ambiguous: Bool) -> ModelSample:
+  match mix receipt:
+    case Mix{files, git, builds, pushes} Receipt{+seconds, code, running}:
+      Bool.pick(ModelSample, keep_mix_receipt(seconds, code, running, has_time(finish), ambiguous),
+        Sample{Mix{files, git, builds, pushes}, seconds}, NoSample{})
+    case _ _: NoSample{}
+
+type RolloutRecord is Data:
+  RolloutRecord{id: String, record: CallRecord, link: CellLink, candidate: CommandMix, sample: ModelSample}
+
+type RolloutSummary is Data:
+  Summary{orphans: U32, records: List<&2, RolloutRecord>, cells: Map<&2, CellPair>, clean: Bool,
+    observations: List<&2, ProcessObservation>}
+
+def add_record(id: String, +record: CallRecord, link: CellLink, +mix: CommandMix, receipt: Receipt,
+  records: List<&2, RolloutRecord>) -> List<&2, RolloutRecord>:
+  match record:
+    case Ignored{extra}: records
+    case Observed{extra, line, tool, command, categories, start, finish, result_line, launched, target, ambiguous}:
+      RolloutRecord{id, record, link, mix, model_sample(mix, receipt, finish, ambiguous)} <> records
+
+def add_saved(id: String, link: CellLink, records: List<&2, RolloutRecord>, saved: RolloutCall) -> List<&2, RolloutRecord>:
+  match saved:
+    case EmptyCall{}: records
+    case SavedCall{call, mix, receipt, process, result, direct}: add_record(id, call_record(call), link, mix, receipt, records)
+
+def add_found(id: String, records: List<&2, RolloutRecord>, call_found: Map<&2, RolloutCall> & RolloutCall,
+  link_found: Map<&2, CellLink> & CellLink) -> List<&2, RolloutRecord>:
+  match call_found link_found:
+    case Tuple{calls, saved} Tuple{links, link}: add_saved(id, link, records, saved)
+
+def summarize_calls(ids: List<&2, String>, +calls: Map<&2, RolloutCall>, +links: Map<&2, CellLink>,
+  records: List<&2, RolloutRecord>) -> List<&2, RolloutRecord>:
+  match ids:
+    case []: records
+    case +id <> rest:
+      summarize_calls(rest, calls, links, add_found(id, records,
+        Map.get(RolloutCall, EmptyCall{}, calls, id), Map.get(CellLink, Unlinked{}, links, id)))
+
+type ProcessOperation is Data:
+  Operation{call: String, line: U32, start: Point, result_call: String, result_line: U32, end: Point,
+    ambiguous: Bool, input: ProcessInput, receipt: ProcessReceipt}
+
+def found_call(found: Map<&2, RolloutCall> & RolloutCall) -> RolloutCall:
+  match found:
+    case Tuple{_, saved}: saved
+
+def saved_call(id: String, calls: Map<&2, RolloutCall>) -> RolloutCall:
+  found_call(Map.get(RolloutCall, EmptyCall{}, calls, id))
+
+def operation_line(line: U32, +result_line: U32) -> U32:
+  Bool.pick(U32, U32.is_eq(result_line, 0), line, result_line)
+
+def line_byte(value: U32) -> Char:
+  Char.from_u32(U32.add(32, U32.and(value, 255)))
+
+def line_key(+line: U32) -> String:
+  String.from_list([line_byte(U32.shrn(line, 24n)), line_byte(U32.shrn(line, 16n)),
+    line_byte(U32.shrn(line, 8n)), line_byte(line)])
+
+def schedule_process(operation: ProcessOperation, key: String,
+  found: Map<&2, List<&2, ProcessOperation>> & List<&2, ProcessOperation>) -> Map<&2, List<&2, ProcessOperation>>:
+  match found:
+    case Tuple{lines, queued}: Map.set(&2, List<&2, ProcessOperation>, lines, key, operation <> queued)
+
+def result_operation(call: String, +line: U32, start: Point, ambiguous: Bool, input: ProcessInput,
+  result_call: String, result: RolloutCall, pending: Map<&2, List<&2, ProcessOperation>>) -> Map<&2, List<&2, ProcessOperation>>:
+  match result:
+    case SavedCall{Seen{_, _, _, _, end, +result_line, _, _, _, result_ambiguous}, _, _, _, receipt, _}:
+      +key = line_key(operation_line(line, result_line))
+      schedule_process(Operation{call, line, start, result_call, result_line, end, Bool.or(ambiguous, result_ambiguous), input, receipt},
+        key, Map.get(List<&2, ProcessOperation>, [], pending, key))
+    case _: pending
+
+def operation_for(+saved: RolloutCall, +id: String, +line: U32, +start: Point, +ambiguous: Bool,
+  link: CellLink, calls: Map<&2, RolloutCall>, pending: Map<&2, List<&2, ProcessOperation>>) -> Map<&2, List<&2, ProcessOperation>>:
+  match saved link:
+    case EmptyCall{} _: pending
+    case SavedCall{_, _, _, NoProcess{}, _, _} _: pending
+    case SavedCall{_, _, _, input, _, _} Linked{_, +result_call, _}:
+      result_operation(id, line, start, ambiguous, input, result_call, saved_call(result_call, calls), pending)
+    case SavedCall{_, _, _, input, _, _} Unlinked{}:
+      result_operation(id, line, start, ambiguous, input, id, saved, pending)
+
+def collect_operations(records: List<&2, RolloutRecord>, +calls: Map<&2, RolloutCall>,
+  pending: Map<&2, List<&2, ProcessOperation>>) -> Map<&2, List<&2, ProcessOperation>>:
+  match records:
+    case []: pending
+    case RolloutRecord{+id, Observed{_, line, _, _, _, start, _, _, _, _, ambiguous}, link, _, _} <> rest:
+      collect_operations(rest, calls, operation_for(saved_call(id, calls), id, line, start, ambiguous, link, calls, pending))
+    case _ <> rest: collect_operations(rest, calls, pending)
+
+type ProcessHistory is Data:
+  History{slots: Map<&2, ProcessSlot>, barrier: U32, observations: List<&2, ProcessObservation>}
+
+def put_process_slot(+key: String, slot: ProcessSlot, table: Map<&2, ProcessSlot>) -> Map<&2, ProcessSlot>:
+  match key:
+    case "": table
+    case _: Map.set(&2, ProcessSlot, table, key, slot)
+
+def record_process(operation: ProcessOperation, +handle: String, next: ProcessStep, slots: Map<&2, ProcessSlot>,
+  barrier: U32, observations: List<&2, ProcessObservation>) -> ProcessHistory:
+  match operation next:
+    case Operation{call, line, start, result_call, +result_line, end, _, input, receipt} ProcessStep{slot, +fact}:
+      History{put_process_slot(process_taint(input, receipt), Conflict{}, put_process_slot(handle, slot, slots)),
+        barrier, ProcessObservation{call, result_call, result_line, handle, fact, process_observer(fact), start, end} <> observations}
+
+def advance_process(found: Map<&2, ProcessSlot> & ProcessSlot, +operation: ProcessOperation, +handle: String,
+  +barrier: U32, clean: Bool, observations: List<&2, ProcessObservation>) -> ProcessHistory:
+  match found operation:
+    case Tuple{table, slot} Operation{+call, +line, +start, _, +result_line, +end, +ambiguous, +input, +receipt}:
+      record_process(operation, handle, process_result(input, observed_slot(slot, barrier), receipt, call,
+        line, start, result_line, end, valid_process_result(clean, ambiguous, start, end)), table,
+        Bool.pick(U32, process_barrier(input, receipt, handle, ambiguous), operation_line(line, result_line), barrier),
+        observations)
+
+def observe_process(history: ProcessHistory, +operation: ProcessOperation, clean: Bool) -> ProcessHistory:
+  match history operation:
+    case History{slots, barrier, observations} Operation{_, _, _, _, _, _, _, input, receipt}:
+      +handle = process_key(input, receipt)
+      advance_process(Map.get(ProcessSlot, Vacant{}, slots, handle), operation, handle, barrier, clean, observations)
+
+def process_observations(history: ProcessHistory) -> List<&2, ProcessObservation>:
+  match history:
+    case History{_, _, observations}: List.reverse(&2, ProcessObservation, observations)
+
+def observe_operations(ordered: List<&2, ProcessOperation>, +clean: Bool, history: ProcessHistory) -> ProcessHistory:
+  match ordered:
+    case []: history
+    case operation <> rest: observe_operations(rest, clean, observe_process(history, operation, clean))
+
+def observe_process_lines(lines: Map<&2, List<&2, ProcessOperation>>, +clean: Bool, history: ProcessHistory) -> ProcessHistory:
+  match lines:
+    case MTip{}: history
+    case MLeaf{_, operations}: observe_operations(operations, clean, history)
+    case MNode{_, low, high}: observe_process_lines(high, clean, observe_process_lines(low, clean, history))
+
+def rollout_process_observations(records: List<&2, RolloutRecord>, calls: Map<&2, RolloutCall>,
+  clean: Bool) -> List<&2, ProcessObservation>:
+  process_observations(observe_process_lines(
+    collect_operations(List.reverse(&2, RolloutRecord, records), calls, Map.new(&2, List<&2, ProcessOperation>)),
+    clean, History{Map.new(&2, ProcessSlot), 0, []}))
+
+def summarize_rollout(+orphans: U32, +clean: Bool, +cells: Map<&2, CellPair>, +index: Map<&2, RolloutCall>,
+  order: List<&2, String>) -> RolloutSummary:
+  +records = summarize_calls(order, index, collect_links(cells, clean, Map.new(&2, CellLink)), [])
+  Summary{orphans, records, cells, clean, rollout_process_observations(records, index, clean)}
+
+def finish_rollout_calls(calls: RolloutCalls, malformed: U32) -> RolloutSummary:
+  match calls:
+    case Calls{+index, order}:
+      +orphans = count_orphans(index)
+      summarize_rollout(orphans, clean_rollout(malformed, orphans), collect_cells(index, Map.new(&2, CellPair)), index, order)
+
+def lookup_wait(call_found: Map<&2, RolloutCall> & RolloutCall, cell_found: Map<&2, CellPair> & CellPair,
+  clean: Bool) -> WaitCell:
+  match call_found cell_found:
+    case Tuple{calls, SavedCall{state, mix, receipt, process, result, direct}} Tuple{cells, pair}: wait_cell(state, pair, clean)
+    case _ _: NotWait{}
+
+def rollout_wait(calls: RolloutCalls, id: String, target: String, cells: Map<&2, CellPair>, clean: Bool) -> WaitCell:
+  match calls:
+    case Calls{index, order}:
+      lookup_wait(Map.get(RolloutCall, EmptyCall{}, index, id),
+        Map.get(CellPair, Pair{NoCell{}, NoCell{}, False{}}, cells, target), clean)
 
 type WatchOverlap is Data:
   NoOverlap{}

@@ -360,7 +360,7 @@ test("rollout CLI keeps fork lineage, rejects unproven input, and preserves repl
   }
 });
 
-test("nested wait receipts, recycled handles and exact watcher overlap through the source importer", async () => {
+test("nested wait receipts, recycled handles and exact watcher overlap through the source importer", async (t) => {
   const root = process.env.BARNACLES_TEST_DIRECTORY;
   assert.ok(root);
   const job = mkdtempSync(join(root, "waits-test-"));
@@ -447,6 +447,18 @@ test("nested wait receipts, recycled handles and exact watcher overlap through t
       result(52, "contradictory-poll", body({ session_id: 47 })),
       poll(53, "ambiguous-poll", 47),
       result(54, "ambiguous-poll", body({ exit_code: 0 })),
+      call(55, "before-barrier", "exec_command", { cmd: "git status" }),
+      result(56, "before-barrier", body({ session_id: 48 })),
+      script(57, "barrier-without-result", "text(await tools.write_stdin({session_id:load('unknown')}));"),
+      poll(58, "after-barrier", 48),
+      result(59, "after-barrier", body({ exit_code: 0 })),
+      call(60, "duplicate-receipt", "exec_command", { cmd: "git status" }),
+      result(61, "duplicate-receipt", "unstructured first result"),
+      result(62, "duplicate-receipt", body({ session_id: 49 })),
+      script(63, "loop-launch", 'for(let i=0;i<2;i++){const r=await tools.exec_command({cmd:"git status"});if(!r.session_id){text(r);break;}}'),
+      result(64, "loop-launch", wrapped({ session_id: 50 })),
+      call(65, "pipeline", "exec_command", { cmd: watcher(1).replace(" > /private/log 2>&1", " | cat") }),
+      result(66, "pipeline", body({ session_id: 51 })),
     ];
     writeFileSync(rollout, entries.map((item) => JSON.stringify(item)).join("\n") + "\n");
     const importer = (args: string[]) => execFileSync(process.execPath, [
@@ -489,6 +501,18 @@ test("nested wait receipts, recycled handles and exact watcher overlap through t
     ]), [["launch-a", "launch-b", epoch + 12000, epoch + 15000]]);
     assert.equal(watchOverlaps(path, policy, policy.watch_identity("synthetic/example", "12345678901", sha, "2")).overlaps.length, 0);
     const data = await readRollout(rollout, "test-instance", policy);
+    const observations = data.waitAttribution!.observations;
+    const polls = observations.filter(({ call }) => ["poll-a", "poll-b", "poll-c"].includes(call));
+    assert.deepEqual(polls.map(({ call, resultCall }) => [call, resultCall]), [
+      ["poll-c", "poll-c"], ["poll-b", "poll-b"], ["poll-a", "terminal-a"],
+    ]);
+    const observation = (call: string) => observations.find((row) => row.call === call)!;
+    assert.equal(observation("barrier-without-result").resultLine, null);
+    assert.equal(observation("after-barrier").fact.status, "ambiguous_process_handle");
+    assert.equal(observation("duplicate-receipt").fact.receipt.$, "MissingReceipt");
+    assert.equal(observation("duplicate-receipt").handle, null);
+    assert.equal(observation("loop-launch").fact.status, "unsupported_process_wrapper");
+    assert.equal(observation("pipeline").fact.watch.$, "NoWatch");
     assert.ok(!JSON.stringify(data).includes("private process output"));
     assert.ok(!JSON.stringify(data).includes("/private/"));
     saveRollout(data);
@@ -511,5 +535,23 @@ test("nested wait receipts, recycled handles and exact watcher overlap through t
     assert.equal(incomplete.coverage[0].malformed_count, 1);
     assert.equal(incomplete.waits[0].cell_status, "incomplete_rollout");
     assert.equal(watchOverlaps(path, policy, key).observations, 0);
+
+    await t.test("orders 12,000 results without consuming the JavaScript stack", async () => {
+      const large = join(job, "large-rollout.jsonl");
+      const count = 12_000;
+      const starts = Array.from({ length: count }, (_, index) =>
+        call(1, `ordered-${index}`, "exec_command", { cmd: "git status" }));
+      const results = Array.from({ length: count }, (_, index) =>
+        result(2, `ordered-${count - 1 - index}`, body({ session_id: index + 1 })));
+      writeFileSync(large, [{ type: "session_meta", payload: { id: "large-session" } }, ...starts, ...results]
+        .map((item) => JSON.stringify(item)).join("\n") + "\n");
+      const ordered = (await readRollout(large, "test-instance", policy)).waitAttribution!.observations;
+      assert.equal(ordered.length, count);
+      for (const [index, row] of ordered.entries()) {
+        assert.equal(row.call, `ordered-${count - 1 - index}`);
+        assert.equal(row.handle, String(index + 1));
+        assert.equal(row.fact.status, "process_opened");
+      }
+    });
   } finally { rmSync(job, { recursive: true, force: true }); }
 });
