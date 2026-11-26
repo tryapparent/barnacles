@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
+import { saveAttempt } from "../evidence/actions.ts";
 import { saveDelivery, saveRollout, saveThread } from "../evidence/sources.ts";
 
 test("dashboard derives a covered comparison and preserves missing source coverage", () => {
@@ -38,6 +39,18 @@ test("dashboard derives a covered comparison and preserves missing source covera
       });
     }
     const at = (cutoff - 1000) * 1000;
+    for (const workflowId of [1, 2]) {
+      const created = at / 1000;
+      const started = created + workflowId;
+      saveAttempt(source, {
+        repository: repo, runId: workflowId, workflowId, attempt: 1, sha: String(workflowId).repeat(40),
+        status: "completed", conclusion: "success", createdAt: created, startedAt: started,
+        sourceUpdated: started + 10, observedAt: started + 12, jobs: [{
+          id: workflowId, label: "Build", status: "completed", conclusion: "success", created,
+          priorExecution: false, queueEnd: started, executionStart: started, executionEnd: started + 10, steps: [],
+        }],
+      });
+    }
     saveRollout(source, {
       instance: "local", session: "point-only", lines: 5, malformed: 0, orphans: 0,
       calls: [], markers: [{ line: 3, at }],
@@ -50,7 +63,7 @@ test("dashboard derives a covered comparison and preserves missing source covera
         { id: "wait", line: 4, tool: "Cell wait", command: null, start: at + 500, end: at + 600,
           async: false, asyncEnd: null, terminalCall: null, ambiguous: false },
         { id: "later", line: 7, tool: "Shell command", command: null, start: at + 750, end: at + 800,
-          async: false, asyncEnd: null, terminalCall: null, ambiguous: false },
+          async: false, asyncEnd: null, terminalCall: null, ambiguous: false, categories: "Git inspection" },
         { id: "pending", line: 8, tool: "Tool script", command: null, start: at + 760, end: null,
           async: false, asyncEnd: null, terminalCall: null, ambiguous: false },
       ], markers: [{ line: 6, at: at + 650, resultCall: "wait" }, { line: 10, at: at + 850, resultCall: "later" }],
@@ -82,7 +95,22 @@ test("dashboard derives a covered comparison and preserves missing source covera
       assert.deepEqual(db.prepare("SELECT name, elapsed_seconds FROM delivery_milestones WHERE pr=2 ORDER BY ordinal").all().map(Object.values),
         [["Thread started", null], ["First commit", 4700], ["PR opened", null], ["First PR CI", null],
           ["PR merged", null], ["Release dispatch", null], ["Shipped", null], ["Access verified", null]]);
-      assert.equal(db.prepare("SELECT count(*) AS n FROM time_map").get()?.n, 2);
+      const overview = db.prepare(`SELECT operation, count, mean_seconds, total_seconds, unmeasured, has_area
+        FROM operation_totals WHERE clock=? ORDER BY rank`);
+      assert.deepEqual(overview.all("CI execution").map(Object.values), [["Build", 2, 10, 20, 0, 1]]);
+      assert.deepEqual(overview.all("CI queue").map(Object.values), [["Build", 2, 1.5, 3, 0, 1]]);
+      assert.deepEqual(overview.all("Async cells").map(Object.values),
+        [["Mixed", 1, 0.6, 0.6, 0, 1], ["Unknown", 0, null, null, 1, 0]]);
+      const toolOverview = overview.all("Tool envelopes");
+      assert.equal(toolOverview[0].operation, "Mixed");
+      assert.equal(toolOverview[0].count, 7);
+      const mixed = db.prepare("SELECT operation, count, total_seconds FROM mixed_groups WHERE clock=? ORDER BY rank");
+      assert.deepEqual(mixed.all("Tool envelopes").map(Object.values),
+        [["Mixed · File inspection + Rust build", 6, 54], ["Mixed · Git inspection + File inspection", 1, 0.1]]);
+      assert.deepEqual(mixed.all("Async cells").map(Object.values), [["Mixed · Git inspection + File inspection", 1, 0.6]]);
+      assert.deepEqual(Object.values(toolOverview.find(({ operation }) => operation === "Git inspection")!),
+        ["Git inspection", 1, 0.05, 0.05, 0, 1]);
+      assert.equal(db.prepare("SELECT count(*) AS n FROM operation_totals WHERE operation='Estimated model wait'").get()?.n, 0);
       const estimated = db.prepare("SELECT seconds, total, samples FROM category_estimates WHERE name=?");
       assert.deepEqual(Object.values(estimated.get("File inspection")!), [2, 24, 6]);
       assert.deepEqual(Object.values(estimated.get("Rust build")!), [null, null, 0]);
@@ -123,7 +151,20 @@ test("dashboard derives a covered comparison and preserves missing source covera
       assert.equal(eventOnly[0].startTimeUnixNano, eventOnly[0].endTimeUnixNano);
       const config = JSON.parse(readFileSync(join(out, "dashboards/shipping.json"), "utf8"));
       assert.equal(config.uid, "barnacles-shipping");
-      assert.ok(config.panels.some(({ type }: { type: string }) => type === "marcusolsson-treemap-panel"));
+      const treemap = config.panels.find(({ type }: { type: string }) => type === "marcusolsson-treemap-panel");
+      const ranked = config.panels.find(({ id }: { id: number }) => id === 10);
+      assert.equal(treemap.options.textField, "Name");
+      for (const panel of [treemap, ranked]) {
+        const query = panel.targets[0].rawQueryText.replace("${operation_clock:sqlstring}", "'CI execution'")
+          .replaceAll("${overview_operation:sqlstring}", "'All operations'");
+        assert.equal(db.prepare(query).get()?.Name, "Build");
+      }
+      const timingBoard = JSON.parse(readFileSync(join(out, "dashboards/timing.json"), "utf8"));
+      const details = timingBoard.panels.find(({ id }: { id: number }) => id === 3);
+      const mixQuery = details.targets[0].rawQueryText.replaceAll("${clock:sqlstring}", "'Tool envelopes'")
+        .replaceAll("${workflow:sqlstring}", "'*'").replaceAll("${operation:sqlstring}", "'Mixed'");
+      assert.deepEqual(db.prepare(mixQuery).all().map(({ Operation }) => Operation),
+        ["Mixed · File inspection + Rust build", "Mixed · Git inspection + File inspection"]);
       const trace = JSON.parse(readFileSync(join(out, "dashboards/trace.json"), "utf8"));
       assert.ok(trace.panels.some(({ type }: { type: string }) => type === "traces"));
       assert.equal(trace.templating.list[0].current.value, "1");
