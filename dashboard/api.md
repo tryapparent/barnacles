@@ -36,6 +36,13 @@ JSON as an agent. Review filters and PR detail links are encoded in the URL.
 The page shows the snapshot timestamp and supports keyboard navigation and
 reduced motion. Grafana remains the reader for its provisioned drilldowns.
 
+For a private Tailscale Serve deployment, set `BARNACLES_PROXY_HOST` to the
+exact Serve hostname and port as sent in the HTTP Host header, and
+`BARNACLES_PROXY_USER` to the authorized Tailscale login. This keeps the app
+bound to loopback and requires the trusted Serve identity on every request,
+including the assets and JSON routes. Use these settings only when the
+proxy strips client-supplied identity headers and sets its own.
+
 The scene uses the approved generated artwork for the two working shores.
 Its references are the [Clyde shipyard archive](https://i.rcahms.gov.uk/canmore/x/SC01268607.jpg)
 and the [Historic England Whitby archive](https://historicengland.org.uk/images-books/photos/item/AA63/04965).

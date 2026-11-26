@@ -149,6 +149,9 @@ async function serve(args: string[]) {
   if (!directory || extra.length) throw Error("Usage: node dashboard/prepare.ts --serve SNAPSHOT_DIRECTORY [PORT] [WEB_BUILD_DIRECTORY]");
   const port = natural(requestedPort, "Port");
   if (port > 65535) throw Error("Port must be at most 65535");
+  const proxyHost = process.env.BARNACLES_PROXY_HOST;
+  const proxyUser = process.env.BARNACLES_PROXY_USER;
+  if (Boolean(proxyHost) !== Boolean(proxyUser)) throw Error("Set both BARNACLES_PROXY_HOST and BARNACLES_PROXY_USER for Tailscale Serve.");
   if (!existsSync(join(directory, "review-policy.mjs"))) throw Error("Run dashboard/prepare.ts to build a review API snapshot first.");
   const webRoot = webDirectory ? resolve(webDirectory) : undefined;
   if (webRoot && !statSync(join(webRoot, "index.html"), { throwIfNoEntry: false })?.isFile()) {
@@ -158,8 +161,12 @@ async function serve(args: string[]) {
   const server = createServer((request, response) => {
     const address = server.address();
     const localPort = typeof address === "object" && address ? address.port : port;
-    if (request.headers.host !== `127.0.0.1:${localPort}` && request.headers.host !== `localhost:${localPort}`) {
-      return error(response, 403, "invalid_host", "Use the loopback address shown when the API starts.");
+    const host = request.headers.host;
+    if (host !== `127.0.0.1:${localPort}` && host !== `localhost:${localPort}` && !(proxyHost && host === proxyHost)) {
+      return error(response, 403, "invalid_host", "Use the configured hostname for this API.");
+    }
+    if (proxyUser && request.headers["tailscale-user-login"] !== proxyUser) {
+      return error(response, 403, "access_denied", "This dashboard requires an authorized Tailscale account.");
     }
     if (request.method !== "GET") {
       response.setHeader("Allow", "GET");

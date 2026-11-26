@@ -494,14 +494,21 @@ test("shipping API preserves historical and partial evidence and reads a replace
     } });
     await prepare(snapshot);
     const web = process.env.BARNACLES_WEB_BUILD;
-    server = spawn(process.execPath, ["dashboard/prepare.ts", "--serve", snapshot, "0", ...(web ? [web] : [])],
-      { stdio: ["ignore", "pipe", "pipe"] });
+    const proxyUser = "owner@example.invalid";
+    server = spawn(process.execPath, ["dashboard/prepare.ts", "--serve", snapshot, "0", ...(web ? [web] : [])], {
+      env: { ...process.env, BARNACLES_PROXY_HOST: "harbor.example.invalid:8443", BARNACLES_PROXY_USER: proxyUser },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     server.stderr?.resume();
     stopped = once(server, "exit");
     const [announcement] = await once(server.stdout!, "data", { signal: AbortSignal.timeout(10_000) });
     const base = /http:\/\/127\.0\.0\.1:\d+/.exec(String(announcement))?.[0];
     assert.ok(base);
-    const call = (route: string, init?: RequestInit) => fetch(base + route, { signal: AbortSignal.timeout(10_000), ...init });
+    const call = (route: string, init?: RequestInit) => fetch(base + route, {
+      signal: AbortSignal.timeout(10_000), headers: { "Tailscale-User-Login": proxyUser }, ...init,
+    });
+    assert.equal((await call("/", { headers: {} })).status, 403);
+    assert.equal((await call("/api/v1", { headers: { "Tailscale-User-Login": "guest@example.invalid" } })).status, 403);
     const get = async (route: string, expected = 200) => {
       const result = await call(route);
       assert.equal(result.status, expected, route);

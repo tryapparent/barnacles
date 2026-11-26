@@ -38,7 +38,7 @@ test("pre-push routes the outgoing commit and blocks failed verification", () =>
     copyFileSync(new URL("../tooling/verify.ts", import.meta.url), join(cwd, "tooling", "verify.ts"));
     copyFileSync(new URL("../tooling/check-directory-width.ts", import.meta.url), join(cwd, "tooling", "check-directory-width.ts"));
     write("tooling/check-boundaries.ts", "process.exit(0)\n");
-    write("dashboard/prepare.test.ts", "process.exit(0)\n");
+    write("dashboard/prepare.test.ts", "process.exit(process.env.BARNACLES_WEB_BUILD ? 0 : 1)\n");
     for (const file of ["pre-push", "snapshot.ts"]) {
       copyFileSync(new URL("./" + file, import.meta.url), join(cwd, ".githooks", file));
     }
@@ -46,7 +46,8 @@ test("pre-push routes the outgoing commit and blocks failed verification", () =>
     write(".githooks/check-comments.ts", "process.exit(0)\n");
     write(".githooks/check-bend-paths.ts", "process.exit(0)\n");
     write("README.md", "Baseline\n");
-    write("package.json", '{"name":"push-fixture","version":"1.0.0","type":"module","scripts":{"verify":"node tooling/verify.ts"}}\n');
+    write("package.json", '{"name":"push-fixture","version":"1.0.0","type":"module","scripts":{"verify":"node tooling/verify.ts","build:harbor":"node tooling/build-harbor.ts"}}\n');
+    write("tooling/build-harbor.ts", "process.exit(process.argv[2] === '--outDir' && process.argv[3] ? 0 : 1)\n");
     write("package-lock.json", '{"name":"push-fixture","version":"1.0.0","lockfileVersion":3,"packages":{}}\n');
     write("collector/github/attempt.test.ts", 'console.log("committed collector test")\n');
     write("collector/sources.test.ts", "process.exit(0)\n");
