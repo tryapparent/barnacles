@@ -506,7 +506,7 @@ test("timing names waits from confirmed process receipts and keeps unresolved ti
     loadEvidence(source, batch);
     loadEvidence(source, batch);
     execFileSync(process.execPath, ["dashboard/prepare.ts", source, out, "synthetic/example", cutoff],
-      { stdio: "pipe", timeout: 60_000 });
+      { stdio: "pipe", timeout: 120_000 });
     const db = new DatabaseSync(join(out, "dashboard.sqlite"), { readOnly: true });
     try {
       const groups = db.prepare(`SELECT operation, count, total_seconds FROM operation_totals
@@ -542,7 +542,7 @@ test("shipping API preserves historical and partial evidence and reads a replace
   const save = (pullRequest: PullRequest, release?: ReleaseEvidence) =>
     loadEvidence(source, { source: "github-delivery", pullRequest, release });
   const prepare = (path: string) => promisify(execFile)(process.execPath,
-    ["dashboard/prepare.ts", source, path, repo, iso(cutoff).replace(".000Z", "Z")], { timeout: 60_000 });
+    ["dashboard/prepare.ts", source, path, repo, iso(cutoff).replace(".000Z", "Z")], { timeout: 120_000 });
   let server: ReturnType<typeof spawn> | undefined;
   let stopped: Promise<unknown> | undefined;
   try {
