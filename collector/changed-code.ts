@@ -1,7 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
-import type { List } from "../evidence/index.ts";
+import { parseArgs } from "node:util";
+import { loadEvidence, repository as repositoryKey, type ChangedCodeFile, type List } from "../evidence/index.ts";
 import { buildPolicy, loadPolicy } from "../tooling/bend.ts";
 
 type PathCount = { $: "ChangedPath"; path: string; commits: number };
@@ -36,11 +37,13 @@ function encodePath(path: string) {
 }
 
 async function main() {
-  const [directory, repository, revision = "HEAD", limit = "1000", ...extra] = process.argv.slice(2);
+  const { positionals, values } = parseArgs({ options: { "save-as": { type: "string" } }, allowPositionals: true });
+  const [directory, repository, revision = "HEAD", limit = "1000", ...extra] = positionals;
   const maxCommits = Number(limit);
   if (!directory || !repository || extra.length || !/^\d{1,5}$/.test(limit) || maxCommits < 1 || maxCommits > 10_000) {
-    throw Error("Usage: changed-code.ts JOB_DIRECTORY REPOSITORY [REVISION [MAX_COMMITS (1–10000)]]");
+    throw Error("Usage: changed-code.ts JOB_DIRECTORY REPOSITORY [REVISION [MAX_COMMITS (1–10000)]] [--save-as OWNER/REPO]");
   }
+  const saveAs = values["save-as"] === undefined ? null : repositoryKey(values["save-as"]);
 
   const git = (...args: string[]) => execFileSync("git", ["--no-replace-objects", ...args], {
     cwd: repository,
@@ -76,11 +79,14 @@ async function main() {
       counts = policy.count_commit(counts, input, boundaries.has(commit));
       commitsScanned++;
     }
-    const files = [];
+    const files: ChangedCodeFile[] = [];
     for (let ranked = policy.top_paths(counts); ranked.$ === "Con"; ranked = ranked.tail) {
       files.push({ ...encodePath(ranked.head.path), commits: ranked.head.commits });
     }
-    console.log(JSON.stringify({ revision: tip, commitsScanned, hasMoreCommits, shallow, files }, null, 2));
+    const report = { revision: tip, commitsScanned, hasMoreCommits, shallow, files };
+    if (saveAs !== null) loadEvidence(join(resolve(directory), "evidence.sqlite"),
+      { source: "git-change-scan", repository: saveAs, report });
+    console.log(JSON.stringify(report, null, 2));
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }

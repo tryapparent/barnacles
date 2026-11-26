@@ -12,6 +12,7 @@ SQLite holds exact source identities, observations, and read views. The table de
 | Actions timing | Repository + run ID + attempt, with head SHA checked against attempt metadata. Use job ID and step number inside the attempt. Preserve clock kind, timestamps, parent and coverage. Retain earlier-attempt attribution for uniquely matched carried jobs. |
 | Release and access | Repository + release ID, asset ID, channel, source SHA and publication time. Keep each asset access check with its observation time and result. |
 | Rollout spans | Source instance + stable session and call IDs, with separate clock kinds for tool envelopes and observed processes. Preserve parent links where supported. |
+| Git change scan | Explicit repository name + resolved revision, with commit count, truncation and shallow coverage. Keep the top paths in the order produced by Bend2. Each successful import atomically replaces the previous scan for that repository. |
 | Import coverage | Source scope, requested window and cutoff, collection time, and gaps such as capped, unavailable, or partial input. |
 
 ## Actions tables

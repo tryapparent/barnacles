@@ -94,6 +94,18 @@ CREATE TABLE IF NOT EXISTS github_release_observations (
   FOREIGN KEY (repository, pr_number) REFERENCES github_prs
 ) STRICT;
 
+CREATE TABLE IF NOT EXISTS git_change_scans(
+  repository TEXT PRIMARY KEY, revision TEXT NOT NULL, commits_scanned INTEGER NOT NULL,
+  truncated INTEGER NOT NULL, shallow INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS git_changed_files(
+  repository TEXT NOT NULL REFERENCES git_change_scans(repository),
+  rank INTEGER NOT NULL, path TEXT, path_base64 TEXT, commits INTEGER NOT NULL,
+  PRIMARY KEY (repository, rank),
+  CHECK ((path IS NULL) <> (path_base64 IS NULL))
+) STRICT;
+
 CREATE VIEW IF NOT EXISTS codex_spans AS
 SELECT instance, session_id, call_id, source_line, tool, 'tool_envelope' AS clock,
        started_ms, ended_ms, NULL AS terminal_call_id
