@@ -391,6 +391,7 @@ export function mountHarbor(scene, contacts) {
       if (vessel.link) {
         const width = Math.max(24, sprite.width * .79);
         const height = Math.max(24, sprite.height * .86 + 8);
+        vessel.link.style.setProperty('--ship-x', `${vessel.x}px`);
         vessel.link.style.left = `${vessel.x - width / 2}px`;
         vessel.link.style.top = `${vessel.y - height / 2}px`;
         vessel.link.style.width = `${width}px`;
