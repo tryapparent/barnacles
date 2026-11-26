@@ -96,6 +96,7 @@ function DelayedBursts() {
     const pitch = 3;
     const radius = 68;
     const lifetime = 620;
+    const intensity = .2;
     let pixels: Array<Pixel | undefined> = [];
     let trace: Pulse[] = [];
     let last: Pulse | undefined;
@@ -155,7 +156,7 @@ function DelayedBursts() {
             const distance = Math.hypot(x, y);
             if (age <= 0 || distance < 1 || distance >= radius) continue;
             const envelope = (1 - Math.exp(-age / 18)) * Math.exp(-age / 143);
-            const amplitude = (1 - distance / radius) * Math.floor(envelope * 13);
+            const amplitude = intensity * (1 - distance / radius) * Math.floor(envelope * 13);
             const dx = Math.round(x / distance * amplitude);
             const dy = Math.round(y / distance * amplitude);
             const strength = Math.max(Math.abs(dx), Math.abs(dy));
