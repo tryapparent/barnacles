@@ -11,3 +11,16 @@ def elapsed_label(ms: Nat, negative: Bool, signed: Bool) -> String:
   +sign = Bool.pick(String, signed, Bool.pick(String, negative, "−", "+"), "")
   Bool.pick(String, Nat.is_eq(minutes, 0n), "0m",
     String.append(sign, String.append(part(days, "d"), String.append(part(hours, "h"), part(remainder, "m")))))
+
+def milliseconds_fraction(+remainder: Nat) -> String:
+  hundreds = Nat.div(remainder, 100n)
+  +tens = Nat.mod(Nat.div(remainder, 10n), 10n)
+  +ones = Nat.mod(remainder, 10n)
+  String.concat([".", Nat.show(hundreds),
+    Bool.pick(String, Bool.and(Nat.is_eq(tens, 0n), Nat.is_eq(ones, 0n)), "", Nat.show(tens)),
+    Bool.pick(String, Nat.is_eq(ones, 0n), "", Nat.show(ones))])
+
+def process_label(+microseconds: Nat) -> String:
+  +remainder = Nat.mod(microseconds, 1000n)
+  String.concat([Nat.show(Nat.div(microseconds, 1000n)),
+    Bool.pick(String, Nat.is_eq(remainder, 0n), "", milliseconds_fraction(remainder)), " ms"])

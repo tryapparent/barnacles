@@ -753,3 +753,61 @@ th[scope="col"] { color: var(--quiet); }
 @media (max-width: 500px) {
   .filter-form > label { grid-column: 1 / -1; }
 }
+
+.process-timings {
+  --process-columns: minmax(9rem, 1fr) minmax(7rem, 2fr) 6rem;
+  border-block-start: 1px solid var(--rule);
+  padding: 21px 24px 28px;
+  scroll-margin-block-start: 12px;
+}
+.process-timings h2 { margin-block-end: 7px; }
+.process-picker { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; }
+.process-grid, .process-rows > li {
+  display: grid;
+  grid-template-columns: var(--process-columns);
+  align-items: center;
+  gap: 8px;
+}
+.process-scale {
+  margin-block-start: 14px;
+  padding-block-end: 4px;
+  color: var(--quiet);
+  font-size: 12px;
+}
+.process-scale > :nth-child(2) { display: flex; justify-content: space-between; }
+.process-scale > :last-child, .process-duration { text-align: end; }
+.process-rows { gap: 0; border-block-start: 1px solid var(--rule); }
+.process-rows > li { min-height: 32px; border-block-end: 1px solid var(--rule); }
+.process-label {
+  padding: 5px 0;
+  padding-inline-start: calc(var(--depth) * clamp(4px, 0.9vw, 12px));
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+.process-duration { white-space: nowrap; font-size: 12px; }
+.process-track {
+  position: relative;
+  align-self: stretch;
+  border-inline: 1px solid var(--rule);
+  background: linear-gradient(90deg, transparent calc(50% - 0.5px),
+    var(--rule) calc(50% - 0.5px) calc(50% + 0.5px), transparent calc(50% + 0.5px));
+}
+.process-bar {
+  position: absolute;
+  inset-inline-start: min(var(--position), calc(100% - 2px));
+  inset-block-start: 50%;
+  transform: translateY(-50%);
+  width: max(2px, var(--duration));
+  height: 7px;
+  background: var(--accent);
+}
+.process-bar[data-root="true"] { height: 10px; background: var(--ink); }
+.process-note { margin-block-start: 9px; max-width: 65ch; }
+@media (max-width: 640px) {
+  .process-timings { --process-columns: minmax(0, 1.2fr) minmax(0, 1fr) 4.65rem; padding-inline: 17px; }
+  .process-grid, .process-rows > li { gap: 5px; }
+  .process-label, .process-duration, .process-scale { font-size: 11px; }
+}
+@media (forced-colors: active) {
+  .process-bar { border: 1px solid CanvasText; }
+}
