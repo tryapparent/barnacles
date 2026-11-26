@@ -65,9 +65,11 @@ PATHS
     unset NODE_TEST_CONTEXT
     cd "$scratch/source"
     export BARNACLES_TEST_DIRECTORY="$scratch"
+    if [ -n "$hook_tests$collector_tests" ]; then
+      npm ci --offline --ignore-scripts --no-audit --no-fund
+    fi
     if [ -n "$hook_tests" ]; then
       printf 'pre-push: checking hook tests at %s\n' "$head" >&2
-      npm ci --offline --ignore-scripts --no-audit --no-fund
       npm run test:hooks
     fi
     if [ -n "$collector_tests" ]; then

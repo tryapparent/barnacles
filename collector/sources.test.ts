@@ -113,23 +113,34 @@ test("compiled Bend2 source decisions through the SQLite import path", async () 
         arguments: '{"cmd":"internal-executable private-target"}' }),
       event("06.400", { type: "custom_tool_call", name: "exec", call_id: "dynamic",
         input: 'await tools.exec_command({cmd:"rg" + privateValue});' }),
+      event("06.500", { type: "custom_tool_call", name: "exec", call_id: "build-and-push",
+        input: 'await tools.exec_command({cmd:`echo "cargo test"\nmkdir -p /private/build\nenv RUSTFLAGS=-g cargo +stable build && git -C /private/build push origin HEAD\nt3-build --jobs 2 -- cargo build`});' }),
+      event("06.600", { type: "custom_tool_call", name: "exec", call_id: "parallel",
+        input: 'await Promise.all([tools.write_stdin({session_id:12}), tools.exec_command({cmd:"cargo check"})]);' }),
+      event("06.700", { type: "function_call", name: "exec_command", call_id: "literal",
+        arguments: '{"cmd":"echo cargo build"}' }),
     ].map((line) => JSON.stringify(line)).join("\n") + "\n");
     const data = await readRollout(rollout, "codex-test", policy);
     assert.deepEqual(data.markers, [{ line: 3, at: Date.parse(time("02.500")) }]);
     assert.deepEqual(data.calls.map(({ tool, command }) => [tool, command]),
       [["Shell command", "git status"], ["Cell wait", null], ["Tool script", null],
-        ["Shell command", "node --test"], ["Shell command", null], ["Shell command", null]]);
+        ["Shell command", "node --test"], ["Shell command", null], ["Shell command", null],
+        ["Shell command", null], ["Parallel tool script", null], ["Shell command", null]]);
+    assert.deepEqual(data.calls.map(({ categories }) => categories),
+      ["Git inspection + Unknown command", "Cell wait", "Unknown script", "JavaScript test", "Unknown command", "Unknown command",
+        "Rust build + Git push + Shell output + File preparation", "Rust check + Process I/O", "Shell output"]);
     saveRollout(path, data);
     saveRollout(path, data);
     const db = new DatabaseSync(path, { readOnly: true });
     try {
-      assert.equal(db.prepare("SELECT count(*) n FROM codex_spans").get()?.n, 7);
+      assert.equal(db.prepare("SELECT count(*) n FROM codex_spans").get()?.n, 10);
       assert.equal(db.prepare("SELECT ended_ms-started_ms duration FROM codex_spans WHERE clock='async_cell'").get()?.duration, 2877);
       assert.equal(db.prepare("SELECT ended_ms FROM codex_calls WHERE call_id='pending'").get()?.ended_ms, null);
       const marker = db.prepare("SELECT source_line, observed_ms FROM codex_reasoning").all();
       assert.deepEqual(marker.map(Object.values), [[3, Date.parse(time("02.500"))]]);
       assert.deepEqual(db.prepare("SELECT command FROM codex_commands ORDER BY command").all().map(Object.values),
         [["git status"], ["node --test"]]);
+      assert.equal(db.prepare("SELECT count(*) n FROM codex_categories").get()?.n, data.calls.length);
       assert.equal(db.prepare("SELECT count(*) n FROM t3_runs").get()?.n, 2);
       assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
     } finally { db.close(); }

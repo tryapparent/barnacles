@@ -27,4 +27,4 @@ The same installation enables the pre-push hook. Fetch the target remote's `main
 
 Documentation-only changes run the comment check. Collector or evidence changes also run the Bend2 integration tests. Hook changes run the hook tests. Changes to shared inputs such as the npm manifest or lockfile run both suites. Deleting a ref sends no source to verify.
 
-The hook suite installs its locked dependencies from the local npm cache populated by setup. The collector suite fetches the existing checksum-pinned Bend2 compiler. Both suites run locally against synthetic inputs.
+The hook and collector suites install their locked dependencies from the local npm cache populated by setup. The collector suite fetches the existing checksum-pinned Bend2 compiler. Both suites run locally against synthetic inputs.

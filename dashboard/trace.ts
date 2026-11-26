@@ -4,12 +4,12 @@ export type TraceWindow = { $: "Window"; from: number; to: number };
 export type TracePolicy = {
   interval_valid(start: number, end: number): boolean;
   extend_window(window: TraceWindow, start: number, end: number): TraceWindow;
-  trace_operation(clock: string, tool: string, command: string): string;
+  trace_operation(clock: string, tool: string, command: string, categories: string): string;
   trace_parent(clock: string, count: number, start: number, end: number, parentStart: number, parentEnd: number): boolean;
 };
 
 export type SpanRow = {
-  call: string; terminal: string | null; line: number; tool: string; command: string;
+  call: string; terminal: string | null; line: number; tool: string; command: string; categories: string;
   clock: string; start: number | null; end: number | null;
 };
 export type ReasoningRow = { line: number; at: number };
@@ -41,10 +41,11 @@ export function encodeTrace(key: string, rows: SpanRow[], markers: ReasoningRow[
     const nested = policy.trace_parent(row.clock, candidates.length, row.start, row.end, parent?.start ?? 0, parent?.end ?? 0);
     return {
       traceId, spanId: spanId(row), parentSpanId: nested && parent ? spanId(parent) : root,
-      name: policy.trace_operation(row.clock, row.tool, row.command), kind: 1,
+      name: policy.trace_operation(row.clock, row.tool, row.command, row.categories), kind: 1,
       startTimeUnixNano: nanos(row.start), endTimeUnixNano: nanos(row.end),
       attributes: [text("barnacles.clock", row.clock), integer("barnacles.source_line", row.line),
-        ...(row.command ? [text("barnacles.submitted_command", row.command)] : [])],
+        ...(row.command ? [text("barnacles.submitted_command", row.command)] : []),
+        ...(row.categories ? [text("barnacles.categories", row.categories), text("barnacles.tool", row.tool)] : [])],
     };
   });
   const session = {
