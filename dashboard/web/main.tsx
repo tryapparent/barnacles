@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent } from "react";
 import { createRoot } from "react-dom/client";
 import {
-  dayLabel, deliveryPage, detailPage, fetchEvidence, milestoneLabel, pagePath, route,
+  dayLabel, deliveryPage, fetchEvidence, milestoneLabel, pagePath,
   shippingPath, stageLabel, stages, utcLabel, wholeMinutes, type Detail, type Milestone, type Review,
 } from "./api";
 import { Overview } from "./visual/charts";
@@ -108,47 +108,31 @@ function useEvidence<T>(path: string) {
   return { result, retry: () => setAttempt((count) => count + 1) };
 }
 
-function PullRequest({ number, asOf }: { number: string; asOf: string }) {
-  const path = `/api/v1/pull-requests/${encodeURIComponent(number)}?asOf=${encodeURIComponent(asOf)}`;
+function PullRequestEvidence({ path, milestones }: { path: string; milestones: Milestone[] }) {
   const { result, retry } = useEvidence<Detail>(path);
-  const heading = useRef<HTMLHeadingElement>(null);
-  useEffect(() => {
-    if (location.hash === "#pr-detail") {
-      heading.current?.focus({ preventScroll: true });
-      heading.current?.closest("section")?.scrollIntoView({ block: "start" });
-    }
-  }, [number]);
-  return <section id="pr-detail" className="pr-detail" aria-labelledby="detail-title">
-    <div className="detail-head">
-      <h2 ref={heading} tabIndex={-1} id="detail-title">PR #{number}</h2>
-      <a href={pagePath({ pr: null }, "#delivery-title")}>Close PR details</a>
-    </div>
-    {result.state === "loading" && <p role="status">Loading PR evidence…</p>}
-    {result.state === "error" && <div role="alert"><p>{result.message}</p>
+  return <>
+    <Waterfall milestones={result.state === "ready" ? result.data.milestones : milestones} />
+    {result.state === "error" && <div className="detail-links" role="alert"><p>{result.message}</p>
       <Button className="retry" onClick={retry}>Retry PR details</Button></div>}
-    {result.state === "ready" && <>
-      <p className="fine">{stageLabel(result.data.stage)} · As of {utcLabel(result.data.asOf)}</p>
-      <Waterfall milestones={result.data.milestones} />
-      <div className="detail-links"><a href={result.data.pullRequestUrl}>Open PR on GitHub</a>
-        <a href={path}>PR evidence JSON</a></div>
-    </>}
-  </section>;
+  </>;
 }
 
-function DeliveryTimeline({ review }: { review: Review }) {
+function DeliveryTimeline({ review, selection }: { review: Review; selection: { pr: number | null; revision: number } }) {
+  const selected = selection.pr;
   const [pages, setPages] = useState(review.deliveries);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const sentinel = useRef<HTMLDivElement>(null);
   const request = useRef<AbortController | null>(null);
   const { items, offset, nextOffset, maxMeasuredMillis } = pages;
-  const loadMore = () => {
+  const found = selected !== null && items.some((item) => item.number === selected);
+  const loadMore = (limit?: number) => {
     if (nextOffset === null || request.current) return;
     const controller = new AbortController();
     request.current = controller;
     setLoading(true);
     setError("");
-    fetchEvidence<Review>(deliveryPage(review, nextOffset), controller.signal).then(({ deliveries }) => {
+    fetchEvidence<Review>(deliveryPage(review, nextOffset, limit), controller.signal).then(({ deliveries }) => {
       setPages((prior) => ({ ...prior, nextOffset: deliveries.nextOffset,
         items: [...prior.items, ...deliveries.items.filter((item) => !prior.items.some((row) => row.number === item.number))] }));
     }).catch((failure: Error) => {
@@ -160,13 +144,46 @@ function DeliveryTimeline({ review }: { review: Review }) {
   };
   useEffect(() => () => request.current?.abort(), []);
   useEffect(() => {
-    if (loading || error || nextOffset === null || !sentinel.current || !window.IntersectionObserver) return;
+    if (loading || error || nextOffset === null) return;
+    if (selected !== null && !found) {
+      loadMore(100);
+      return;
+    }
+    if (!sentinel.current || !window.IntersectionObserver) return;
     const observer = new IntersectionObserver(([entry]) => {
       if (entry.isIntersecting) loadMore();
     }, { rootMargin: "160px" });
     observer.observe(sentinel.current);
     return () => observer.disconnect();
-  }, [loading, error, nextOffset]);
+  }, [loading, error, nextOffset, selected, found]);
+  useEffect(() => {
+    if (!found) return;
+    const row = document.getElementById(`delivery-pr-${selected}`) as HTMLDetailsElement | null;
+    const summary = row?.querySelector("summary");
+    if (!row || !summary) return;
+    const finish = () => {
+      row.open = true;
+      summary.focus({ preventScroll: true });
+    };
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches || Math.abs(row.getBoundingClientRect().top - 16) < 2) {
+      row.scrollIntoView({ block: "start" });
+      finish();
+      return;
+    }
+    let timer: number;
+    const open = () => {
+      clearTimeout(timer);
+      document.removeEventListener("scrollend", open);
+      finish();
+    };
+    document.addEventListener("scrollend", open, { once: true });
+    timer = window.setTimeout(open, 900);
+    row.scrollIntoView({ block: "start", behavior: "smooth" });
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("scrollend", open);
+    };
+  }, [selection, found]);
   return <section className="delivery" aria-labelledby="delivery-title">
     <h2 id="delivery-title">Delivery cycle time</h2>
     {items.length ? <>
@@ -178,7 +195,7 @@ function DeliveryTimeline({ review }: { review: Review }) {
           [{ ...entry, elapsedMillis: entry.elapsedMillis }] : []);
         const total = measured.reduce((sum, entry) => sum + entry.elapsedMillis, 0);
         const rowWidth = 100 * Math.log1p(total / 60_000) / Math.log1p(Math.max(1, maxMeasuredMillis) / 60_000);
-        return <details key={item.number} className="thread">
+        return <details key={item.number} id={`delivery-pr-${item.number}`} className="thread">
           <summary>
             <span className="thread-meta">
               <span className="thread-name" aria-label={hasThread ? `Thread linked to PR #${item.number}` : undefined}>
@@ -194,28 +211,49 @@ function DeliveryTimeline({ review }: { review: Review }) {
                 title={`${milestoneLabel(entry.key)} · ${wholeMinutes(elapsed)}`}><span>{wholeMinutes(elapsed)}</span></span>;
             }) : <span className="thread-unmeasured">—</span>}</span>
           </summary>
-          <Waterfall milestones={item.milestones} />
-          <div className="detail-links"><a href={detailPage(item.number, review.window.to)}>View PR #{item.number} evidence</a></div>
+          {selected === item.number ? <PullRequestEvidence path={item.detailPath} milestones={item.milestones} /> :
+            <Waterfall milestones={item.milestones} />}
+          <div className="detail-links"><a href={item.pullRequestUrl}>Open PR on GitHub</a><a href={item.detailPath}>PR evidence JSON</a></div>
         </details>;
       })}</div>
       {nextOffset !== null && <div ref={sentinel} className="delivery-tail">
         {loading && <span role="status" className="fine">Loading more deliveries…</span>}
         {error && <p role="alert">{error}</p>}
-        {!loading && <Button className={error || !window.IntersectionObserver ? "" : "scroll-keyboard"} onClick={loadMore}>
+        {!loading && <Button className={error || !window.IntersectionObserver ? "" : "scroll-keyboard"}
+          onClick={() => loadMore(selected !== null && !found ? 100 : undefined)}>
           {error ? "Retry loading deliveries" : "Load more deliveries"}
         </Button>}
       </div>}
     </> : offset > 0 ? <p className="fine">No pull requests on this page.{" "}
       <a href={pagePath({ offset: null, to: review.window.to }, "#delivery-title")}>First page</a></p> :
       <p className="fine">No delivery milestones were observed in this window.</p>}
+    {selected !== null && !found && nextOffset === null && <p className="fine" role="status">
+      PR #{selected} has no row in this window. <a href={`/api/v1/pull-requests/${selected}?asOf=${encodeURIComponent(review.window.to)}`}>PR evidence JSON</a>
+    </p>}
   </section>;
+}
+
+function selectedPullRequest(): number | null {
+  const pr = new URLSearchParams(location.search).get("pr");
+  return pr && /^[1-9]\d*$/.test(pr) && Number.isSafeInteger(Number(pr)) ? Number(pr) : null;
 }
 
 function App() {
   const path = shippingPath();
   const { result, retry } = useEvidence<Review>(path);
   const review = result.state === "ready" ? result.data : null;
-  const pr = route.get("pr");
+  const [selection, setSelection] = useState(() => ({ pr: selectedPullRequest(), revision: 0 }));
+  const select = (event: MouseEvent<HTMLAnchorElement>, pr: number) => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    history.pushState(null, "", event.currentTarget.href);
+    setSelection((prior) => ({ pr, revision: prior.revision + 1 }));
+  };
+  useEffect(() => {
+    const restore = () => setSelection((prior) => ({ pr: selectedPullRequest(), revision: prior.revision + 1 }));
+    window.addEventListener("popstate", restore);
+    return () => window.removeEventListener("popstate", restore);
+  }, []);
   useEffect(() => {
     if (review && location.hash === "#delivery-title") document.getElementById("delivery-title")?.scrollIntoView();
   }, [review]);
@@ -237,10 +275,9 @@ function App() {
         <span>Snapshot · <time dateTime={review.snapshotAt}>{utcLabel(review.snapshotAt)}</time></span>
         <Filters review={review} />
       </div>
-      <Fleet fleet={review.fleet} />
+      <Fleet fleet={review.fleet} onSelect={select} />
       <Overview review={review} />
-      {pr && <PullRequest number={pr} asOf={review.window.to} />}
-      <DeliveryTimeline review={review} />
+      <DeliveryTimeline review={review} selection={selection} />
     </>}
   </main>;
 }

@@ -96,7 +96,9 @@ deliveries. Advance using `deliveries.nextOffset`, which is null at the end.
 intervals across the selected delivery rows, independent of pagination. The
 browser uses it to hold the scale steady as more rows enter the list. Row widths
 use a compressed scale so short intervals stay visible alongside long ones.
-Selecting a ship opens its PR milestone waterfall on a linear UTC scale.
+Selecting a ship scrolls to its delivery row and opens the milestone waterfall
+there. The link keeps the PR number and cutoff so it can be opened directly.
+Waterfalls use a linear UTC scale.
 
 Follow a record's `detailPath` to read `/api/v1/pull-requests/{number}`. It
 carries an `asOf` cutoff so the summary and detail use the same time. You can

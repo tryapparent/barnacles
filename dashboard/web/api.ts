@@ -46,11 +46,12 @@ export function shippingPath(query = route) {
   return "/api/v1/shipping?" + filters(query);
 }
 
-export function deliveryPage(review: Review, offset: number) {
+export function deliveryPage(review: Review, offset: number, limit = review.deliveries.limit) {
   const query = new URLSearchParams(route);
   query.set("from", review.window.from);
   query.set("to", review.window.to);
   query.set("offset", String(offset));
+  query.set("limit", String(limit));
   return shippingPath(query);
 }
 
@@ -64,7 +65,7 @@ export function pagePath(changes: Record<string, string | number | null>, anchor
 }
 
 export function detailPage(number: number, to: string) {
-  return pagePath({ pr: number, to }, "#pr-detail");
+  return pagePath({ pr: number, to, offset: null }, `#delivery-pr-${number}`);
 }
 
 export async function fetchEvidence<T>(path: string, signal: AbortSignal): Promise<T> {

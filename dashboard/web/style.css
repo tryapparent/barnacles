@@ -254,6 +254,7 @@ h2, figcaption { font-size: 17px; line-height: 1.24; }
   border-block-start: 1px solid var(--rule);
   padding: 22px 24px 24px;
 }
+.thread { scroll-margin-block-start: 16px; }
 
 .thread-meta time { color: var(--quiet); font-size: 11px; }
 .stage-key {
@@ -530,15 +531,13 @@ table { border-collapse: collapse; width: 100%; font-size: 12px; text-align: lef
 th { font-weight: 400; }
 td, th { padding: 6px 8px; border-bottom: 1px solid var(--rule); vertical-align: top; }
 th[scope="col"] { color: var(--quiet); }
-.pr-detail, .page-message { padding: 22px 24px; border-bottom: 1px solid var(--rule); }
-.pr-detail { background: #060f19; }
-.detail-head, .detail-links {
+.page-message { padding: 22px 24px; border-bottom: 1px solid var(--rule); }
+.detail-links {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   gap: 9px 18px;
 }
-.detail-head { justify-content: space-between; }
 .detail-links { margin-block: 10px; font-size: 12px; }
 .retry { margin-top: 8px; }
 
@@ -553,7 +552,7 @@ th[scope="col"] { color: var(--quiet); }
   .filters[open] { grid-row: 3; }
 }
 @media (max-width: 640px) {
-  .fleet-manifest, .fleet-empty, .pr-detail, .page-message { padding-inline: 17px; }
+  .fleet-manifest, .fleet-empty, .page-message { padding-inline: 17px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

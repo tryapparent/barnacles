@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { countLabel, detailPage, stages, utcLabel, type Review } from "../api";
 import { Button } from "../controls";
 import { mountHarbor } from "./scene";
 
-export function Fleet({ fleet }: { fleet: Review["fleet"] }) {
+export function Fleet({ fleet, onSelect }: { fleet: Review["fleet"];
+  onSelect: (event: MouseEvent<HTMLAnchorElement>, number: number) => void }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const sky = useRef<HTMLDivElement>(null);
   const localClock = useRef<HTMLTimeElement>(null);
@@ -80,7 +81,7 @@ export function Fleet({ fleet }: { fleet: Review["fleet"] }) {
       <canvas className="fleet-water" aria-hidden="true" ref={canvas} />
       <div className="fleet-celestial" aria-hidden="true" ref={sky} />
       {contacts.map(({ item }) => <a key={item.number} className="fleet-ship" aria-label={`Open PR #${item.number} evidence`}
-        title={`PR #${item.number}`} href={detailPage(item.number, fleet.to)} ref={(link) => {
+        title={`PR #${item.number}`} href={detailPage(item.number, fleet.to)} onClick={(event) => onSelect(event, item.number)} ref={(link) => {
           if (link) shipLinks.current.set(item.number, link);
           else shipLinks.current.delete(item.number);
         }} />)}
@@ -91,7 +92,7 @@ export function Fleet({ fleet }: { fleet: Review["fleet"] }) {
       <ul className="fleet-groups">{groups.filter(({ items }) => items.length).map(({ stage, label, items }) =>
         <li key={stage}><span>{label} <small>· {countLabel(items.length)}</small></span>
           <ul className="fleet-prs">{items.map((item) => <li key={item.number}>
-            <a href={detailPage(item.number, fleet.to)}>PR #{item.number}</a>
+            <a href={detailPage(item.number, fleet.to)} onClick={(event) => onSelect(event, item.number)}>PR #{item.number}</a>
           </li>)}</ul>
         </li>)}</ul>
     </details> : <p className="fleet-empty fine">No milestones were observed in this fleet window.</p>}
