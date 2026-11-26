@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
@@ -66,16 +67,23 @@ test("changed-code CLI ranks Git paths and reports bounded and shallow coverage"
         ...padding.slice(0, 21).map((path) => ({ path, commits: 1 })),
       ],
     });
-    assert.deepEqual(analyze(repository), report);
+    assert.deepEqual(analyze(repository, "--save-as", "Synthetic/Example"), report);
     assert.deepEqual(analyze(repository, side, "2"), {
       revision: side, commitsScanned: 2, hasMoreCommits: true, shallow: false,
       files: [{ path: "nested/hot.ts", commits: 1 }],
     });
-    assert.deepEqual(analyze(repository, rename, "1").files, [
+    assert.deepEqual(analyze(repository, rename, "1", "--save-as", "synthetic/example").files, [
       { path: "cold.ts", commits: 1 },
       { path: "renamed.ts", commits: 1 },
       { pathBytesBase64: "/w==", commits: 1 },
     ]);
+    const db = new DatabaseSync(join(job, "evidence.sqlite"), { readOnly: true });
+    try {
+      assert.deepEqual(db.prepare("SELECT * FROM git_change_scans").all().map(Object.values),
+        [["synthetic/example", rename, 1, 1, 0]]);
+      assert.deepEqual(db.prepare("SELECT path, path_base64, commits FROM git_changed_files ORDER BY rank").all().map(Object.values),
+        [["cold.ts", null, 1], ["renamed.ts", null, 1], [null, "/w==", 1]]);
+    } finally { db.close(); }
 
     git("clone", "--quiet", "--no-local", "--depth=2", "--branch=side", repository, shallow);
     assert.deepEqual(analyze(shallow), {

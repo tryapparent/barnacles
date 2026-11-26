@@ -5,9 +5,13 @@ const green = "#4DAE79";
 const ink = "#D3D8D2";
 const timingPath = "/d/barnacles-timing/timing";
 const tracePath = "/d/barnacles-trace/trace";
+const changedCodePath = "/d/barnacles-changed-code/changed-code-analysis";
+const shippingPath = "/d/barnacles-shipping/shipping";
 
 type Window = { from: number; to: number };
-type Range = Window & { rolloutCount: number; operationCount: number; traceSessions: number; defaultTrace?: Window & { session: number; traceId: string } };
+type ChangeScan = { revision: string; commitsScanned: number; truncated: boolean; shallow: boolean; hasPaths: boolean };
+type Range = Window & { rolloutCount: number; operationCount: number; traceSessions: number; changedCode?: ChangeScan;
+  defaultTrace?: Window & { session: number; traceId: string } };
 type FieldProperty = { id: string; value: unknown };
 type Override = { matcher: { id: string; options: string }; properties: FieldProperty[] };
 
@@ -63,6 +67,16 @@ function board(uid: string, title: string, from: string, to: string, panels: obj
 function variable(name: string, label: string, query: string, value: string) {
   return { type: "query", name, label, datasource, query, definition: query, refresh: 1,
     current: { selected: true, text: value, value }, options: [] };
+}
+
+function scanSummary(repo: string, scan: ChangeScan) {
+  const unit = scan.commitsScanned === 1 ? "commit" : "commits";
+  const scope = `Scanned **${scan.commitsScanned.toLocaleString("en-US")} non-merge ${unit}** in \`${repo}\` at \`${scan.revision.slice(0, 12)}\`.`;
+  const limitations = [
+    scan.truncated ? "More commits are outside the scan limit." : "",
+    scan.shallow ? "Shallow history. File changes at the checkout boundary are unavailable." : "",
+  ].filter(Boolean);
+  return [scope, limitations.join(" ")].filter(Boolean).join("\n\n");
 }
 
 export function dashboards(range: Range, repository: string) {
@@ -161,7 +175,7 @@ export function dashboards(range: Range, repository: string) {
       { showHeader: true }, {}, prLinks, ["Thread started"],
       "Only imported T3 threads with an explicit owning link to an observed open pull request."),
   ], [link("Timing breakdown", range.operationCount ? timingPath + "?var-clock=${operation_clock:percentencode}" : timingPath),
-    link("Rollout waterfall", tracePath)], [
+    link("Rollout waterfall", tracePath), link("Changed Code Analysis", changedCodePath)], [
     ...(range.operationCount ? operations : []),
     variable("cycle_pr", "Cycle-time PR", "SELECT CAST(pr AS TEXT) FROM releases ORDER BY published DESC, pr DESC", ""),
   ]);
@@ -245,5 +259,23 @@ export function dashboards(range: Range, repository: string) {
         WHERE CAST(session AS TEXT) = ${session}), '')`, first?.traceId ?? ""), hide: 2 },
     ]);
   Object.assign(trace, { timepicker: { hidden: true } });
-  return { shipping, timing, trace };
+  const scan = range.changedCode;
+  const coverageHeight = scan?.truncated || scan?.shallow ? 6 : 4;
+  const changedCode = {
+    ...board("barnacles-changed-code", "Barnacles · Changed Code Analysis", from, to, [
+      scan ? block(1, "Git scan coverage", [0, 0, 24, coverageHeight], scanSummary(repository, scan))
+        : block(1, "No Git scan", [0, 0, 24, 5],
+          `Run Changed Code Analysis with \`--save-as ${repository}\`, then rebuild the Grafana snapshot.`),
+      ...(scan?.hasPaths ? [data(2, "table", "Files by commit count", [0, coverageHeight, 24, 17],
+        `SELECT COALESCE(path, 'Base64: ' || path_base64) AS "File path", commits AS "Commits" FROM changed_files ORDER BY rank`,
+        { showHeader: true, enablePagination: true }, { custom: { minWidth: 68 } },
+        [byName("Commits", unit("none"), width(80), { id: "decimals", value: 0 })], [],
+        "Up to 25 paths ranked by commits that touched them. Additions, edits, and deletions each count once per commit. Frequent edits can point to files worth investigating.")]
+        : scan ? [block(2, "No file changes in this scan", [0, coverageHeight, 24, 4],
+          scan.shallow || scan.truncated ? "Scan more history to look for file changes."
+            : "Scan a revision with file changes to see a ranking.")] : []),
+    ], [link("Shipping review", shippingPath)]),
+    timepicker: { hidden: true },
+  };
+  return { shipping, timing, trace, "changed-code": changedCode };
 }
