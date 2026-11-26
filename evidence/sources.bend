@@ -70,7 +70,13 @@ def tool_label(+name: String, fallback: String) -> String:
                 Bool.pick(String, String.starts_with(name, "mcp__codex_apps__github__"), "GitHub operation", fallback))))))))
 
 type ToolContext is Data:
-  Tool{label: String, command: String, wrapper: Bool, cell_wait: Bool}
+  Tool{label: String, command: String, categories: String, wrapper: Bool, cell_wait: Bool}
+
+type ShellCommand is Data:
+  Command{name: String, args: List<&2, String>}
+
+type ToolInvocation is Data:
+  Invocation{receiver: String, method: String, commands: List<&2, ShellCommand>}
 
 def known_command(+program: String, +action: String) -> String:
   Bool.pick(String, String.eq(program, "unknown"), "",
@@ -78,23 +84,206 @@ def known_command(+program: String, +action: String) -> String:
       String.append(program, String.append(" ", action))))
 
 def command_label(+program: String, +word: String) -> String:
-  known = label(program, ["git", "gh", "node", "npm", "docker", "rg", "sed", "cat", "curl", "python3", "ffmpeg", "ffprobe", "ls", "jq", "t3-build"])
+  known = label(program, ["git", "gh", "node", "npm", "docker", "rg", "sed", "cat", "curl", "python3", "ffmpeg", "ffprobe", "ls", "jq", "t3-build", "cargo"])
   action = Bool.pick(String, String.eq(program, "git"), label(word, ["status", "diff", "log", "show", "fetch", "add", "commit", "push", "switch", "rev-parse"]),
     Bool.pick(String, String.eq(program, "gh"), label(word, ["pr", "run", "api"]),
       Bool.pick(String, String.eq(program, "node"), label(word, ["--test"]),
         Bool.pick(String, String.eq(program, "npm"), label(word, ["ci", "test", "run"]),
-          Bool.pick(String, String.eq(program, "docker"), label(word, ["ps", "run", "inspect", "pull", "compose"]), "")))))
+          Bool.pick(String, String.eq(program, "docker"), label(word, ["ps", "run", "inspect", "pull", "compose"]),
+            Bool.pick(String, String.eq(program, "cargo"), label(word, ["build", "check", "test", "clippy"]), ""))))))
   known_command(known, action)
 
-def tool_command(+name: String, program: String, word: String) -> String:
-  Bool.pick(String, String.eq(name, "exec_command"), command_label(program, word), "")
+def last_word(words: List<&2, String>) -> String:
+  match words:
+    case []: ""
+    case head <> []: head
+    case head <> tail: last_word(tail)
 
-def tool(+name: String, +wrapped: String, +parallel: Bool, +program: String, +word: String) -> ToolContext:
-  Bool.pick(ToolContext, String.eq(name, "exec"),
-    Tool{Bool.pick(String, parallel, "Parallel tool script", tool_label(wrapped, "Tool script")),
-      tool_command(wrapped, program, word), True{}, False{}},
-    Bool.pick(ToolContext, String.eq(name, "wait"), Tool{"Cell wait", "", False{}, True{}},
-      Tool{tool_label(name, "Other tool"), tool_command(name, program, word), False{}, False{}}))
+def first_word(words: List<&2, String>) -> String:
+  match words:
+    case []: ""
+    case head <> tail: head
+
+def command_words(words: List<&2, String>) -> ShellCommand:
+  match words:
+    case []: Command{"", []}
+    case name <> tail: Command{last_word(String.split(name, '/')), tail}
+
+def skip_env(words: List<&2, String>) -> ShellCommand:
+  match words:
+    case []: Command{"", []}
+    case +head <> +tail:
+      Bool.pick(ShellCommand, Bool.or(String.ends_with(head, "="),
+        Bool.or(String.eq(head, "-i"), String.eq(head, "--ignore-environment"))), skip_env(tail),
+        Bool.pick(ShellCommand, String.eq(head, "--"), command_words(tail), command_words(head <> tail)))
+
+def env_command(name: String, +args: List<&2, String>) -> ShellCommand:
+  +program = last_word(String.split(name, '/'))
+  Bool.pick(ShellCommand, String.eq(program, "env"), skip_env(args), Command{program, args})
+
+def runner_command(words: List<&2, String>) -> ShellCommand:
+  match words:
+    case []: Command{"t3-build", []}
+    case "--" <> tail: command_words(tail)
+    case head <> tail: runner_command(tail)
+
+def unwrap_runner(command: ShellCommand) -> ShellCommand:
+  match command:
+    case Command{"t3-build", args}: runner_command(args)
+    case _: command
+
+def normalize_shell(name: String, args: List<&2, String>) -> ShellCommand:
+  unwrap_runner(env_command(name, args))
+
+def git_action(args: List<&2, String>) -> String:
+  match args:
+    case []: ""
+    case "-C" <> value <> tail: git_action(tail)
+    case "-c" <> value <> tail: git_action(tail)
+    case "--git-dir" <> value <> tail: git_action(tail)
+    case "--work-tree" <> value <> tail: git_action(tail)
+    case head <> tail: head
+
+def cargo_action(args: List<&2, String>) -> String:
+  match args:
+    case []: ""
+    case +head <> tail:
+      Bool.pick(String, String.starts_with(head, "+"), first_word(tail), head)
+
+def shell_action(program: String, +args: List<&2, String>) -> String:
+  match program:
+    case "git": git_action(args)
+    case "cargo": cargo_action(args)
+    case _: first_word(args)
+
+def normalized_command_label(command: ShellCommand) -> String:
+  match command:
+    case Command{+program, words}: command_label(program, shell_action(program, words))
+
+def first_command(commands: List<&2, ShellCommand>) -> String:
+  match commands:
+    case []: ""
+    case Command{name, args} <> tail: normalized_command_label(normalize_shell(name, args))
+
+def rust_category(action: String) -> String:
+  match action:
+    case "build": "Rust build"
+    case "check": "Rust check"
+    case "test": "Rust test"
+    case "clippy": "Rust lint"
+    case _: "Other Rust command"
+
+def git_category(action: String) -> String:
+  match action:
+    case "push": "Git push"
+    case "fetch": "Git fetch"
+    case "commit": "Git commit"
+    case "status": "Git inspection"
+    case "log": "Git inspection"
+    case "diff": "Git inspection"
+    case "show": "Git inspection"
+    case "rev-parse": "Git inspection"
+    case _: "Other Git command"
+
+def shell_category(program: String, +action: String) -> String:
+  match program:
+    case "cargo": rust_category(action)
+    case "git": git_category(action)
+    case "gh":
+      Bool.pick(String, String.eq(action, "pr"), "GitHub PR operation",
+        Bool.pick(String, String.eq(action, "run"), "GitHub Actions operation", "GitHub operation"))
+    case "node": Bool.pick(String, String.eq(action, "--test"), "JavaScript test", "JavaScript command")
+    case "npm":
+      Bool.pick(String, String.eq(action, "test"), "JavaScript test",
+        Bool.pick(String, String.eq(action, "ci"), "Install dependencies", "Package command"))
+    case "docker": "Container operation"
+    case "t3-build": "Build runner"
+    case "mkdir": "File preparation"
+    case "mktemp": "File preparation"
+    case "echo": "Shell output"
+    case "printf": "Shell output"
+    case "test": "Shell check"
+    case "rg": "File inspection"
+    case "cat": "File inspection"
+    case "ls": "File inspection"
+    case "tail": "File inspection"
+    case _: "Unknown command"
+
+def category_rank(+name: String) -> U32:
+  Bool.pick(U32, Bool.or(String.starts_with(name, "Rust "), String.eq(name, "Git push")), 0,
+    Bool.pick(U32, Bool.or(String.starts_with(name, "Unknown"), String.starts_with(name, "File ")), 2, 1))
+
+def add_category(+name: String, categories: List<&2, String>) -> List<&2, String>:
+  match categories:
+    case []: name <> []
+    case +head <> +rest:
+      Bool.pick(List<&2, String>, String.eq(name, head), head <> rest,
+        Bool.pick(List<&2, String>, U32.is_lt(category_rank(name), category_rank(head)), name <> head <> rest,
+          head <> add_category(name, rest)))
+
+def normalized_category(command: ShellCommand) -> String:
+  match command:
+    case Command{+program, words}: shell_category(program, shell_action(program, words))
+
+def shell_categories(commands: List<&2, ShellCommand>, categories: List<&2, String>) -> List<&2, String>:
+  match commands:
+    case []: categories
+    case Command{name, args} <> tail:
+      shell_categories(tail, add_category(normalized_category(normalize_shell(name, args)), categories))
+
+def shell_invocation(+commands: List<&2, ShellCommand>, categories: List<&2, String>) -> List<&2, String>:
+  match commands:
+    case []: add_category("Unknown command", categories)
+    case _: shell_categories(commands, categories)
+
+def invocation_categories(+method: String, commands: List<&2, ShellCommand>, +categories: List<&2, String>) -> List<&2, String>:
+  Bool.pick(List<&2, String>, String.eq(method, "exec_command"), shell_invocation(commands, categories),
+    add_category(tool_label(method, "Unknown tool"), categories))
+
+def wrapped_categories(invocations: List<&2, ToolInvocation>, +categories: List<&2, String>) -> List<&2, String>:
+  match invocations:
+    case []: categories
+    case Invocation{receiver, method, commands} <> tail:
+      wrapped_categories(tail, Bool.pick(List<&2, String>, String.eq(receiver, "tools"),
+        invocation_categories(method, commands, categories), categories))
+
+def first_invocation(invocations: List<&2, ToolInvocation>) -> ToolInvocation:
+  match invocations:
+    case []: Invocation{"", "", []}
+    case +call <> tail:
+      match call:
+        case Invocation{receiver, method, commands}:
+          Bool.pick(ToolInvocation, String.eq(receiver, "tools"), call, first_invocation(tail))
+
+def has_parallel(invocations: List<&2, ToolInvocation>) -> Bool:
+  match invocations:
+    case []: False{}
+    case Invocation{receiver, +method, commands} <> tail:
+      Bool.or(Bool.and(String.eq(receiver, "Promise"),
+        Bool.or(String.eq(method, "all"), String.eq(method, "allSettled"))), has_parallel(tail))
+
+def joined_categories(categories: List<&2, String>, fallback: String) -> String:
+  match categories:
+    case []: fallback
+    case head <> []: head
+    case head <> tail: String.append(head, String.append(" + ", joined_categories(tail, "")))
+
+def tool_script(first: ToolInvocation, +wrapped: List<&2, ToolInvocation>) -> ToolContext:
+  match first:
+    case Invocation{receiver, +method, commands}:
+      Tool{Bool.pick(String, has_parallel(wrapped), "Parallel tool script", tool_label(method, "Tool script")),
+        Bool.pick(String, String.eq(method, "exec_command"), first_command(commands), ""),
+        joined_categories(wrapped_categories(wrapped, []), "Unknown script"), True{}, False{}}
+
+def tool(+name: String, +direct: List<&2, ShellCommand>, +wrapped: List<&2, ToolInvocation>) -> ToolContext:
+  match name:
+    case "exec": tool_script(first_invocation(wrapped), wrapped)
+    case "wait": Tool{"Cell wait", "", "Cell wait", False{}, True{}}
+    case "exec_command":
+      Tool{"Shell command", first_command(direct), joined_categories(shell_categories(direct, []), "Unknown command"),
+        False{}, False{}}
+    case _:
+      Tool{tool_label(name, "Other tool"), "", tool_label(name, "Unknown tool"), False{}, False{}}
 
 def merged_at(opened: U32, +merged: U32, confirmed: Bool) -> U32:
   Bool.pick(U32, Bool.and(confirmed, ordered(opened, merged)), merged, 0)
@@ -138,8 +327,8 @@ def finish_seen(+accept: Bool, orphans: U32, line: U32, observed: ToolContext, s
   target: String, cell: String, terminal: Bool, ambiguous: Bool, ended: Point,
   yielded: String, completed: Bool) -> CallState:
   match observed:
-    case Tool{label, command, +wrapper, +cell_wait}:
-      Seen{orphans, line, Tool{label, command, wrapper, cell_wait}, start, Bool.pick(Point, accept, ended, finish), target,
+    case Tool{label, command, categories, +wrapper, +cell_wait}:
+      Seen{orphans, line, Tool{label, command, categories, wrapper, cell_wait}, start, Bool.pick(Point, accept, ended, finish), target,
         Bool.pick(String, Bool.and(accept, wrapper), yielded, cell),
         Bool.or(terminal, Bool.and(accept, Bool.and(cell_wait, completed))),
         Bool.or(ambiguous, Bool.not(accept))}
@@ -191,13 +380,13 @@ def cell_link(pair: CellPair, malformed: U32) -> CellLink:
 
 type CallRecord is Data:
   Ignored{orphans: U32}
-  Observed{orphans: U32, line: U32, tool: String, command: String, start: Point, finish: Point, launched: Bool, ambiguous: Bool}
+  Observed{orphans: U32, line: U32, tool: String, command: String, categories: String, start: Point, finish: Point, launched: Bool, ambiguous: Bool}
 
 def call_record(state: CallState) -> CallRecord:
   match state:
     case Unseen{orphans}: Ignored{orphans}
-    case Seen{orphans, line, Tool{label, command, wrapper, cell_wait}, start, finish, target, cell, terminal, +ambiguous}:
-      Observed{orphans, line, label, command, start, Bool.pick(Point, ambiguous, Time{0, 0}, finish),
+    case Seen{orphans, line, Tool{label, command, categories, wrapper, cell_wait}, start, finish, target, cell, terminal, +ambiguous}:
+      Observed{orphans, line, label, command, categories, start, Bool.pick(Point, ambiguous, Time{0, 0}, finish),
         Bool.not(String.eq(cell, "")), ambiguous}
 
 type Milestone is Data:

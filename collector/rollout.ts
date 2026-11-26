@@ -2,6 +2,7 @@
 import { open } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import type { Point, RolloutEvidence, SourcePolicy } from "../evidence/sources.ts";
+import { rolloutSyntax } from "./rollout-syntax.ts";
 import { millis, row, str, timeParts, token, validMillis } from "./wire.ts";
 
 const unseen = { $: "Unseen", orphans: 0 };
@@ -29,31 +30,8 @@ function waitTarget(input: unknown): string {
   } catch { return ""; }
 }
 
-function scriptShape(input: unknown): [string, boolean, string] {
-  if (typeof input !== "string") return ["", false, ""];
-  const head = input.slice(0, 8192).replace(/^\/\/ @exec: [^\n]*\n/, "").trimStart();
-  const first = head.replace(/^(?:(?:const|let) [\w$]+\s*=\s*|(?:text|image|audio|generatedImage)\(\s*)/, "")
-    .replace(/^\(\s*/, "");
-  const method = /^await\s+tools\.([\w$]+)\s*\(/.exec(first)?.[1] ?? "";
-  const command = /^await\s+tools\.\w+\s*\(\s*\{\s*(?:cmd|"cmd"|'cmd')\s*:\s*(?:"((?:[^"\\\r\n]|\\.)*)"|'((?:[^'\\\r\n]|\\.)*)'|`((?:[^`\\]|\\[\s\S])*)`)\s*[,}]/.exec(first);
-  const literal = command?.[1] ?? command?.[2] ?? command?.[3] ?? "";
-  return [method, /^await\s+Promise\.all(?:Settled)?\s*\(\s*\[/.test(first), literal];
-}
-
-function commandArgument(input: unknown): string {
-  if (typeof input !== "string" || input.length > 65536) return "";
-  try {
-    const cmd = row(JSON.parse(input)).cmd;
-    return typeof cmd === "string" ? cmd.slice(0, 256) : "";
-  } catch { return ""; }
-}
-
-function commandWords(command: string): [string, string] {
-  const match = /^[ \t]*([a-z][\w-]*)(?=$|[ \t\r\n;&|<>])(?:[ \t]+([\w-]+)(?=$|[ \t\r\n;&|<>]))?/.exec(command);
-  return [match?.[1] ?? "", match?.[2] ?? ""];
-}
-
 export async function readRollout(path: string, instance: string, policy: SourcePolicy): Promise<RolloutEvidence> {
+  const syntax = await rolloutSyntax();
   const file = await open(path);
   const calls = new Map<string, unknown>();
   const markers: RolloutEvidence["markers"] = [];
@@ -94,9 +72,7 @@ export async function readRollout(path: string, instance: string, policy: Source
       if (!/^[\w:-]+$/.test(id)) { malformed++; continue; }
       const state = calls.get(id) ?? unseen;
       if (type === "function_call" || type === "custom_tool_call") {
-        const [wrapped, parallel, literal] = scriptShape(event.input);
-        const observed = policy.tool(str(event.name), wrapped, parallel,
-          ...commandWords(type === "function_call" ? commandArgument(event.arguments) : literal));
+        const observed = policy.tool(str(event.name), syntax.direct(event.arguments), syntax.wrapped(event.input));
         calls.set(id, policy.start_call(state, lineNumber, observed, at, waitTarget(event.arguments)));
       } else {
         const header = outputHeader(event.output);
@@ -124,7 +100,7 @@ export async function readRollout(path: string, instance: string, policy: Source
     const record = policy.call_record(state);
     orphans += record.orphans;
     if (record.$ === "Ignored") continue;
-    records.push({ id, line: record.line, tool: record.tool, command: record.command || null, start: toMillis(record.start),
+    records.push({ id, line: record.line, tool: record.tool, command: record.command || null, categories: record.categories, start: toMillis(record.start),
       end: toMillis(record.finish), async: record.launched, ambiguous: record.ambiguous,
       ...(links.get(id) ?? { asyncEnd: null, terminalCall: null }) });
   }

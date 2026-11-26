@@ -161,10 +161,9 @@ function writeSnapshot(input: string, output: string, otlp: string, repo: string
     let defaultTrace: { session: number; from: number; to: number; traceId: string; mixed: boolean } | undefined;
     let traceSessions = 0;
     if (table("codex_spans")) {
-      const spans = table("codex_commands")
-        ? all(`SELECT codex_spans.*, command FROM codex_spans LEFT JOIN codex_commands USING (instance, session_id, call_id)
-            ORDER BY started_ms, source_line, clock`)
-        : all("SELECT * FROM codex_spans ORDER BY started_ms, source_line, clock");
+      const joins = ["codex_commands", "codex_categories"].filter(table)
+        .map((name) => `LEFT JOIN ${name} USING (instance, session_id, call_id)`);
+      const spans = all(`SELECT * FROM codex_spans ${joins.join(" ")} ORDER BY started_ms, source_line, clock`);
       const markers = table("codex_reasoning") ? all("SELECT * FROM codex_reasoning ORDER BY observed_ms, source_line") : [];
       const sessionKey = (row: Record<string, SQLOutputValue>) => JSON.stringify([row.instance, row.session_id]);
       const sessions = Map.groupBy(spans, sessionKey);
@@ -177,7 +176,8 @@ function writeSnapshot(input: string, output: string, otlp: string, repo: string
       for (const [key, rows] of sessions) {
         const session = ++traceSessions;
         const observations = rows.map((row) => ({ call: String(row.call_id), terminal: row.terminal_call_id as string | null,
-          line: Number(row.source_line), tool: String(row.tool), command: String(row.command ?? ""), clock: String(row.clock),
+          line: Number(row.source_line), tool: String(row.tool), command: String(row.command ?? ""),
+          categories: String(row.categories ?? ""), clock: String(row.clock),
           start: row.started_ms as number | null, end: row.ended_ms as number | null }));
         const events = (bySession.get(key) ?? []).map((row) => ({ line: Number(row.source_line), at: Number(row.observed_ms) }));
         const clocks = new Map([["Tool envelopes", empty], ["Async cells", empty]]);
@@ -187,7 +187,7 @@ function writeSnapshot(input: string, output: string, otlp: string, repo: string
           const end = row.end ?? 0;
           add(clock, 0, row.tool, start, end);
           clocks.set(clock, metrics.record_interval(clocks.get(clock) ?? empty, start, end));
-          insert.run(session, row.line, metrics.trace_operation(row.clock, row.tool, row.command),
+          insert.run(session, row.line, metrics.trace_operation(row.clock, row.tool, row.command, row.categories),
             clock, row.start, row.end);
         }
         let ordinal = 0;

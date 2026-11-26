@@ -90,8 +90,18 @@ def trace_preferred(+ended: Nat, mixed: Bool, +other_ended: Nat, +other_mixed: B
 def trace_label(+tool: String, +command: String) -> String:
   Bool.pick(String, String.eq(command, ""), tool, String.append(tool, String.append(" · ", command)))
 
-def trace_operation(clock: String, +tool: String, command: String) -> String:
-  trace_label(Bool.pick(String, String.eq(clock, "async_cell"), String.append("Async cell · ", tool), tool), command)
+def trace_operation(clock: String, tool: String, command: String, +categories: String) -> String:
+  +name = Bool.pick(String, String.eq(categories, ""), trace_label(tool, command), categories)
+  Bool.pick(String, String.eq(clock, "async_cell"), String.append("Async cell · ", name), name)
+
+def trace_category_title(parts: List<&2, String>) -> String:
+  match parts:
+    case []: ""
+    case head <> []: head
+    case head <> tail: String.append(String.trim(head), String.append(" +", Nat.show(List.length(&2, String, tail))))
+
+def trace_span_name(clock: String, tool: String, command: String, categories: String) -> String:
+  trace_operation(clock, tool, command, trace_category_title(String.split(categories, '+')))
 
 type Focus is Data:
   Window{from: Nat, to: Nat}
