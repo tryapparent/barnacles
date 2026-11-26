@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import type { Milestone, PullRequest, ReleaseEvidence, SourcePolicy } from "../../evidence/sources.ts";
+import type { Milestone, PullRequest, ReleaseEvidence, SourcePolicy } from "../../evidence/index.ts";
 import { array, repository, row, seconds, sha, str } from "../wire.ts";
 import { positiveInt, readGitHub } from "./attempt.ts";
 

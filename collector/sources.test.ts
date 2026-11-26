@@ -3,9 +3,8 @@ import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
-import { pathToFileURL } from "node:url";
-import { deliveryReport, saveDelivery, saveRollout, saveThread } from "../evidence/sources.ts";
-import { buildPolicy } from "./build.ts";
+import { sourcePolicy, deliveryReport, loadEvidence, type PullRequest, type ReleaseEvidence, type RolloutEvidence, type SourcePolicy, type ThreadEvidence } from "../evidence/index.ts";
+import { buildPolicy, loadPolicy } from "../tooling/bend.ts";
 import { pullRequest, releaseEvidence } from "./github/delivery.ts";
 import { readRollout } from "./rollout.ts";
 import { t3Snapshot } from "./t3.ts";
@@ -15,8 +14,7 @@ test("compiled Bend2 source decisions through the SQLite import path", async () 
   assert.ok(root);
   const job = mkdtempSync(join(root, "sources-test-"));
   try {
-    const source = new URL("../evidence/sources.bend", import.meta.url);
-    const policy = (await import(pathToFileURL(await buildPolicy(job, source, "sources.mjs")).href)).default;
+    const policy = await loadPolicy<SourcePolicy>(await buildPolicy(job, sourcePolicy, "sources.mjs"));
     const time = (s: string) => `2026-01-01T12:00:${s}Z`;
     const repo = "synthetic/example";
     const merged = "a".repeat(40);
@@ -68,29 +66,33 @@ test("compiled Bend2 source decisions through the SQLite import path", async () 
       throw Error("Unexpected synthetic route");
     };
     const path = join(job, "evidence.sqlite");
+    const saveDelivery = (pullRequest: PullRequest, release?: ReleaseEvidence) =>
+      loadEvidence(path, { source: "github-delivery", pullRequest, release });
+    const saveRollout = (rollout: RolloutEvidence) => loadEvidence(path, { source: "codex", rollout });
+    const saveThread = (thread: ThreadEvidence) => loadEvidence(path, { source: "t3", thread });
     const pr = pullRequest(repo, 9, policy, read, true);
     assert.equal(pr.firstCommit?.sha, merged);
     assert.equal(pr.firstReview?.id, 7);
     assert.deepEqual(pr.firstCI, { id: 102, at: Date.parse(time("07")) / 1000 });
     const failure = releaseEvidence(pr, tag, policy, read, () => ({ http: 206, bytes: 1, range: false }));
-    saveDelivery(path, pr, failure);
+    saveDelivery(pr, failure);
     assert.equal(deliveryReport(path, policy)[0].pr_to_release_seconds, null);
     const proof = releaseEvidence(pr, tag, policy, read, () => ({ http: 206, bytes: 1, range: true }), true);
-    saveDelivery(path, pr, proof);
+    saveDelivery(pr, proof);
     assert.equal(deliveryReport(path, policy)[0].first_ci_run, 102);
     assert.equal(deliveryReport(path, policy)[0].release_run, 205);
-    saveDelivery(path, pr, { ...proof, id: 1, published: proof.published! + 1 });
-    saveDelivery(path, pr, { ...proof, id: 12 });
+    saveDelivery(pr, { ...proof, id: 1, published: proof.published! + 1 });
+    saveDelivery(pr, { ...proof, id: 12 });
     assert.equal(deliveryReport(path, policy)[0].release_id, 2);
     assert.equal(deliveryReport(path, policy)[0].pr_to_release_seconds, 5);
     assert.equal(deliveryReport(path, policy)[0].thread_to_release_seconds, null);
 
     const thread = t3Snapshot(snapshot, policy);
     assert.equal(thread.origin, "manual_t3");
-    saveThread(path, thread);
-    saveThread(path, thread);
+    saveThread(thread);
+    saveThread(thread);
     assert.equal(deliveryReport(path, policy)[0].thread_to_release_seconds, 8.875);
-    saveThread(path, { ...thread, id: "thread-2" });
+    saveThread({ ...thread, id: "thread-2" });
     assert.equal(deliveryReport(path, policy)[0].thread_to_release_seconds, null);
     assert.throws(() => t3Snapshot({ ...snapshot, links: { ...snapshot.links, nextCursor: "more" } }, policy),
       /Incomplete T3/);
@@ -150,8 +152,8 @@ test("compiled Bend2 source decisions through the SQLite import path", async () 
       ["Git inspection + Unknown command", "Cell wait", "Unknown script", "JavaScript test", "Unknown command", "Unknown command",
         "Rust build + Git push + Shell output + File preparation", "Rust check + Process I/O", "Shell output",
         "Git inspection + File inspection", "File inspection", "Git inspection"]);
-    saveRollout(path, data);
-    saveRollout(path, data);
+    saveRollout(data);
+    saveRollout(data);
     const db = new DatabaseSync(path, { readOnly: true });
     try {
       assert.equal(db.prepare("SELECT count(*) n FROM codex_spans").get()?.n, 13);

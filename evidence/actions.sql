@@ -47,24 +47,3 @@ CREATE TABLE IF NOT EXISTS action_steps (
   FOREIGN KEY (repository, run_id, attempt, job_id)
     REFERENCES action_jobs ON DELETE CASCADE
 ) STRICT;
-
-CREATE VIEW IF NOT EXISTS action_occupancy AS
-WITH spans AS (
-  SELECT repository, run_id, attempt, label AS operation,
-         'queue' AS clock, queue_end - created_at AS seconds
-  FROM action_jobs
-  UNION ALL
-  SELECT repository, run_id, attempt, label,
-         'execution', execution_end - execution_start
-  FROM action_jobs
-  UNION ALL
-  SELECT repository, run_id, attempt, label,
-         'step', completed_at - started_at
-  FROM action_steps
-)
-SELECT spans.repository, workflow_id, clock, operation,
-       count(seconds) AS count, avg(seconds) AS mean_seconds,
-       sum(seconds) AS total_seconds, count(*) - count(seconds) AS unmeasured_count
-FROM spans
-JOIN action_attempts USING (repository, run_id, attempt)
-GROUP BY spans.repository, workflow_id, clock, operation;

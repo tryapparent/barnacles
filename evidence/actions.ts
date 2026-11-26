@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { closeSync, openSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 
 export type AttemptIdentity = { repository: string; runId: number; attempt: number; sha: string };
@@ -24,6 +24,7 @@ export type ActionAttempt = AttemptIdentity & {
 const schema = readFileSync(new URL("./actions.sql", import.meta.url), "utf8");
 
 export function saveAttempt(path: string, attempt: ActionAttempt) {
+  closeSync(openSync(path, "a", 0o600));
   const db = new DatabaseSync(path);
   try {
     db.exec("PRAGMA busy_timeout = 5000; BEGIN IMMEDIATE");

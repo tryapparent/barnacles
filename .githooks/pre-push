@@ -36,25 +36,25 @@ while read -r local_ref local_oid remote_ref remote_oid; do
     exit 1
   fi
   node .githooks/check-comments.ts "$base" "$head"
+  node .githooks/check-bend-paths.ts "$base" "$head"
 
   changed=$(git diff --name-only --no-renames "$base" "$head" --)
   [ -n "$changed" ] || continue
-  hook_tests=''
-  collector_tests=''
-  dashboard_tests=''
+  scopes=''
   while IFS= read -r path; do
     case "$path" in
       *.md|LICENSE|*/APPARENT-LICENSE) ;;
-      .githooks/*) hook_tests=yes ;;
-      collector/*|evidence/*) collector_tests=yes; dashboard_tests=yes ;;
-      dashboard/*) dashboard_tests=yes ;;
-      *) hook_tests=yes; collector_tests=yes; dashboard_tests=yes ;;
+      .githooks/*) scopes="$scopes hooks" ;;
+      collector/*) scopes="$scopes collector dashboard" ;;
+      evidence/*) scopes="$scopes collector dashboard evidence" ;;
+      dashboard/*) scopes="$scopes dashboard" ;;
+      *) scopes="$scopes hooks collector dashboard evidence" ;;
     esac
   done <<PATHS
 $changed
 PATHS
-  [ -n "$hook_tests$collector_tests$dashboard_tests" ] || continue
-
+  [ -n "$scopes" ] || continue
+  set -- $(printf '%s\n' $scopes | sort -u)
   scratch=$(mktemp -d "/tmp/apparent-dev-barnacles-push-XXXXXX")
   mkdir "$scratch/source"
   node .githooks/snapshot.ts "$head" "$scratch/source"
@@ -65,23 +65,9 @@ PATHS
     unset NODE_TEST_CONTEXT
     cd "$scratch/source"
     export BARNACLES_TEST_DIRECTORY="$scratch"
-    if [ -n "$hook_tests$collector_tests" ]; then
-      npm ci --offline --ignore-scripts --no-audit --no-fund
-    fi
-    if [ -n "$hook_tests" ]; then
-      printf 'pre-push: checking hook tests at %s\n' "$head" >&2
-      npm run test:hooks
-    fi
-    if [ -n "$collector_tests" ]; then
-      printf 'pre-push: checking collector tests at %s\n' "$head" >&2
-      node --test collector/github/attempt.test.ts collector/*.test.ts
-    fi
-    if [ -n "$dashboard_tests" ]; then
-      if [ -f dashboard/prepare.test.ts ]; then
-        printf 'pre-push: checking dashboard snapshot at %s\n' "$head" >&2
-        node --test dashboard/prepare.test.ts
-      fi
-    fi
+    npm ci --offline --ignore-scripts --no-audit --no-fund
+    printf 'pre-push: checking %s tests at %s\n' "$*" "$head" >&2
+    npm run verify -- "$@"
   )
   rm -rf "$scratch"
   scratch=''

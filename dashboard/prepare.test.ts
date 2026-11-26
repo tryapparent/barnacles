@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
-import { saveAttempt } from "../evidence/actions.ts";
-import { saveDelivery, saveRollout, saveThread } from "../evidence/sources.ts";
+import {
+  loadEvidence, type ActionAttempt, type PullRequest, type ReleaseEvidence, type RolloutEvidence, type ThreadEvidence,
+} from "../evidence/index.ts";
 
 test("dashboard derives a covered comparison and preserves missing source coverage", () => {
   const parent = process.env.BARNACLES_TEST_DIRECTORY;
@@ -14,6 +15,11 @@ test("dashboard derives a covered comparison and preserves missing source covera
   try {
     const repo = "synthetic/example";
     const source = join(job, "source.sqlite");
+    const saveDelivery = (pullRequest: PullRequest, release?: ReleaseEvidence) =>
+      loadEvidence(source, { source: "github-delivery", pullRequest, release });
+    const saveRollout = (rollout: RolloutEvidence) => loadEvidence(source, { source: "codex", rollout });
+    const saveThread = (thread: ThreadEvidence) => loadEvidence(source, { source: "t3", thread });
+    const saveAttempt = (attempt: ActionAttempt) => loadEvidence(source, { source: "github-actions", attempt });
     const week = 7 * 86400;
     const cutoff = Math.floor(Date.now() / 1000);
     const monday = cutoff - ((cutoff + 3 * 86400) % week);
@@ -22,7 +28,7 @@ test("dashboard derives a covered comparison and preserves missing source covera
       [2, monday - week + 7200, 5400],
     ]) {
       const sha = String(pr).repeat(40);
-      saveDelivery(source, {
+      saveDelivery({
         repository: repo, number: pr, state: "merged", opened: published - 1000,
         merged: published - 500, mergeSha: sha, firstCommit: { sha, at: published - (pr === 1 ? 1500 : 700) },
         firstCI: pr === 1 ? { id: 3, at: published - 980 } : null, firstReview: null,
@@ -32,7 +38,7 @@ test("dashboard derives a covered comparison and preserves missing source covera
         published, assetId: pr, checked: published + 1, http: 206, bytes: 1,
         accessible: true, ancestry: "equal", shipped: true, dispatch: pr === 1 ? { id: 4, at: published - 200 } : null,
       });
-      saveThread(source, {
+      saveThread({
         instance: "synthetic", id: `thread-${pr}`, created: (published - cycle) * 1000,
         updated: published * 1000, status: "completed", origin: "manual_t3", settled: true, runs: [],
         pullRequests: [{ repository: repo, number: pr, source: "created", state: "merged", owning: true }],
@@ -42,7 +48,7 @@ test("dashboard derives a covered comparison and preserves missing source covera
     for (const workflowId of [1, 2]) {
       const created = at / 1000;
       const started = created + workflowId;
-      saveAttempt(source, {
+      saveAttempt({
         repository: repo, runId: workflowId, workflowId, attempt: 1, sha: String(workflowId).repeat(40),
         status: "completed", conclusion: "success", createdAt: created, startedAt: started,
         sourceUpdated: started + 10, observedAt: started + 12, jobs: [{
@@ -51,11 +57,11 @@ test("dashboard derives a covered comparison and preserves missing source covera
         }],
       });
     }
-    saveRollout(source, {
+    saveRollout({
       instance: "local", session: "point-only", lines: 5, malformed: 0, orphans: 0,
       calls: [], markers: [{ line: 3, at }],
     });
-    saveRollout(source, {
+    saveRollout({
       instance: "local", session: "test-session", lines: 12, malformed: 0, orphans: 0,
       calls: [
         { id: "launch", line: 2, tool: "Shell command", command: "git status", start: at, end: at + 100,
@@ -68,8 +74,8 @@ test("dashboard derives a covered comparison and preserves missing source covera
           async: false, asyncEnd: null, terminalCall: null, ambiguous: false },
       ], markers: [{ line: 6, at: at + 650, resultCall: "wait" }, { line: 10, at: at + 850, resultCall: "later" }],
     });
-    saveRollout(source, {
-      instance: "local", session: "newer-envelope-only", lines: 10, malformed: 0, orphans: 0,
+    saveRollout({
+      instance: "local", session: "other-project-rollout", lines: 10, malformed: 0, orphans: 0,
       calls: [{ id: "launch", line: 2, tool: "Tool script", command: null, start: at + 800, end: at + 900,
         async: true, asyncEnd: null, terminalCall: null, ambiguous: false },
       ...Array.from({ length: 6 }, (_, index) => {
@@ -84,6 +90,9 @@ test("dashboard derives a covered comparison and preserves missing source covera
       markers: [],
     });
     const out = join(job, "out");
+    assert.throws(() => execFileSync(process.execPath,
+      ["dashboard/prepare.ts", join(job, "missing.sqlite"), out, repo], { stdio: "pipe" }), /existing evidence SQLite/);
+    assert.equal(existsSync(out), false);
     execFileSync(process.execPath, ["dashboard/prepare.ts", source, out, repo], { stdio: "pipe", timeout: 60_000 });
     const db = new DatabaseSync(join(out, "dashboard.sqlite"), { readOnly: true });
     try {
@@ -98,6 +107,8 @@ test("dashboard derives a covered comparison and preserves missing source covera
       const overview = db.prepare(`SELECT operation, count, mean_seconds, total_seconds, unmeasured, has_area
         FROM operation_totals WHERE clock=? ORDER BY rank`);
       assert.deepEqual(overview.all("CI execution").map(Object.values), [["Build", 2, 10, 20, 0, 1]]);
+      assert.deepEqual(db.prepare(`SELECT workflow FROM workflows WHERE clock='CI execution' ORDER BY rank`).all().map(Object.values),
+        [[1], [2]]);
       assert.deepEqual(overview.all("CI queue").map(Object.values), [["Build", 2, 1.5, 3, 0, 1]]);
       assert.deepEqual(overview.all("Async cells").map(Object.values),
         [["Mixed", 1, 0.6, 0.6, 0, 1], ["Unknown", 0, null, null, 1, 0]]);
@@ -151,6 +162,9 @@ test("dashboard derives a covered comparison and preserves missing source covera
       assert.equal(eventOnly[0].startTimeUnixNano, eventOnly[0].endTimeUnixNano);
       const config = JSON.parse(readFileSync(join(out, "dashboards/shipping.json"), "utf8"));
       assert.equal(config.uid, "barnacles-shipping");
+      const scope = config.panels.find(({ title }: { title: string }) => title === "Evidence scope").options.content;
+      assert.match(scope, /synthetic\/example/);
+      assert.match(scope, /all 3 imported rollouts across projects/);
       const treemap = config.panels.find(({ type }: { type: string }) => type === "marcusolsson-treemap-panel");
       const ranked = config.panels.find(({ id }: { id: number }) => id === 10);
       assert.equal(treemap.options.textField, "Name");

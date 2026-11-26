@@ -12,9 +12,10 @@ Keep the dependency direction from collector to evidence and from dashboard to e
 
 ## Bend2 is the implementation language
 
-- Implement all Barnacles product behavior in Bend2. This includes pairing, correlation, filtering, classification, validation of evidence, state updates, selection and ranking, attribution, and metric calculations. Apply this rule to new code and migrate the complete decision when changing existing behavior.
+- Use Bend2 by default for authored code. Implement all Barnacles product behavior in Bend2. This includes pairing, correlation, filtering, classification, validation of evidence, state updates, selection and ranking, attribution, and metric calculations. Apply this rule to new code and migrate the complete decision when changing existing behavior.
 - Keep the TypeScript host to external I/O, foreign-format decoding and encoding, compiler wiring, and SQLite transactions. SQL supplies schema, storage constraints, and raw evidence reads. Make domain decisions in Bend2 even when a TypeScript loop or SQL query could do the work.
 - If the pinned compiler or runtime blocks a required Bend2 implementation, record the exact limitation and affected behavior. Get an explicit scope decision before adding a host-language implementation of that product behavior.
+- Keep non-Bend host and tooling exceptions in the [exact-path registry](.githooks/bend-exceptions.json). New exceptions require an explicit decision and a concrete reason. The commit and push hooks check new paths.
 - Review every changed host and SQL branch for misplaced product decisions. Exercise the compiled Bend2 code through the real entry point before claiming completion. Keep generated modules out of Git.
 
 ## Evidence and privacy

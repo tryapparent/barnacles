@@ -75,38 +75,23 @@ CREATE TABLE IF NOT EXISTS github_prs (
   PRIMARY KEY (repository, pr_number)
 ) STRICT;
 
-CREATE TABLE IF NOT EXISTS github_releases (
-  repository TEXT NOT NULL, release_id INTEGER NOT NULL, channel TEXT NOT NULL, tag TEXT NOT NULL,
-  source_sha TEXT NOT NULL, tag_matches INTEGER NOT NULL, published_at INTEGER, asset_id INTEGER,
-  PRIMARY KEY (repository, release_id, channel)
-) STRICT;
-
 CREATE TABLE IF NOT EXISTS github_pr_ci (
   repository TEXT NOT NULL, pr_number INTEGER NOT NULL, run_id INTEGER NOT NULL, started_at INTEGER NOT NULL,
   PRIMARY KEY (repository, pr_number),
   FOREIGN KEY (repository, pr_number) REFERENCES github_prs
 ) STRICT;
 
-CREATE TABLE IF NOT EXISTS github_asset_checks (
-  repository TEXT NOT NULL, release_id INTEGER NOT NULL, channel TEXT NOT NULL, checked_at INTEGER NOT NULL,
-  asset_id INTEGER, http_status INTEGER, bytes INTEGER, accessible INTEGER NOT NULL,
-  PRIMARY KEY (repository, release_id, channel, checked_at),
-  FOREIGN KEY (repository, release_id, channel) REFERENCES github_releases
-) STRICT;
-
-CREATE TABLE IF NOT EXISTS github_release_dispatch (
-  repository TEXT NOT NULL, release_id INTEGER NOT NULL, channel TEXT NOT NULL, run_id INTEGER NOT NULL, created_at INTEGER NOT NULL,
-  PRIMARY KEY (repository, release_id, channel),
-  FOREIGN KEY (repository, release_id, channel) REFERENCES github_releases
-) STRICT;
-
-CREATE TABLE IF NOT EXISTS github_release_proofs (
+CREATE TABLE IF NOT EXISTS github_release_observations (
   repository TEXT NOT NULL, pr_number INTEGER NOT NULL, release_id INTEGER NOT NULL,
-  channel TEXT NOT NULL, checked_at INTEGER NOT NULL, merge_sha TEXT,
-  ancestry TEXT NOT NULL, shipped INTEGER NOT NULL,
-  PRIMARY KEY (repository, pr_number, release_id, channel, checked_at),
-  FOREIGN KEY (repository, pr_number) REFERENCES github_prs,
-  FOREIGN KEY (repository, release_id, channel, checked_at) REFERENCES github_asset_checks
+  channel TEXT NOT NULL, checked_at INTEGER NOT NULL, merge_sha TEXT NOT NULL,
+  source_sha TEXT NOT NULL, tag TEXT NOT NULL, tag_matches INTEGER NOT NULL,
+  published_at INTEGER NOT NULL, asset_id INTEGER NOT NULL, http_status INTEGER NOT NULL,
+  bytes INTEGER NOT NULL, accessible INTEGER NOT NULL, ancestry TEXT NOT NULL, shipped INTEGER NOT NULL,
+  dispatch_run INTEGER NOT NULL, dispatched_at INTEGER NOT NULL,
+  PRIMARY KEY (repository, pr_number, release_id, channel, checked_at, merge_sha,
+               source_sha, tag, tag_matches, published_at, asset_id, http_status, bytes, accessible, ancestry, shipped,
+               dispatch_run, dispatched_at),
+  FOREIGN KEY (repository, pr_number) REFERENCES github_prs
 ) STRICT;
 
 CREATE VIEW IF NOT EXISTS codex_spans AS

@@ -1,9 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
-import type { List } from "../evidence/sources.ts";
-import { buildPolicy } from "./build.ts";
+import type { List } from "../evidence/index.ts";
+import { buildPolicy, loadPolicy } from "../tooling/bend.ts";
 
 type PathCount = { $: "ChangedPath"; path: string; commits: number };
 type Policy = {
@@ -64,7 +63,7 @@ async function main() {
   const scratch = mkdtempSync(join(resolve(directory), "build-"));
   try {
     const output = await buildPolicy(scratch, new URL("../evidence/changed-code.bend", import.meta.url), "changed-code.mjs");
-    const policy: Policy = (await import(pathToFileURL(output).href)).default;
+    const policy: Policy = await loadPolicy(output);
     let counts = policy.empty_counts();
     let commitsScanned = 0;
     let hasMoreCommits = false;

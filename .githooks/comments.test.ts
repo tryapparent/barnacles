@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -51,9 +51,15 @@ test("real Git commits check the staged tree and enforce comment multiplicity", 
     pass("config", "user.name", "Synthetic Test");
     pass("config", "user.email", "synthetic@example.invalid");
     pass("config", "commit.gpgsign", "false");
-    for (const entry of [".githooks", "node_modules"]) {
+    for (const entry of ["node_modules"]) {
       symlinkSync(fileURLToPath(new URL("../" + entry, import.meta.url)), join(cwd, entry));
     }
+    mkdirSync(join(cwd, ".githooks"));
+    for (const file of ["pre-commit", "check-comments.ts", "check-bend-paths.ts"]) {
+      symlinkSync(fileURLToPath(new URL(file, import.meta.url)), join(cwd, ".githooks", file));
+    }
+    write(".githooks/bend-exceptions.json", '{"Host fixture":[".githooks/bend-exceptions.json","renamed.ts"]}\n');
+    pass("add", ".githooks/bend-exceptions.json");
     pass("config", "core.hooksPath", ".githooks");
     write("a.ts", "// rejected on an unborn branch\nconst value = 1;\n");
     pass("add", "a.ts");
@@ -86,6 +92,16 @@ test("real Git commits check the staged tree and enforce comment multiplicity", 
     write("renamed.ts", "const value = 3;\n");
     pass("add", "renamed.ts");
     pass("commit", "-qm", "remove existing comment");
+    write("policy.ts", "const value = 1;\n");
+    pass("add", "policy.ts");
+    write(".githooks/bend-exceptions.json", '{"Unstaged exception":["policy.ts"]}\n');
+    reject(/Bend2 path check: "policy.ts"/);
+    pass("restore", "--", ".githooks/bend-exceptions.json");
+    pass("rm", "-f", "policy.ts");
+    write("policy.bend", "def value() -> U32: 1\n");
+    pass("add", "policy.bend");
+    pass("commit", "-qm", "Bend2 feature");
+
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
