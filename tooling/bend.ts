@@ -45,7 +45,7 @@ export async function buildPolicies(directory: string, policies: ReadonlyArray<r
     return policies.map(([source, filename]) => {
       const output = resolve(directory, filename);
       execFileSync(process.execPath, [
-        "--experimental-transform-types", "--input-type=module", "-e", compile, fileURLToPath(source), output,
+        "--stack-size=4096", "--experimental-transform-types", "--input-type=module", "-e", compile, fileURLToPath(source), output,
       ], {
         cwd: scratch,
         timeout: 60_000,

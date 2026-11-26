@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 import { Language, Parser, type Node } from "web-tree-sitter";
-import type { List, ShellCommand, ToolInvocation } from "../../evidence/index.ts";
+import type { List, ProcessReceipt, ShellCommand, SourcePolicy, ToolInvocation } from "../../evidence/index.ts";
 
 const require = createRequire(import.meta.url);
 const maxText = 64 * 1024;
@@ -58,12 +58,32 @@ function shellWord(node: Node | null): string {
   const assignment = /^[A-Za-z_][A-Za-z_0-9]*=/.exec(text);
   if (assignment) return assignment[0];
   const bare = node.type === "raw_string" || node.type === "string" ? text.slice(1, -1) : text;
-  return /^[a-zA-Z0-9_/.+:@-]+$/.test(bare) ? bare : "";
+  return bare.length <= 128 && /^[a-zA-Z0-9_/.+:@-]+$/.test(bare) ? bare : "";
 }
 
-function argumentCmd(input: unknown): unknown {
-  if (typeof input !== "string" || input.length > maxText) return null;
-  try { return JSON.parse(input)?.cmd; } catch { return null; }
+export function rolloutArguments(input: unknown): Record<string, unknown> {
+  if (typeof input !== "string" || input.length > maxText) return {};
+  try {
+    const value = JSON.parse(input);
+    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  } catch { return {}; }
+}
+
+export const sessionHandle = (value: unknown) =>
+  typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? String(value) : "";
+
+function literalFields(object: Node | null | undefined): Map<string, Node> {
+  const result = new Map<string, Node>();
+  if (object?.type !== "object") return result;
+  for (const part of object.namedChildren) {
+    if (part.type === "comment") continue;
+    const key = part.childForFieldName("key");
+    const value = part.childForFieldName("value");
+    const name = key?.type === "property_identifier" ? key.text : javascriptLiteral(key);
+    if (part.type !== "pair" || !name || !value || name === "__proto__" || result.has(name)) return new Map();
+    result.set(name, value);
+  }
+  return result;
 }
 
 function propertyCmd(object: Node | null | undefined): string {
@@ -92,26 +112,93 @@ function andSeries(node: Node): Node[] {
   return parts.length === 2 && parts.every((part) => part.length) ? parts.flat() : [];
 }
 
-function printedCommand(root: Node): string {
-  const statements = root.namedChildren.filter((node) => node.type !== "comment");
-  const print = statements.at(-1)?.namedChild(0);
-  const printArgs = print?.childForFieldName("arguments");
-  if (statements.at(-1)?.type !== "expression_statement" ||
-      print?.childForFieldName("function")?.text !== "text" || printArgs?.namedChildCount !== 1) return "";
-  const arg = printArgs.namedChild(0);
-  let awaited = arg;
-  if (statements.length === 2) {
-    const declaration = statements[0];
-    const binding = declaration.namedChild(0);
-    const name = binding?.childForFieldName("name");
-    if (declaration.type !== "lexical_declaration" || declaration.namedChildCount !== 1 ||
-        name?.type !== "identifier" || arg?.type !== "identifier" || name.text !== arg.text) return "";
-    awaited = binding?.childForFieldName("value") ?? null;
-  } else if (statements.length !== 1) return "";
-  const call = awaited?.namedChild(0);
-  const args = call?.childForFieldName("arguments");
-  if (awaited?.type !== "await_expression" || call?.childForFieldName("function")?.text !== "tools.exec_command") return "";
-  return args?.namedChildCount === 1 ? propertyCmd(args.namedChild(0)) : "";
+const named = (node?: Node | null) => node?.namedChildren.filter((part) => part.type !== "comment") ?? [];
+const field = (node: Node | null | undefined, name: string) => node?.childForFieldName(name);
+const expression = (node?: Node | null) => node?.type === "expression_statement" ? node.namedChild(0) : null;
+
+function binding(node?: Node | null): { name: string; value: Node } | undefined {
+  if (node?.type !== "lexical_declaration" || named(node).length !== 1) return;
+  const declaration = named(node)[0];
+  const name = field(declaration, "name");
+  const value = field(declaration, "value");
+  if (name?.type === "identifier" && value) return { name: name.text, value };
+}
+
+function printedArgument(statement?: Node) {
+  const call = expression(statement);
+  const args = field(call, "arguments");
+  if (call?.type === "call_expression" && field(call, "function")?.text === "text" &&
+      !named(call).some((node) => node.type === "optional_chain") && named(args).length === 1) return named(args)[0];
+}
+
+function commandCall(awaited: Node | null | undefined): Node | null {
+  while (awaited?.type === "parenthesized_expression" && named(awaited).length === 1) awaited = named(awaited)[0];
+  const call = named(awaited)[0];
+  const args = field(call, "arguments");
+  if (awaited?.type !== "await_expression" || call?.type !== "call_expression" ||
+      !["tools.exec_command", "tools.write_stdin"].includes(field(call, "function")?.text ?? "")) return null;
+  const fields = literalFields(named(args)[0]);
+  const literalTypes = ["string", "template_string", "number", "true", "false", "null"];
+  if (named(args).length !== 1 || !fields.size || named(call).some((node) => node.type === "optional_chain") ||
+      Array.from(fields.values()).some((value) => !literalTypes.includes(value.type) ||
+        named(value).some((child) => child.type === "template_substitution"))) return null;
+  return call;
+}
+
+function loopPoll(loop: Node): Node | null {
+  if (loop.type !== "for_statement") return null;
+  const index = binding(field(loop, "initializer"));
+  const ceiling = field(field(loop, "condition"), "right");
+  if (!index || !/^[A-Za-z_][A-Za-z_0-9]*$/.test(index.name) || !safeLoopCount(index.value) || !safeLoopCount(ceiling) ||
+      field(loop, "condition")?.text.replace(/\s/g, "") !== `${index.name}<${ceiling!.text}` ||
+      field(loop, "increment")?.text.replace(/\s/g, "") !== `${index.name}++`) return null;
+  const body = field(loop, "body");
+  const [declaration, branch, ...extra] = named(body);
+  const result = binding(declaration);
+  if (body?.type !== "statement_block" || extra.length || !result || result.name === index.name ||
+      branch?.type !== "if_statement" || field(branch, "alternative")) return null;
+  const condition = field(branch, "condition")?.text.replace(/\s/g, "");
+  const exhausted = Number(ceiling!.text) - 1;
+  const closed = `!${result.name}.session_id`;
+  if (condition !== `(${closed})` && condition !== `(${closed}||${index.name}===${exhausted})`) return null;
+  const consequence = field(branch, "consequence");
+  const output = printedArgument(named(consequence)[0]);
+  if (consequence?.type !== "statement_block" || named(consequence).length !== 2 ||
+      named(consequence)[1].type !== "break_statement" || named(named(consequence)[1]).length !== 0 ||
+      output?.type !== "identifier" || output.text !== result.name) return null;
+  const call = commandCall(result.value);
+  return field(call, "function")?.text === "tools.write_stdin" ? call : null;
+}
+
+function safeLoopCount(node?: Node | null) {
+  return node?.type === "number" && /^(?:0|[1-9]\d{0,2})$/.test(node.text);
+}
+
+function printedCall(root: Node): Node | null {
+  const statements = named(root);
+  if (statements.length === 1) return commandCall(printedArgument(statements[0])) ?? loopPoll(statements[0]);
+  if (statements.length !== 2) return null;
+  const result = binding(statements[0]);
+  const output = printedArgument(statements[1]);
+  return result && output?.type === "identifier" && output.text === result.name ? commandCall(result.value) : null;
+}
+
+function exactCommand(statement: Node): ShellCommand | null {
+  const command = statement.type === "redirected_statement" ? field(statement, "body") : statement;
+  if (command?.type !== "command" ||
+      named(statement).some((part) => part.type === "file_redirect" &&
+        !/^(?:[12]?>{1,2}|[12]>&[12])/.test(part.text)) ||
+      Array.from(nodes(statement)).some((part) => ["command_substitution", "process_substitution",
+        "variable_assignment", "heredoc_redirect", "herestring_redirect"].includes(part.type))) return null;
+  return shellCommand(command);
+}
+
+function exactShell(root: Node): ShellCommand[] {
+  if (root.children.some((node) => !node.isNamed && node.type !== ";")) return [];
+  const statements = named(root);
+  if (statements.length > 3) return [];
+  const commands = statements.map(exactCommand);
+  return commands.every((command) => command !== null) ? commands : [];
 }
 
 async function loadParsers() {
@@ -127,10 +214,16 @@ export async function rolloutSyntax() {
   const shell = (input: unknown) => decode<ShellCommand>(bash, input, (root) =>
     Array.from(nodes(root)).flatMap((node) => node.type === "command" ? [shellCommand(node)] : []));
 
+  const exact = (input: unknown) => decode<ShellCommand>(bash, input, exactShell);
   return {
-    direct: (input: unknown) => shell(argumentCmd(input)),
+    direct: (input: unknown) => shell(input),
+    exact,
     sequential: (input: unknown): List<ShellCommand> => {
-      const decoded = decode<string>(js, input, (root) => [printedCommand(root)]);
+      const decoded = decode<string>(js, input, (root) => {
+        const call = printedCall(root);
+        return [call?.childForFieldName("function")?.text === "tools.exec_command"
+          ? propertyCmd(call.childForFieldName("arguments")?.namedChild(0)) : ""];
+      });
       return decode<ShellCommand>(bash, decoded.$ === "Con" ? decoded.head : "", (root) => {
         const statements = root.namedChildren.filter((node) => node.type !== "comment");
         return statements.length === 1 ? andSeries(statements[0]).map(shellCommand) : [];
@@ -138,6 +231,7 @@ export async function rolloutSyntax() {
     },
     wrapped: (input: unknown) => decode<ToolInvocation>(js, input, (root) => {
       const invocations: ToolInvocation[] = [];
+      const printed = printedCall(root);
       for (const node of nodes(root)) {
         if (node.type !== "call_expression") continue;
         const callee = node.childForFieldName("function");
@@ -146,10 +240,44 @@ export async function rolloutSyntax() {
         const member = callee?.childForFieldName("property");
         const method = member?.type === "property_identifier" ? member.text
           : javascriptLiteral(callee?.childForFieldName("index"));
-        invocations.push({ $: "Invocation", receiver: receiver.text, method,
-          commands: shell(propertyCmd(node.childForFieldName("arguments")?.namedChild(0))) });
+        const object = node.childForFieldName("arguments")?.namedChild(0);
+        const cmd = propertyCmd(object);
+        const fields = method === "write_stdin" ? literalFields(object) : new Map<string, Node>();
+        const handle = fields.get("session_id");
+        const chars = fields.get("chars");
+        invocations.push({ $: "Invocation", receiver: receiver.text, method, commands: shell(cmd),
+          printed: printed?.id === node.id, exact: method === "exec_command" ? exact(cmd) : nil,
+          handle: handle?.type === "number" && /^[1-9]\d*$/.test(handle.text) ? sessionHandle(Number(handle.text)) : "",
+          read_only: !chars || ((chars.text === '""' || chars.text === "''") && chars.type === "string") });
       }
       return invocations;
     }),
   };
+}
+
+const completedHeader = /^Script completed\nWall time \d+(?:\.\d+)? seconds\nOutput:\n$/;
+const maxReceipt = 256 * 1024;
+const missing = { $: "MissingReceipt" } as const;
+const invalid = { $: "InvalidReceipt" } as const;
+
+export function processReceipt(output: unknown, direct: boolean, policy: SourcePolicy): ProcessReceipt {
+  const blocks = Array.isArray(output) ? output : [];
+  const wrapped = blocks[0]?.type === "input_text" && completedHeader.test(blocks[0].text);
+  const encoded = wrapped && blocks.length === 2 && blocks[1]?.type === "input_text" ? blocks[1].text
+    : direct && blocks.length === 1 && blocks[0]?.type === "input_text" ? blocks[0].text
+    : direct && typeof output === "string" ? output : null;
+  if (typeof encoded !== "string" || !encoded.startsWith("{")) return wrapped ? invalid : missing;
+  if (encoded.length > maxReceipt) return invalid;
+  try {
+    const result = JSON.parse(encoded);
+    if (typeof result.chunk_id !== "string" || !result.chunk_id || result.chunk_id.length > 128 ||
+        typeof result.output !== "string" || !Number.isSafeInteger(result.original_token_count) ||
+        result.original_token_count < 0 || !Number.isFinite(result.wall_time_seconds)) return invalid;
+    const code = Number.isInteger(result.exit_code) && result.exit_code >= 0 && result.exit_code <= 255
+      ? result.exit_code : 256;
+    return policy.process_receipt(sessionHandle(result.session_id), Object.hasOwn(result, "session_id"), code,
+      Object.hasOwn(result, "exit_code"), result.wall_time_seconds);
+  } catch {
+    return invalid;
+  }
 }

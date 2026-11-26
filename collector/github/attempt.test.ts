@@ -126,7 +126,7 @@ test("Bend2 clocks reach SQLite through the exact-attempt importer", async () =>
   }
 });
 
-test("the window CLI reports coverage, replays atomically, and preserves jobless attempts", () => {
+test("bounded Actions imports report coverage, replay atomically, and preserve jobless attempts", () => {
   const parent = process.env.BARNACLES_TEST_DIRECTORY;
   assert.ok(parent, "Set BARNACLES_TEST_DIRECTORY to a private job directory");
   const directory = mkdtempSync(join(parent, "test-"));
@@ -198,6 +198,38 @@ if (url.searchParams.has("created")) {
     } finally {
       db.close();
     }
+    const seed = new DatabaseSync(database);
+    try {
+      seed.exec(`
+        DELETE FROM action_attempts;
+        DROP VIEW IF EXISTS actions_wait_facts;
+        CREATE TABLE actions_wait_facts (repository TEXT, run_id INTEGER, head_sha TEXT, attempt INTEGER,
+          identity_exact INTEGER, started_ms INTEGER, ended_ms INTEGER);
+      `);
+      const wait = seed.prepare("INSERT INTO actions_wait_facts VALUES (?, ?, ?, 1, ?, ?, ?)");
+      const start = Date.parse(from);
+      const end = Date.parse(to);
+      for (const id of [1, 2, 2]) wait.run("synthetic/example", id, sha, 1, start, end);
+      wait.run("synthetic/example", 3, sha, 1, end, end + 1000);
+      wait.run("synthetic/example", 4, sha, 0, start, end);
+      wait.run("synthetic/other", 5, sha, 1, start, end);
+    } finally {
+      seed.close();
+    }
+    const waitArgs = [cli, directory, "synthetic/example", "--from-waits", from, to];
+    const partial = spawnSync(process.execPath, [...waitArgs, "2"], { env: { ...env, ACTIONS_CASE: "partial" }, encoding: "utf8" });
+    assert.equal(partial.status, 1);
+    assert.match(partial.stderr, /Partial or changing GitHub job inventory/);
+    const capture = () => JSON.parse(execFileSync(process.execPath, [...waitArgs, "1"], { env, encoding: "utf8" }));
+    assert.deepEqual(capture(), { sourceAvailable: true, missingBeforeCapture: 2, captured: 1 });
+    const readBack = new DatabaseSync(database, { readOnly: true });
+    try {
+      assert.deepEqual(readBack.prepare("SELECT run_id FROM action_attempts").all().map(Object.values), [[2]]);
+    } finally {
+      readBack.close();
+    }
+    assert.deepEqual(capture(), { sourceAvailable: true, missingBeforeCapture: 1, captured: 1 });
+    assert.deepEqual(capture(), { sourceAvailable: true, missingBeforeCapture: 0, captured: 0 });
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
