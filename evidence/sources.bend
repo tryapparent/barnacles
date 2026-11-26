@@ -59,7 +59,7 @@ type ShellCommand is Data:
   Command{name: String, args: List<&2, String>}
 
 type ToolInvocation is Data:
-  Invocation{receiver: String, method: String, commands: List<&2, ShellCommand>}
+  Invocation{receiver: String, method: String, commands: List<&2, ShellCommand>, printed: Bool, exact: List<&2, ShellCommand>, handle: String, read_only: Bool}
 
 def known_command(+program: String, +action: String) -> String:
   Bool.pick(String, String.eq(program, "unknown"), "",
@@ -253,22 +253,22 @@ def invocation_categories(+method: String, commands: List<&2, ShellCommand>, +ca
 def wrapped_categories(invocations: List<&2, ToolInvocation>, +categories: List<&2, String>) -> List<&2, String>:
   match invocations:
     case []: categories
-    case Invocation{receiver, method, commands} <> tail:
+    case Invocation{receiver, method, commands, printed, exact, handle, read_only} <> tail:
       wrapped_categories(tail, Bool.pick(List<&2, String>, String.eq(receiver, "tools"),
         invocation_categories(method, commands, categories), categories))
 
 def first_invocation(invocations: List<&2, ToolInvocation>) -> ToolInvocation:
   match invocations:
-    case []: Invocation{"", "", []}
+    case []: Invocation{"", "", [], False{}, [], "", False{}}
     case +call <> tail:
       match call:
-        case Invocation{receiver, method, commands}:
+        case Invocation{receiver, method, commands, printed, exact, handle, read_only}:
           Bool.pick(ToolInvocation, String.eq(receiver, "tools"), call, first_invocation(tail))
 
 def has_parallel(invocations: List<&2, ToolInvocation>) -> Bool:
   match invocations:
     case []: False{}
-    case Invocation{receiver, +method, commands} <> tail:
+    case Invocation{receiver, +method, commands, printed, exact, handle, read_only} <> tail:
       Bool.or(Bool.and(String.eq(receiver, "Promise"),
         Bool.or(String.eq(method, "all"), String.eq(method, "allSettled"))), has_parallel(tail))
 
@@ -280,7 +280,7 @@ def joined_categories(categories: List<&2, String>, fallback: String) -> String:
 
 def tool_script(first: ToolInvocation, +wrapped: List<&2, ToolInvocation>) -> ToolContext:
   match first:
-    case Invocation{receiver, +method, commands}:
+    case Invocation{receiver, +method, commands, printed, exact, handle, read_only}:
       Tool{Bool.pick(String, has_parallel(wrapped), "Parallel tool script", tool_label(method, "Tool script")),
         Bool.pick(String, String.eq(method, "exec_command"), first_command(commands), ""),
         joined_categories(wrapped_categories(wrapped, []), "Unknown script"), True{}, False{}}
@@ -347,80 +347,115 @@ def model_wait_input(previous: String, +envelope: String, +kind: String, call_id
 
 type CallState is Data:
   Unseen{orphans: U32}
-  Seen{orphans: U32, line: U32, tool: ToolContext, start: Point, finish: Point, target: String, cell: String, terminal: Bool, ambiguous: Bool}
+  Seen{orphans: U32, line: U32, tool: ToolContext, start: Point, finish: Point, result_line: U32, target: String,
+    cell: String, terminal: Bool, ambiguous: Bool}
 
 def start_call(state: CallState, line: U32, observed: ToolContext, start: Point, target: String) -> CallState:
   match state:
     case Unseen{orphans}:
-      Seen{orphans, line, observed, start, Time{0, 0}, target, "", False{}, False{}}
-    case Seen{orphans, old_line, tool, old_start, finish, old_target, cell, terminal, ambiguous}:
-      Seen{orphans, old_line, tool, old_start, finish, old_target, cell, terminal, True{}}
+      Seen{orphans, line, observed, start, Time{0, 0}, 0, target, "", False{}, False{}}
+    case Seen{orphans, old_line, tool, old_start, finish, result_line, old_target, +cell, terminal, ambiguous}:
+      Seen{orphans, old_line, tool, old_start, finish, result_line, old_target, cell, terminal, True{}}
 
-def finish_seen(+accept: Bool, orphans: U32, line: U32, observed: ToolContext, start: Point, finish: Point,
-  target: String, cell: String, terminal: Bool, ambiguous: Bool, ended: Point,
-  yielded: String, completed: Bool) -> CallState:
-  match observed:
-    case Tool{label, command, categories, +wrapper, +cell_wait}:
-      Seen{orphans, line, Tool{label, command, categories, wrapper, cell_wait}, start, Bool.pick(Point, accept, ended, finish), target,
-        Bool.pick(String, Bool.and(accept, wrapper), yielded, cell),
-        Bool.or(terminal, Bool.and(accept, Bool.and(cell_wait, completed))),
-        Bool.or(ambiguous, Bool.not(accept))}
-
-def finish_call(state: CallState, +ended: Point, yielded: String, completed: Bool) -> CallState:
+def finish_call(state: CallState, line: U32, +ended: Point, yielded: String, completed: Bool) -> CallState:
   match state:
     case Unseen{orphans}: Unseen{U32.inc(orphans)}
-    case Seen{orphans, line, tool, +start, +finish, target, cell, terminal, ambiguous}:
-      finish_seen(Bool.and(Bool.not(has_time(finish)), time_order(start, ended)), orphans, line,
-        tool, start, finish, target, cell, terminal, ambiguous, ended, yielded, completed)
+    case Seen{orphans, opened, tool, +start, finish, result_line, target, +cell, terminal, ambiguous}:
+      match result_line:
+        case 0:
+          Seen{orphans, opened, tool, start, ended, line, target, yielded, completed,
+            Bool.or(ambiguous, Bool.not(time_order(start, ended)))}
+        case _:
+          Seen{orphans, opened, tool, start, finish, result_line, target, cell, terminal, True{}}
 
 type CellFact is Data:
   NoCell{}
-  Launch{key: String, owner: String, yielded_at: Point, valid: Bool}
-  Terminal{key: String, call_id: String, started_at: Point, ended_at: Point, valid: Bool}
+  Launch{key: String, owner: String, yielded_at: Point, yielded_line: U32, valid: Bool}
+  Terminal{key: String, call_id: String, started_at: Point, started_line: U32, ended_at: Point, valid: Bool}
 
-def pick_cell(+id: String, +cell: String, +target: String, +finish: Point, start: Point, +valid: Bool, terminal: Bool) -> CellFact:
-  Bool.pick(CellFact, String.eq(cell, ""), Bool.pick(CellFact, Bool.and(terminal, Bool.not(String.eq(target, ""))),
-    Terminal{target, id, start, finish, valid}, NoCell{}), Launch{cell, id, finish, valid})
-
-def cell_fact(id: String, state: CallState) -> CellFact:
+def cell_fact(+id: String, state: CallState) -> CellFact:
   match state:
-    case Unseen{orphans}: NoCell{}
-    case Seen{orphans, line, tool, start, finish, target, cell, terminal, ambiguous}:
-      pick_cell(id, cell, target, finish, start, Bool.not(ambiguous), terminal)
+    case Seen{orphans, line, Tool{label, command, categories, wrapper, wait}, +start, +finish, result_line,
+      +target, +cell, terminal, ambiguous}:
+      +valid = Bool.and(Bool.not(ambiguous), U32.is_eq(orphans, 0))
+      Bool.pick(CellFact, Bool.and(wrapper, Bool.not(String.eq(cell, ""))), Launch{cell, id, finish, result_line, valid},
+        Bool.pick(CellFact, Bool.and(wait, Bool.and(terminal, Bool.not(String.eq(target, "")))),
+          Terminal{target, id, start, line, finish, valid}, NoCell{}))
+    case _: NoCell{}
 
 type CellPair is Data:
   Pair{launch: CellFact, terminal: CellFact, duplicate: Bool}
 
 def add_cell_fact(pair: CellPair, +fact: CellFact) -> CellPair:
   match pair fact:
-    case Pair{NoCell{}, terminal, duplicate} Launch{key, owner, yielded_at, valid}:
-      Pair{Launch{key, owner, yielded_at, valid}, terminal, duplicate}
-    case Pair{launch, NoCell{}, duplicate} Terminal{key, call_id, started_at, ended_at, valid}:
-      Pair{launch, Terminal{key, call_id, started_at, ended_at, valid}, duplicate}
+    case Pair{NoCell{}, terminal, duplicate} Launch{key, owner, yielded_at, yielded_line, valid}:
+      Pair{fact, terminal, duplicate}
+    case Pair{launch, NoCell{}, duplicate} Terminal{key, call_id, started_at, +started_line, ended_at, valid}:
+      Pair{launch, fact, duplicate}
     case Pair{launch, terminal, duplicate} _:
       Pair{launch, terminal, True{}}
+
+def cell_order(yielded_at: Point, yielded_line: U32, started_at: Point, started_line: U32) -> Bool:
+  Bool.and(U32.is_lt(yielded_line, started_line), time_order(yielded_at, started_at))
 
 type CellLink is Data:
   Unlinked{}
   Linked{owner: String, call_id: String, end: Point}
 
-def cell_link(pair: CellPair, malformed: U32) -> CellLink:
+def cell_link(pair: CellPair, clean: Bool) -> CellLink:
   match pair:
-    case Pair{Launch{key, owner, yielded_at, launch_valid}, Terminal{target, call_id, started_at, ended_at, end_valid}, False{}}:
-      Bool.pick(CellLink, Bool.and(U32.is_eq(malformed, 0), Bool.and(launch_valid, Bool.and(end_valid, time_order(yielded_at, started_at)))),
+    case Pair{Launch{key, owner, yielded_at, yielded_line, launch_valid},
+      Terminal{target, call_id, started_at, started_line, ended_at, end_valid}, False{}}:
+      Bool.pick(CellLink, Bool.and(clean, Bool.and(launch_valid, Bool.and(end_valid,
+        cell_order(yielded_at, yielded_line, started_at, started_line)))),
         Linked{owner, call_id, ended_at}, Unlinked{})
     case _: Unlinked{}
 
+type WaitCell is Data:
+  NotWait{}
+  WaitCell{status: String, owner: String}
+
+def before_cell_terminal(terminal: CellFact, line: U32, +result_line: U32, finish: Point) -> Bool:
+  match terminal:
+    case Terminal{target, call_id, started_at, +started_line, ended_at, valid}:
+      Bool.and(valid, Bool.or(U32.is_eq(line, started_line),
+        Bool.and(U32.is_ne(result_line, 0), cell_order(finish, result_line, started_at, started_line))))
+    case _: True{}
+
+def match_wait_cell(pair: CellPair, +line: U32, +result_line: U32, +start: Point, +finish: Point) -> WaitCell:
+  match pair:
+    case Pair{launch, terminal, True{}}: WaitCell{"ambiguous_cell", ""}
+    case Pair{Launch{key, owner, yielded_at, yielded_line, valid}, terminal, False{}}:
+      Bool.pick(WaitCell, Bool.and(valid, Bool.and(cell_order(yielded_at, yielded_line, start, line),
+        before_cell_terminal(terminal, line, result_line, finish))),
+        WaitCell{"linked_cell", owner}, WaitCell{"ambiguous_cell", ""})
+    case _: WaitCell{"missing_cell_launch", ""}
+
+def wait_cell(state: CallState, pair: CellPair, clean: Bool) -> WaitCell:
+  match state:
+    case Seen{orphans, line, Tool{label, command, categories, wrapper, True{}}, start, finish, result_line,
+      +target, +cell, terminal, ambiguous}:
+      Bool.pick(WaitCell, Bool.not(clean), WaitCell{"incomplete_rollout", ""},
+        Bool.pick(WaitCell, String.eq(target, ""), WaitCell{"missing_cell_id", ""},
+          Bool.pick(WaitCell, Bool.or(ambiguous, Bool.not(Bool.or(String.eq(cell, ""), String.eq(cell, target)))),
+            WaitCell{"ambiguous_cell", ""}, match_wait_cell(pair, line, result_line, start, finish))))
+    case _: NotWait{}
+
+def clean_rollout(malformed: U32, orphans: U32) -> Bool:
+  Bool.and(U32.is_eq(malformed, 0), U32.is_eq(orphans, 0))
+
 type CallRecord is Data:
   Ignored{orphans: U32}
-  Observed{orphans: U32, line: U32, tool: String, command: String, categories: String, start: Point, finish: Point, launched: Bool, ambiguous: Bool}
+  Observed{orphans: U32, line: U32, tool: String, command: String, categories: String, start: Point, finish: Point,
+    result_line: U32, launched: Bool, target: String, ambiguous: Bool}
 
 def call_record(state: CallState) -> CallRecord:
   match state:
     case Unseen{orphans}: Ignored{orphans}
-    case Seen{orphans, line, Tool{label, command, categories, wrapper, cell_wait}, start, finish, target, cell, terminal, +ambiguous}:
+    case Seen{orphans, line, Tool{label, command, categories, wrapper, wait}, +start, +finish, result_line,
+      target, cell, terminal, +ambiguous}:
       Observed{orphans, line, label, command, categories, start, Bool.pick(Point, ambiguous, Time{0, 0}, finish),
-        Bool.not(String.eq(cell, "")), ambiguous}
+        result_line, Bool.and(wrapper, Bool.not(String.eq(cell, ""))), target, ambiguous}
 
 type Milestone is Data:
   Milestone{id: String, at: U32}
@@ -692,7 +727,7 @@ def empty_rollout_calls() -> RolloutCalls:
 
 type CallEvent is Data:
   Started{line: U32, tool: ToolContext, stamp: Point, target: String, mix: CommandMix}
-  Finished{stamp: Point, yielded: String, completed: Bool, receipt: Receipt}
+  Finished{line: U32, stamp: Point, yielded: String, completed: Bool, receipt: Receipt}
 
 def receipt_for(mix: CommandMix, +previous: Receipt, +received: Receipt) -> Receipt:
   match mix received:
@@ -704,12 +739,12 @@ def observe_call(current: RolloutCall, event: CallEvent) -> RolloutCall:
   match current event:
     case EmptyCall{} Started{line, tool, stamp, target, mix}:
       SavedCall{start_call(Unseen{0}, line, tool, stamp, target), mix, NoReceipt{}}
-    case EmptyCall{} Finished{stamp, yielded, completed, receipt}:
-      SavedCall{finish_call(Unseen{0}, stamp, yielded, completed), NoMix{}, NoReceipt{}}
+    case EmptyCall{} Finished{line, stamp, yielded, completed, receipt}:
+      SavedCall{finish_call(Unseen{0}, line, stamp, yielded, completed), NoMix{}, NoReceipt{}}
     case SavedCall{call, old_mix, receipt} Started{line, tool, stamp, target, mix}:
       SavedCall{start_call(call, line, tool, stamp, target), mix, receipt}
-    case SavedCall{call, +mix, previous} Finished{stamp, yielded, completed, received}:
-      SavedCall{finish_call(call, stamp, yielded, completed), mix, receipt_for(mix, previous, received)}
+    case SavedCall{call, +mix, previous} Finished{line, stamp, yielded, completed, received}:
+      SavedCall{finish_call(call, line, stamp, yielded, completed), mix, receipt_for(mix, previous, received)}
 
 def add_rollout_call(+id: String, event: CallEvent, order: List<&2, String>,
   found: Map<&2, RolloutCall> & RolloutCall) -> RolloutCalls:
@@ -731,8 +766,9 @@ def rollout_start(calls: RolloutCalls, id: String, line: U32, +name: String, sta
   rollout_call(calls, id, Started{line, tool(name, direct, wrapped), stamp, target,
     Bool.pick(CommandMix, accepts_model_script(name), command_mix(sequential), NoMix{})})
 
-def rollout_finish(calls: RolloutCalls, id: String, stamp: Point, yielded: String, completed: Bool, receipt: Receipt) -> RolloutCalls:
-  rollout_call(calls, id, Finished{stamp, yielded, completed, receipt})
+def rollout_finish(calls: RolloutCalls, id: String, line: U32, stamp: Point, yielded: String, completed: Bool,
+  receipt: Receipt) -> RolloutCalls:
+  rollout_call(calls, id, Finished{line, stamp, yielded, completed, receipt})
 
 def add_cell(key: String, fact: CellFact, found: Map<&2, CellPair> & CellPair) -> Map<&2, CellPair>:
   match found:
@@ -741,9 +777,9 @@ def add_cell(key: String, fact: CellFact, found: Map<&2, CellPair> & CellPair) -
 def record_cell(+fact: CellFact, cells: Map<&2, CellPair>) -> Map<&2, CellPair>:
   match fact:
     case NoCell{}: cells
-    case Launch{+key, owner, yielded_at, valid}:
+    case Launch{+key, owner, yielded_at, yielded_line, valid}:
       add_cell(key, fact, Map.get(CellPair, Pair{NoCell{}, NoCell{}, False{}}, cells, key))
-    case Terminal{+key, call_id, started_at, ended_at, valid}:
+    case Terminal{+key, call_id, started_at, started_line, ended_at, valid}:
       add_cell(key, fact, Map.get(CellPair, Pair{NoCell{}, NoCell{}, False{}}, cells, key))
 
 def collect_cells(calls: Map<&2, RolloutCall>, cells: Map<&2, CellPair>) -> Map<&2, CellPair>:
@@ -758,11 +794,22 @@ def record_link(link: CellLink, links: Map<&2, CellLink>) -> Map<&2, CellLink>:
     case Unlinked{}: links
     case Linked{+owner, call_id, end}: Map.set(&2, CellLink, links, owner, Linked{owner, call_id, end})
 
-def collect_links(cells: Map<&2, CellPair>, +malformed: U32, links: Map<&2, CellLink>) -> Map<&2, CellLink>:
+def collect_links(cells: Map<&2, CellPair>, +clean: Bool, links: Map<&2, CellLink>) -> Map<&2, CellLink>:
   match cells:
     case MTip{}: links
-    case MLeaf{key, pair}: record_link(cell_link(pair, malformed), links)
-    case MNode{position, lo, hi}: collect_links(hi, malformed, collect_links(lo, malformed, links))
+    case MLeaf{key, pair}: record_link(cell_link(pair, clean), links)
+    case MNode{position, lo, hi}: collect_links(hi, clean, collect_links(lo, clean, links))
+
+def call_orphans(state: CallState) -> U32:
+  match state:
+    case Unseen{orphans}: orphans
+    case Seen{orphans, line, tool, start, finish, result_line, target, cell, terminal, ambiguous}: orphans
+
+def count_orphans(calls: Map<&2, RolloutCall>) -> U32:
+  match calls:
+    case MLeaf{id, SavedCall{state, mix, receipt}}: call_orphans(state)
+    case MNode{position, lo, hi}: U32.add(count_orphans(lo), count_orphans(hi))
+    case _: 0
 
 type ModelSample is Data:
   NoSample{}
@@ -779,47 +826,54 @@ type RolloutRecord is Data:
   RolloutRecord{id: String, record: CallRecord, link: CellLink, candidate: CommandMix, sample: ModelSample}
 
 type RolloutSummary is Data:
-  Summary{orphans: U32, records: List<&2, RolloutRecord>}
+  Summary{orphans: U32, records: List<&2, RolloutRecord>, cells: Map<&2, CellPair>, clean: Bool}
 
-def summarize_call(id: String, +record: CallRecord, link: CellLink, +mix: CommandMix, receipt: Receipt,
-  summary: RolloutSummary) -> RolloutSummary:
-  match record summary:
-    case Ignored{extra} Summary{orphans, records}: Summary{U32.add(orphans, extra), records}
-    case Observed{extra, line, tool, command, categories, start, finish, launched, ambiguous} Summary{orphans, records}:
-      Summary{U32.add(orphans, extra), RolloutRecord{id, record, link, mix, model_sample(mix, receipt, finish, ambiguous)} <> records}
+def add_record(id: String, +record: CallRecord, link: CellLink, +mix: CommandMix, receipt: Receipt,
+  records: List<&2, RolloutRecord>) -> List<&2, RolloutRecord>:
+  match record:
+    case Ignored{extra}: records
+    case Observed{extra, line, tool, command, categories, start, finish, result_line, launched, target, ambiguous}:
+      RolloutRecord{id, record, link, mix, model_sample(mix, receipt, finish, ambiguous)} <> records
 
-def summarize_saved(id: String, link: CellLink, summary: RolloutSummary, saved: RolloutCall) -> RolloutSummary:
+def add_saved(id: String, link: CellLink, records: List<&2, RolloutRecord>, saved: RolloutCall) -> List<&2, RolloutRecord>:
   match saved:
-    case EmptyCall{}: summary
-    case SavedCall{call, mix, receipt}: summarize_call(id, call_record(call), link, mix, receipt, summary)
+    case EmptyCall{}: records
+    case SavedCall{call, mix, receipt}: add_record(id, call_record(call), link, mix, receipt, records)
 
-def summarize_found(id: String, summary: RolloutSummary, call_found: Map<&2, RolloutCall> & RolloutCall,
-  link_found: Map<&2, CellLink> & CellLink) -> RolloutSummary:
+def add_found(id: String, records: List<&2, RolloutRecord>, call_found: Map<&2, RolloutCall> & RolloutCall,
+  link_found: Map<&2, CellLink> & CellLink) -> List<&2, RolloutRecord>:
   match call_found link_found:
-    case Tuple{calls, saved} Tuple{links, link}: summarize_saved(id, link, summary, saved)
+    case Tuple{calls, saved} Tuple{links, link}: add_saved(id, link, records, saved)
 
 def summarize_calls(ids: List<&2, String>, +calls: Map<&2, RolloutCall>, +links: Map<&2, CellLink>,
-  summary: RolloutSummary) -> RolloutSummary:
+  records: List<&2, RolloutRecord>) -> List<&2, RolloutRecord>:
   match ids:
-    case []: summary
+    case []: records
     case +id <> rest:
-      summarize_calls(rest, calls, links, summarize_found(id, summary,
+      summarize_calls(rest, calls, links, add_found(id, records,
         Map.get(RolloutCall, EmptyCall{}, calls, id), Map.get(CellLink, Unlinked{}, links, id)))
+
+def summarize_rollout(+orphans: U32, +clean: Bool, +cells: Map<&2, CellPair>, index: Map<&2, RolloutCall>,
+  order: List<&2, String>) -> RolloutSummary:
+  Summary{orphans, summarize_calls(order, index, collect_links(cells, clean, Map.new(&2, CellLink)), []), cells, clean}
 
 def finish_rollout_calls(calls: RolloutCalls, malformed: U32) -> RolloutSummary:
   match calls:
     case Calls{+index, order}:
-      summarize_calls(order, index, collect_links(collect_cells(index, Map.new(&2, CellPair)),
-        malformed, Map.new(&2, CellLink)), Summary{0, []})
+      +orphans = count_orphans(index)
+      summarize_rollout(orphans, clean_rollout(malformed, orphans), collect_cells(index, Map.new(&2, CellPair)), index, order)
 
-def has_script_sample(found: Map<&2, RolloutCall> & RolloutCall) -> Bool:
-  match found:
-    case Tuple{calls, SavedCall{state, Mix{files, git, builds, pushes}, receipt}}: True{}
-    case _: False{}
+def lookup_wait(call_found: Map<&2, RolloutCall> & RolloutCall, cell_found: Map<&2, CellPair> & CellPair,
+  clean: Bool) -> WaitCell:
+  match call_found cell_found:
+    case Tuple{calls, SavedCall{state, mix, receipt}} Tuple{cells, pair}: wait_cell(state, pair, clean)
+    case _ _: NotWait{}
 
-def rollout_needs_receipt(calls: RolloutCalls, id: String) -> Bool:
+def rollout_wait(calls: RolloutCalls, id: String, target: String, cells: Map<&2, CellPair>, clean: Bool) -> WaitCell:
   match calls:
-    case Calls{index, order}: has_script_sample(Map.get(RolloutCall, EmptyCall{}, index, id))
+    case Calls{index, order}:
+      lookup_wait(Map.get(RolloutCall, EmptyCall{}, index, id),
+        Map.get(CellPair, Pair{NoCell{}, NoCell{}, False{}}, cells, target), clean)
 
 def rollout_timestamp(original: Point, envelope: Point) -> Point:
   match original:
@@ -1037,3 +1091,341 @@ def rollout_clock(clocks: RolloutClocks, +at: Point) -> RolloutClocks:
 
 def rollout_pairing_gaps(malformed: U32, oversized: U32, cutoff: U32, unassigned: U32) -> U32:
   U32.add(U32.add(malformed, oversized), U32.add(cutoff, unassigned))
+
+def delivery_thread_link(owner_count: U32, link_count: U32, start: Point, opened: Point) -> String:
+  match owner_count link_count:
+    case 0 0: "no_link"
+    case 0 _: "no_owning_link"
+    case 1 _: Bool.pick(String, time_order(start, opened), "verified", "thread_clock_conflict")
+    case _ _: "ambiguous_owner"
+
+def proof_matches_merge(+proof_merge: String, current_merge: String) -> Bool:
+  Bool.and(Bool.not(String.eq(proof_merge, "")), String.eq(proof_merge, current_merge))
+
+def delivery_release_link(selected: Bool, has_proof: Bool, matching_merge: Bool) -> String:
+  match selected has_proof matching_merge:
+    case True{} _ _: "verified"
+    case False{} False{} _: "no_release_proof"
+    case False{} True{} True{}: "release_unverified"
+    case False{} True{} False{}: "no_proof_for_current_merge"
+
+def delivery_endpoint(at: Point) -> String:
+  Bool.pick(String, has_time(at), "observed", "missing")
+
+def delivery_stage(+start: Point, +end: Point) -> String:
+  Bool.pick(String, has_time(start),
+    Bool.pick(String, has_time(end), Bool.pick(String, time_order(start, end), "observed", "clock_conflict"), "missing_end"),
+    Bool.pick(String, has_time(end), "missing_start", "missing_both"))
+
+def delivery_thread_window(+created: Point, +window_start: Point) -> String:
+  Bool.pick(String, Bool.and(has_time(created), has_time(window_start)),
+    Bool.pick(String, time_order(window_start, created), "at_or_after_window_start", "before_window_start"), "unknown")
+
+def delivery_thread_stage(link: String, start: Point, end: Point) -> String:
+  Bool.pick(String, String.eq(link, "thread_clock_conflict"), "clock_conflict", delivery_stage(start, end))
+
+type DeliveryClocks is Data:
+  DeliveryTimes{thread_started: Point, first_commit: Point, pr_opened: Point, first_ci: Point,
+    first_review: Point, pr_merged: Point, release_dispatched: Point, published: Point, access_checked: Point}
+
+type DeliveryEndpoints is Data:
+  Endpoints{thread_started: String, first_commit: String, pr_opened: String, first_ci: String,
+    first_review: String, pr_merged: String, release_dispatched: String, published: String, access_checked: String}
+
+type DeliveryStages is Data:
+  Stages{thread_to_commit: String, commit_to_open: String, open_to_first_ci: String, first_ci_to_merge: String,
+    merge_to_dispatch: String, dispatch_to_publication: String, open_to_merge: String, merge_to_publication: String,
+    thread_to_publication: String, publication_to_access_check: String}
+
+def delivery_endpoints(clocks: DeliveryClocks) -> DeliveryEndpoints:
+  match clocks:
+    case DeliveryTimes{thread, commit, opened, ci, review, merge, dispatch, published, checked}:
+      Endpoints{delivery_endpoint(thread), delivery_endpoint(commit), delivery_endpoint(opened),
+        delivery_endpoint(ci), delivery_endpoint(review), delivery_endpoint(merge), delivery_endpoint(dispatch),
+        delivery_endpoint(published), delivery_endpoint(checked)}
+
+def delivery_stages(clocks: DeliveryClocks, +thread_link: String) -> DeliveryStages:
+  match clocks:
+    case DeliveryTimes{+thread, +commit, +opened, +ci, review, +merge, +dispatch, +published, checked}:
+      Stages{delivery_thread_stage(thread_link, thread, commit), delivery_stage(commit, opened),
+        delivery_stage(opened, ci), delivery_stage(ci, merge), delivery_stage(merge, dispatch),
+        delivery_stage(dispatch, published), delivery_stage(opened, merge), delivery_stage(merge, published),
+        delivery_thread_stage(thread_link, thread, published), delivery_stage(published, checked)}
+
+type WatchIdentity is Data:
+  NoWatch{}
+  ExactWatch{repository: String, run_id: String, head_sha: String, attempt: String}
+
+def all_digits(chars: List<&2, Char>) -> Bool:
+  match chars:
+    case []: True{}
+    case head <> tail: Bool.and(Char.is_digit(head), all_digits(tail))
+
+def decimal(+value: String) -> Bool:
+  Bool.and(Bool.not(String.is_empty(value)), Bool.and(Bool.not(String.starts_with(value, "0")),
+    all_digits(String.to_list(value))))
+
+def all_hex(chars: List<&2, Char>) -> Bool:
+  match chars:
+    case []: True{}
+    case +head <> tail:
+      Bool.and(Bool.or(Char.is_digit(head), String.contains("abcdef", String.from_list([head]))), all_hex(tail))
+
+def repository_chars(chars: List<&2, Char>) -> Bool:
+  match chars:
+    case []: True{}
+    case +head <> tail:
+      Bool.and(Bool.or(Char.is_alpha(head), Bool.or(Char.is_digit(head),
+        String.contains("_.-", String.from_list([head])))), repository_chars(tail))
+
+def repository_part(+word: String) -> Bool:
+  Bool.and(Bool.not(String.is_empty(word)), Bool.and(Bool.not(String.eq(word, ".")),
+    Bool.and(Bool.not(String.eq(word, "..")), repository_chars(String.to_list(word)))))
+
+def valid_repository(parts: List<&2, String>) -> Bool:
+  match parts:
+    case [owner, name]: Bool.and(repository_part(owner), repository_part(name))
+    case _: False{}
+
+def watch_identity(+repo: String, +run: String, +sha: String, +attempt: String) -> WatchIdentity:
+  Bool.pick(WatchIdentity, Bool.and(valid_repository(String.split(repo, '/')), Bool.and(decimal(run),
+    Bool.and(decimal(attempt), Bool.and(Nat.is_eq(String.length(sha), 40n), all_hex(String.to_list(sha)))))),
+    ExactWatch{String.to_lower(repo), run, sha, attempt}, NoWatch{})
+
+def watcher_flags(words: List<&2, String>) -> WatchIdentity:
+  match words:
+    case [run, repo_flag, repo, head_flag, sha, attempt_flag, attempt, timeout_flag, timeout, interval_flag, interval]:
+      flags = Bool.and(String.eq(repo_flag, "--repo"), Bool.and(String.eq(head_flag, "--head"),
+        Bool.and(String.eq(attempt_flag, "--attempt"), Bool.and(String.eq(timeout_flag, "--timeout"),
+          String.eq(interval_flag, "--interval")))))
+      Bool.pick(WatchIdentity, Bool.and(flags, Bool.and(decimal(timeout), decimal(interval))),
+        watch_identity(repo, run, sha, attempt), NoWatch{})
+    case _: NoWatch{}
+
+type ProcessInput is Data:
+  NoProcess{}
+  LaunchProcess{category: String, watch: WatchIdentity}
+  PollProcess{handle: String}
+  UnresolvedProcess{status: String, handle: String, potential_io: Bool}
+
+def watcher_launch(watch: WatchIdentity) -> ProcessInput:
+  match watch:
+    case NoWatch{}: LaunchProcess{"GitHub watcher with incomplete identity", NoWatch{}}
+    case +watch: LaunchProcess{"Exact GitHub watcher request", watch}
+
+def gh_watch_arguments(words: List<&2, String>) -> Bool:
+  match words:
+    case group <> action <> tail: Bool.and(String.eq(group, "run"), String.eq(action, "watch"))
+    case _: False{}
+
+def process_launch_words(command: ShellCommand, +category: String) -> ProcessInput:
+  match command:
+    case Command{+program, +args}:
+      Bool.pick(ProcessInput, String.eq(program, "gh_owned_wait.py"), watcher_launch(watcher_flags(args)),
+        Bool.pick(ProcessInput, Bool.and(String.eq(program, "gh"), gh_watch_arguments(args)),
+          LaunchProcess{"GitHub watcher with incomplete identity", NoWatch{}}, LaunchProcess{category, NoWatch{}}))
+
+def process_launch(exact: List<&2, ShellCommand>, +category: String) -> ProcessInput:
+  match exact:
+    case [Command{+program, +args}]:
+      process_launch_words(Bool.pick(ShellCommand, Bool.or(String.eq(program, "python3"), String.eq(program, "python")),
+        command_words(args), Command{last_word(String.split(program, '/')), args}), category)
+    case Command{+name, [+arg]} <> tail:
+      Bool.pick(ProcessInput, Bool.or(Bool.and(String.eq(name, "umask"), String.eq(arg, "077")),
+        Bool.and(String.eq(name, "set"), String.eq(arg, "-e"))), process_launch(tail, category),
+        LaunchProcess{category, NoWatch{}})
+    case _: LaunchProcess{category, NoWatch{}}
+
+def process_poll(+handle: String, read_only: Bool, printed: Bool) -> ProcessInput:
+  Bool.pick(ProcessInput, String.is_empty(handle), UnresolvedProcess{"dynamic_process_handle", "", True{}},
+    Bool.pick(ProcessInput, Bool.and(read_only, printed), PollProcess{handle},
+      UnresolvedProcess{"unsupported_process_wrapper", handle, True{}}))
+
+type Invocations is Data:
+  ProcessInvocations{launches: U32, polls: U32}
+
+def process_invocations(invocations: List<&2, ToolInvocation>, +launches: U32, +polls: U32) -> Invocations:
+  match invocations:
+    case []: ProcessInvocations{launches, polls}
+    case Invocation{+receiver, +method, commands, printed, exact, handle, read_only} <> tail:
+      process_invocations(tail,
+        U32.add(launches, Bool.to_u32(Bool.and(String.eq(receiver, "tools"), String.eq(method, "exec_command")))),
+        U32.add(polls, Bool.to_u32(Bool.and(String.eq(receiver, "tools"), String.eq(method, "write_stdin")))))
+
+def wrapped_process(counts: Invocations, first: ToolInvocation, +category: String) -> ProcessInput:
+  match counts first:
+    case ProcessInvocations{1, 0} Invocation{"tools", "exec_command", commands, True{}, exact, handle, read_only}:
+      process_launch(exact, category)
+    case ProcessInvocations{0, 1} Invocation{"tools", "write_stdin", commands, printed, exact, handle, read_only}:
+      process_poll(handle, read_only, printed)
+    case ProcessInvocations{0, 0} _:
+      UnresolvedProcess{"unsupported_process_wrapper", "", False{}}
+    case ProcessInvocations{1, 0} _:
+      UnresolvedProcess{"unsupported_process_wrapper", "", True{}}
+    case _ _:
+      UnresolvedProcess{"multiple_process_invocations", "", True{}}
+
+def process_input_category(+name: String, +exact: List<&2, ShellCommand>, +wrapped: List<&2, ToolInvocation>,
+  +handle: String, +read_only: Bool, +categories: String) -> ProcessInput:
+  Bool.pick(ProcessInput, String.eq(name, "exec_command"), process_launch(exact, categories),
+    Bool.pick(ProcessInput, String.eq(name, "exec"),
+      wrapped_process(process_invocations(wrapped, 0, 0), first_invocation(wrapped), categories),
+      Bool.pick(ProcessInput, String.eq(name, "write_stdin"), process_poll(handle, read_only, True{}), NoProcess{})))
+
+def process_input(name: String, exact: List<&2, ShellCommand>, wrapped: List<&2, ToolInvocation>,
+  handle: String, read_only: Bool, observed: ToolContext) -> ProcessInput:
+  match observed:
+    case Tool{tool, command, categories, wrapper, wait}:
+      process_input_category(name, exact, wrapped, handle, read_only, categories)
+
+type ProcessReceipt is Data:
+  MissingReceipt{}
+  InvalidReceipt{}
+  RunningReceipt{handle: String, seconds: F32}
+  ExitReceipt{code: U32, seconds: F32}
+
+def process_receipt(+handle: String, has_handle: Bool, +code: U32, +has_exit: Bool, +seconds: F32) -> ProcessReceipt:
+  Bool.pick(ProcessReceipt, Bool.and(F32.is_ge(seconds, 0.0), F32.is_le(seconds, 86400.0)),
+    Bool.pick(ProcessReceipt, has_handle,
+      Bool.pick(ProcessReceipt, Bool.and(Bool.not(String.is_empty(handle)), Bool.not(has_exit)),
+        RunningReceipt{handle, seconds}, InvalidReceipt{}),
+      Bool.pick(ProcessReceipt, Bool.and(has_exit, U32.is_le(code, 255)),
+        ExitReceipt{code, seconds}, InvalidReceipt{})), InvalidReceipt{})
+
+type ProcessSlot is Data:
+  Vacant{}
+  Conflict{}
+  Live{owner: String, category: String, watch: WatchIdentity, line: U32, end: Point}
+
+type ProcessFact is Data:
+  ProcessFact{status: String, owner: String, category: String, watch: WatchIdentity, receipt: ProcessReceipt}
+
+type ProcessStep is Data:
+  ProcessStep{slot: ProcessSlot, fact: ProcessFact}
+
+def process_gap(status: String, slot: ProcessSlot, receipt: ProcessReceipt) -> ProcessStep:
+  ProcessStep{slot, ProcessFact{status, "", "", NoWatch{}, receipt}}
+
+def receipt_handle(receipt: ProcessReceipt) -> String:
+  match receipt:
+    case RunningReceipt{handle, seconds}: handle
+    case _: ""
+
+def process_key(input: ProcessInput, receipt: ProcessReceipt) -> String:
+  match input:
+    case PollProcess{handle}: handle
+    case UnresolvedProcess{status, +handle, potential_io}:
+      Bool.pick(String, String.is_empty(handle), receipt_handle(receipt), handle)
+    case _: receipt_handle(receipt)
+
+def open_process(slot: ProcessSlot, +owner: String, +category: String, +watch: WatchIdentity,
+  line: U32, end: Point, +receipt: ProcessReceipt) -> ProcessStep:
+  match slot:
+    case Vacant{}:
+      ProcessStep{Live{owner, category, watch, line, end}, ProcessFact{"process_opened", owner, category, watch, receipt}}
+    case _:
+      process_gap("ambiguous_process_handle", Conflict{}, receipt)
+
+def finish_poll(+handle: String, +owner: String, +category: String, +watch: WatchIdentity, +line: U32, +end: Point,
+  +receipt: ProcessReceipt) -> ProcessStep:
+  match receipt:
+    case RunningReceipt{echoed, seconds}:
+      Bool.pick(ProcessStep, String.eq(echoed, handle),
+        ProcessStep{Live{owner, category, watch, line, end}, ProcessFact{"process_running", owner, category, watch, receipt}},
+        process_gap("contradictory_process_receipt", Conflict{}, receipt))
+    case ExitReceipt{code, seconds}:
+      ProcessStep{Vacant{}, ProcessFact{"process_exited", owner, category, watch, receipt}}
+    case MissingReceipt{}:
+      ProcessStep{Conflict{}, ProcessFact{"missing_process_receipt", owner, category, watch, receipt}}
+    case InvalidReceipt{}:
+      ProcessStep{Conflict{}, ProcessFact{"invalid_process_receipt", owner, category, watch, receipt}}
+
+def poll_process(slot: ProcessSlot, +handle: String, start_line: U32, start: Point,
+  +line: U32, +end: Point, +receipt: ProcessReceipt) -> ProcessStep:
+  match slot:
+    case Vacant{}: process_gap("missing_process_launch", Conflict{}, receipt)
+    case Conflict{}: process_gap("ambiguous_process_handle", Conflict{}, receipt)
+    case Live{owner, category, watch, prior_line, prior_end}:
+      Bool.pick(ProcessStep, cell_order(prior_end, prior_line, start, start_line),
+        finish_poll(handle, owner, category, watch, line, end, receipt),
+        process_gap("ambiguous_process_order", Conflict{}, receipt))
+
+def process_result(input: ProcessInput, +slot: ProcessSlot, +receipt: ProcessReceipt, +owner: String,
+  start_line: U32, start: Point, +line: U32, +end: Point, +valid: Bool) -> ProcessStep:
+  match input receipt:
+    case LaunchProcess{category, watch} RunningReceipt{handle, seconds}:
+      Bool.pick(ProcessStep, valid, open_process(slot, owner, category, watch, line, end, receipt),
+        process_gap("ambiguous_process_launch", Conflict{}, receipt))
+    case LaunchProcess{category, watch} ExitReceipt{code, seconds}:
+      Bool.pick(ProcessStep, valid, ProcessStep{slot, ProcessFact{"synchronous_process_exit", owner, category, watch, receipt}},
+        process_gap("ambiguous_process_launch", slot, receipt))
+    case LaunchProcess{category, watch} _:
+      process_gap("missing_process_launch_receipt", slot, receipt)
+    case PollProcess{handle} _:
+      Bool.pick(ProcessStep, valid, poll_process(slot, handle, start_line, start, line, end, receipt),
+        process_gap("incomplete_process_poll", Conflict{}, receipt))
+    case UnresolvedProcess{status, handle, potential_io} _:
+      process_gap(status, Conflict{}, receipt)
+    case _ _:
+      process_gap("cell_without_supported_process", slot, receipt)
+
+def extra_handle(+primary: String, +echoed: String) -> String:
+  Bool.pick(String, Bool.or(String.is_empty(primary), String.eq(primary, echoed)), "", echoed)
+
+def process_taint(input: ProcessInput, +receipt: ProcessReceipt) -> String:
+  match input:
+    case PollProcess{handle}: extra_handle(handle, receipt_handle(receipt))
+    case UnresolvedProcess{status, handle, potential_io}: extra_handle(handle, receipt_handle(receipt))
+    case _: ""
+
+def process_observer(fact: ProcessFact) -> WatchIdentity:
+  match fact:
+    case ProcessFact{+status, owner, category, watch, receipt}:
+      Bool.pick(WatchIdentity, Bool.or(String.eq(status, "process_running"), String.eq(status, "process_exited")),
+        watch, NoWatch{})
+
+def process_has_payload(receipt: ProcessReceipt) -> Bool:
+  match receipt:
+    case MissingReceipt{}: False{}
+    case _: True{}
+
+def process_receipt_invalid(receipt: ProcessReceipt) -> Bool:
+  match receipt:
+    case InvalidReceipt{}: True{}
+    case _: False{}
+
+def process_barrier(input: ProcessInput, receipt: ProcessReceipt, handle: String, +ambiguous: Bool) -> Bool:
+  match input:
+    case UnresolvedProcess{status, candidate, potential_io}:
+      Bool.and(String.is_empty(handle), Bool.or(potential_io, process_has_payload(receipt)))
+    case LaunchProcess{category, watch}:
+      Bool.and(String.is_empty(handle), Bool.or(ambiguous, process_receipt_invalid(receipt)))
+    case PollProcess{candidate}: ambiguous
+    case _: False{}
+
+def observed_slot(+slot: ProcessSlot, barrier: U32) -> ProcessSlot:
+  match slot:
+    case Live{owner, category, watch, line, end}:
+      Bool.pick(ProcessSlot, U32.is_gt(barrier, line), Conflict{}, slot)
+    case _: slot
+
+def valid_process_result(+clean: Bool, ambiguous: Bool, start: Point, end: Point) -> Bool:
+  Bool.and(clean, Bool.and(Bool.not(ambiguous), time_order(start, end)))
+
+type WatchOverlap is Data:
+  NoOverlap{}
+  Overlap{start: Point, end: Point}
+
+type Observer is Data:
+  Observer{session: String, launch: String}
+
+def independent_observers(first: Observer, second: Observer) -> Bool:
+  match first second:
+    case Observer{a_session, a_launch} Observer{b_session, b_launch}:
+      Bool.not(Bool.and(String.eq(a_session, b_session), String.eq(a_launch, b_launch)))
+
+def watch_overlap(first: Observer, second: Observer, +a_start: Point, +a_end: Point, +b_start: Point, +b_end: Point) -> WatchOverlap:
+  +start = Bool.pick(Point, time_order(a_start, b_start), b_start, a_start)
+  +end = Bool.pick(Point, time_order(a_end, b_end), a_end, b_end)
+  Bool.pick(WatchOverlap, Bool.and(independent_observers(first, second),
+    Bool.and(time_order(start, end), Bool.not(time_order(end, start)))), Overlap{start, end}, NoOverlap{})

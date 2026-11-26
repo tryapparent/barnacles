@@ -66,6 +66,41 @@ CREATE TABLE IF NOT EXISTS codex_command_mixes (
   FOREIGN KEY (instance, session_id, call_id) REFERENCES codex_calls
 ) STRICT;
 
+CREATE TABLE IF NOT EXISTS codex_wait_coverage (
+  instance TEXT NOT NULL, session_id TEXT NOT NULL,
+  PRIMARY KEY (instance, session_id),
+  FOREIGN KEY (instance, session_id) REFERENCES codex_rollouts
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS codex_wait_attribution (
+  instance TEXT NOT NULL, session_id TEXT NOT NULL, call_id TEXT NOT NULL,
+  cell_id TEXT, cell_status TEXT NOT NULL, cell_launch_call_id TEXT,
+  PRIMARY KEY (instance, session_id, call_id),
+  FOREIGN KEY (instance, session_id, call_id) REFERENCES codex_calls,
+  FOREIGN KEY (instance, session_id, cell_launch_call_id) REFERENCES codex_calls
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS codex_process_receipts (
+  instance TEXT NOT NULL, session_id TEXT NOT NULL, call_id TEXT NOT NULL,
+  result_call_id TEXT, receipt_source_line INTEGER, process_handle TEXT, receipt_handle TEXT,
+  process_status TEXT NOT NULL, process_launch_call_id TEXT, process_category TEXT,
+  receipt_kind TEXT NOT NULL, receipt_seconds REAL, exit_code INTEGER,
+  repository TEXT, run_id TEXT, head_sha TEXT, attempt TEXT,
+  poll_started_ms INTEGER, poll_result_ms INTEGER,
+  PRIMARY KEY (instance, session_id, call_id),
+  FOREIGN KEY (instance, session_id, call_id) REFERENCES codex_calls,
+  FOREIGN KEY (instance, session_id, result_call_id) REFERENCES codex_calls,
+  FOREIGN KEY (instance, session_id, process_launch_call_id) REFERENCES codex_calls
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS codex_process_workflow
+ON codex_process_receipts(repository, run_id, head_sha, attempt, poll_started_ms);
+
+CREATE VIEW IF NOT EXISTS actions_wait_facts AS
+SELECT repository, run_id, head_sha, attempt, 1 AS identity_exact,
+       poll_started_ms AS started_ms, poll_result_ms AS ended_ms
+FROM codex_process_receipts WHERE poll_started_ms IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS github_prs (
   repository TEXT NOT NULL, pr_number INTEGER NOT NULL, state TEXT NOT NULL,
   opened_at INTEGER NOT NULL, merged_at INTEGER, merge_sha TEXT,

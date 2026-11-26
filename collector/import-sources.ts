@@ -1,24 +1,31 @@
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { sourcePolicy, admissionPolicy, deliveryPolicy, type AdmissionPolicy, type DeliveryPolicy, deliveryReport, rolloutCoverage, loadEvidence, type SourcePolicy } from "../evidence/index.ts";
+import { sourcePolicy, admissionPolicy, deliveryPolicy, type AdmissionPolicy, type DeliveryPolicy, deliveryReport, rolloutCoverage, waitReport, watchOverlaps, loadEvidence, type SourcePolicy } from "../evidence/index.ts";
 import { buildPolicy, buildPolicies, loadPolicy } from "../tooling/bend.ts";
 import { positiveInt } from "./github/attempt.ts";
 import { pullRequest, releaseEvidence } from "./github/delivery.ts";
 import { inspectRollout } from "./codex/rollout.ts";
+import { str, token } from "./wire.ts";
 import { t3Snapshot } from "./t3.ts";
 
 async function main() {
-  const [directory, command, first, second, third, ...extra] = process.argv.slice(2);
+  const [directory, command, first, second, third, fourth, ...extra] = process.argv.slice(2);
   if (!directory || extra.length || !(
     ((command === "report" || command === "rollout-coverage") && !first) ||
+    (command === "waits" && !third) ||
+    (command === "watch-overlaps" && first && second && third && fourth) ||
     (command === "t3" && first && !second) ||
-    (command === "rollout" && first && second) ||
-    (command === "github" && first && second)
-  )) throw Error("Usage: import-sources.ts JOB_DIRECTORY { t3 SNAPSHOT | rollout INSTANCE FILE [SOURCE_ID] | github OWNER/REPO PR [TAG] | report | rollout-coverage }");
+    (command === "rollout" && first && second && !fourth) ||
+    (command === "github" && first && second && !fourth)
+  )) throw Error("Usage: import-sources.ts JOB_DIRECTORY { t3 SNAPSHOT | rollout INSTANCE FILE [SOURCE_ID] | github OWNER/REPO PR [TAG] | report | rollout-coverage | waits [SESSION [CALL]] | watch-overlaps OWNER/REPO RUN SHA ATTEMPT }");
 
+  const db = join(resolve(directory), "evidence.sqlite");
+  if (command === "waits") {
+    console.log(JSON.stringify(waitReport(db, first ? token(first) : null, second ? token(second) : null), null, 2));
+    return;
+  }
   const scratch = mkdtempSync(join(resolve(directory), "build-"));
   try {
-    const db = join(resolve(directory), "evidence.sqlite");
     if (command === "rollout-coverage") {
       console.log(JSON.stringify(rolloutCoverage(db), null, 2));
       return;
@@ -53,6 +60,10 @@ async function main() {
       if (release) loadEvidence(db, { source: "github-delivery", pullRequest: pr, release }, admission);
       console.log(release ? `Imported pull request and release evidence (access: ${release.accessible ? "verified" : "unverified"})`
         : "Imported pull request metadata");
+    } else if (command === "watch-overlaps") {
+      const workflow = policy.watch_identity(str(first), str(second), str(third), str(fourth));
+      if (workflow.$ !== "ExactWatch") throw Error("Expected an exact GitHub workflow identity");
+      console.log(JSON.stringify(watchOverlaps(db, policy, workflow), null, 2));
     }
   } finally {
     rmSync(scratch, { recursive: true, force: true });

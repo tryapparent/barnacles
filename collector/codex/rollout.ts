@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import { open, type FileHandle } from "node:fs/promises";
 import { resolve } from "node:path";
 import { constants } from "node:fs";
-import type { CommandMix, List, Point, RolloutAdmission, RolloutImport, RolloutEvidence, ShellCommand, SourcePolicy, ToolInvocation } from "../../evidence/index.ts";
-import { rolloutSyntax, type SyntaxPolicy } from "./rollout-syntax.ts";
+import type { CommandMix, List, Point, ProcessInput, ProcessReceipt, RolloutAdmission, RolloutImport, RolloutEvidence, ShellCommand, SourcePolicy, ToolInvocation } from "../../evidence/index.ts";
+import { processReceipt, rolloutArguments, rolloutSyntax, sessionHandle, type SyntaxPolicy } from "./rollout-syntax.ts";
 import { bendValues, millis, point, row, str, toMillis, token, validMillis } from "../wire.ts";
 
 type Receipt = { $: "NoReceipt" } | { $: "Receipt"; seconds: number; code: number; running: boolean };
@@ -19,7 +19,6 @@ type ReasoningMarker = { line: number; observed: Point; input: string };
 type RolloutPolicy = SourcePolicy & SyntaxPolicy & {
   empty_rollout_calls(): unknown;
   accepts_model_script(name: string): boolean;
-  rollout_needs_receipt(calls: unknown, id: string): boolean;
   rollout_timestamp(original: Point, envelope: Point): Point;
   empty_rollout_metadata(): RolloutMetadata;
   rollout_clear_result(meta: RolloutMetadata, session: string): RolloutMetadata;
@@ -28,8 +27,9 @@ type RolloutPolicy = SourcePolicy & SyntaxPolicy & {
     session: string, line: number, observed: Point): { state: RolloutMetadata; action: "" | "start" | "finish" | "conflict" };
   rollout_start(calls: unknown, id: string, line: number, name: string, stamp: Point, target: string,
     direct: List<ShellCommand>, wrapped: List<ToolInvocation>, sequential: List<ShellCommand>): unknown;
-  rollout_finish(calls: unknown, id: string, stamp: Point, yielded: string, completed: boolean, receipt: Receipt): unknown;
-  finish_rollout_calls(calls: unknown, malformed: number): { orphans: number; records: List<RolloutRecord> };
+  rollout_finish(calls: unknown, id: string, line: number, stamp: Point, yielded: string, completed: boolean, receipt: Receipt): unknown;
+  finish_rollout_calls(calls: unknown, malformed: number): { orphans: number; records: List<RolloutRecord>; cells: unknown; clean: boolean };
+  rollout_wait(calls: unknown, id: string, target: string, cells: unknown, clean: boolean): ReturnType<SourcePolicy["wait_cell"]>;
 };
 
 const fileLimit = 128 * 1024 * 1024;
@@ -102,31 +102,12 @@ function outputHeader(output: unknown): string {
   return typeof item === "string" ? item.slice(0, 256).split("\n", 1)[0] : "";
 }
 
-function waitTarget(input: unknown): string {
-  if (typeof input !== "string" || input.length > 1024) return "";
-  try {
-    const args = row(JSON.parse(input));
-    const cell = str(args.cell_id);
-    return /^[\w:.-]+$/.test(cell) ? cell : "";
-  } catch { return ""; }
+function cellId(value: unknown): string {
+  const id = str(value);
+  return /^[\w:.-]+$/.test(id) ? id : "";
 }
 
-function execReceipt(output: unknown) {
-  if (!Array.isArray(output) || output.length !== 2) return undefined;
-  const [header, body] = output;
-  if (header?.type !== "input_text" || body?.type !== "input_text" || typeof body.text !== "string" ||
-      body.text.length > 256 * 1024 ||
-      !/^Script completed\nWall time \d+(?:\.\d+)? seconds\nOutput:\n$/.test(str(header.text))) return undefined;
-  try {
-    const result = row(JSON.parse(body.text));
-    const seconds = result.wall_time_seconds;
-    const code = result.exit_code;
-    if (typeof seconds !== "number" || !Number.isFinite(seconds) || typeof code !== "number" ||
-        !Number.isInteger(code) || code < 0 || code > 255 || typeof result.chunk_id !== "string" ||
-        typeof result.output !== "string" || !Number.isSafeInteger(result.original_token_count)) return undefined;
-    return { $: "Receipt" as const, seconds, code, running: Object.hasOwn(result, "session_id") };
-  } catch { return undefined; }
-}
+const absentReceipt: ProcessReceipt = { $: "MissingReceipt" };
 
 export async function inspectRollout(path: string, instance: string, rules: SourcePolicy, source?: string):
   Promise<{ receipt: RolloutImport; data?: RolloutEvidence }> {
@@ -139,6 +120,9 @@ export async function inspectRollout(path: string, instance: string, rules: Sour
   }
   let calls = policy.empty_rollout_calls();
   let meta = policy.empty_rollout_metadata();
+  const inputs = new Map<string, ProcessInput>();
+  const receipts = new Map<number, ProcessReceipt>();
+  const directCalls = new Set<string>();
   let admission = awaitingMetadata;
   let clocks = { $: "Clocks" as const, first: point(0), last: point(0) };
   let readFailed = false;
@@ -178,13 +162,21 @@ export async function inspectRollout(path: string, instance: string, rules: Sour
       if (action === "conflict") throw Error("Rollout contains conflicting session IDs");
       if (action === "start") {
         const name = str(event.name);
-        calls = policy.rollout_start(calls, id, lineNumber, name, at, waitTarget(event.arguments),
-          syntax.direct(event.arguments), syntax.wrapped(event.input), policy.accepts_model_script(name) ? syntax.sequential(event.input) : { $: "Nil" });
+        const args = rolloutArguments(event.arguments);
+        const direct = syntax.direct(args.cmd);
+        const wrapped = syntax.wrapped(event.input);
+        if (name === "exec_command" || name === "write_stdin") directCalls.add(id);
+        if (!inputs.has(id)) inputs.set(id, policy.process_input(name, syntax.exact(args.cmd), wrapped, sessionHandle(args.session_id),
+          !Object.hasOwn(args, "chars") || args.chars === "", policy.tool(name, direct, wrapped)));
+        calls = policy.rollout_start(calls, id, lineNumber, name, at, cellId(args.cell_id), direct, wrapped,
+          policy.accepts_model_script(name) ? syntax.sequential(event.input) : { $: "Nil" });
       } else {
         const header = outputHeader(event.output);
-        const yielded = /^Script running with cell ID ([\w:.-]+)/.exec(header)?.[1] ?? "";
-        calls = policy.rollout_finish(calls, id, at, yielded, /^Script completed(?:\s|$)/.test(header),
-          (policy.rollout_needs_receipt(calls, id) ? execReceipt(event.output) : undefined) ?? { $: "NoReceipt" });
+        const yielded = cellId(/^Script running with cell ID (\S+)$/.exec(header)?.[1]);
+        const observed = processReceipt(event.output, directCalls.has(id), policy);
+        if (observed.$ !== "MissingReceipt") receipts.set(lineNumber, observed);
+        calls = policy.rollout_finish(calls, id, lineNumber, at, yielded, /^Script completed(?:\s|$)/.test(header),
+          observed.$ === "ExitReceipt" ? { $: "Receipt", seconds: observed.seconds, code: observed.code, running: false } : { $: "NoReceipt" });
       }
     }
   } catch (error) {
@@ -209,7 +201,21 @@ export async function inspectRollout(path: string, instance: string, rules: Sour
     $: "Quality" as const, missing_start: 0, missing_end: 0, missing_async_end: 0, ambiguous_calls: 0,
     mix_candidates: 0, mix_receipts: 0, mixed_calls: 0, mixed_without_receipt: 0,
   };
-  const records = Array.from(bendValues(summary.records), ({ id, record, link, candidate, sample }) => {
+  const rows = Array.from(bendValues(summary.records));
+  const observations = new Map(rows.map(({ id, record }) => [id, record]));
+  const waitAttribution: NonNullable<RolloutEvidence["waitAttribution"]> = { waits: [], observations: [] };
+  const processOperations = [];
+  const records = rows.map(({ id, record, link, candidate, sample }) => {
+    const wait = policy.rollout_wait(calls, id, record.target, summary.cells, summary.clean);
+    if (wait.$ === "WaitCell") waitAttribution.waits.push({
+      call: id, cell: record.target || null, status: wait.status, owner: wait.owner || null,
+    });
+    const input = inputs.get(id);
+    const terminalCall = link.$ === "Linked" ? link.call_id : null;
+    if (input && input.$ !== "NoProcess") {
+      const resultCall = terminalCall ?? id;
+      processOperations.push({ id, record, input, result: observations.get(resultCall) ?? record, resultCall });
+    }
     quality = policy.rollout_call_quality(quality, record.start, record.finish, record.launched,
       link.$ === "Linked" ? link.end : point(0), record.ambiguous, record.categories, candidate, sample.$ === "Sample");
     return {
@@ -217,11 +223,34 @@ export async function inspectRollout(path: string, instance: string, rules: Sour
       start: toMillis(record.start), end: toMillis(record.finish), async: record.launched, ambiguous: record.ambiguous,
       mix: sample.$ === "Sample" ? { ...sample.mix, seconds: sample.seconds } : undefined,
       asyncEnd: link.$ === "Linked" ? toMillis(link.end) : null,
-      terminalCall: link.$ === "Linked" ? link.call_id : null,
+      terminalCall,
     };
   });
+
+  const slots = new Map<string, ReturnType<SourcePolicy["process_result"]>["slot"]>();
+  let barrier = 0;
+  for (const { id, record, input, result, resultCall } of processOperations.sort(
+    (a, b) => (a.result.result_line || a.record.line) - (b.result.result_line || b.record.line),
+  )) {
+    const receipt = receipts.get(result.result_line) ?? absentReceipt;
+    const handle = policy.process_key(input, receipt);
+    const ambiguous = record.ambiguous || result.ambiguous;
+    const slot = policy.observed_slot(slots.get(handle) ?? { $: "Vacant" }, barrier);
+    const step = policy.process_result(input, slot, receipt, id,
+      record.line, record.start, result.result_line, result.finish,
+      policy.valid_process_result(summary.clean, ambiguous, record.start, result.finish));
+    if (policy.process_barrier(input, receipt, handle, ambiguous)) barrier = result.result_line || record.line;
+    if (handle) slots.set(handle, step.slot);
+    const extra = policy.process_taint(input, receipt);
+    if (extra) slots.set(extra, { $: "Conflict" });
+    waitAttribution.observations.push({
+      call: id, resultCall: result.result_line ? resultCall : null, resultLine: result.result_line || null,
+      handle: handle || null, fact: step.fact, observer: policy.process_observer(step.fact),
+      start: toMillis(record.start), end: toMillis(result.finish),
+    });
+  }
   return { receipt, data: { instance: receipt.instance, session: admission.session, lines: receipt.lines,
-    malformed, orphans: summary.orphans, calls: records, markers, receipt,
+    malformed, orphans: summary.orphans, calls: records, markers, receipt, waitAttribution,
     quality: { ...quality, first: toMillis(clocks.first), last: toMillis(clocks.last) } } };
 }
 

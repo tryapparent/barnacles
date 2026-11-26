@@ -27,6 +27,10 @@ durations within each clock. Nested and overlapping spans are cumulative
 recorded time. The category model and estimated model-wait spans have their
 own displays.
 
+## Actions waits
+
+From Shipping review, open **Actions waits** to see how much observed workflow watcher time overlaps each GitHub job family. Select a family, then a job ID, to see individual steps and open the exact GitHub job. The view uses the 24 hours ending at the prepared snapshot cutoff. It shows matching coverage, time in measured execution or queue, and time without known job clocks. [Capture exact attempts and reproduce the view](../evidence/actions-wait.md).
+
 ## Codex waterfall
 
 Import a permitted rollout with `node collector/import-sources.ts "$job" rollout local-codex "$rollout"`.

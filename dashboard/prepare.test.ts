@@ -7,6 +7,7 @@ import { test } from "node:test";
 import {
   buildAdmissionPolicy, loadEvidence, type ActionAttempt, type PullRequest, type ReleaseEvidence, type RolloutEvidence, type ThreadEvidence,
 } from "../evidence/index.ts";
+import { dashboards } from "./panels.ts";
 
 test("dashboard derives a covered comparison and preserves missing source coverage", async () => {
   const parent = process.env.BARNACLES_TEST_DIRECTORY;
@@ -178,6 +179,7 @@ test("dashboard derives a covered comparison and preserves missing source covera
       assert.match(changes.panels[0].options.content, /outside the scan limit.*Shallow history/);
       assert.deepEqual(db.prepare(changes.panels[1].targets[0].rawQueryText).all().map(Object.values),
         [["src/frequent.ts", 4], ["Base64: /w==", 2]]);
+      assert.equal(JSON.parse(readFileSync(join(out, "dashboards/actions.json"), "utf8")).uid, "barnacles-actions");
       const scope = config.panels.find(({ title }: { title: string }) => title === "Evidence scope").options.content;
       assert.match(scope, /synthetic\/example/);
       assert.match(scope, /all 3 imported rollouts across projects/);
@@ -229,4 +231,79 @@ test("dashboard derives a covered comparison and preserves missing source covera
     assert.ok(!legacyPayload.includes("Estimated model wait"));
     assert.ok(!legacyPayload.includes("barnacles.submitted_command"));
   } finally { rmSync(job, { recursive: true, force: true }); }
+});
+
+test("Actions dashboard reads ranked overlap, coverage and exact job steps from the snapshot contract", () => {
+  const parent = process.env.BARNACLES_TEST_DIRECTORY;
+  assert.ok(parent, "Set BARNACLES_TEST_DIRECTORY to a private job directory");
+  const job = mkdtempSync(join(parent, "actions-dashboard-test-"));
+  const db = new DatabaseSync(join(job, "dashboard.sqlite"));
+  try {
+    db.exec(`
+      CREATE TABLE actions_wait_coverage (
+        window_start_ms INTEGER, window_end_ms INTEGER,
+        wait_count INTEGER, exact_wait_count INTEGER, matched_wait_count INTEGER,
+        matched_attempts INTEGER, unmatched_attempts INTEGER, jobless_attempts INTEGER,
+        matched_wait_ms INTEGER, running_ms INTEGER, queue_only_ms INTEGER, unknown_job_ms INTEGER, wait_source_present INTEGER
+      );
+      CREATE TABLE actions_wait_jobs (
+        job_label TEXT, job_count INTEGER, execution_ms INTEGER, only_known_running_ms INTEGER,
+        queue_ms INTEGER, rank INTEGER
+      );
+      CREATE TABLE actions_wait_job_instances (
+        repository TEXT, run_id INTEGER, head_sha TEXT, attempt INTEGER, job_id INTEGER, job_label TEXT,
+        execution_ms INTEGER, only_known_running_ms INTEGER, queue_ms INTEGER
+      );
+      CREATE TABLE actions_wait_steps (
+        run_id INTEGER, attempt INTEGER, job_id INTEGER, step_number INTEGER, step_label TEXT, execution_ms INTEGER
+      );
+      INSERT INTO actions_wait_coverage VALUES
+        (1767225600123, 1767312000456, 12, 10, 8, 3, 1, 1, 300000, 210000, 15000, 75000, 1);
+      INSERT INTO actions_wait_jobs VALUES
+        ('Package', 1, 180000, 120000, 10000, 2),
+        ('Build & ''verify'' / x64', 2, 200000, 120000, 5000, 1),
+        ('Pending job', 1, NULL, NULL, 0, 3);
+      INSERT INTO actions_wait_job_instances VALUES
+        ('synthetic/example', 4201, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 2, 2001, 'Build & ''verify'' / x64', 80000, 50000, 5000),
+        ('synthetic/example', 4201, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 1, 2002, 'Build & ''verify'' / x64', 120000, 70000, 0),
+        ('synthetic/example', 4202, 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 1, 2003, 'Package', 180000, 120000, 10000),
+        ('synthetic/example', 4202, 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 1, 2004, 'Pending job', NULL, NULL, 0),
+        ('other/example', 9999, 'cccccccccccccccccccccccccccccccccccccccc', 1, 9999, 'Build & ''verify'' / x64', 45000, 0, 0);
+      INSERT INTO actions_wait_steps VALUES
+        (4201, 1, 2002, 1, 'First attempt only', 75000),
+        (4201, 2, 2001, 2, 'Compile sources', 75000),
+        (4201, 2, 2001, 1, 'Set up toolchain', 5000),
+        (4202, 1, 2003, 1, 'Package output', 180000);
+    `);
+    const { actions, shipping } = dashboards({ from: 0, to: 0, rolloutCount: 0, operationCount: 0, traceSessions: 0 },
+      "synthetic/example");
+    assert.equal(shipping.links[0].url, "/d/barnacles-actions/actions");
+    assert.equal(actions.timepicker.hidden, true);
+    const query = (id: number, family = "*", instance = "*") => {
+      const panel = actions.panels.find((panel) => "id" in panel && panel.id === id);
+      assert.ok(panel && "targets" in panel);
+      const sql = (panel.targets as { rawQueryText: string }[])[0].rawQueryText
+        .replaceAll("${job_family:sqlstring}", `'${family.replaceAll("'", "''")}'`)
+        .replaceAll("${job_instance:sqlstring}", `'${instance.replaceAll("'", "''")}'`);
+      return db.prepare(sql).all().map(Object.values);
+    };
+    assert.deepEqual(query(2), [["Start", "2026-01-01 00:00:00.123"], ["End", "2026-01-02 00:00:00.456"], ["Source", "Watcher evidence available"]]);
+    assert.deepEqual(query(3), [
+      ["Build & 'verify' / x64", 2, 200000, 120000, 5000],
+      ["Package", 1, 180000, 120000, 10000], ["Pending job", 1, null, null, 0],
+    ]);
+    assert.deepEqual(query(4).map((row) => row[1]), [12, 10, 8, 3, 1, 1]);
+    assert.deepEqual(query(5).map((row) => row[1]), [300000, 210000, 15000, 75000]);
+    assert.deepEqual(query(6, ":Build & 'verify' / x64").map((row) => [row[0], row[2], row[3], row.at(-1)]),
+      [["2001", 2, "4201", "4201/2/2001"], ["2002", 1, "4201", "4201/1/2002"]]);
+    assert.deepEqual(query(7, "*", "4201/2/2001"), [[1, "Set up toolchain", 5000], [2, "Compile sources", 75000]]);
+    assert.deepEqual(query(7), []);
+    db.exec("DELETE FROM actions_wait_jobs; DELETE FROM actions_wait_job_instances; DELETE FROM actions_wait_steps;");
+    for (const id of [3, 6, 7]) assert.deepEqual(query(id), []);
+    db.exec("UPDATE actions_wait_coverage SET wait_source_present = 0");
+    assert.deepEqual(query(2).at(-1), ["Source", "Reimport Codex rollouts"]);
+  } finally {
+    db.close();
+    rmSync(job, { recursive: true, force: true });
+  }
 });

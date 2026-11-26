@@ -7,6 +7,7 @@ const timingPath = "/d/barnacles-timing/timing";
 const tracePath = "/d/barnacles-trace/trace";
 const changedCodePath = "/d/barnacles-changed-code/changed-code-analysis";
 const shippingPath = "/d/barnacles-shipping/shipping";
+const actionsPath = "/d/barnacles-actions/actions";
 
 type Window = { from: number; to: number };
 type ChangeScan = { revision: string; commitsScanned: number; truncated: boolean; shallow: boolean; hasPaths: boolean };
@@ -77,6 +78,91 @@ function scanSummary(repo: string, scan: ChangeScan) {
     scan.shallow ? "Shallow history. File changes at the checkout boundary are unavailable." : "",
   ].filter(Boolean);
   return [scope, limitations.join(" ")].filter(Boolean).join("\n\n");
+}
+
+function actionsDashboard(from: string, to: string, repository: string) {
+  const family = "${job_family:sqlstring}";
+  const job = "${job_instance:sqlstring}";
+  const jobKey = "run_id || '/' || attempt || '/' || job_id";
+  const instances = `FROM actions_wait_job_instances
+    WHERE repository = '${repository}' AND (${family} = '*' OR ':' || job_label = ${family})`;
+  const familyLink = link("Show instances of this job family",
+    actionsPath + '?var-job_family=:${__value.raw:percentencode}&var-job_instance=*');
+  const stepsLink = link("Show steps for this job instance",
+    actionsPath + '?var-job_family=${job_family:percentencode}&var-job_instance=${__data.fields["Job key"]:percentencode}');
+  const githubLink = link("Open verified job on GitHub",
+    `https://github.com/${repository}/actions/runs/` + '${__data.fields["Run"]:percentencode}/job/${__data.fields["Job ID"]:percentencode}');
+  const tableOptions = { showHeader: true, cellHeight: "sm" };
+  const tableFields = { noValue: "Unknown", custom: { minWidth: 76 } };
+  const wrap = { id: "custom.wrapText", value: true };
+  const execution = byName("Execution", unit("ms"), width(86));
+  const durations = [
+    execution,
+    byName("Only known running", unit("ms"), width(169)),
+    byName("Queue", unit("ms"), width(80)),
+  ];
+  const coverageRows = (fields: [string, string][]) => fields.map(([label, column]) =>
+    `SELECT '${label}' AS "Evidence", ${column} AS "Observed" FROM actions_wait_coverage`).join("\nUNION ALL\n");
+  const actions = board("barnacles-actions", "Barnacles · Actions waits", from, to, [
+    block(1, "Evidence scope", [0, 0, 15, 5],
+      `**${repository}** · This view covers recorded workflow watcher receipts. “Only known running” counts time with one observed running job. Job durations can overlap. Establishing what held up a run requires dependency evidence.`),
+    data(2, "table", "Snapshot window · UTC", [15, 0, 9, 5],
+      `SELECT 'Start' AS "Bound", strftime('%Y-%m-%d %H:%M:%f', window_start_ms / 1000.0, 'unixepoch') AS "Time"
+        FROM actions_wait_coverage
+      UNION ALL
+      SELECT 'End', strftime('%Y-%m-%d %H:%M:%f', window_end_ms / 1000.0, 'unixepoch')
+        FROM actions_wait_coverage
+      UNION ALL
+      SELECT 'Source', CASE wait_source_present WHEN 1 THEN 'Watcher evidence available' ELSE 'Reimport Codex rollouts' END
+        FROM actions_wait_coverage`,
+      { showHeader: false, cellHeight: "sm" }, tableFields, [byName("Bound", width(58))], [],
+      "The prepared evidence snapshot fixes these bounds."),
+    data(3, "table", "Job family ranking", [0, 5, 24, 7],
+      `SELECT job_label AS "Family", job_count AS "Jobs", execution_ms AS "Execution",
+        only_known_running_ms AS "Only known running", queue_ms AS "Queue"
+        FROM actions_wait_jobs ORDER BY rank`,
+      tableOptions, tableFields,
+      [byName("Family", { id: "custom.minWidth", value: 98 }, wrap, links(familyLink)),
+        byName("Jobs", width(56)), ...durations], [],
+      "Ranked by execution overlap. Select a family to filter Exact job instances below. Jobs counts instances. Execution and queue measure overlap with matched waits. Scroll sideways for more columns."),
+    data(4, "table", "Wait and attempt coverage", [0, 12, 12, 8], coverageRows([
+      ["Observed waits", "wait_count"], ["Waits with exact identity", "exact_wait_count"],
+      ["Matched waits", "matched_wait_count"], ["Matched attempts", "matched_attempts"],
+      ["Unmatched attempts", "unmatched_attempts"], ["Matched attempts with no job records", "jobless_attempts"],
+    ]), { showHeader: false, cellHeight: "sm" }, tableFields,
+      [byName("Evidence", wrap), byName("Observed", width(80))], [],
+      "Zero observed waits means this window has no wait evidence. An exact identity names the repository, run, expected head SHA and attempt. A wait can have an exact identity without a matching attempt receipt."),
+    data(5, "table", "Time within matched waits", [12, 12, 12, 8], coverageRows([
+      ["Matched wait time", "matched_wait_ms"], ["Known job running", "running_ms"],
+      ["Known queue only", "queue_only_ms"], ["Job clocks unknown", "unknown_job_ms"],
+    ]), { showHeader: false, cellHeight: "sm" }, tableFields,
+      [byName("Evidence", wrap), byName("Observed", unit("ms"), width(100))], [],
+      "Matched wait intervals are counted once within each exact attempt. Time can overlap across different attempts. Unknown marks missing job clocks."),
+    data(6, "table", "Exact job instances", [0, 20, 24, 9],
+      `SELECT CAST(job_id AS TEXT) AS "Job ID", job_label AS "Job", attempt AS "Attempt",
+        CAST(run_id AS TEXT) AS "Run", execution_ms AS "Execution",
+        only_known_running_ms AS "Only known running", queue_ms AS "Queue",
+        'Open job' AS "GitHub", head_sha AS "Head SHA", ${jobKey} AS "Job key"
+        ${instances} ORDER BY run_id DESC, attempt DESC, job_id`,
+      tableOptions, tableFields,
+      [byName("Job ID", width(102), links(stepsLink)), byName("Job", wrap), byName("Attempt", width(76)),
+        byName("Run", width(113)), ...durations, byName("GitHub", width(92), links(githubLink)),
+        byName("Head SHA", width(360)), byName("Job key", { id: "custom.hidden", value: true })], [],
+      "Select a job ID or use Job instance to show its steps. Scroll the table sideways for more columns on narrow screens."),
+    data(7, "table", "Steps for selected job", [0, 29, 24, 8],
+      `SELECT step_number AS "Step", step_label AS "Step name", execution_ms AS "Execution"
+        FROM actions_wait_steps WHERE ${jobKey} = ${job} ORDER BY step_number`,
+      tableOptions, tableFields,
+      [byName("Step", width(62)), byName("Step name", wrap), execution], [],
+      "Choose an exact job instance. If no steps appear, the snapshot has no step evidence for that selection."),
+  ], [link("Shipping review", "/d/barnacles-shipping/shipping")], [
+    variable("job_family", "Job family", `SELECT 'All job families' AS __text, '*' AS __value
+      UNION ALL SELECT job_label, ':' || job_label FROM actions_wait_jobs ORDER BY __value`, "*"),
+    variable("job_instance", "Job instance", `SELECT 'Choose a job' AS __text, '*' AS __value
+      UNION ALL SELECT 'Job ' || job_id || ' · run ' || run_id || ' · attempt ' || attempt, ${jobKey}
+      ${instances} ORDER BY __value`, "*"),
+  ]);
+  return Object.assign(actions, { timepicker: { hidden: true } });
 }
 
 export function dashboards(range: Range, repository: string) {
@@ -174,7 +260,8 @@ export function dashboards(range: Range, repository: string) {
       'SELECT pr AS "PR", status AS "T3 status", created AS "Thread started", url AS "URL" FROM work ORDER BY created DESC',
       { showHeader: true }, {}, prLinks, ["Thread started"],
       "Only imported T3 threads with an explicit owning link to an observed open pull request."),
-  ], [link("Timing breakdown", range.operationCount ? timingPath + "?var-clock=${operation_clock:percentencode}" : timingPath),
+  ], [link("Actions waits", actionsPath),
+    link("Timing breakdown", range.operationCount ? timingPath + "?var-clock=${operation_clock:percentencode}" : timingPath),
     link("Rollout waterfall", tracePath), link("Changed Code Analysis", changedCodePath)], [
     ...(range.operationCount ? operations : []),
     variable("cycle_pr", "Cycle-time PR", "SELECT CAST(pr AS TEXT) FROM releases ORDER BY published DESC, pr DESC", ""),
@@ -271,5 +358,5 @@ export function dashboards(range: Range, repository: string) {
     ], [link("Shipping review", shippingPath)]),
     timepicker: { hidden: true },
   };
-  return { shipping, timing, trace, "changed-code": changedCode };
+  return { shipping, timing, trace, "changed-code": changedCode, actions: actionsDashboard(from, to, repository) };
 }
