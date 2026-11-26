@@ -1,7 +1,6 @@
 import { closeSync, openSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-
-export type Elapsed = { $: "Duration"; seconds: number; subtract_ms: number } | { $: "Unknown" };
+import { requireAdmission, revision, snapshot, type AdmissionPolicy } from "./actions.ts";
 
 export type Point = { $: "Time"; s: number; ms: number };
 export type List<T> = { $: "Nil" } | { $: "Con"; head: T; tail: List<T> };
@@ -17,8 +16,6 @@ type CallRecord = { $: "Ignored"; orphans: number } | {
 type CellFact = { $: "NoCell" } | { $: "Launch" | "Terminal"; key: string };
 type CellLink = { $: "Unlinked" } | { $: "Linked"; owner: string; call_id: string; end: Point };
 export type Milestone = { $: "Milestone"; id: string; at: number };
-type Owners = { $: "Owners"; count: number; s: number; ms: number };
-export type ReleaseOrder = { $: "Release"; published: number; checked: number; id: string; dispatch: number; index: number };
 
 export type SourcePolicy = {
   reasoning(event: string, point: Point): boolean;
@@ -40,10 +37,6 @@ export type SourcePolicy = {
     sourceMatches: boolean, runMatches: boolean): boolean;
   commit_complete(expected: number, observed: number): boolean;
   keep_commit(complete: boolean, milestone: Milestone): boolean;
-  pick_release(best: ReleaseOrder, next: ReleaseOrder, eligible: boolean): ReleaseOrder;
-  count_owner(state: Owners, owning: boolean, s: number, ms: number): Owners;
-  release_eligible(shipped: boolean, proofMerge: string, currentMerge: string, published: number,
-    checked: number, observedAsset: string, releaseAsset: string, observations: number): boolean;
   interval_ms(startSecond: number, startMs: number, endSecond: number, endMs: number): boolean;
   origin(creator: string, creationSource: string): string;
   owns_pr(source: string): boolean;
@@ -58,9 +51,6 @@ export type SourcePolicy = {
   proves_ancestry(base: string, mergeBase: string, expected: string, status: string): boolean;
   asset_access(status: number, bytes: number, rangeMatches: boolean): boolean;
   shipping(merged: number, published: number, checked: number, ancestry: boolean, access: boolean): boolean;
-  pr_to_release(opened: number, published: number): Elapsed;
-  thread_to_release(threadCount: number, startedSecond: number, startedMs: number,
-    opened: number, published: number): Elapsed;
 };
 
 export type ThreadEvidence = {
@@ -95,11 +85,11 @@ export function writeSources(path: string, action: (db: DatabaseSync) => void) {
   }
 }
 
-export function saveThread(path: string, data: ThreadEvidence) {
+export function saveThread(path: string, data: ThreadEvidence, policy: AdmissionPolicy) {
   writeSources(path, (db) => {
     const key = [data.instance, data.id] as const;
     const before = db.prepare("SELECT updated_ms FROM t3_threads WHERE instance=? AND thread_id=?").get(...key);
-    if (before && Number(before.updated_ms) > data.updated) throw Error("Older T3 snapshot");
+    requireAdmission(policy.thread_admission(snapshot(before?.updated_ms as number | undefined), revision(data.updated)));
     db.prepare("INSERT OR REPLACE INTO t3_threads VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
       ...key, data.created, data.updated, data.status, data.origin, Number(data.settled), data.runs.length);
     const runs = db.prepare("INSERT OR REPLACE INTO t3_runs VALUES (?, ?, ?, ?, ?, ?, ?)");
@@ -112,11 +102,11 @@ export function saveThread(path: string, data: ThreadEvidence) {
   });
 }
 
-export function saveRollout(path: string, data: RolloutEvidence) {
+export function saveRollout(path: string, data: RolloutEvidence, policy: AdmissionPolicy) {
   writeSources(path, (db) => {
     const key = [data.instance, data.session] as const;
     const previous = db.prepare("SELECT line_count FROM codex_rollouts WHERE instance=? AND session_id=?").get(...key);
-    if (previous && Number(previous.line_count) > data.lines) throw Error("Shorter rollout snapshot");
+    requireAdmission(policy.rollout_admission(snapshot(previous?.line_count as number | undefined), revision(data.lines)));
     db.prepare(`INSERT INTO codex_rollouts VALUES (?, ?, ?, ?, ?)
       ON CONFLICT(instance, session_id) DO UPDATE SET line_count=excluded.line_count,
       malformed_count=excluded.malformed_count, orphan_count=excluded.orphan_count`).run(

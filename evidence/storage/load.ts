@@ -1,4 +1,5 @@
-import { saveAttempt, type ActionAttempt } from "./actions.ts";
+import { buildPolicy, loadPolicy } from "../../tooling/bend.ts";
+import { admissionPolicy, saveAttempt, type ActionAttempt, type AdmissionPolicy } from "./actions.ts";
 import { saveDelivery, type PullRequest, type ReleaseEvidence } from "../delivery/delivery.ts";
 import { saveRollout, saveThread, writeSources, type RolloutEvidence, type ThreadEvidence } from "./sources.ts";
 
@@ -10,6 +11,12 @@ type ChangedCodeReport = {
   shallow: boolean;
   files: ChangedCodeFile[];
 };
+
+export { admissionPolicy, type AdmissionPolicy } from "./actions.ts";
+
+export async function buildAdmissionPolicy(directory: string): Promise<AdmissionPolicy> {
+  return loadPolicy(await buildPolicy(directory, admissionPolicy, "admission.mjs"));
+}
 
 export type EvidenceBatch =
   | { source: "github-actions"; attempt: ActionAttempt }
@@ -32,12 +39,12 @@ function saveChangedCode(database: string, repository: string, report: ChangedCo
   });
 }
 
-export function loadEvidence(database: string, batch: EvidenceBatch) {
+export function loadEvidence(database: string, batch: EvidenceBatch, policy: AdmissionPolicy) {
   switch (batch.source) {
-    case "github-actions": return saveAttempt(database, batch.attempt);
-    case "github-delivery": return saveDelivery(database, batch.pullRequest, batch.release);
-    case "codex": return saveRollout(database, batch.rollout);
+    case "github-actions": return saveAttempt(database, batch.attempt, policy);
+    case "github-delivery": return saveDelivery(database, batch.pullRequest, batch.release, policy);
+    case "codex": return saveRollout(database, batch.rollout, policy);
     case "git-change-scan": return saveChangedCode(database, batch.repository, batch.report);
-    case "t3": return saveThread(database, batch.thread);
+    case "t3": return saveThread(database, batch.thread, policy);
   }
 }
