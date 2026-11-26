@@ -2,7 +2,7 @@ import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, 
 import { once } from "node:events";
 import { createServer, type ServerResponse } from "node:http";
 import { dirname, extname, join, resolve } from "node:path";
-import { openShippingReview, repository, snapshotFormatVersion, writeSnapshot } from "../evidence/read.ts";
+import { openShippingReview, readPollMinutes, repository, savePollMinutes, snapshotFormatVersion, writeSnapshot } from "../evidence/read.ts";
 import { dashboards } from "./panels.ts";
 import { encodeTrace } from "./trace.ts";
 
@@ -128,6 +128,28 @@ const webTypes: Record<string, string> = {
   ".webp": "image/webp",
 };
 
+function pollingSettings(file: string, url: URL, method: string | undefined,
+  origin: string | undefined, expectedOrigin: string, response: ServerResponse) {
+  try {
+    if (method === "GET") {
+      queryParams(url.searchParams, []);
+      return json(response, 200, { minutes: readPollMinutes(file) });
+    }
+    if (method === "PUT") {
+      if (origin !== expectedOrigin) return error(response, 403, "invalid_origin", "Save from Harbor Settings.");
+      const value = queryParams(url.searchParams, ["minutes"]).get("minutes") ?? "";
+      const minutes = savePollMinutes(file, value);
+      if (minutes === null) throw new InvalidRequest("Enter a whole number from 1 to 1440.");
+      return json(response, 200, { minutes });
+    }
+    response.setHeader("Allow", "GET, PUT");
+    return error(response, 405, "method_not_allowed", "Use GET or PUT for polling settings.");
+  } catch (failure) {
+    if (failure instanceof InvalidRequest) throw failure;
+    return error(response, 503, "settings_unavailable", "Polling settings could not be accessed. Check the settings file and try again.");
+  }
+}
+
 function serveWeb(root: string, path: string, response: ServerResponse) {
   if (path !== "/" && !/^\/assets\/[a-zA-Z0-9_-]+[.][a-z0-9]+$/.test(path)) return false;
   const file = path === "/" ? "index.html" : path.slice(1);
@@ -151,6 +173,7 @@ async function serve(args: string[]) {
   if (port > 65535) throw Error("Port must be at most 65535");
   const proxyHost = process.env.BARNACLES_PROXY_HOST;
   const proxyUser = process.env.BARNACLES_PROXY_USER;
+  const pollSettings = process.env.BARNACLES_POLL_SETTINGS;
   if (Boolean(proxyHost) !== Boolean(proxyUser)) throw Error("Set both BARNACLES_PROXY_HOST and BARNACLES_PROXY_USER for Tailscale Serve.");
   if (!existsSync(join(directory, "review-policy.mjs"))) throw Error("Run dashboard/prepare.ts to build a review API snapshot first.");
   const webRoot = webDirectory ? resolve(webDirectory) : undefined;
@@ -168,18 +191,23 @@ async function serve(args: string[]) {
     if (proxyUser && request.headers["tailscale-user-login"] !== proxyUser) {
       return error(response, 403, "access_denied", "This dashboard requires an authorized Tailscale account.");
     }
-    if (request.method !== "GET") {
-      response.setHeader("Allow", "GET");
-      return error(response, 405, "method_not_allowed", "This API accepts GET requests.");
-    }
     try {
       if (!request.url?.startsWith("/")) throw new InvalidRequest("Use a documented API path.");
       const url = new URL(`http://127.0.0.1${request.url}`);
+      if (url.pathname === "/settings/polling" && pollSettings) {
+        const origin = `${host === proxyHost ? "https" : "http"}://${host}`;
+        return pollingSettings(pollSettings, url, request.method, request.headers.origin, origin, response);
+      }
+      if (request.method !== "GET") {
+        response.setHeader("Allow", "GET");
+        return error(response, 405, "method_not_allowed", "This API accepts GET requests.");
+      }
       if (webRoot && serveWeb(webRoot, url.pathname, response)) return;
       if (url.pathname === "/api/v1") {
         queryParams(url.searchParams, []);
         return json(response, 200, {
           version: 1,
+          pollingSettings: pollSettings ? "/settings/polling" : undefined,
           endpoints: {
             shipping: { path: "/api/v1/shipping", parameters: ["from", "to", "clock", "operation", "limit", "offset"] },
             pullRequest: { path: "/api/v1/pull-requests/{number}", parameters: ["asOf"] },

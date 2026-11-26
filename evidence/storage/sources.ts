@@ -126,6 +126,10 @@ export type SourcePolicy = {
   link_state(state: string): string;
   merged_at(opened: number, merged: number, confirmed: boolean): number;
   linux_main_source(tag: string): string;
+  poll_pr_needed(updated: number, stored: number): boolean;
+  poll_attempt_needed(updated: number, stored: number, status: string): boolean;
+  poll_release_source(tag: string, published: number, draft: boolean): string;
+  poll_release_recorded(shipped: boolean, stored: string, source: string): boolean;
   linux_main_asset(state: string, name: string): boolean;
   may_probe(assetCount: number, published: number, publicRelease: boolean, tagMatches: boolean): boolean;
   same_revision(merge: string, release: string): boolean;

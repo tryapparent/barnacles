@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { closeSync, copyFileSync, openSync } from "node:fs";
+import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, renameSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { DatabaseSync, type SQLInputValue, type SQLOutputValue } from "node:sqlite";
 import { buildPolicies, buildPolicy, loadPolicy } from "../../tooling/bend.ts";
 import { readDelivery } from "../delivery/delivery.ts";
@@ -208,9 +209,7 @@ function writeActionsWait(source: DatabaseSync, view: DatabaseSync, repo: string
   }
 }
 
-export async function writeSnapshot(input: string, output: string, scratch: string, repo: string, cutoff: number,
-  writeTrace: (key: string, trace: TraceProjection) => string, actionsWaitWindow?: ActionWaitWindow,
-  timingCutoff = cutoff * 1000, reviewPolicyOutput?: string) {
+async function compileSnapshotPolicies(scratch: string) {
   const [sources, metricModule, modelModule, waitModule] = await buildPolicies(scratch, [
     [sourcePolicy, "sources.mjs"],
     [new URL("./metrics.bend", import.meta.url), "metrics.mjs"],
@@ -221,6 +220,15 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
   const metrics: Metrics = await loadPolicy(metricModule);
   const estimator: Estimator = await loadPolicy(modelModule);
   const waits: WaitPolicy = await loadPolicy(waitModule);
+  return { policy, metrics, estimator, waits, metricModule };
+}
+
+type SnapshotPolicies = Awaited<ReturnType<typeof compileSnapshotPolicies>>;
+
+export async function writeSnapshot(input: string, output: string, scratch: string, repo: string, cutoff: number,
+  writeTrace?: (key: string, trace: TraceProjection) => string, actionsWaitWindow?: ActionWaitWindow,
+  timingCutoff = cutoff * 1000, reviewPolicyOutput?: string, compiled?: SnapshotPolicies) {
+  const { policy, metrics, estimator, waits, metricModule } = compiled ?? await compileSnapshotPolicies(scratch);
   const source = new DatabaseSync(input, { readOnly: true });
   closeSync(openSync(output, "wx", 0o600));
   const view = new DatabaseSync(output);
@@ -452,7 +460,7 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
         const rollout = rollouts.get(key);
         const trace = projectTrace(observations, events, metrics.rollout_clean(
           Number(rollout?.malformed_count ?? 1), Number(rollout?.orphan_count ?? 1)), metrics);
-        const traceId = trace ? writeTrace(key, trace) : null;
+        const traceId = trace && writeTrace ? writeTrace(key, trace) : null;
         windows.run(session, traceId, trace?.bounds.from ?? null, trace?.bounds.to ?? null, trace?.spans.length ?? 0);
         const mixed = metrics.trace_preference(clocks.cells.count, events.length);
         if (trace && traceId && metrics.trace_preferred(trace.bounds.to, mixed, defaultTrace?.to ?? 0, defaultTrace?.mixed ?? false)) {
@@ -476,6 +484,38 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
     source.close();
     view.close();
   }
+}
+
+export function harborSnapshotPublisher(directory: string, repo: string, scratch: string) {
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const database = join(directory, "dashboard.sqlite");
+  const reviewPolicy = join(directory, "review-policy.mjs");
+  if (existsSync(database)) {
+    const previous = new DatabaseSync(database, { readOnly: true });
+    try {
+      if (previous.prepare("SELECT repository FROM review_metadata").get()?.repository !== repo) {
+        throw Error("The Harbor snapshot belongs to another repository");
+      }
+    } finally {
+      previous.close();
+    }
+  }
+  let compiled: SnapshotPolicies | undefined;
+  return async (input: string) => {
+    compiled ??= await compileSnapshotPolicies(scratch);
+    const staging = mkdtempSync(join(directory, ".harbor-"));
+    try {
+      const next = join(staging, "dashboard.sqlite");
+      const policy = join(staging, "review-policy.mjs");
+      const now = Date.now();
+      await writeSnapshot(input, next, scratch, repo, Math.floor(now / 1000), undefined, undefined, now,
+        existsSync(reviewPolicy) ? undefined : policy, compiled);
+      if (existsSync(policy)) renameSync(policy, reviewPolicy);
+      renameSync(next, database);
+    } finally {
+      rmSync(staging, { recursive: true, force: true });
+    }
+  };
 }
 
 type ReviewInput = {

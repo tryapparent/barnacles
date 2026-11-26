@@ -33,6 +33,15 @@ def link_state(value: String) -> String:
 def same_revision(merge_sha: String, release_sha: String) -> Bool:
   String.eq(merge_sha, release_sha)
 
+def poll_pr_needed(updated: U32, stored: U32) -> Bool:
+  U32.is_gt(updated, stored)
+
+def poll_attempt_needed(updated: U32, stored: U32, status: String) -> Bool:
+  Bool.or(U32.is_gt(updated, stored), Bool.not(String.eq(status, "completed")))
+
+def poll_release_recorded(shipped: Bool, stored: String, source: String) -> Bool:
+  Bool.and(shipped, same_revision(stored, source))
+
 def proves_ancestry(base: String, merge_base: String, +expected: String, status: String) -> Bool:
   Bool.and(String.eq(status, "ahead"), Bool.and(String.eq(base, expected), String.eq(merge_base, expected)))
 
@@ -317,6 +326,9 @@ def merged_at(opened: U32, +merged: U32, confirmed: Bool) -> U32:
 
 def linux_main_source(+tag: String) -> String:
   Bool.pick(String, String.starts_with(tag, "linux-main-v2-"), String.drop(tag, 14n), "")
+
+def poll_release_source(tag: String, published: U32, draft: Bool) -> String:
+  Bool.pick(String, Bool.and(U32.is_ne(published, 0), Bool.not(draft)), linux_main_source(tag), "")
 
 def linux_main_asset(state: String, name: String) -> Bool:
   Bool.and(String.eq(state, "uploaded"), String.ends_with(name, "-linux-x86_64.AppImage"))

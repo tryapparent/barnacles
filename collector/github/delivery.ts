@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
-import type { Milestone, PullRequest, ReleaseEvidence, SourcePolicy } from "../../evidence/index.ts";
+import { githubPollRows, loadEvidence, type Milestone, type PullRequest, type ReleaseEvidence, type SourcePolicy } from "../../evidence/index.ts";
 import { array, repository, row, seconds, sha, str } from "../wire.ts";
-import { positiveInt, readGitHub } from "./attempt.ts";
+import { collectAttempt, positiveInt, readGitHub, type ClockPolicy } from "./attempt.ts";
 
 function probe(url: string, size: number) {
   try {
@@ -144,4 +144,65 @@ export function releaseEvidence(pr: PullRequest, tag: string, policy: SourcePoli
     checked, http: proof.http || null, bytes: proof.http ? proof.bytes : null, accessible, ancestry,
     shipped, dispatch: includeDispatch && shipped ? releaseDispatch(root, source, published, policy, read) : null,
   };
+}
+
+export function pollGitHub(database: string, repo: string, policy: SourcePolicy, clocks: ClockPolicy,
+  read = readGitHub, access = probe) {
+  const root = `repos/${repo}`;
+  const prs = array(read(`${root}/pulls?state=all&sort=updated&direction=desc&per_page=30`), 30).map(row);
+  const inventory = row(read(`${root}/actions/runs?per_page=30`));
+  const runs = array(inventory.workflow_runs, 30).map(row);
+  const releases = array(read(`${root}/releases?per_page=20`), 20).map(row);
+  const stored = githubPollRows(database, repo);
+  const prClocks = new Map(stored.prs.map((pr) => [Number(pr.pr_number), Number(pr.updated_at)]));
+  const attempts = new Map(stored.attempts.map((run) => [`${run.run_id}/${run.attempt}`, run]));
+  const changes = new Map<number, PullRequest>();
+  let failed = 0;
+  function capture(kind: string, action: () => void) {
+    try {
+      action();
+    } catch (error) {
+      failed++;
+      console.error(`GitHub poll ${kind} failed: ${(error as Error).message}`);
+    }
+  }
+  for (const item of prs) capture("pull request", () => {
+    const number = positiveInt(item.number);
+    const updated = seconds(item.updated_at);
+    if (!updated) throw Error("Missing pull request update time");
+    if (!policy.poll_pr_needed(updated, prClocks.get(number) ?? 0)) return;
+    const pr = pullRequest(repo, number, policy, read, true);
+    loadEvidence(database, { source: "github-delivery", pullRequest: pr });
+    changes.set(number, pr);
+  });
+  for (const run of runs) capture("workflow", () => {
+    const runId = positiveInt(run.id);
+    const attempt = positiveInt(run.run_attempt);
+    const updated = seconds(run.updated_at);
+    if (!updated) throw Error("Missing workflow update time");
+    const previous = attempts.get(`${runId}/${attempt}`);
+    if (!policy.poll_attempt_needed(updated, Number(previous?.source_updated ?? 0), str(previous?.status))) return;
+    const fact = collectAttempt({ repository: repo, runId, attempt, sha: sha(run.head_sha) }, clocks, read);
+    loadEvidence(database, { source: "github-actions", attempt: fact });
+  });
+  const mergeShas = new Map(stored.prs.map((pr) => [Number(pr.pr_number), str(pr.merge_sha)]));
+  for (const pr of changes.values()) mergeShas.set(pr.number, pr.mergeSha ?? "");
+  const byMerge = Map.groupBy(mergeShas, ([, merge]) => merge);
+  const proofs = Map.groupBy(stored.releases, (release) => `${release.pr_number}/${release.release_id}`);
+  for (const item of releases) capture("release", () => {
+    const tag = str(item.tag_name);
+    const source = policy.poll_release_source(tag, seconds(item.published_at), item.draft !== false);
+    if (!source) return;
+    const releaseId = positiveInt(item.id);
+    for (const [number] of byMerge.get(source) ?? []) {
+      if (proofs.get(`${number}/${releaseId}`)?.some((old) =>
+        policy.poll_release_recorded(old.shipped === 1, str(old.merge_sha), source))) continue;
+      const pr = changes.get(number) ?? pullRequest(repo, number, policy, read, true);
+      if (!policy.same_revision(pr.mergeSha ?? "", source)) continue;
+      const release = releaseEvidence(pr, tag, policy, read, access, true);
+      if (release.id !== releaseId) throw Error("GitHub release identity changed during polling");
+      loadEvidence(database, { source: "github-delivery", pullRequest: pr, release });
+    }
+  });
+  return { pullRequestsScanned: prs.length, workflowRunsScanned: runs.length, releasesScanned: releases.length, failed };
 }
