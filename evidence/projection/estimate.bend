@@ -46,6 +46,11 @@ def model_observe(model: Model, +scope: String, +files: Nat, +git: Nat, +builds:
         observe(b, context(scope, files, git, pushes), builds, seconds),
         observe(p, context(scope, files, git, builds), pushes, seconds)}
 
+def model_receipt(model: Model, +instance: String, session: String, files: Nat, git: Nat, builds: Nat, pushes: Nat,
+                  seconds: F32) -> Model:
+  +scope = String.append(Nat.show(String.length(instance)), String.append(":", String.append(instance, session)))
+  model_observe(model, scope, files, git, builds, pushes, seconds)
+
 def merge_fit(fit: Fit, n: Nat, commands: Nat, xx: F32, xy: F32, yy: F32) -> Fit:
   match fit:
     case Fit{sn, sc, sg, sxx, sxy, syy}:

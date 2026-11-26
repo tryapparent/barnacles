@@ -1,5 +1,37 @@
-import { DatabaseSync } from "node:sqlite";
-import { writeSources, type DeliveryClocks, type Elapsed, type Point, type ReleaseOrder, type SourcePolicy } from "../storage/sources.ts";
+import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
+import { requireAdmission, revision, snapshot, type AdmissionPolicy } from "../storage/actions.ts";
+import { writeSources, type List, type Point } from "../storage/sources.ts";
+
+type Elapsed = { $: "Duration"; seconds: number; subtract_ms: number } | { $: "Unknown" };
+type Owners = { $: "Owners"; count: number; s: number; ms: number };
+type Provenance = { $: "Observation" } | { $: "Legacy"; checks: List<number> };
+type Proof = { $: "Proof"; channel: string; index: number; shipped: boolean; merge: string;
+  published: number; checked: number; asset: string; release_asset: string; release_id: string;
+  source: string; dispatch: number; provenance: Provenance };
+type ReportRow = { $: "ReportRow"; index: number; pr: Elapsed; thread: Elapsed };
+
+type DeliveryEndpoint = "thread_started" | "first_commit" | "pr_opened" | "first_ci" | "first_review" |
+  "pr_merged" | "release_dispatched" | "published" | "access_checked";
+type DeliveryStage = "thread_to_commit" | "commit_to_open" | "open_to_first_ci" | "first_ci_to_merge" |
+  "merge_to_dispatch" | "dispatch_to_publication" | "open_to_merge" | "merge_to_publication" |
+  "thread_to_publication" | "publication_to_access_check";
+export type DeliveryClocks = { $: "DeliveryTimes" } & Record<DeliveryEndpoint, Point>;
+
+export type DeliveryPolicy = {
+  delivery_thread_link(ownerCount: number, linkCount: number, start: Point, opened: Point): string;
+  proof_matches_merge(proofMerge: string, currentMerge: string): boolean;
+  delivery_release_link(selected: boolean, hasProof: boolean, matchingMerge: boolean): string;
+  delivery_endpoints(clocks: DeliveryClocks): { $: "Endpoints" } & Record<DeliveryEndpoint, string>;
+  delivery_stages(clocks: DeliveryClocks, threadLink: string): { $: "Stages" } & Record<DeliveryStage, string>;
+  delivery_thread_window(created: Point, windowStart: Point): string;
+  empty_groups(): unknown;
+  empty_owners(): Owners;
+  observe_owner(owners: Owners, owning: boolean, seconds: number, millis: number): Owners;
+  observe_release(groups: unknown, currentMerge: string, proof: Proof): unknown;
+  report_rows(groups: unknown, opened: number, owners: Owners): List<ReportRow>;
+};
+
+export const deliveryPolicy = new URL("./report.bend", import.meta.url);
 
 export type PullRequest = {
   repository: string; number: number; opened: number; merged: number | null;
@@ -20,11 +52,11 @@ function secondsFromElapsed(value: Elapsed): number | null {
   return value.$ === "Duration" ? (value.seconds * 1000 - value.subtract_ms) / 1000 : null;
 }
 
-export function saveDelivery(path: string, pr: PullRequest, release?: ReleaseEvidence) {
+export function saveDelivery(path: string, pr: PullRequest, release: ReleaseEvidence | undefined, policy: AdmissionPolicy) {
   writeSources(path, (db) => {
     const before = db.prepare("SELECT updated_at FROM github_prs WHERE repository=? AND pr_number=?")
       .get(pr.repository, pr.number);
-    if (before && Number(before.updated_at) > pr.updated) throw Error("Older pull request snapshot");
+    requireAdmission(policy.pr_admission(snapshot(before?.updated_at as number | undefined), revision(pr.updated)));
     db.prepare("INSERT OR REPLACE INTO github_prs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
       pr.repository, pr.number, pr.state, pr.opened, pr.merged, pr.mergeSha,
       pr.firstCommit?.at ?? null, pr.firstCommit?.sha ?? null, Number(pr.commitsComplete),
@@ -47,7 +79,7 @@ function point(ms: number): Point {
   return { $: "Time", s: Math.floor(ms / 1000), ms: ms % 1000 };
 }
 
-function deliveryCoverage(policy: SourcePolicy, clocks: DeliveryClocks, threadLink: string, releaseLink: string) {
+function deliveryCoverage(policy: DeliveryPolicy, clocks: DeliveryClocks, threadLink: string, releaseLink: string) {
   const { $: _endpointTag, ...endpoints } = policy.delivery_endpoints(clocks);
   const { $: _stageTag, ...stages } = policy.delivery_stages(clocks, threadLink);
   return {
@@ -64,7 +96,7 @@ function deliveryCoverage(policy: SourcePolicy, clocks: DeliveryClocks, threadLi
   };
 }
 
-export function deliveryReport(path: string, policy: SourcePolicy) {
+export function deliveryReport(path: string, policy: DeliveryPolicy) {
   const db = new DatabaseSync(path, { readOnly: true });
   try {
     db.exec("BEGIN");
@@ -74,7 +106,7 @@ export function deliveryReport(path: string, policy: SourcePolicy) {
   }
 }
 
-export function readDelivery(db: DatabaseSync, policy: SourcePolicy, repository?: string) {
+export function readDelivery(db: DatabaseSync, policy: DeliveryPolicy, repository?: string) {
   const table = (name: string) => Boolean(db.prepare("SELECT 1 FROM sqlite_schema WHERE name=?").get(name));
   const pullRequests = db.prepare(`
     SELECT repository, pr_number, state, opened_at, merged_at, merge_sha,
@@ -83,57 +115,67 @@ export function readDelivery(db: DatabaseSync, policy: SourcePolicy, repository?
   `).all(repository ?? null, repository ?? null);
   const current = table("github_release_observations") ? db.prepare(`
     SELECT channel, published_at, checked_at, ancestry, release_id, asset_id, shipped, merge_sha,
-           source_sha, 1 AS observation_count, asset_id AS release_asset_id, dispatch_run, dispatched_at
+           source_sha, asset_id AS release_asset_id, dispatch_run, dispatched_at
     FROM github_release_observations WHERE repository = ? AND pr_number = ?
   `) : null;
-  const legacy = table("github_release_proofs") ? db.prepare(`
-    SELECT proof.channel, release.published_at, proof.checked_at, proof.ancestry, proof.release_id,
-           asset.asset_id, proof.shipped, proof.merge_sha, release.source_sha,
-           release.asset_id AS release_asset_id,
-           (SELECT count(*) FROM github_asset_checks c WHERE c.repository = proof.repository
-             AND c.release_id = proof.release_id AND c.channel = proof.channel) AS observation_count,
-           NULL AS dispatch_run, NULL AS dispatched_at
-    FROM github_release_proofs proof
-    JOIN github_releases release USING (repository, release_id, channel)
-    JOIN github_asset_checks asset USING (repository, release_id, channel, checked_at)
-    WHERE proof.repository = ? AND proof.pr_number = ?
-  `) : null;
+  const legacy = table("github_release_proofs") ? {
+    proofs: db.prepare(`
+      SELECT proof.channel, release.published_at, proof.checked_at, proof.ancestry, proof.release_id,
+             asset.asset_id, proof.shipped, proof.merge_sha, release.source_sha,
+             release.asset_id AS release_asset_id,
+             NULL AS dispatch_run, NULL AS dispatched_at
+      FROM github_release_proofs proof
+      JOIN github_releases release USING (repository, release_id, channel)
+      JOIN github_asset_checks asset USING (repository, release_id, channel, checked_at)
+      WHERE proof.repository = ? AND proof.pr_number = ?
+    `),
+    checks: db.prepare(`
+      SELECT checked_at FROM github_asset_checks WHERE repository=? AND release_id=? AND channel=?
+    `),
+  } : null;
   const owners = db.prepare(`
     SELECT owning, created_ms FROM t3_pr_links JOIN t3_threads USING (instance, thread_id)
     WHERE repository = ? AND pr_number = ?
   `);
   const ci = db.prepare("SELECT 1 FROM sqlite_schema WHERE name='github_pr_ci'").get()
     ? db.prepare("SELECT run_id, started_at FROM github_pr_ci WHERE repository=? AND pr_number=?") : null;
-  const none: ReleaseOrder = { $: "Release", published: 0xffffffff, checked: 0xffffffff, id: "", dispatch: 0, index: 0 };
   return pullRequests.flatMap(({ merge_sha, ...pr }) => {
     const key = [pr.repository, pr.pr_number] as const;
     const firstCI = ci?.get(...key);
-    const proofs = [...(current?.all(...key) ?? []), ...(legacy?.all(...key) ?? [])];
-    const groups = Map.groupBy(proofs, (release) => release.channel);
-    const selected = [];
-    for (const releases of groups.values()) {
-      const first = releases.reduce((best, candidate, index) => policy.pick_release(best, {
-        $: "Release", published: Number(candidate.published_at ?? 0), checked: Number(candidate.checked_at),
-        id: [String(candidate.release_id).padStart(16, "0"), candidate.source_sha, candidate.asset_id].join(":"),
-        dispatch: Number(candidate.dispatched_at ?? 0), index: index + 1,
-      }, policy.release_eligible(candidate.shipped === 1, String(candidate.merge_sha ?? ""), String(merge_sha ?? ""),
-        Number(candidate.published_at ?? 0), Number(candidate.checked_at), String(candidate.asset_id ?? "0"),
-        String(candidate.release_asset_id ?? "0"), Number(candidate.observation_count))), none);
-      if (first.index) selected.push(releases[first.index - 1]);
+    const candidates: Record<string, SQLOutputValue>[] = [];
+    let groups = policy.empty_groups();
+    const observe = (row: Record<string, SQLOutputValue>, provenance: Provenance) => {
+      groups = policy.observe_release(groups, String(merge_sha ?? ""), {
+        $: "Proof", index: candidates.push(row), channel: String(row.channel), shipped: row.shipped === 1,
+        merge: String(row.merge_sha ?? ""), published: Number(row.published_at ?? 0), checked: Number(row.checked_at),
+        asset: String(row.asset_id ?? "0"), release_asset: String(row.release_asset_id ?? "0"),
+        release_id: String(row.release_id), source: String(row.source_sha ?? ""),
+        dispatch: Number(row.dispatched_at ?? 0), provenance,
+      });
+    };
+    for (const row of current?.all(...key) ?? []) observe(row, { $: "Observation" });
+    if (legacy) for (const row of legacy.proofs.all(...key)) {
+      let checks: List<number> = { $: "Nil" };
+      for (const check of legacy.checks.all(pr.repository, row.release_id, row.channel)) {
+        checks = { $: "Con", head: Number(check.checked_at), tail: checks };
+      }
+      observe(row, { $: "Legacy", checks });
     }
+    let owner = policy.empty_owners();
     const links = owners.all(...key);
-    const owner = links.reduce((value, row) => {
+    for (const row of links) {
       const ms = Number(row.created_ms);
-      return policy.count_owner(value, row.owning === 1, Math.floor(ms / 1000), ms % 1000);
-    }, { $: "Owners" as const, count: 0, s: 0, ms: 0 });
-    return (selected.length ? selected : [null]).map((release) => {
+      owner = policy.observe_owner(owner, row.owning === 1, Math.floor(ms / 1000), ms % 1000);
+    }
+    const rows = [];
+    for (let row = policy.report_rows(groups, Number(pr.opened_at), owner); row.$ === "Con"; row = row.tail) {
+      const release = candidates[row.head.index - 1];
       const opened = Number(pr.opened_at);
       const published = Number(release?.published_at ?? 0);
-      const cycle = policy.thread_to_release(owner.count, owner.s, owner.ms, opened, published);
       const threadStart: Point = { $: "Time", s: owner.s, ms: owner.ms };
       const threadLink = policy.delivery_thread_link(owner.count, links.length, threadStart, point(opened * 1000));
-      const releaseLink = policy.delivery_release_link(release !== null, proofs.length > 0,
-        proofs.some((proof) => policy.proof_matches_merge(String(proof.merge_sha ?? ""), String(merge_sha ?? ""))));
+      const releaseLink = policy.delivery_release_link(release !== undefined, candidates.length > 0,
+        candidates.some((proof) => policy.proof_matches_merge(String(proof.merge_sha ?? ""), String(merge_sha ?? ""))));
       const coverage = deliveryCoverage(policy, {
         $: "DeliveryTimes",
         thread_started: threadStart,
@@ -146,16 +188,17 @@ export function readDelivery(db: DatabaseSync, policy: SourcePolicy, repository?
         published: point(published * 1000),
         access_checked: point(Number(release?.checked_at ?? 0) * 1000),
       }, threadLink, releaseLink);
-      return {
+      rows.push({
         ...pr, channel: release?.channel ?? null, published_at: release?.published_at ?? null,
         first_ci_at: firstCI?.started_at ?? null, first_ci_run: firstCI?.run_id ?? null,
         release_dispatched_at: release?.dispatched_at || null, release_run: release?.dispatch_run || null,
         checked_at: release?.checked_at ?? null, ancestry: release?.ancestry ?? null,
         release_id: release?.release_id ?? null, asset_id: release?.asset_id ?? null,
         coverage, owner_count: owner.count, thread_started_ms: owner.s ? owner.s * 1000 + owner.ms : null,
-        pr_to_release_seconds: secondsFromElapsed(policy.pr_to_release(opened, published)),
-        thread_to_release_seconds: secondsFromElapsed(cycle),
-      };
-    });
+        pr_to_release_seconds: secondsFromElapsed(row.head.pr),
+        thread_to_release_seconds: secondsFromElapsed(row.head.thread),
+      });
+    }
+    return rows;
   });
 }

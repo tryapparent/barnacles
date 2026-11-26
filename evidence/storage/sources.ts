@@ -1,7 +1,6 @@
 import { closeSync, openSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-
-export type Elapsed = { $: "Duration"; seconds: number; subtract_ms: number } | { $: "Unknown" };
+import { requireAdmission, revision, snapshot, type AdmissionPolicy } from "./actions.ts";
 
 export type Point = { $: "Time"; s: number; ms: number };
 export type List<T> = { $: "Nil" } | { $: "Con"; head: T; tail: List<T> };
@@ -34,18 +33,19 @@ type ProcessFact = {
 };
 type WaitCell = { $: "NotWait" } | { $: "WaitCell"; status: string; owner: string };
 type Observer = { $: "Observer"; session: string; launch: string };
+type WatchPoll = { $: "Poll"; index: number; observer: Observer; start: Point; end: Point };
+type IndexedOverlap = { first: number; second: number; start: Point; end: Point };
 type ProcessObservation = {
   call: string; resultCall: string | null; resultLine: number | null; handle: string | null;
   fact: ProcessFact; observer: WatchIdentity; start: number | null; end: number | null;
 };
 
 export type Milestone = { $: "Milestone"; id: string; at: number };
-type Owners = { $: "Owners"; count: number; s: number; ms: number };
-export type ReleaseOrder = { $: "Release"; published: number; checked: number; id: string; dispatch: number; index: number };
 
 export type RolloutAdmission = {
-  $: "Gate"; status: string; session: string; parent: string; boundary: number; inherited: number;
-  unassigned: number; keep: boolean;
+  $: "Gate";
+  phase: { $: "AwaitingMetadata" | "SingleSource" | "ForkSource" | "InvalidMetadata" | "UnprovenFork" | "ConflictingMetadata" };
+  session: string; parent: string; boundary: number; inherited: number; unassigned: number; keep: boolean;
 };
 
 type RolloutQuality = {
@@ -55,14 +55,9 @@ type RolloutQuality = {
 
 type RolloutClocks = { $: "Clocks"; first: Point; last: Point };
 
-type DeliveryEndpoint = "thread_started" | "first_commit" | "pr_opened" | "first_ci" | "first_review" |
-  "pr_merged" | "release_dispatched" | "published" | "access_checked";
-type DeliveryStage = "thread_to_commit" | "commit_to_open" | "open_to_first_ci" | "first_ci_to_merge" |
-  "merge_to_dispatch" | "dispatch_to_publication" | "open_to_merge" | "merge_to_publication" |
-  "thread_to_publication" | "publication_to_access_check";
-export type DeliveryClocks = { $: "DeliveryTimes" } & Record<DeliveryEndpoint, Point>;
-
 export type SourcePolicy = {
+  repository_name(value: string): string;
+  rollout_admission(): RolloutAdmission;
   rollout_file_status(available: boolean, regular: boolean, empty: boolean, oversized: boolean): string;
   rollout_line(state: RolloutAdmission, meta: boolean, id: string, parent: string, fork: string, shared: string,
     boundary: number, line: number, ordinalOk: boolean, decoded: boolean): RolloutAdmission;
@@ -72,12 +67,6 @@ export type SourcePolicy = {
     ambiguous: boolean, categories: string, candidate: CommandMix, received: boolean): RolloutQuality;
   rollout_clock(clocks: RolloutClocks, at: Point): RolloutClocks;
   rollout_pairing_gaps(malformed: number, oversized: number, cutoff: number, unassigned: number): number;
-  delivery_thread_link(ownerCount: number, linkCount: number, start: Point, opened: Point): string;
-  proof_matches_merge(proofMerge: string, currentMerge: string): boolean;
-  delivery_release_link(selected: boolean, hasProof: boolean, matchingMerge: boolean): string;
-  delivery_endpoints(clocks: DeliveryClocks): { $: "Endpoints" } & Record<DeliveryEndpoint, string>;
-  delivery_stages(clocks: DeliveryClocks, threadLink: string): { $: "Stages" } & Record<DeliveryStage, string>;
-  delivery_thread_window(created: Point, windowStart: Point): string;
   reasoning(event: string, point: Point): boolean;
   model_wait_input(previous: string, envelope: string, kind: string, callId: string): string;
   tool(name: string, direct: List<ShellCommand>, wrapped: List<ToolInvocation>): unknown;
@@ -103,8 +92,7 @@ export type SourcePolicy = {
   valid_process_result(clean: boolean, ambiguous: boolean, start: Point, end: Point): boolean;
   watch_identity(repository: string, run: string, sha: string, attempt: string): WatchIdentity;
   time_order(first: Point, last: Point): boolean;
-  watch_overlap(first: Observer, second: Observer, firstStart: Point, firstEnd: Point, secondStart: Point, secondEnd: Point):
-    { $: "NoOverlap" } | { $: "Overlap"; start: Point; end: Point };
+  watch_overlaps(polls: List<WatchPoll>): List<IndexedOverlap>;
   call_record(state: unknown): CallRecord;
   pick_milestone(best: Milestone, next: Milestone): Milestone;
   pick_review(best: Milestone, next: Milestone, opened: number): Milestone;
@@ -114,10 +102,6 @@ export type SourcePolicy = {
     sourceMatches: boolean, runMatches: boolean): boolean;
   commit_complete(expected: number, observed: number): boolean;
   keep_commit(complete: boolean, milestone: Milestone): boolean;
-  pick_release(best: ReleaseOrder, next: ReleaseOrder, eligible: boolean): ReleaseOrder;
-  count_owner(state: Owners, owning: boolean, s: number, ms: number): Owners;
-  release_eligible(shipped: boolean, proofMerge: string, currentMerge: string, published: number,
-    checked: number, observedAsset: string, releaseAsset: string, observations: number): boolean;
   interval_ms(startSecond: number, startMs: number, endSecond: number, endMs: number): boolean;
   origin(creator: string, creationSource: string): string;
   owns_pr(source: string): boolean;
@@ -136,9 +120,6 @@ export type SourcePolicy = {
   proves_ancestry(base: string, mergeBase: string, expected: string, status: string): boolean;
   asset_access(status: number, bytes: number, rangeMatches: boolean): boolean;
   shipping(merged: number, published: number, checked: number, ancestry: boolean, access: boolean): boolean;
-  pr_to_release(opened: number, published: number): Elapsed;
-  thread_to_release(threadCount: number, startedSecond: number, startedMs: number,
-    opened: number, published: number): Elapsed;
 };
 
 export type ThreadEvidence = {
@@ -185,11 +166,11 @@ export function writeSources(path: string, action: (db: DatabaseSync) => void) {
   }
 }
 
-export function saveThread(path: string, data: ThreadEvidence) {
+export function saveThread(path: string, data: ThreadEvidence, policy: AdmissionPolicy) {
   writeSources(path, (db) => {
     const key = [data.instance, data.id] as const;
     const before = db.prepare("SELECT updated_ms FROM t3_threads WHERE instance=? AND thread_id=?").get(...key);
-    if (before && Number(before.updated_ms) > data.updated) throw Error("Older T3 snapshot");
+    requireAdmission(policy.thread_admission(snapshot(before?.updated_ms as number | undefined), revision(data.updated)));
     db.prepare("INSERT OR REPLACE INTO t3_threads VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
       ...key, data.created, data.updated, data.status, data.origin, Number(data.settled), data.runs.length);
     const runs = db.prepare("INSERT OR REPLACE INTO t3_runs VALUES (?, ?, ?, ?, ?, ?, ?)");
@@ -214,11 +195,11 @@ export function saveRejectedRollout(path: string, receipt: RolloutImport) {
   writeSources(path, (db) => writeRolloutReceipt(db, receipt));
 }
 
-export function saveRollout(path: string, data: RolloutEvidence) {
+export function saveRollout(path: string, data: RolloutEvidence, policy: AdmissionPolicy) {
   writeSources(path, (db) => {
     const key = [data.instance, data.session] as const;
     const previous = db.prepare("SELECT line_count FROM codex_rollouts WHERE instance=? AND session_id=?").get(...key);
-    if (previous && Number(previous.line_count) > data.lines) throw Error("Shorter rollout snapshot");
+    requireAdmission(policy.rollout_admission(snapshot(previous?.line_count as number | undefined), revision(data.lines)));
     db.prepare(`INSERT INTO codex_rollouts VALUES (?, ?, ?, ?, ?)
       ON CONFLICT(instance, session_id) DO UPDATE SET line_count=excluded.line_count,
       malformed_count=excluded.malformed_count, orphan_count=excluded.orphan_count`).run(
@@ -333,22 +314,16 @@ export function watchOverlaps(path: string, policy: SourcePolicy, workflow: Extr
       WHERE repository=? AND run_id=? AND head_sha=? AND attempt=? AND poll_started_ms IS NOT NULL
       ORDER BY poll_started_ms, instance, session_id, call_id`)
       .all(workflow.repository, workflow.run_id, workflow.head_sha, workflow.attempt) : [];
-    const intervals = observations.map((row) => ({
-      row, start: point(Number(row.poll_started_ms)), end: point(Number(row.poll_result_ms)),
-      observer: { $: "Observer", session: String(row.session_id), launch: String(row.process_launch_call_id) } as const,
-    }));
+    const intervals = observations.reduceRight<List<WatchPoll>>((tail, row, index) => ({
+      $: "Con", tail, head: {
+        $: "Poll", index, start: point(Number(row.poll_started_ms)), end: point(Number(row.poll_result_ms)),
+        observer: { $: "Observer", session: String(row.session_id), launch: String(row.process_launch_call_id) },
+      },
+    }), { $: "Nil" });
     const overlaps = [];
-    let active: typeof intervals = [];
-    for (const current of intervals) {
-      active = active.filter((previous) => policy.time_order(current.start, previous.end));
-      for (const previous of active) {
-        const overlap = policy.watch_overlap(previous.observer, current.observer,
-          previous.start, previous.end, current.start, current.end);
-        if (overlap.$ === "Overlap") overlaps.push({
-          first: previous.row, second: current.row, started_ms: millis(overlap.start), ended_ms: millis(overlap.end),
-        });
-      }
-      active.push(current);
+    for (let sequence = policy.watch_overlaps(intervals); sequence.$ === "Con"; sequence = sequence.tail) {
+      const { first, second, start, end } = sequence.head;
+      overlaps.push({ first: observations[first], second: observations[second], started_ms: millis(start), ended_ms: millis(end) });
     }
     return { workflow, observations: observations.length, overlaps };
   } finally {

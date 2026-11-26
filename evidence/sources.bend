@@ -1,4 +1,5 @@
 import Base
+import ./repository.bend as Repository
 
 def ordered(+start: U32, end: U32) -> Bool:
   Bool.and(U32.is_ne(start, 0), U32.is_le(start, end))
@@ -50,23 +51,6 @@ def asset_access(http_status: U32, bytes: U32, range_matches: Bool) -> Bool:
 
 def shipping(merged: U32, +published: U32, checked: U32, ancestry: Bool, access: Bool) -> Bool:
   Bool.and(ancestry, Bool.and(access, Bool.and(ordered(merged, published), ordered(published, checked))))
-
-type Elapsed is Data:
-  Duration{seconds: U32, subtract_ms: U32}
-  Unknown{}
-
-def elapsed(known: Bool, started: U32, offset_ms: U32, ended: U32) -> Elapsed:
-  match known:
-    case True{}: Duration{U32.sub(ended, started), offset_ms}
-    case False{}: Unknown{}
-
-def pr_to_release(+opened: U32, +published: U32) -> Elapsed:
-  elapsed(ordered(opened, published), opened, 0, published)
-
-def thread_to_release(owner_count: U32, +started: U32, +offset_ms: U32, +opened: U32, +published: U32) -> Elapsed:
-  elapsed(Bool.and(U32.is_eq(owner_count, 1),
-    Bool.and(interval_ms(started, offset_ms, opened, 0), ordered(opened, published))),
-    started, offset_ms, published)
 
 def tool_label(+name: String, fallback: String) -> String:
   Bool.pick(String, String.eq(name, "exec_command"), "Shell command",
@@ -348,6 +332,17 @@ def has_time(point: Point) -> Bool:
   match point:
     case Time{s, ms}: U32.is_ne(s, 0)
 
+type RunClocks is Data:
+  RunClocks{started: Point, completed: Point}
+
+def t3_run_clocks(requested: Point, +started: Point, +completed: Point) -> RunClocks:
+  +started_known = time_order(requested, started)
+  RunClocks{Bool.pick(Point, started_known, started, Time{0, 0}),
+    Bool.pick(Point, Bool.and(started_known, time_order(started, completed)), completed, Time{0, 0})}
+
+def github_link(host: String) -> Bool:
+  String.eq(host, "github.com")
+
 def reasoning(event: String, point: Point) -> Bool:
   Bool.and(String.eq(event, "reasoning"), has_time(point))
 
@@ -355,9 +350,12 @@ def is_turn_boundary(+kind: String) -> Bool:
   Bool.or(Bool.or(String.eq(kind, "task_started"), String.eq(kind, "task_complete")),
     Bool.or(String.eq(kind, "turn_aborted"), Bool.or(String.eq(kind, "user_message"), String.eq(kind, "agent_message"))))
 
+def tool_output(+kind: String) -> Bool:
+  Bool.or(String.eq(kind, "function_call_output"), String.eq(kind, "custom_tool_call_output"))
+
 def model_wait_input(previous: String, +envelope: String, +kind: String, call_id: String) -> String:
   Bool.pick(String, Bool.and(String.eq(envelope, "response_item"),
-    Bool.or(String.eq(kind, "function_call_output"), String.eq(kind, "custom_tool_call_output"))), call_id,
+    tool_output(kind)), call_id,
     Bool.pick(String, Bool.and(String.eq(envelope, "event_msg"), Bool.not(is_turn_boundary(kind))), previous, ""))
 
 type CallState is Data:
@@ -507,39 +505,481 @@ def keep_commit(complete: Bool, milestone: Milestone) -> Bool:
   match milestone:
     case Milestone{id, at}: Bool.and(complete, Bool.and(U32.is_ne(at, 0), Bool.not(String.eq(id, ""))))
 
-type ReleaseOrder is Data:
-  Release{published: U32, checked: U32, id: String, dispatch: U32, index: U32}
+def source_identity(+actual: String, expected: String) -> Bool:
+  Bool.and(Bool.not(String.eq(actual, "")), String.eq(actual, expected))
 
-def release_before(a: ReleaseOrder, b: ReleaseOrder) -> Bool:
-  match a b:
-    case Release{+ap, +ac, +aid, +ad, ai} Release{+bp, +bc, +bid, +bd, bi}:
-      preferred_dispatch = Bool.and(U32.is_ne(ad, 0), Bool.or(U32.is_eq(bd, 0), U32.is_lt(ad, bd)))
-      same_observation = Bool.and(String.eq(aid, bid), preferred_dispatch)
-      Bool.and(U32.is_ne(ap, 0), Bool.or(U32.is_eq(bi, 0),
-        Bool.or(U32.is_lt(ap, bp), Bool.and(U32.is_eq(ap, bp),
-          Bool.or(U32.is_lt(ac, bc), Bool.and(U32.is_eq(ac, bc),
-            Bool.or(String.is_lt(aid, bid), same_observation)))))))
+def pr_identity(number: String, expected_number: String, repo: String, expected_repo: String) -> Bool:
+  Bool.and(source_identity(number, expected_number), source_identity(repo, expected_repo))
 
-def pick_release(+best: ReleaseOrder, +next: ReleaseOrder, eligible: Bool) -> ReleaseOrder:
-  Bool.pick(ReleaseOrder, Bool.and(eligible, release_before(next, best)), next, best)
+def workflow_complete(expected: String, returned: String, size: U32, array_seen: Bool) -> Bool:
+  Bool.and(array_seen, Bool.and(U32.is_le(size, 100), source_identity(expected, returned)))
 
-def release_eligible(shipped: Bool, proof_merge: String, current_merge: String, +published: U32,
-                     checked: U32, +asset: String, release_asset: String, observations: U32) -> Bool:
-  Bool.and(shipped, Bool.and(String.eq(proof_merge, current_merge),
-    Bool.and(ordered(published, checked), Bool.and(U32.is_eq(observations, 1),
-      Bool.and(Bool.not(String.eq(asset, "0")), String.eq(asset, release_asset))))))
+def reviews_complete(size: U32) -> Bool:
+  U32.is_lt(size, 100)
 
-type Owners is Data:
-  Owners{count: U32, s: U32, ms: U32}
+type PRTarget is Data:
+  PRTarget{number: String, repo: String, fork: String, branch: String, opened: U32, merged: U32}
 
-def count_owner(state: Owners, owning: Bool, s: U32, ms: U32) -> Owners:
-  match state owning:
-    case Owners{0, previous_s, previous_ms} True{}: Owners{1, s, ms}
-    case Owners{count, previous_s, previous_ms} True{}: Owners{U32.inc(count), 0, 0}
-    case _ False{}: state
+type PRLink is Data:
+  PRLink{number: String, repo: String}
+
+type WorkflowRun is Data:
+  WorkflowRun{id: String, event: String, status: String, conclusion: String, attempt: String,
+    repo: String, fork: String, branch: String, revision: String, links_known: Bool, links: List<&2, PRLink>, started: U32}
+
+def search_pr_ci(target: PRTarget) -> Bool:
+  match target:
+    case PRTarget{number, repo, fork, branch, opened, merged}:
+      Bool.and(ordered(opened, merged), Bool.and(Bool.not(String.eq(repo, "")), Bool.not(String.eq(branch, ""))))
+
+def has_workflow_link(+number: String, +repo: String, links: List<&2, PRLink>) -> Bool:
+  match links:
+    case []: False{}
+    case PRLink{linked_number, linked_repo} <> rest:
+      Bool.or(pr_identity(linked_number, number, linked_repo, repo), has_workflow_link(number, repo, rest))
+
+def has_revision(+revision: String, revisions: List<&2, String>) -> Bool:
+  match revisions:
+    case []: False{}
+    case head <> rest:
+      Bool.or(source_identity(revision, head), has_revision(revision, rest))
+
+def pr_run_matches(target: PRTarget, run: WorkflowRun, revisions: List<&2, String>, complete: Bool) -> Bool:
+  match target run:
+    case PRTarget{number, +base, head, branch, opened, merged}
+         WorkflowRun{id, event, status, conclusion, attempt, repo, fork, ref, revision, links_known, links, started}:
+      match links:
+        case []:
+          Bool.and(links_known, Bool.and(complete,
+            Bool.and(pr_identity(repo, base, fork, head), Bool.and(source_identity(ref, branch), has_revision(revision, revisions)))))
+        case _:
+          Bool.and(links_known, has_workflow_link(number, base, links))
+
+def workflow_start(+target: PRTarget, +run: WorkflowRun, revisions: List<&2, String>, complete: Bool, +best: Milestone) -> Milestone:
+  match target run:
+    case PRTarget{number, base, head, ref, opened, merged}
+         WorkflowRun{+id, event, status, conclusion, attempt, repo, fork, branch, revision, links_known, links, +started}:
+      Bool.pick(Milestone, pr_ci_start(event, status, conclusion,
+        Bool.pick(U32, String.eq(attempt, "1"), 1, 0), pr_run_matches(target, run, revisions, complete), opened, started, merged),
+        pick_milestone(best, Milestone{id, started}), best)
+
+def no_milestone() -> Milestone:
+  Milestone{"", 4294967295}
+
+type MilestoneInventory is Data:
+  Inventory{best: Milestone, seen: Map<&2, Bool>}
+  Ambiguous{}
+
+def take_milestone(id: String, best: Milestone, found: Map<&2, Bool> & Bool) -> MilestoneInventory:
+  match id found:
+    case "" _: Ambiguous{}
+    case _ Tuple{seen, True{}}: Ambiguous{}
+    case _ Tuple{seen, False{}}: Inventory{best, Map.set(&2, Bool, seen, id, True{})}
+
+def observe_workflow(inventory: MilestoneInventory, +run: WorkflowRun, target: PRTarget,
+  revisions: List<&2, String>, complete: Bool) -> MilestoneInventory:
+  match inventory run:
+    case Inventory{best, seen} WorkflowRun{+id, event, status, conclusion, attempt, repo, fork, branch, revision, links_known, links, started}:
+      take_milestone(id, workflow_start(target, run, revisions, complete, best), Map.has(&2, Bool, seen, id))
+    case _ _: Ambiguous{}
+
+def workflow_milestone(inventory: MilestoneInventory) -> Milestone:
+  match inventory:
+    case Inventory{best, seen}: best
+    case Ambiguous{}: no_milestone()
+
+def scan_pr_workflows(runs: List<&2, WorkflowRun>, +target: PRTarget, +revisions: List<&2, String>, +complete: Bool,
+  inventory: MilestoneInventory) -> Milestone:
+  match runs:
+    case []: workflow_milestone(inventory)
+    case run <> rest:
+      scan_pr_workflows(rest, target, revisions, complete, observe_workflow(inventory, run, target, revisions, complete))
+
+def first_pr_workflow(runs: List<&2, WorkflowRun>, target: PRTarget, revisions: List<&2, String>, complete: Bool) -> Milestone:
+  scan_pr_workflows(runs, target, revisions, complete, Inventory{no_milestone(), Map.new(&2, Bool)})
+
+type DispatchRun is Data:
+  DispatchRun{id: String, event: String, conclusion: String, title: String, created: U32, updated: U32}
+
+def publishing_title(+title: String, source: String, +id: String) -> Bool:
+  +expected = String.concat(["main · source ", source, " · candidate run ", id])
+  Bool.and(Bool.not(String.eq(id, "")),
+    Bool.or(String.eq(title, expected), String.starts_with(title, String.append(expected, " ·"))))
+
+def keep_dispatch(best: Milestone, next: Milestone, eligible: Bool, updated: Map<&2, Bool>) -> MilestoneInventory:
+  match best eligible:
+    case _ False{}: Inventory{best, updated}
+    case Milestone{"", before} True{}: Inventory{next, updated}
+    case _ _: Ambiguous{}
+
+def add_dispatch(best: Milestone, next: Milestone, eligible: Bool, found: Map<&2, Bool> & Bool) -> MilestoneInventory:
+  match next found:
+    case Milestone{"", at} _: Ambiguous{}
+    case _ Tuple{seen, True{}}: Ambiguous{}
+    case Milestone{+id, at} Tuple{seen, False{}}:
+      keep_dispatch(best, Milestone{id, at}, eligible, Map.set(&2, Bool, seen, id, True{}))
+
+def observe_dispatch(inventory: MilestoneInventory, run: DispatchRun, source: String, published: U32) -> MilestoneInventory:
+  match inventory run:
+    case Inventory{best, seen} DispatchRun{+id, event, conclusion, title, +created, updated}:
+      add_dispatch(best, Milestone{id, created}, publishing_run(event, conclusion, created, published, updated,
+        publishing_title(title, source, id), True{}), Map.has(&2, Bool, seen, id))
+    case _ _: Ambiguous{}
+
+def scan_dispatch(runs: List<&2, DispatchRun>, +source: String, +published: U32, inventory: MilestoneInventory) -> Milestone:
+  match runs:
+    case []: workflow_milestone(inventory)
+    case run <> rest: scan_dispatch(rest, source, published, observe_dispatch(inventory, run, source, published))
+
+def release_dispatch(runs: List<&2, DispatchRun>, source: String, published: U32) -> Milestone:
+  scan_dispatch(runs, source, published, Inventory{no_milestone(), Map.new(&2, Bool)})
+
+type CommitObservation is Data:
+  CommitObservation{complete: Bool, first: Milestone}
+
+type CommitInventory is Data:
+  Commits{count: U32, selection: MilestoneInventory}
+
+def observe_commit(inventory: CommitInventory, +commit: Milestone) -> CommitInventory:
+  match inventory commit:
+    case Commits{count, Inventory{best, seen}} Milestone{+id, at}:
+      Commits{U32.inc(count), take_milestone(id, pick_milestone(best, commit), Map.has(&2, Bool, seen, id))}
+    case _ _: Commits{0, Ambiguous{}}
+
+def commit_observation(expected: String, inventory: CommitInventory) -> CommitObservation:
+  match inventory:
+    case Commits{count, Inventory{+best, seen}}:
+      +complete = String.eq(expected, U32.show(count))
+      CommitObservation{complete, Bool.pick(Milestone, keep_commit(complete, best), best, no_milestone())}
+    case _: CommitObservation{False{}, no_milestone()}
+
+def pr_commits(expected: String, commits: List<&2, Milestone>) -> CommitObservation:
+  commit_observation(expected, List.foldl(~&2, ~Milestone, ~CommitInventory,
+    ~(state => commit => observe_commit(state, commit)), commits, Commits{0, Inventory{no_milestone(), Map.new(&2, Bool)}}))
+
+type ReviewObservation is Data:
+  ReviewObservation{complete: Bool, first: Milestone}
+
+def earliest_review(reviews: List<&2, Milestone>, +opened: U32, count: U32, best: Milestone) -> ReviewObservation:
+  match reviews:
+    case []: ReviewObservation{reviews_complete(count), best}
+    case review <> rest: earliest_review(rest, opened, U32.inc(count), pick_review(best, review, opened))
+
+def pr_reviews(reviews: List<&2, Milestone>, opened: U32) -> ReviewObservation:
+  earliest_review(reviews, opened, 0, no_milestone())
+
+def same_tag(observed: String, requested: String) -> Bool:
+  source_identity(observed, requested)
+
+def tag_matches(kind: String, revision: String, source: String) -> Bool:
+  Bool.and(String.eq(kind, "commit"), source_identity(revision, source))
+
+def ancestry_request(+merge: String, source: String, tag_verified: Bool) -> String:
+  Bool.pick(String, Bool.and(tag_verified, Bool.not(String.eq(merge, ""))),
+    Bool.pick(String, same_revision(merge, source), "equal", "compare"), "unknown")
+
+def ancestry_result(base: String, merge_base: String, expected: String, status: String) -> String:
+  Bool.pick(String, proves_ancestry(base, merge_base, expected, status), "ancestor", "unproven")
+
+def release_shipped(merged: U32, published: U32, checked: U32, +ancestry: String, access: Bool) -> Bool:
+  shipping(merged, published, checked, Bool.or(String.eq(ancestry, "equal"), String.eq(ancestry, "ancestor")), access)
+
+type ReleaseAsset is Data:
+  ReleaseAsset{index: U32, state: String, name: String}
+
+def asset_chars(name: String) -> Bool:
+  match name:
+    case SNil{}: True{}
+    case SCon{+c, tail}:
+      Bool.and(Bool.or(Char.is_alpha(c), Bool.or(Char.is_digit(c),
+        Bool.or(Char.is_eq(c, '.'), Bool.or(Char.is_eq(c, '_'), Bool.or(Char.is_eq(c, '+'), Char.is_eq(c, '-')))))), asset_chars(tail))
+
+type AssetSelection is Data:
+  Candidate{index: U32}
+  Competing{}
+
+def consider_asset(selection: AssetSelection, index: U32, eligible: Bool) -> AssetSelection:
+  match selection eligible:
+    case Candidate{0} True{}: Candidate{index}
+    case _ True{}: Competing{}
+    case _ False{}: selection
+
+def select_asset(selection: AssetSelection, asset: ReleaseAsset) -> AssetSelection:
+  match asset:
+    case ReleaseAsset{index, state, +name}:
+      consider_asset(selection, index, Bool.and(linux_main_asset(state, name), asset_chars(name)))
+
+type AssetChoice is Data:
+  AssetChoice{index: U32, probe: Bool}
+
+def asset_choice(selection: AssetSelection, published: U32, public_release: Bool, verified: Bool) -> AssetChoice:
+  match selection:
+    case Competing{}: AssetChoice{0, False{}}
+    case Candidate{+index}:
+      AssetChoice{index, may_probe(Bool.pick(U32, U32.is_ne(index, 0), 1, 0), published, public_release, verified)}
+
+def choose_asset(assets: List<&2, ReleaseAsset>, published: U32, public_release: Bool, verified: Bool) -> AssetChoice:
+  asset_choice(List.foldl(~&2, ~ReleaseAsset, ~AssetSelection, ~select_asset, assets, Candidate{0}), published, public_release, verified)
+
+def range_matches(header: String, size: String) -> Bool:
+  String.eq(header, String.append("content-range: bytes 0-0/", size))
+
+def rollout_timestamp(original: Point, envelope: Point) -> Point:
+  match original:
+    case Time{0, 0}: envelope
+    case _: original
+
+def rollout_session(+previous: String, observed: String) -> Bool:
+  Bool.or(String.eq(previous, ""), String.eq(previous, observed))
+
+def rollout_event(+kind: String) -> String:
+  Bool.pick(String, Bool.or(String.eq(kind, "function_call"), String.eq(kind, "custom_tool_call")), "start",
+    Bool.pick(String, tool_output(kind), "finish", ""))
+
+def all_digits(chars: List<&2, Char>) -> Bool:
+  match chars:
+    case []: True{}
+    case head <> tail: Bool.and(Char.is_digit(head), all_digits(tail))
+
+def decimal(+value: String) -> Bool:
+  Bool.and(Bool.not(String.is_empty(value)), Bool.and(Bool.not(String.starts_with(value, "0")),
+    all_digits(String.to_list(value))))
+
+type PrintedOutput is Data:
+  PrintedOutput{statement: String, call: String, printer: String, args: U32, optional: Bool}
+
+def prints_result(output: PrintedOutput) -> Bool:
+  match output:
+    case PrintedOutput{"expression_statement", "call_expression", "text", 1, False{}}: True{}
+    case _: False{}
+
+type BindingSyntax is Data:
+  BindingSyntax{declaration: String, count: U32, kind: String, name: String}
+
+def bound_result(binding: BindingSyntax, kind: String, name: String) -> Bool:
+  match binding kind:
+    case BindingSyntax{"lexical_declaration", 1, "identifier", bound} "identifier": String.eq(bound, name)
+    case _ _: False{}
+
+def printed_process(+statements: U32, output: PrintedOutput, binding: BindingSyntax, kind: String, name: String) -> Bool:
+  Bool.and(prints_result(output), Bool.or(U32.is_eq(statements, 1),
+    Bool.and(U32.is_eq(statements, 2), bound_result(binding, kind, name))))
+
+def literal_kind(kind: String) -> Bool:
+  Bool.not(String.eq(label(kind, ["string", "template_string", "number", "true", "false", "null"]), "unknown"))
+
+def literal_fields(fields: List<&2, String>) -> Bool:
+  Bool.not(List.any(~&2, ~String, ~(kind => Bool.not(literal_kind(kind))), fields))
+
+def awaited_process(awaited: String, call: String, +callee: String, arity: U32, optional: Bool,
+  +fields: List<&2, String>, poll: Bool) -> Bool:
+  match awaited call arity optional:
+    case "await_expression" "call_expression" 1 False{}:
+      Bool.and(Bool.or(String.eq(callee, "tools.write_stdin"), Bool.and(Bool.not(poll), String.eq(callee, "tools.exec_command"))),
+        Bool.and(Bool.not(List.is_empty(&2, String, fields)), literal_fields(fields)))
+    case _ _ _ _: False{}
+
+def loop_digits(bounded: Bool, +value: String) -> Bool:
+  match bounded:
+    case True{}: Bool.or(String.eq(value, "0"), decimal(value))
+    case False{}: False{}
+
+def loop_count(kind: String, +value: String) -> Bool:
+  loop_digits(Bool.and(String.eq(kind, "number"), Nat.is_le(String.length(value), 3n)), value)
+
+def identifier_char(+char: Char) -> Bool:
+  Bool.or(Char.is_alpha(char), Bool.or(Char.is_digit(char), Char.is_eq(char, '_')))
+
+def identifier_rest(name: String, valid: Bool) -> Bool:
+  match name valid:
+    case _ False{}: False{}
+    case SNil{} True{}: True{}
+    case SCon{head, tail} True{}: identifier_rest(tail, identifier_char(head))
+
+def loop_index(name: String) -> Bool:
+  match name:
+    case SNil{}: False{}
+    case SCon{+head, rest}:
+      identifier_rest(rest, Bool.or(Char.is_alpha(head), Char.is_eq(head, '_')))
+
+def last_iteration(value: Maybe<&2, U32>) -> String:
+  match value:
+    case Some{0}: "-1"
+    case Some{count}: U32.show(U32.sub(count, 1))
+    case None{}: ""
+
+def loop_stop(+stop: String, index: String, ceiling: String, result: String) -> Bool:
+  +closed = String.concat(["(!", result, ".session_id"])
+  Bool.or(String.eq(stop, String.append(closed, ")")),
+    String.eq(stop, String.concat([closed, "||", index, "===", last_iteration(U32.read(ceiling)), ")"])))
+
+type PollLoop is Data:
+  PollLoop{kind: String, initial_kind: String, initial: String, ceiling_kind: String, ceiling: String,
+    condition: String, increment: String, body: String, statements: U32, branch: String, alternative: Bool,
+    stop: String, consequence: String, actions: U32, exit: String, exit_args: U32, output_kind: String, output_name: String}
+
+def loop_shape(+kind: String, body: String, statements: U32, branch: String, alternative: Bool,
+  consequence: String, actions: U32, exit: String, exit_args: U32) -> Bool:
+  Bool.and(String.eq(kind, "for_statement"), Bool.and(String.eq(body, "statement_block"),
+    Bool.and(U32.is_eq(statements, 2), Bool.and(String.eq(branch, "if_statement"), Bool.and(Bool.not(alternative),
+      Bool.and(String.eq(consequence, "statement_block"), Bool.and(U32.is_eq(actions, 2),
+        Bool.and(String.eq(exit, "break_statement"), U32.is_eq(exit_args, 0)))))))))
+
+def loop_bounds(initial_kind: String, initial: String, ceiling_kind: String, +ceiling: String,
+  condition: String, increment: String, +i: String) -> Bool:
+  Bool.and(loop_index(i), Bool.and(loop_count(initial_kind, initial), Bool.and(loop_count(ceiling_kind, ceiling),
+    Bool.and(String.eq(condition, String.concat([i, "<", ceiling])), String.eq(increment, String.append(i, "++"))))))
+
+def poll_loop(loop: PollLoop, index: BindingSyntax, +result: BindingSyntax, output: PrintedOutput) -> Bool:
+  match loop index:
+    case PollLoop{kind, initial_kind, initial, ceiling_kind, +ceiling, condition, increment,
+      body, statements, branch, alternative, stop, consequence, actions, exit, exit_args, output_kind, +printed}
+      BindingSyntax{"lexical_declaration", 1, "identifier", +i}:
+      Bool.and(prints_result(output), Bool.and(bound_result(result, output_kind, printed),
+        Bool.and(Bool.not(String.eq(i, printed)), Bool.and(loop_bounds(initial_kind, initial, ceiling_kind, ceiling, condition, increment, i),
+          Bool.and(loop_shape(kind, body, statements, branch, alternative, consequence, actions, exit, exit_args),
+            loop_stop(stop, i, ceiling, printed))))))
+    case _ _: False{}
+
+type ShellSyntax is Data:
+  OtherShell{}
+  ShellLiteral{command: ShellCommand, nested_kinds: List<&2, String>}
+  ShellBinary{operators: List<&2, String>, left: ShellSyntax, right: ShellSyntax}
+
+def substitution(+kind: String) -> Bool:
+  Bool.or(String.eq(kind, "command_substitution"), String.eq(kind, "process_substitution"))
+
+def has_substitution(kinds: List<&2, String>) -> Bool:
+  List.any(~&2, ~String, ~(kind => substitution(kind)), kinds)
+
+def append_shell(left: List<&2, ShellCommand>, right: List<&2, ShellCommand>) -> List<&2, ShellCommand>:
+  match left right:
+    case Nil{} _: []
+    case _ Nil{}: []
+    case _ _: List.append(&2, ShellCommand, left, right)
+
+def sequential_commands(syntax: ShellSyntax) -> List<&2, ShellCommand>:
+  match syntax:
+    case OtherShell{}: []
+    case ShellLiteral{command, kinds}:
+      Bool.pick(List<&2, ShellCommand>, has_substitution(kinds), [], [command])
+    case ShellBinary{Con{"&&", Nil{}}, left, right}:
+      append_shell(sequential_commands(left), sequential_commands(right))
+    case _: []
+
+def sequential_shell(statements: U32, syntax: ShellSyntax) -> List<&2, ShellCommand>:
+  Bool.pick(List<&2, ShellCommand>, U32.is_eq(statements, 1), sequential_commands(syntax), [])
+
+type ExactShell is Data:
+  ExactShell{kind: String, command: ShellCommand, nested: List<&2, String>, redirects: List<&2, String>}
+
+def bad_shell_node(+kind: String) -> Bool:
+  Bool.or(substitution(kind), Bool.or(String.eq(kind, "variable_assignment"),
+    Bool.or(String.eq(kind, "heredoc_redirect"), String.eq(kind, "herestring_redirect"))))
+
+def bad_redirect(+text: String) -> Bool:
+  Bool.not(Bool.or(String.starts_with(text, ">"), Bool.or(String.starts_with(text, "1>"), String.starts_with(text, "2>"))))
+
+def exact_statements(statements: List<&2, ExactShell>, remaining: U32, kept: List<&2, ShellCommand>) -> List<&2, ShellCommand>:
+  match statements remaining:
+    case [] _: List.reverse(&2, ShellCommand, kept)
+    case _ 0: []
+    case ExactShell{"command", command, nested, redirects} <> tail _:
+      Bool.pick(List<&2, ShellCommand>,
+        Bool.or(List.any(~&2, ~String, ~(node => bad_shell_node(node)), nested), List.any(~&2, ~String, ~(redirect => bad_redirect(redirect)), redirects)),
+        [], exact_statements(tail, U32.sub(remaining, 1), command <> kept))
+    case _ _: []
+
+def exact_shell(separators: List<&2, String>, statements: List<&2, ExactShell>) -> List<&2, ShellCommand>:
+  Bool.pick(List<&2, ShellCommand>, List.any(~&2, ~String, ~(kind => Bool.not(String.eq(kind, ";"))), separators),
+    [], exact_statements(statements, 3, []))
+
+type ReasoningMarker is Data:
+  Marker{line: U32, observed: Point, input: String}
+
+type RolloutMetadata is Data:
+  RolloutMetadata{session: String, malformed: U32, previous: String, newest_markers: List<&2, ReasoningMarker>}
+
+type MetadataStep is Data:
+  MetadataStep{state: RolloutMetadata, action: String}
+
+def empty_rollout_metadata() -> RolloutMetadata:
+  RolloutMetadata{"", 0, "", []}
+
+def rollout_bad_line(meta: RolloutMetadata) -> RolloutMetadata:
+  match meta:
+    case RolloutMetadata{session, malformed, previous, markers}:
+      RolloutMetadata{session, U32.inc(malformed), previous, markers}
+
+def rollout_clear_result(meta: RolloutMetadata, session: String) -> RolloutMetadata:
+  match meta:
+    case RolloutMetadata{old, malformed, previous, markers}: RolloutMetadata{session, malformed, "", markers}
+
+def rollout_markers(meta: RolloutMetadata) -> List<&2, ReasoningMarker>:
+  match meta:
+    case RolloutMetadata{session, malformed, previous, markers}: List.reverse(&2, ReasoningMarker, markers)
+
+def record_metadata(known_session: Bool, call_event: Bool, valid_id: Bool, mark: Bool,
+  action: String, line: U32, observed: Point, previous: String, meta: RolloutMetadata) -> MetadataStep:
+  match known_session call_event valid_id mark meta:
+    case False{} _ _ _ _: MetadataStep{rollout_bad_line(meta), ""}
+    case True{} True{} False{} _ _: MetadataStep{rollout_bad_line(meta), ""}
+    case True{} _ _ True{} RolloutMetadata{session, malformed, input, markers}:
+      MetadataStep{RolloutMetadata{session, malformed, input, Marker{line, observed, previous} <> markers}, action}
+    case _ _ _ _ _: MetadataStep{meta, action}
+
+def record_response(+action: String, known_session: Bool, valid_id: Bool, kind: String, line: U32,
+  +observed: Point, previous: String, meta: RolloutMetadata) -> MetadataStep:
+  record_metadata(known_session, Bool.not(String.eq(action, "")), valid_id, reasoning(kind, observed),
+    action, line, observed, previous, meta)
+
+def call_id_chars(id: String) -> Bool:
+  match id:
+    case SNil{}: True{}
+    case SCon{+c, rest}:
+      Bool.and(Bool.or(Char.is_alpha(c), Bool.or(Char.is_digit(c),
+        Bool.or(Char.is_eq(c, '_'), Bool.or(Char.is_eq(c, ':'), Char.is_eq(c, '-'))))), call_id_chars(rest))
+
+def valid_call_id(+id: String) -> Bool:
+  Bool.and(Bool.not(String.eq(id, "")), call_id_chars(id))
+
+type RolloutEnvelope is Data:
+  SessionMetadata{}
+  ResponseItem{}
+  OtherEnvelope{}
+
+def record_envelope(route: RolloutEnvelope, meta: RolloutMetadata, +envelope: String, +kind: String, +id: String,
+  +observed_session: String, line: U32, observed: Point) -> MetadataStep:
+  match route meta:
+    case SessionMetadata{} RolloutMetadata{+session, malformed, previous, markers}:
+      MetadataStep{RolloutMetadata{observed_session, malformed, "", markers},
+        Bool.pick(String, rollout_session(session, observed_session), "", "conflict")}
+    case ResponseItem{} RolloutMetadata{+session, malformed, +previous, markers}:
+      +valid_id = valid_call_id(id)
+      record_response(rollout_event(kind), Bool.not(String.eq(session, "")), valid_id, kind, line, observed, previous,
+        RolloutMetadata{session, malformed, model_wait_input(previous, envelope, kind, Bool.pick(String, valid_id, id, "")), markers})
+    case OtherEnvelope{} RolloutMetadata{session, malformed, previous, markers}:
+      MetadataStep{RolloutMetadata{session, malformed, model_wait_input(previous, envelope, kind, id), markers}, ""}
+
+def rollout_metadata(meta: RolloutMetadata, +envelope: String, kind: String, id: String,
+  observed_session: String, line: U32, observed: Point) -> MetadataStep:
+  route = Bool.pick(RolloutEnvelope, String.eq(envelope, "session_meta"), SessionMetadata{},
+    Bool.pick(RolloutEnvelope, String.eq(envelope, "response_item"), ResponseItem{}, OtherEnvelope{}))
+  record_envelope(route, meta, envelope, kind, id, observed_session, line, observed)
+
+type RolloutPhase is Data:
+  AwaitingMetadata{}
+  SingleSource{}
+  ForkSource{}
+  InvalidMetadata{}
+  UnprovenFork{}
+  ConflictingMetadata{}
 
 type RolloutAdmission is Data:
-  Gate{status: String, session: String, parent: String, boundary: U32, inherited: U32, unassigned: U32, keep: Bool}
+  Gate{phase: RolloutPhase, session: String, parent: String, boundary: U32, inherited: U32, unassigned: U32, keep: Bool}
+
+def rollout_admission() -> RolloutAdmission:
+  Gate{AwaitingMetadata{}, "", "", 0, 0, 0, False{}}
 
 def rollout_file_status(available: Bool, regular: Bool, empty: Bool, oversized: Bool) -> String:
   Bool.pick(String, available,
@@ -549,14 +989,14 @@ def rollout_file_status(available: Bool, regular: Bool, empty: Bool, oversized: 
 def rollout_header(+id: String, +parent: String, fork: String, shared: String, +boundary: U32, line: U32, ordinal_ok: Bool,
   +unassigned: U32) -> RolloutAdmission:
   match id boundary:
-    case "" _: Gate{"invalid_metadata", "", "", 0, 0, unassigned, False{}}
-    case _ 0: Gate{"single", id, "", 0, 0, unassigned, False{}}
+    case "" _: Gate{InvalidMetadata{}, "", "", 0, 0, unassigned, False{}}
+    case _ 0: Gate{SingleSource{}, id, "", 0, 0, unassigned, False{}}
     case _ _:
       valid = Bool.and(ordinal_ok, Bool.and(U32.is_eq(line, 1), U32.is_gt(boundary, 1)))
       linked = Bool.and(String.eq(parent, fork), Bool.and(String.eq(parent, shared),
         Bool.and(Bool.not(String.eq(parent, "")), Bool.not(String.eq(parent, id)))))
-      Bool.pick(RolloutAdmission, Bool.and(valid, linked), Gate{"fork", id, parent, boundary, 0, unassigned, False{}},
-        Gate{"unproven_fork", "", "", 0, 0, unassigned, False{}})
+      Bool.pick(RolloutAdmission, Bool.and(valid, linked), Gate{ForkSource{}, id, parent, boundary, 0, unassigned, False{}},
+        Gate{UnprovenFork{}, "", "", 0, 0, unassigned, False{}})
 
 def rollout_fork_line(+session: String, +parent: String, +boundary: U32, +inherited: U32, +unassigned: U32,
   +line: U32, ordinal_ok: Bool, +meta: Bool, id: String, shared: String, declares_fork: Bool) -> RolloutAdmission:
@@ -565,9 +1005,9 @@ def rollout_fork_line(+session: String, +parent: String, +boundary: U32, +inheri
   +before = U32.is_le(line, boundary)
   valid = Bool.and(ordinal_ok, header_ok)
   Bool.pick(RolloutAdmission, valid,
-    Gate{"fork", session, parent, boundary, Bool.pick(U32, before, U32.inc(inherited), inherited), unassigned,
+    Gate{ForkSource{}, session, parent, boundary, Bool.pick(U32, before, U32.inc(inherited), inherited), unassigned,
       Bool.not(before)},
-    Gate{"unproven_fork", session, parent, boundary, inherited, unassigned, False{}})
+    Gate{UnprovenFork{}, session, parent, boundary, inherited, unassigned, False{}})
 
 def add_if(+count: U32, test: Bool) -> U32:
   Bool.pick(U32, test, U32.inc(count), count)
@@ -575,26 +1015,28 @@ def add_if(+count: U32, test: Bool) -> U32:
 def rollout_line(state: RolloutAdmission, +meta: Bool, +id: String, parent: String, fork: String, shared: String,
   +boundary: U32, line: U32, ordinal_ok: Bool, decoded: Bool) -> RolloutAdmission:
   match state:
-    case Gate{"awaiting_metadata", _, _, _, _, +unassigned, _}:
+    case Gate{AwaitingMetadata{}, _, _, _, _, +unassigned, _}:
       Bool.pick(RolloutAdmission, meta, rollout_header(id, parent, fork, shared, boundary, line, ordinal_ok, unassigned),
-        Gate{"awaiting_metadata", "", "", 0, 0, add_if(unassigned, decoded), False{}})
-    case Gate{"single", +session, _, _, _, +unassigned, _}:
+        Gate{AwaitingMetadata{}, "", "", 0, 0, add_if(unassigned, decoded), False{}})
+    case Gate{SingleSource{}, +session, _, _, _, +unassigned, _}:
       same = Bool.and(String.eq(id, session), U32.is_eq(boundary, 0))
       Bool.pick(RolloutAdmission, Bool.and(meta, Bool.not(same)),
-        Gate{"conflicting_metadata", session, "", 0, 0, unassigned, False{}},
-        Gate{"single", session, "", 0, 0, unassigned, Bool.not(meta)})
-    case Gate{"fork", session, source_parent, start, inherited, unassigned, _}:
+        Gate{ConflictingMetadata{}, session, "", 0, 0, unassigned, False{}},
+        Gate{SingleSource{}, session, "", 0, 0, unassigned, Bool.not(meta)})
+    case Gate{ForkSource{}, session, source_parent, start, inherited, unassigned, _}:
       rollout_fork_line(session, source_parent, start, inherited, unassigned, line, ordinal_ok, meta, id, shared, U32.is_ne(boundary, 0))
     case _: state
 
 def rollout_status(state: RolloutAdmission, lines: U32, complete_read: Bool) -> String:
   match state complete_read:
     case _ False{}: "read_failed"
-    case Gate{"single", _, _, _, _, _, _} True{}: "admitted"
-    case Gate{"fork", _, _, boundary, _, _, _} True{}:
+    case Gate{SingleSource{}, _, _, _, _, _, _} True{}: "admitted"
+    case Gate{ForkSource{}, _, _, boundary, _, _, _} True{}:
       Bool.pick(String, U32.is_gt(lines, boundary), "admitted_fork_suffix", "unproven_fork")
-    case Gate{"awaiting_metadata", _, _, _, _, _, _} True{}: "missing_metadata"
-    case Gate{status, _, _, _, _, _, _} True{}: status
+    case Gate{AwaitingMetadata{}, _, _, _, _, _, _} True{}: "missing_metadata"
+    case Gate{InvalidMetadata{}, _, _, _, _, _, _} True{}: "invalid_metadata"
+    case Gate{UnprovenFork{}, _, _, _, _, _, _} True{}: "unproven_fork"
+    case Gate{ConflictingMetadata{}, _, _, _, _, _, _} True{}: "conflicting_metadata"
 
 type RolloutQuality is Data:
   Quality{missing_start: U32, missing_end: U32, missing_async_end: U32, ambiguous_calls: U32,
@@ -699,39 +1141,14 @@ type WatchIdentity is Data:
   NoWatch{}
   ExactWatch{repository: String, run_id: String, head_sha: String, attempt: String}
 
-def all_digits(chars: List<&2, Char>) -> Bool:
-  match chars:
-    case []: True{}
-    case head <> tail: Bool.and(Char.is_digit(head), all_digits(tail))
-
-def decimal(+value: String) -> Bool:
-  Bool.and(Bool.not(String.is_empty(value)), Bool.and(Bool.not(String.starts_with(value, "0")),
-    all_digits(String.to_list(value))))
-
 def all_hex(chars: List<&2, Char>) -> Bool:
   match chars:
     case []: True{}
     case +head <> tail:
       Bool.and(Bool.or(Char.is_digit(head), String.contains("abcdef", String.from_list([head]))), all_hex(tail))
 
-def repository_chars(chars: List<&2, Char>) -> Bool:
-  match chars:
-    case []: True{}
-    case +head <> tail:
-      Bool.and(Bool.or(Char.is_alpha(head), Bool.or(Char.is_digit(head),
-        String.contains("_.-", String.from_list([head])))), repository_chars(tail))
-
-def repository_part(+word: String) -> Bool:
-  Bool.and(Bool.not(String.is_empty(word)), Bool.and(Bool.not(String.eq(word, ".")),
-    Bool.and(Bool.not(String.eq(word, "..")), repository_chars(String.to_list(word)))))
-
-def valid_repository(parts: List<&2, String>) -> Bool:
-  match parts:
-    case [owner, name]: Bool.and(repository_part(owner), repository_part(name))
-    case _: False{}
-
 def watch_identity(+repo: String, +run: String, +sha: String, +attempt: String) -> WatchIdentity:
-  Bool.pick(WatchIdentity, Bool.and(valid_repository(String.split(repo, '/')), Bool.and(decimal(run),
+  Bool.pick(WatchIdentity, Bool.and(Repository.valid(repo), Bool.and(decimal(run),
     Bool.and(decimal(attempt), Bool.and(Nat.is_eq(String.length(sha), 40n), all_hex(String.to_list(sha)))))),
     ExactWatch{String.to_lower(repo), run, sha, attempt}, NoWatch{})
 
@@ -955,6 +1372,314 @@ def observed_slot(+slot: ProcessSlot, barrier: U32) -> ProcessSlot:
 def valid_process_result(+clean: Bool, ambiguous: Bool, start: Point, end: Point) -> Bool:
   Bool.and(clean, Bool.and(Bool.not(ambiguous), time_order(start, end)))
 
+type ProcessObservation is Data:
+  ProcessObservation{call: String, result_call: String, result_line: U32, handle: String, fact: ProcessFact,
+    observer: WatchIdentity, start: Point, end: Point}
+
+type Receipt is Data:
+  NoReceipt{}
+  Receipt{seconds: F32, code: U32, running: Bool}
+
+type RolloutCall is Data:
+  EmptyCall{}
+  SavedCall{call: CallState, mix: CommandMix, receipt: Receipt, process: ProcessInput, result: ProcessReceipt,
+    direct: Bool}
+
+type RolloutCalls is Data:
+  Calls{index: Map<&2, RolloutCall>, newest_first: List<&2, String>}
+
+def empty_rollout_calls() -> RolloutCalls:
+  Calls{Map.new(&2, RolloutCall), []}
+
+type CallEvent is Data:
+  Started{line: U32, tool: ToolContext, stamp: Point, target: String, mix: CommandMix, process: ProcessInput,
+    direct: Bool}
+  Finished{line: U32, stamp: Point, yielded: String, completed: Bool, receipt: ProcessReceipt}
+
+def receipt_for(mix: CommandMix, +previous: Receipt, +received: Receipt) -> Receipt:
+  match mix received:
+    case NoMix{} _: previous
+    case _ NoReceipt{}: previous
+    case _ _: received
+
+def model_receipt(receipt: ProcessReceipt) -> Receipt:
+  match receipt:
+    case ExitReceipt{code, seconds}: Receipt{seconds, code, False{}}
+    case _: NoReceipt{}
+
+def first_result(state: CallState, previous: ProcessReceipt, received: ProcessReceipt) -> ProcessReceipt:
+  match state:
+    case Seen{_, _, _, _, _, 0, _, _, _, _}: received
+    case _: previous
+
+def first_process(state: CallState, previous: ProcessInput, next: ProcessInput) -> ProcessInput:
+  match state:
+    case Unseen{_}: next
+    case _: previous
+
+def observe_call(current: RolloutCall, event: CallEvent) -> RolloutCall:
+  match current event:
+    case EmptyCall{} Started{line, tool, stamp, target, mix, process, direct}:
+      SavedCall{start_call(Unseen{0}, line, tool, stamp, target), mix, NoReceipt{}, process, MissingReceipt{}, direct}
+    case EmptyCall{} Finished{line, stamp, yielded, completed, receipt}:
+      SavedCall{finish_call(Unseen{0}, line, stamp, yielded, completed), NoMix{}, NoReceipt{}, NoProcess{}, MissingReceipt{}, False{}}
+    case SavedCall{+call, old_mix, receipt, previous, result, seen_direct} Started{line, tool, stamp, target, mix, process, direct}:
+      SavedCall{start_call(call, line, tool, stamp, target), mix, receipt, first_process(call, previous, process),
+        result, Bool.or(seen_direct, direct)}
+    case SavedCall{+call, +mix, previous, process, result, direct} Finished{line, stamp, yielded, completed, +received}:
+      SavedCall{finish_call(call, line, stamp, yielded, completed), mix, receipt_for(mix, previous, model_receipt(received)),
+        process, first_result(call, result, received), direct}
+
+def add_rollout_call(+id: String, event: CallEvent, order: List<&2, String>,
+  found: Map<&2, RolloutCall> & RolloutCall) -> RolloutCalls:
+  match found:
+    case Tuple{index, EmptyCall{}}:
+      Calls{Map.set(&2, RolloutCall, index, id, observe_call(EmptyCall{}, event)), id <> order}
+    case Tuple{index, saved}:
+      Calls{Map.set(&2, RolloutCall, index, id, observe_call(saved, event)), order}
+
+def rollout_call(calls: RolloutCalls, +id: String, event: CallEvent) -> RolloutCalls:
+  match calls:
+    case Calls{index, order}: add_rollout_call(id, event, order, Map.get(RolloutCall, EmptyCall{}, index, id))
+
+def accepts_model_script(name: String) -> Bool:
+  String.eq(name, "exec")
+
+def direct_process(+name: String) -> Bool:
+  Bool.or(String.eq(name, "exec_command"), String.eq(name, "write_stdin"))
+
+def rollout_start(calls: RolloutCalls, id: String, line: U32, +name: String, stamp: Point, target: String,
+  direct: List<&2, ShellCommand>, +wrapped: List<&2, ToolInvocation>, sequential: List<&2, ShellCommand>,
+  exact: List<&2, ShellCommand>, handle: String, read_only: Bool) -> RolloutCalls:
+  +observed = tool(name, direct, wrapped)
+  rollout_call(calls, id, Started{line, observed, stamp, target,
+    Bool.pick(CommandMix, accepts_model_script(name), command_mix(sequential), NoMix{}),
+    process_input(name, exact, wrapped, handle, read_only, observed), direct_process(name)})
+
+def direct_call(found: Map<&2, RolloutCall> & RolloutCall) -> Bool:
+  match found:
+    case Tuple{_, SavedCall{_, _, _, _, _, direct}}: direct
+    case _: False{}
+
+def direct_result(calls: RolloutCalls, id: String) -> Bool:
+  match calls:
+    case Calls{index, order}: direct_call(Map.get(RolloutCall, EmptyCall{}, index, id))
+
+def rollout_finish(calls: RolloutCalls, id: String, line: U32, stamp: Point, yielded: String, completed: Bool,
+  receipt: ProcessReceipt) -> RolloutCalls:
+  rollout_call(calls, id, Finished{line, stamp, yielded, completed, receipt})
+
+def add_cell(key: String, fact: CellFact, found: Map<&2, CellPair> & CellPair) -> Map<&2, CellPair>:
+  match found:
+    case Tuple{cells, pair}: Map.set(&2, CellPair, cells, key, add_cell_fact(pair, fact))
+
+def record_cell(+fact: CellFact, cells: Map<&2, CellPair>) -> Map<&2, CellPair>:
+  match fact:
+    case NoCell{}: cells
+    case Launch{+key, owner, yielded_at, yielded_line, valid}:
+      add_cell(key, fact, Map.get(CellPair, Pair{NoCell{}, NoCell{}, False{}}, cells, key))
+    case Terminal{+key, call_id, started_at, started_line, ended_at, valid}:
+      add_cell(key, fact, Map.get(CellPair, Pair{NoCell{}, NoCell{}, False{}}, cells, key))
+
+def collect_cells(calls: Map<&2, RolloutCall>, cells: Map<&2, CellPair>) -> Map<&2, CellPair>:
+  match calls:
+    case MTip{}: cells
+    case MLeaf{id, EmptyCall{}}: cells
+    case MLeaf{id, SavedCall{state, mix, receipt, process, result, direct}}: record_cell(cell_fact(id, state), cells)
+    case MNode{position, lo, hi}: collect_cells(hi, collect_cells(lo, cells))
+
+def record_link(link: CellLink, links: Map<&2, CellLink>) -> Map<&2, CellLink>:
+  match link:
+    case Unlinked{}: links
+    case Linked{+owner, call_id, end}: Map.set(&2, CellLink, links, owner, Linked{owner, call_id, end})
+
+def collect_links(cells: Map<&2, CellPair>, +clean: Bool, links: Map<&2, CellLink>) -> Map<&2, CellLink>:
+  match cells:
+    case MTip{}: links
+    case MLeaf{key, pair}: record_link(cell_link(pair, clean), links)
+    case MNode{position, lo, hi}: collect_links(hi, clean, collect_links(lo, clean, links))
+
+def call_orphans(state: CallState) -> U32:
+  match state:
+    case Unseen{orphans}: orphans
+    case Seen{orphans, line, tool, start, finish, result_line, target, cell, terminal, ambiguous}: orphans
+
+def count_orphans(calls: Map<&2, RolloutCall>) -> U32:
+  match calls:
+    case MLeaf{id, SavedCall{state, mix, receipt, process, result, direct}}: call_orphans(state)
+    case MNode{position, lo, hi}: U32.add(count_orphans(lo), count_orphans(hi))
+    case _: 0
+
+type ModelSample is Data:
+  NoSample{}
+  Sample{mix: CommandMix, seconds: F32}
+
+def model_sample(mix: CommandMix, receipt: Receipt, finish: Point, ambiguous: Bool) -> ModelSample:
+  match mix receipt:
+    case Mix{files, git, builds, pushes} Receipt{+seconds, code, running}:
+      Bool.pick(ModelSample, keep_mix_receipt(seconds, code, running, has_time(finish), ambiguous),
+        Sample{Mix{files, git, builds, pushes}, seconds}, NoSample{})
+    case _ _: NoSample{}
+
+type RolloutRecord is Data:
+  RolloutRecord{id: String, record: CallRecord, link: CellLink, candidate: CommandMix, sample: ModelSample}
+
+type RolloutSummary is Data:
+  Summary{orphans: U32, records: List<&2, RolloutRecord>, cells: Map<&2, CellPair>, clean: Bool,
+    observations: List<&2, ProcessObservation>}
+
+def add_record(id: String, +record: CallRecord, link: CellLink, +mix: CommandMix, receipt: Receipt,
+  records: List<&2, RolloutRecord>) -> List<&2, RolloutRecord>:
+  match record:
+    case Ignored{extra}: records
+    case Observed{extra, line, tool, command, categories, start, finish, result_line, launched, target, ambiguous}:
+      RolloutRecord{id, record, link, mix, model_sample(mix, receipt, finish, ambiguous)} <> records
+
+def add_saved(id: String, link: CellLink, records: List<&2, RolloutRecord>, saved: RolloutCall) -> List<&2, RolloutRecord>:
+  match saved:
+    case EmptyCall{}: records
+    case SavedCall{call, mix, receipt, process, result, direct}: add_record(id, call_record(call), link, mix, receipt, records)
+
+def add_found(id: String, records: List<&2, RolloutRecord>, call_found: Map<&2, RolloutCall> & RolloutCall,
+  link_found: Map<&2, CellLink> & CellLink) -> List<&2, RolloutRecord>:
+  match call_found link_found:
+    case Tuple{calls, saved} Tuple{links, link}: add_saved(id, link, records, saved)
+
+def summarize_calls(ids: List<&2, String>, +calls: Map<&2, RolloutCall>, +links: Map<&2, CellLink>,
+  records: List<&2, RolloutRecord>) -> List<&2, RolloutRecord>:
+  match ids:
+    case []: records
+    case +id <> rest:
+      summarize_calls(rest, calls, links, add_found(id, records,
+        Map.get(RolloutCall, EmptyCall{}, calls, id), Map.get(CellLink, Unlinked{}, links, id)))
+
+type ProcessOperation is Data:
+  Operation{call: String, line: U32, start: Point, result_call: String, result_line: U32, end: Point,
+    ambiguous: Bool, input: ProcessInput, receipt: ProcessReceipt}
+
+def found_call(found: Map<&2, RolloutCall> & RolloutCall) -> RolloutCall:
+  match found:
+    case Tuple{_, saved}: saved
+
+def saved_call(id: String, calls: Map<&2, RolloutCall>) -> RolloutCall:
+  found_call(Map.get(RolloutCall, EmptyCall{}, calls, id))
+
+def operation_line(line: U32, +result_line: U32) -> U32:
+  Bool.pick(U32, U32.is_eq(result_line, 0), line, result_line)
+
+def line_byte(value: U32) -> Char:
+  Char.from_u32(U32.add(32, U32.and(value, 255)))
+
+def line_key(+line: U32) -> String:
+  String.from_list([line_byte(U32.shrn(line, 24n)), line_byte(U32.shrn(line, 16n)),
+    line_byte(U32.shrn(line, 8n)), line_byte(line)])
+
+def schedule_process(operation: ProcessOperation, key: String,
+  found: Map<&2, List<&2, ProcessOperation>> & List<&2, ProcessOperation>) -> Map<&2, List<&2, ProcessOperation>>:
+  match found:
+    case Tuple{lines, queued}: Map.set(&2, List<&2, ProcessOperation>, lines, key, operation <> queued)
+
+def result_operation(call: String, +line: U32, start: Point, ambiguous: Bool, input: ProcessInput,
+  result_call: String, result: RolloutCall, pending: Map<&2, List<&2, ProcessOperation>>) -> Map<&2, List<&2, ProcessOperation>>:
+  match result:
+    case SavedCall{Seen{_, _, _, _, end, +result_line, _, _, _, result_ambiguous}, _, _, _, receipt, _}:
+      +key = line_key(operation_line(line, result_line))
+      schedule_process(Operation{call, line, start, result_call, result_line, end, Bool.or(ambiguous, result_ambiguous), input, receipt},
+        key, Map.get(List<&2, ProcessOperation>, [], pending, key))
+    case _: pending
+
+def operation_for(+saved: RolloutCall, +id: String, +line: U32, +start: Point, +ambiguous: Bool,
+  link: CellLink, calls: Map<&2, RolloutCall>, pending: Map<&2, List<&2, ProcessOperation>>) -> Map<&2, List<&2, ProcessOperation>>:
+  match saved link:
+    case EmptyCall{} _: pending
+    case SavedCall{_, _, _, NoProcess{}, _, _} _: pending
+    case SavedCall{_, _, _, input, _, _} Linked{_, +result_call, _}:
+      result_operation(id, line, start, ambiguous, input, result_call, saved_call(result_call, calls), pending)
+    case SavedCall{_, _, _, input, _, _} Unlinked{}:
+      result_operation(id, line, start, ambiguous, input, id, saved, pending)
+
+def collect_operations(records: List<&2, RolloutRecord>, +calls: Map<&2, RolloutCall>,
+  pending: Map<&2, List<&2, ProcessOperation>>) -> Map<&2, List<&2, ProcessOperation>>:
+  match records:
+    case []: pending
+    case RolloutRecord{+id, Observed{_, line, _, _, _, start, _, _, _, _, ambiguous}, link, _, _} <> rest:
+      collect_operations(rest, calls, operation_for(saved_call(id, calls), id, line, start, ambiguous, link, calls, pending))
+    case _ <> rest: collect_operations(rest, calls, pending)
+
+type ProcessHistory is Data:
+  History{slots: Map<&2, ProcessSlot>, barrier: U32, observations: List<&2, ProcessObservation>}
+
+def put_process_slot(+key: String, slot: ProcessSlot, table: Map<&2, ProcessSlot>) -> Map<&2, ProcessSlot>:
+  match key:
+    case "": table
+    case _: Map.set(&2, ProcessSlot, table, key, slot)
+
+def record_process(operation: ProcessOperation, +handle: String, next: ProcessStep, slots: Map<&2, ProcessSlot>,
+  barrier: U32, observations: List<&2, ProcessObservation>) -> ProcessHistory:
+  match operation next:
+    case Operation{call, line, start, result_call, +result_line, end, _, input, receipt} ProcessStep{slot, +fact}:
+      History{put_process_slot(process_taint(input, receipt), Conflict{}, put_process_slot(handle, slot, slots)),
+        barrier, ProcessObservation{call, result_call, result_line, handle, fact, process_observer(fact), start, end} <> observations}
+
+def advance_process(found: Map<&2, ProcessSlot> & ProcessSlot, +operation: ProcessOperation, +handle: String,
+  +barrier: U32, clean: Bool, observations: List<&2, ProcessObservation>) -> ProcessHistory:
+  match found operation:
+    case Tuple{table, slot} Operation{+call, +line, +start, _, +result_line, +end, +ambiguous, +input, +receipt}:
+      record_process(operation, handle, process_result(input, observed_slot(slot, barrier), receipt, call,
+        line, start, result_line, end, valid_process_result(clean, ambiguous, start, end)), table,
+        Bool.pick(U32, process_barrier(input, receipt, handle, ambiguous), operation_line(line, result_line), barrier),
+        observations)
+
+def observe_process(history: ProcessHistory, +operation: ProcessOperation, clean: Bool) -> ProcessHistory:
+  match history operation:
+    case History{slots, barrier, observations} Operation{_, _, _, _, _, _, _, input, receipt}:
+      +handle = process_key(input, receipt)
+      advance_process(Map.get(ProcessSlot, Vacant{}, slots, handle), operation, handle, barrier, clean, observations)
+
+def process_observations(history: ProcessHistory) -> List<&2, ProcessObservation>:
+  match history:
+    case History{_, _, observations}: List.reverse(&2, ProcessObservation, observations)
+
+def observe_operations(ordered: List<&2, ProcessOperation>, +clean: Bool, history: ProcessHistory) -> ProcessHistory:
+  match ordered:
+    case []: history
+    case operation <> rest: observe_operations(rest, clean, observe_process(history, operation, clean))
+
+def observe_process_lines(lines: Map<&2, List<&2, ProcessOperation>>, +clean: Bool, history: ProcessHistory) -> ProcessHistory:
+  match lines:
+    case MTip{}: history
+    case MLeaf{_, operations}: observe_operations(operations, clean, history)
+    case MNode{_, low, high}: observe_process_lines(high, clean, observe_process_lines(low, clean, history))
+
+def rollout_process_observations(records: List<&2, RolloutRecord>, calls: Map<&2, RolloutCall>,
+  clean: Bool) -> List<&2, ProcessObservation>:
+  process_observations(observe_process_lines(
+    collect_operations(List.reverse(&2, RolloutRecord, records), calls, Map.new(&2, List<&2, ProcessOperation>)),
+    clean, History{Map.new(&2, ProcessSlot), 0, []}))
+
+def summarize_rollout(+orphans: U32, +clean: Bool, +cells: Map<&2, CellPair>, +index: Map<&2, RolloutCall>,
+  order: List<&2, String>) -> RolloutSummary:
+  +records = summarize_calls(order, index, collect_links(cells, clean, Map.new(&2, CellLink)), [])
+  Summary{orphans, records, cells, clean, rollout_process_observations(records, index, clean)}
+
+def finish_rollout_calls(calls: RolloutCalls, malformed: U32) -> RolloutSummary:
+  match calls:
+    case Calls{+index, order}:
+      +orphans = count_orphans(index)
+      summarize_rollout(orphans, clean_rollout(malformed, orphans), collect_cells(index, Map.new(&2, CellPair)), index, order)
+
+def lookup_wait(call_found: Map<&2, RolloutCall> & RolloutCall, cell_found: Map<&2, CellPair> & CellPair,
+  clean: Bool) -> WaitCell:
+  match call_found cell_found:
+    case Tuple{calls, SavedCall{state, mix, receipt, process, result, direct}} Tuple{cells, pair}: wait_cell(state, pair, clean)
+    case _ _: NotWait{}
+
+def rollout_wait(calls: RolloutCalls, id: String, target: String, cells: Map<&2, CellPair>, clean: Bool) -> WaitCell:
+  match calls:
+    case Calls{index, order}:
+      lookup_wait(Map.get(RolloutCall, EmptyCall{}, index, id),
+        Map.get(CellPair, Pair{NoCell{}, NoCell{}, False{}}, cells, target), clean)
+
 type WatchOverlap is Data:
   NoOverlap{}
   Overlap{start: Point, end: Point}
@@ -972,3 +1697,53 @@ def watch_overlap(first: Observer, second: Observer, +a_start: Point, +a_end: Po
   +end = Bool.pick(Point, time_order(a_end, b_end), a_end, b_end)
   Bool.pick(WatchOverlap, Bool.and(independent_observers(first, second),
     Bool.and(time_order(start, end), Bool.not(time_order(end, start)))), Overlap{start, end}, NoOverlap{})
+
+def repository_name(value: String) -> String:
+  Repository.normalized(value)
+
+type WatchPoll is Data:
+  Poll{index: Nat, observer: Observer, start: Point, end: Point}
+
+type IndexedOverlap is Data:
+  IndexedOverlap{first: Nat, second: Nat, start: Point, end: Point}
+
+type OverlapScan is Data:
+  OverlapScan{active: List<&2, WatchPoll>, newest: List<&2, IndexedOverlap>}
+
+def add_overlap(first: Nat, second: Nat, overlap: WatchOverlap, newest: List<&2, IndexedOverlap>) -> List<&2, IndexedOverlap>:
+  match overlap:
+    case NoOverlap{}: newest
+    case Overlap{start, end}: IndexedOverlap{first, second, start, end} <> newest
+
+def retain_poll(keep: Bool, +previous: WatchPoll, current: WatchPoll, state: OverlapScan) -> OverlapScan:
+  match keep previous current state:
+    case True{} Poll{first, a, a_start, a_end} Poll{second, b, b_start, b_end} OverlapScan{active, newest}:
+      OverlapScan{previous <> active, add_overlap(first, second, watch_overlap(a, b, a_start, a_end, b_start, b_end), newest)}
+    case _ _ _ _: state
+
+def compare_poll(state: OverlapScan, +previous: WatchPoll, +current: WatchPoll) -> OverlapScan:
+  match previous current:
+    case Poll{first, a, a_start, a_end} Poll{second, b, b_start, b_end}:
+      retain_poll(time_order(b_start, a_end), previous, current, state)
+
+def keep_current(state: OverlapScan, current: WatchPoll) -> OverlapScan:
+  match state:
+    case OverlapScan{active, newest}: OverlapScan{List.reverse(&2, WatchPoll, current <> active), newest}
+
+def compare_active(active: List<&2, WatchPoll>, +current: WatchPoll, state: OverlapScan) -> OverlapScan:
+  match active:
+    case []: state
+    case previous <> tail: compare_active(tail, current, compare_poll(state, previous, current))
+
+def sweep_poll(state: OverlapScan, +current: WatchPoll) -> OverlapScan:
+  match state:
+    case OverlapScan{active, newest}:
+      keep_current(compare_active(active, current, OverlapScan{[], newest}), current)
+
+def ordered_overlaps(state: OverlapScan) -> List<&2, IndexedOverlap>:
+  match state:
+    case OverlapScan{active, newest}: List.reverse(&2, IndexedOverlap, newest)
+
+def watch_overlaps(polls: List<&2, WatchPoll>) -> List<&2, IndexedOverlap>:
+  ordered_overlaps(List.foldl(~&2, ~WatchPoll, ~OverlapScan, ~(scan => current => sweep_poll(scan, current)),
+    polls, OverlapScan{[], []}))

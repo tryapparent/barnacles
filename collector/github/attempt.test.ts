@@ -6,7 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { loadEvidence, sourcePolicy, type SourcePolicy } from "../../evidence/index.ts";
+import { buildAdmissionPolicy, loadEvidence, sourcePolicy, type SourcePolicy } from "../../evidence/index.ts";
 import { buildPolicy, loadPolicy } from "../../tooling/bend.ts";
 import { collectAttempt, collectWindow, type ClockPolicy } from "./attempt.ts";
 import { pollGitHub } from "./delivery.ts";
@@ -17,6 +17,7 @@ test("Bend2 clocks reach SQLite through the exact-attempt importer", async () =>
   const directory = mkdtempSync(join(parent, "test-"));
   try {
     const policy = await loadPolicy<ClockPolicy>(await buildPolicy(directory, new URL("./clocks.bend", import.meta.url), "clocks.mjs"));
+    const admission = await buildAdmissionPolicy(directory);
     const arm = policy.job_label("linux / Linux aarch64");
     assert.equal(arm, "linux / Linux aarch64");
     assert.equal(policy.step_label(arm, "Package"), "Package");
@@ -47,8 +48,8 @@ test("Bend2 clocks reach SQLite through the exact-attempt importer", async () =>
     const read = (path: string) => path.includes("/jobs?") ? { total_count: jobs.length, jobs } : run;
     const observed = collectAttempt(identity, policy, read);
     const path = join(directory, "evidence.sqlite");
-    loadEvidence(path, { source: "github-actions", attempt: observed });
-    loadEvidence(path, { source: "github-actions", attempt: observed });
+    loadEvidence(path, { source: "github-actions", attempt: observed }, admission);
+    loadEvidence(path, { source: "github-actions", attempt: observed }, admission);
     const db = new DatabaseSync(path, { readOnly: true });
     try {
       const results = db.prepare("SELECT queue_end-created_at AS queue, execution_end-execution_start AS execution, prior_execution FROM action_jobs ORDER BY job_id").all();
@@ -60,10 +61,10 @@ test("Bend2 clocks reach SQLite through the exact-attempt importer", async () =>
         ["Build and package the exact Mac candidate for native checks", 30], ["Other steps", null],
         ["Build and package the exact Mac candidate for native checks", null], ["Other steps", null],
       ]);
-      assert.throws(() => loadEvidence(path, { source: "github-actions", attempt: { ...observed, sourceUpdated: 0, jobs: [] } }), /older observation/);
+      assert.throws(() => loadEvidence(path, { source: "github-actions", attempt: { ...observed, sourceUpdated: 0, jobs: [] } }, admission), /older observation/);
       assert.throws(() => loadEvidence(path, { source: "github-actions-window", attempts: [
         { ...observed, runId: 2 }, { ...observed, sourceUpdated: 0 },
-      ] }), /older observation/);
+      ] }, admission), /older observation/);
       assert.equal(db.prepare("SELECT count(*) AS count FROM action_attempts").get()?.count, 1);
       assert.equal(db.prepare("SELECT count(*) AS count FROM action_jobs").get()?.count, 5);
     } finally {
@@ -78,6 +79,19 @@ test("Bend2 clocks reach SQLite through the exact-attempt importer", async () =>
     assert.throws(() => collectAttempt({ ...identity, sha: "b".repeat(40) }, policy, read), /identity/);
     assert.throws(() => collectAttempt(identity, policy, (path) => path.includes("/jobs?")
       ? { total_count: 1, jobs: [{ ...allocated, run_attempt: 1 }] } : run), /job identity/);
+    const pages = Array.from({ length: 100 }, (_, index) => ({ ...allocated, id: 2 ** 32 + index, steps: [] }));
+    const secondPage = { ...allocated, id: 2 ** 32 + 100, steps: [] };
+    const pagedRead = (path: string, total: number, pageTwo: unknown[]) => {
+      if (!path.includes("/jobs?")) return run;
+      return path.endsWith("page=1") ? { total_count: 101, jobs: pages } : { total_count: total, jobs: pageTwo };
+    };
+    const paged = collectAttempt(identity, policy, (path) => pagedRead(path, 101, [secondPage]));
+    assert.deepEqual(paged.jobs.map(({ id }) => id), [...pages, secondPage].map(({ id }) => id));
+    assert.throws(() => collectAttempt(identity, policy, (path) => pagedRead(path, 101, [pages[0]])), /Duplicate GitHub job ID/);
+    assert.throws(() => collectAttempt(identity, policy, (path) => pagedRead(path, 102, [secondPage])), /changing GitHub job inventory/);
+    assert.throws(() => collectAttempt(identity, policy, (path) => pagedRead(path, 101, [])), /Partial or changing GitHub job inventory/);
+    assert.throws(() => collectAttempt(identity, policy, (path) => path.includes("/jobs?")
+      ? { total_count: 1, jobs: [{ ...allocated, steps: [allocated.steps[0], allocated.steps[0]] }] } : run), /Duplicate GitHub step number/);
     const withoutJobAttempt = collectAttempt(identity, policy, (path) => path.includes("/jobs?")
       ? { total_count: 1, jobs: [{ ...allocated, run_attempt: undefined }] } : run);
     assert.equal(withoutJobAttempt.jobs.length, 1);
@@ -258,9 +272,10 @@ test("polling captures changing attempts and excludes unverifiable releases", as
     assets: [{ id: 23, name: "Synthetic-linux-x86_64.AppImage", state: "uploaded", size: 50 }] };
   try {
     const policy = await loadPolicy<SourcePolicy>(await buildPolicy(directory, sourcePolicy, "sources.mjs"));
+    const admission = await buildAdmissionPolicy(directory);
     const clocks = await loadPolicy<ClockPolicy>(
       await buildPolicy(directory, new URL("./clocks.bend", import.meta.url), "clocks.mjs"));
-    const invoke = (responses: Record<string, unknown>, accessible = true) => pollGitHub(database, repo, policy, clocks,
+    const invoke = (responses: Record<string, unknown>, accessible = true) => pollGitHub(database, repo, policy, clocks, admission,
       (path) => {
         if (!Object.hasOwn(responses, path)) throw Error("Missing fixture response");
         return responses[path];

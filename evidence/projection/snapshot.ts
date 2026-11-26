@@ -2,14 +2,14 @@ import { randomUUID } from "node:crypto";
 import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync, type SQLInputValue, type SQLOutputValue } from "node:sqlite";
+import { repository } from "../repository.ts";
 import { buildPolicies, buildPolicy, loadPolicy } from "../../tooling/bend.ts";
-import { readDelivery } from "../delivery/delivery.ts";
+import { deliveryPolicy, readDelivery, type DeliveryPolicy } from "../delivery/delivery.ts";
 import type { AttemptIdentity } from "../storage/actions.ts";
-import { sourcePolicy, type List, type SourcePolicy } from "../storage/sources.ts";
-import { collectTiming, empty, millis, rows, seconds, type ProcessAttribution, type Stats, type TimingPolicy } from "./timing.ts";
-import { projectTrace, type TracePolicy, type TraceProjection, type SpanRow } from "./trace.ts";
+import type { List } from "../storage/sources.ts";
+import { collectTiming, millis, rows, seconds, type Stats, type TimingPolicy } from "./timing.ts";
+import { writeTraces, type OtlpPolicy, type TracePolicy, type TraceWriter } from "./trace.ts";
 
-type SessionTiming = { $: "SessionTiming"; envelopes: Stats; cells: Stats };
 type Shipping = { $: "Delivery"; shipped: number; cycles: Stats };
 type CycleStage = { $: "Measured"; ms: number } | { $: "Missing" };
 type ActionWaitWindow = { start: number; end: number };
@@ -40,7 +40,7 @@ type WaitPolicy = {
 };
 type Estimator = {
   empty_model(): unknown;
-  model_observe(model: unknown, scope: string, files: number, git: number, builds: number, pushes: number, seconds: number): unknown;
+  model_receipt(model: unknown, instance: string, session: string, files: number, git: number, builds: number, pushes: number, seconds: number): unknown;
   model_estimates(model: unknown): List<{ name: string; supported: boolean; seconds: number; error: number;
     total: number; samples: number }>;
 };
@@ -71,24 +71,24 @@ type ReviewPolicy = {
   };
   mean: TimingPolicy["mean"];
 };
-type Metrics = TracePolicy & TimingPolicy & ReviewPolicy & {
-  record_release(sample: Shipping, linked: boolean, elapsedMs: number): Shipping;
-  visible_release(channel: string, published: number): boolean;
-  empty_session_timing(): SessionTiming;
-  session_timing_observe(state: SessionTiming, clock: string, start: number, end: number): SessionTiming;
-  rollout_clean(malformed: number, orphans: number): boolean;
-  trace_preference(asyncSpans: number, reasoningEvents: number): boolean;
-  trace_preferred(ended: number, mixed: boolean, otherEnded: number, otherMixed: boolean): boolean;
-  delivery_stages(thread: number, commit: number, opened: number, ci: number, merged: number,
-    dispatch: number, published: number, linked: boolean): List<{ ending: number; name: string; value: CycleStage }>;
-  count_cycle_stage(sample: Stats, stage: CycleStage): Stats;
-  week(epoch: number): number;
-  previous_week(epoch: number): number;
-  direction(recent: Stats, prior: Stats): { $: "Insufficient" } | { $: "Gardening" | "Shipping"; delta: ReturnType<TimingPolicy["mean"]> };
+type Metrics = TimingPolicy & ReviewPolicy & {
+  empty_shipping_report(): unknown;
+  shipping_observe(report: unknown, channel: string, published: number, clocks: ReleaseClocks,
+    linked: boolean, elapsed: number): { $: "Unpublished"; report: unknown } |
+      { $: "Published"; report: unknown; milestones: List<Milestone> };
+  shipping_result(report: unknown, cutoff: number): ShippingSummary;
   visible_open(owning: boolean, state: string, settled: boolean): boolean;
 };
 
-const emptyShipping: Shipping = { $: "Delivery", shipped: 0, cycles: empty };
+type ReleaseClocks = { $: "ReleaseClocks"; thread: number; commit: number; opened: number; ci: number;
+  merged: number; dispatch: number; published: number; checked: number };
+type Milestone = { ordinal: number; name: string; clock: number; elapsed: CycleStage };
+type ShippingSummary = {
+  delivery: Shipping; weeks: List<{ week: number; summary: Shipping }>; stages: List<{ name: string; stats: Stats }>;
+  from: number; prior_week: number; recent_week: number; prior: Stats; recent: Stats;
+  direction: { $: "Insufficient" } | { $: "Gardening" | "Shipping"; delta: ReturnType<TimingPolicy["mean"]> };
+};
+
 export const snapshotFormatVersion = 1;
 
 const actionsWaitPolicy = new URL("./actions-wait.bend", import.meta.url);
@@ -210,25 +210,30 @@ function writeActionsWait(source: DatabaseSync, view: DatabaseSync, repo: string
 }
 
 async function compileSnapshotPolicies(scratch: string) {
-  const [sources, metricModule, modelModule, waitModule] = await buildPolicies(scratch, [
-    [sourcePolicy, "sources.mjs"],
+  const [deliveryModule, metricModule, modelModule, traceModule, otlpModule, waitModule] = await buildPolicies(scratch, [
+    [deliveryPolicy, "delivery.mjs"],
     [new URL("./metrics.bend", import.meta.url), "metrics.mjs"],
     [new URL("./estimate.bend", import.meta.url), "estimate.mjs"],
+    [new URL("./trace.bend", import.meta.url), "trace.mjs"],
+    [new URL("./otlp.bend", import.meta.url), "otlp.mjs"],
     [actionsWaitPolicy, "actions-wait.mjs"],
   ]);
-  const policy: SourcePolicy = await loadPolicy(sources);
+  const policy = await loadPolicy<DeliveryPolicy>(deliveryModule);
   const metrics: Metrics = await loadPolicy(metricModule);
+  const tracePolicy: TracePolicy = await loadPolicy(traceModule);
+  const otlp: OtlpPolicy = await loadPolicy(otlpModule);
   const estimator: Estimator = await loadPolicy(modelModule);
   const waits: WaitPolicy = await loadPolicy(waitModule);
-  return { policy, metrics, estimator, waits, metricModule };
+  return { policy, metrics, estimator, waits, metricModule, tracePolicy, otlp };
 }
 
 type SnapshotPolicies = Awaited<ReturnType<typeof compileSnapshotPolicies>>;
 
-export async function writeSnapshot(input: string, output: string, scratch: string, repo: string, cutoff: number,
-  writeTrace?: (key: string, trace: TraceProjection) => string, actionsWaitWindow?: ActionWaitWindow,
+export async function writeSnapshot(input: string, output: string, scratch: string, requestedRepository: string, cutoff: number,
+  writeTrace?: TraceWriter, actionsWaitWindow?: ActionWaitWindow,
   timingCutoff = cutoff * 1000, reviewPolicyOutput?: string, compiled?: SnapshotPolicies) {
-  const { policy, metrics, estimator, waits, metricModule } = compiled ?? await compileSnapshotPolicies(scratch);
+  const { policy, metrics, estimator, waits, metricModule, tracePolicy, otlp } = compiled ?? await compileSnapshotPolicies(scratch);
+  const repo = repository(requestedRepository, metrics);
   const source = new DatabaseSync(input, { readOnly: true });
   closeSync(openSync(output, "wx", 0o600));
   const view = new DatabaseSync(output);
@@ -276,71 +281,54 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
     const url = (number: number) => `https://github.com/${repo}/pull/${number}`;
     const timing = collectTiming(source, repo, metrics, true);
     const prs = table("github_prs") ? readDelivery(source, policy, repo) : [];
-    const weeks = new Map<number, Shipping>();
     const release = view.prepare("INSERT INTO releases VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
     const milestone = view.prepare("INSERT INTO delivery_milestones VALUES (?, ?, ?, ?, ?)");
-    const milestoneNames = ["Thread started", "First commit", "PR opened", "First PR CI", "PR merged", "Release dispatch", "Shipped", "Access verified"];
-    const stagesFor = (thread: number, commit: number, opened: number, ci: number, merged: number,
-      dispatch: number, published: number, linked: boolean) =>
-      metrics.delivery_stages(thread, commit, opened, ci, merged, dispatch, published, linked);
-    const stageStats = new Map<string, Stats>();
-    for (let stage = stagesFor(0, 0, 0, 0, 0, 0, 0, false); stage.$ === "Con"; stage = stage.tail) {
-      stageStats.set(stage.head.name, empty);
-    }
-    let delivery = emptyShipping;
     view.prepare("INSERT INTO review_metadata VALUES (?)").run(repo);
     const review = view.prepare("INSERT OR REPLACE INTO review_prs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
     const preparedReviews = new Map<number, boolean>();
+    let shipments = metrics.empty_shipping_report();
     for (const row of prs) {
       timing.observe("Releases", millis(row.published_at));
       timing.receive("Releases", millis(row.checked_at));
-      const targetRelease = metrics.visible_release(String(row.channel ?? ""), Number(row.published_at ?? 0));
+      const clocks: ReleaseClocks = {
+        $: "ReleaseClocks", thread: Number(row.thread_started_ms ?? 0), commit: millis(row.first_commit_at),
+        opened: millis(row.opened_at), ci: millis(row.first_ci_at), merged: millis(row.merged_at),
+        dispatch: millis(row.release_dispatched_at), published: millis(row.published_at), checked: millis(row.checked_at),
+      };
+      const linked = row.thread_to_release_seconds !== null;
+      const elapsed = Math.round((row.thread_to_release_seconds ?? 0) * 1000);
+      const result = metrics.shipping_observe(shipments, String(row.channel ?? ""), Number(row.published_at ?? 0), clocks, linked, elapsed);
+      shipments = result.report;
+      const targetRelease = result.$ === "Published";
       const number = Number(row.pr_number);
-      const clocks = [Number(row.thread_started_ms ?? 0), millis(row.first_commit_at), millis(row.opened_at),
-        millis(row.first_ci_at), millis(row.merged_at), millis(row.release_dispatched_at),
-        millis(row.published_at), millis(row.checked_at)] as const;
-      const params = [row.thread_to_release_seconds !== null, Math.round((row.thread_to_release_seconds ?? 0) * 1000)] as const;
       const prepared = preparedReviews.get(number);
       if (prepared === undefined || metrics.review_prefer(prepared, targetRelease)) {
-        const fact = metrics.review_fact(number, targetRelease, ...clocks, ...params);
+        const fact = metrics.review_fact(number, targetRelease, clocks.thread, clocks.commit, clocks.opened, clocks.ci,
+          clocks.merged, clocks.dispatch, clocks.published, clocks.checked, linked, elapsed);
         review.run(fact.pr, Number(fact.release), fact.thread || null, fact.commit || null, fact.opened || null,
           fact.ci || null, fact.merged || null, fact.dispatch || null, fact.publication || null, fact.access || null,
           Number(fact.linked), fact.cycle_ms, row.first_ci_run, fact.dispatch ? row.release_run : null,
           fact.publication ? row.release_id : null);
         preparedReviews.set(number, fact.release);
       }
-      if (!targetRelease) continue;
+      if (result.$ === "Unpublished") continue;
       release.run(number, row.opened_at, row.merged_at, row.published_at, row.checked_at,
         row.thread_to_release_seconds, row.pr_to_release_seconds, url(number));
-      const elapsed = new Map<number, CycleStage>();
-      for (let stage = stagesFor(clocks[0], clocks[1], clocks[2], clocks[3], clocks[4], clocks[5], clocks[6],
-        row.thread_to_release_seconds !== null); stage.$ === "Con"; stage = stage.tail) {
-        const { ending, name, value } = stage.head;
-        elapsed.set(ending, value);
-        stageStats.set(name, metrics.count_cycle_stage(stageStats.get(name) ?? empty, value));
+      for (const { ordinal, name, clock, elapsed } of rows(result.milestones)) {
+        milestone.run(number, ordinal, name, clock || null, elapsed.$ === "Measured" ? elapsed.ms / 1000 : null);
       }
-      clocks.forEach((clock, index) => {
-        const part = index ? elapsed.get(index) : undefined;
-        milestone.run(number, index, milestoneNames[index], clock || null, part?.$ === "Measured" ? part.ms / 1000 : null);
-      });
-      delivery = metrics.record_release(delivery, ...params);
-      const week = metrics.week(Number(row.published_at));
-      weeks.set(week, metrics.record_release(weeks.get(week) ?? emptyShipping, ...params));
     }
+    const summary = metrics.shipping_result(shipments, cutoff);
     const stageInsert = view.prepare("INSERT INTO delivery_stages VALUES (?, ?, ?, ?, ?)");
-    let stageIndex = 0;
-    for (const [name, stats] of stageStats) stageInsert.run(stageIndex++, name, seconds(metrics.mean(stats)), stats.count, stats.missing);
+    rows(summary.stages).forEach(({ name, stats }, ordinal) =>
+      stageInsert.run(ordinal, name, seconds(metrics.mean(stats)), stats.count, stats.missing));
     const weekInsert = view.prepare("INSERT INTO weeks VALUES (?, ?, ?, ?)");
-    for (const [week, { shipped, cycles }] of weeks) {
+    for (const { week, summary: { shipped, cycles } } of rows(summary.weeks)) {
       weekInsert.run(week, shipped, cycles.count, seconds(metrics.mean(cycles)));
     }
-    const recentWeek = metrics.previous_week(cutoff);
-    const priorWeek = metrics.previous_week(recentWeek);
-    const recent = weeks.get(recentWeek)?.cycles ?? empty;
-    const prior = weeks.get(priorWeek)?.cycles ?? empty;
-    const direction = metrics.direction(recent, prior);
+    const { delivery, prior_week, recent_week, prior, recent, direction } = summary;
     view.prepare("INSERT INTO coverage VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
-      cutoff, prs.length, delivery.shipped, delivery.cycles.count, priorWeek, recentWeek, prior.count, recent.count, direction.$,
+      cutoff, prs.length, delivery.shipped, delivery.cycles.count, prior_week, recent_week, prior.count, recent.count, direction.$,
       direction.$ === "Insufficient" ? null : direction.$ === "Gardening" ? -1 : 1,
       direction.$ === "Insufficient" ? null : (direction.$ === "Gardening" ? 1 : -1) * Number(seconds(direction.delta)),
     );
@@ -371,7 +359,7 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
     let model = estimator.empty_model();
     if (table("codex_command_mixes")) {
       for (const row of all("SELECT * FROM codex_command_mixes ORDER BY instance, session_id, call_id")) {
-        model = estimator.model_observe(model, JSON.stringify([row.instance, row.session_id]), Number(row.file_count),
+        model = estimator.model_receipt(model, String(row.instance), String(row.session_id), Number(row.file_count),
           Number(row.git_count), Number(row.build_count), Number(row.push_count), Number(row.seconds));
       }
     }
@@ -381,105 +369,20 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
       measure.run(name, supported ? seconds : null, supported ? total : null, supported ? error : null, samples);
     }
 
-    let defaultTrace: { session: number; from: number; to: number; traceId: string; mixed: boolean } | undefined;
-    let traceSessions = 0;
-    const rolloutCount = table("codex_rollouts") ? Number(all("SELECT count(*) AS count FROM codex_rollouts")[0].count) : 0;
-    if (table("codex_spans")) {
-      const columns = ["span.*"];
-      const joins = [];
-      for (const [name, column] of [["codex_commands", "command"], ["codex_categories", "categories"]]) {
-        if (table(name)) {
-          columns.push(`${name}.${column}`);
-          joins.push(`LEFT JOIN ${name} USING (instance, session_id, call_id)`);
-        }
-      }
-      if (table("codex_process_receipts")) {
-        columns.push("direct.process_status AS io_status", "direct.process_category AS io_category");
-        joins.push(`LEFT JOIN codex_process_receipts direct
-          ON (direct.instance, direct.session_id, direct.call_id) = (span.instance, span.session_id, span.call_id)`);
-        if (table("codex_wait_attribution")) {
-          columns.push("wait.cell_status", "launch.process_status AS wait_status", "launch.process_category AS wait_category");
-          joins.push(`LEFT JOIN codex_wait_attribution wait
-            ON (wait.instance, wait.session_id, wait.call_id) = (span.instance, span.session_id, span.call_id)
-            LEFT JOIN codex_process_receipts launch
-            ON (launch.instance, launch.session_id, launch.call_id) = (wait.instance, wait.session_id, wait.cell_launch_call_id)`);
-        }
-      }
-      const spans = all(`SELECT ${columns.join(", ")} FROM codex_spans span ${joins.join(" ")}
-        ORDER BY span.started_ms, span.source_line, span.clock`);
-      const markers = table("codex_reasoning") ? all(table("codex_reasoning_inputs") ? `
-        SELECT reasoning.*, calls.ended_ms AS result_at, calls.source_line AS result_call_line
-        FROM codex_reasoning reasoning LEFT JOIN codex_reasoning_inputs USING (instance, session_id, source_line)
-        LEFT JOIN codex_calls calls ON calls.instance = reasoning.instance AND calls.session_id = reasoning.session_id
-          AND calls.call_id = result_call_id
-        ORDER BY observed_ms, reasoning.source_line
-      ` : "SELECT * FROM codex_reasoning ORDER BY observed_ms, source_line") : [];
-      for (const marker of markers) timing.observe("Codex", Number(marker.observed_ms));
-      const sessionKey = (row: Record<string, SQLOutputValue>) => JSON.stringify([row.instance, row.session_id]);
-      const sessions = Map.groupBy(spans, sessionKey);
-      const bySession = Map.groupBy(markers, sessionKey);
-      const rollouts = new Map(all("SELECT * FROM codex_rollouts").map((row) => [sessionKey(row), row]));
-      for (const key of bySession.keys()) if (!sessions.has(key)) sessions.set(key, []);
-      const insert = view.prepare("INSERT INTO trace VALUES (?, ?, ?, ?, ?, ?)");
-      const mark = view.prepare("INSERT INTO trace_reasoning VALUES (?, ?, ?)");
-      const windows = view.prepare("INSERT INTO trace_windows VALUES (?, ?, ?, ?, ?)");
-      const coverage = view.prepare("INSERT INTO trace_coverage VALUES (?, ?, ?, ?, ?)");
-      for (const [key, rows] of sessions) {
-        const session = ++traceSessions;
-        const observations = rows.map((row): SpanRow & { attribution: ProcessAttribution } => ({
-          identity: { source: "codex", instance: String(row.instance), session: String(row.session_id), call: String(row.call_id) },
-          terminal: row.terminal_call_id as string | null,
-          line: Number(row.source_line), tool: String(row.tool), command: String(row.command ?? ""),
-          categories: String(row.categories ?? ""), clock: row.clock as SpanRow["clock"],
-          start: row.started_ms as number | null, end: row.ended_ms as number | null,
-          attribution: {
-            $: "ProcessAttribution",
-            cell_status: String(row.cell_status ?? ""),
-            wait_status: String(row.wait_status ?? ""),
-            wait_category: String(row.wait_category ?? ""),
-            io_status: String(row.io_status ?? ""),
-            io_category: String(row.io_category ?? ""),
-          },
-        }));
-        const events = (bySession.get(key) ?? []).map((row) => ({ line: Number(row.source_line), at: Number(row.observed_ms),
-          resultAt: Number(row.result_at ?? 0), resultCallLine: Number(row.result_call_line ?? 0) }));
-        let clocks = metrics.empty_session_timing();
-        for (const row of observations) {
-          const clock = metrics.interval_clock(row.clock);
-          const start = row.start ?? 0;
-          const end = row.end ?? 0;
-          timing.observeCodex(row, row.categories, row.attribution);
-          clocks = metrics.session_timing_observe(clocks, row.clock, start, end);
-          insert.run(session, row.line, metrics.trace_operation(row.clock, row.tool, row.command, row.categories),
-            clock, row.start, row.end);
-        }
-        coverage.run(session, 0, "Tool envelopes", clocks.envelopes.count, clocks.envelopes.missing);
-        coverage.run(session, 1, "Async cells", clocks.cells.count, clocks.cells.missing);
-        coverage.run(session, 2, "Reasoning events", events.length, null);
-        for (const event of events) mark.run(session, event.line, event.at);
-        const rollout = rollouts.get(key);
-        const trace = projectTrace(observations, events, metrics.rollout_clean(
-          Number(rollout?.malformed_count ?? 1), Number(rollout?.orphan_count ?? 1)), metrics);
-        const traceId = trace && writeTrace ? writeTrace(key, trace) : null;
-        windows.run(session, traceId, trace?.bounds.from ?? null, trace?.bounds.to ?? null, trace?.spans.length ?? 0);
-        const mixed = metrics.trace_preference(clocks.cells.count, events.length);
-        if (trace && traceId && metrics.trace_preferred(trace.bounds.to, mixed, defaultTrace?.to ?? 0, defaultTrace?.mixed ?? false)) {
-          defaultTrace = { session, from: trace.bounds.from, to: trace.bounds.to, traceId, mixed };
-        }
-      }
-    }
+    const traces = writeTraces(source, view, tracePolicy, otlp, timing, writeTrace);
     timing.write(view, timingCutoff);
 
     writeActionsWait(source, view, repo,
       actionsWaitWindow ? { $: "Window", ...actionsWaitWindow } : waits.report_window(timingCutoff), waits);
     view.exec("COMMIT");
     if (reviewPolicyOutput) copyFileSync(metricModule, reviewPolicyOutput);
-    const from = Math.min(priorWeek, ...weeks.keys());
+    const from = summary.from;
     const manifest = { formatVersion: snapshotFormatVersion, generation: randomUUID(), createdAt: new Date().toISOString(),
       coverage: { from, to: cutoff, timingCutoffMs: timingCutoff, pullRequests: prs.length,
         shipped: delivery.shipped, linked: delivery.cycles.count,
-        rollouts: rolloutCount, traceSessions } };
-    return { from, to: cutoff, defaultTrace, traceSessions, timingCutoff, rolloutCount, changedCode, manifest };
+        rollouts: traces.rolloutCount, traceSessions: traces.traceSessions } };
+    return { from: summary.from, to: cutoff, defaultTrace: traces.defaultTrace, traceSessions: traces.traceSessions,
+      timingCutoff, rolloutCount: traces.rolloutCount, changedCode, repository: repo, manifest };
   } finally {
     source.close();
     view.close();

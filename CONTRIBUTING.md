@@ -8,7 +8,7 @@ Open a scoped pull request with the change, verification, and remaining acceptan
 
 ## Verify locally
 
-Run `npm ci --ignore-scripts` followed by `npm run verify` from a fresh checkout. The same command runs in the hosted workflow on pull requests and on landed main. Verification builds the pinned Bend2 policy, runs integration tests with synthetic evidence, and checks owner imports. It uses a private temporary job directory and needs network access for the compiler. Use `npm run verify -- collector`, `npm run verify -- evidence`, `npm run verify -- dashboard`, or `npm run test:hooks` for focused feedback.
+Run `npm ci --ignore-scripts` followed by `npm run verify` from a fresh checkout. The same command runs in the hosted workflow on pull requests and on landed main. Verification builds the pinned Bend2 policy, runs integration tests with synthetic evidence, and checks owner imports. It uses a private temporary job directory. A fresh run fetches the pinned compiler and packages once when there is no installed bundle. Use `npm run verify -- collector`, `npm run verify -- evidence`, `npm run verify -- dashboard`, or `npm run test:hooks` for focused feedback.
 
 Collector loads evidence through `evidence/index.ts`. Dashboard reads it through `evidence/read.ts`. Its verification fixture can use the loader to seed a synthetic database. Evidence and Collector may use the independent `tooling/bend.ts` compiler bootstrap. The boundary check covers static imports and re-exports, including type imports, and literal module loads in the owner directories. Generated policy loads go through the compiler bootstrap.
 
@@ -21,7 +21,7 @@ npm ci --ignore-scripts
 npm run hooks:install
 ```
 
-Use Node 22.18 or later. The installer selects the tracked hook directory in the current worktree. The hook runs offline and compares parsed comments in the staged Git tree to the current HEAD. Existing comments may remain or be deleted. A detected rename can carry an existing comment to the new path. A copy receives no allowance.
+Use Node 22.18 or later. On the first install, the setup command fetches and verifies the pinned compiler and packages into the Git common directory. It selects the tracked hooks for the current worktree. Subsequent commits compile the checked-out policies from that local bundle and compare parsed comments in the staged Git tree to the current HEAD. Rerun setup when pins change or a bundle needs repair. [Offline verification](tooling/README.md#verify-without-network-access). Existing comments may remain or be deleted. A detected rename can carry an existing comment to the new path. A copy receives no allowance.
 
 The directory-width guard allows at most ten immediate files and ten immediate subdirectories per affected first-party directory. It checks the staged or outgoing Git tree, including affected parent directories whose immediate entries changed. Docs and extensionless files count. Symlinks count as files and submodules count as directories. Dependency and cache trees are excluded. The root has separate slots for actual `.github` and `.githooks` directories, and GitHub's immediate `.github/workflows` directory is exempt. The push hook repeats the check against the outgoing commit.
 
@@ -39,4 +39,4 @@ The same installation enables the pre-push hook. Fetch the target remote's `main
 
 Documentation-only changes still run the directory-width, comment, and Bend2 path checks. Collector changes also run the Collector and Dashboard suites. Evidence changes run all three product suites. Dashboard changes run its snapshot suite. Hook changes run the hook suite. Shared changes run the full verification command. Deleting a ref sends no source to verify.
 
-The push hook sources its locked dependencies from the npm cache populated by setup. The suites use the same commands as local and hosted verification.
+The push hook reads the installed compiler bundle and sources locked Node dependencies from the npm cache populated by setup. The tests run from the outgoing commit using the same command as local and hosted verification.

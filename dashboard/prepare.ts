@@ -2,9 +2,8 @@ import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, 
 import { once } from "node:events";
 import { createServer, type ServerResponse } from "node:http";
 import { dirname, extname, join, resolve } from "node:path";
-import { openShippingReview, readPollMinutes, repository, savePollMinutes, snapshotFormatVersion, writeSnapshot } from "../evidence/read.ts";
+import { openShippingReview, readPollMinutes, savePollMinutes, snapshotFormatVersion, writeSnapshot } from "../evidence/read.ts";
 import { dashboards } from "./panels.ts";
-import { encodeTrace } from "./trace.ts";
 
 function validateSnapshot(directory: string) {
   const path = join(directory, "snapshot.json");
@@ -31,7 +30,6 @@ async function prepare(args: string[]) {
   if (!input || !output || !requestedRepository || extra.length) {
     throw Error("Usage: node dashboard/prepare.ts EVIDENCE_SQLITE NEW_OUTPUT_DIRECTORY OWNER/REPO [AS_OF_UTC]");
   }
-  const repo = repository(requestedRepository);
   const timingCutoff = asOf === undefined ? Math.floor(Date.now() / 1000) * 1000 : Date.parse(asOf);
   if (!Number.isFinite(timingCutoff) || timingCutoff < 86400000 || (asOf !== undefined &&
       new Date(timingCutoff).toISOString() !== asOf.replace(/(T\d{2}:\d{2}:\d{2})Z$/, "$1.000Z"))) {
@@ -46,15 +44,15 @@ async function prepare(args: string[]) {
     const scratch = mkdtempSync(join(staging, "build-"));
     const payloads = openSync(join(staging, "tempo.ndjson"), "wx", 0o600);
     try {
-      const range = await writeSnapshot(resolve(input), join(staging, "dashboard.sqlite"), scratch, repo,
-        cutoff, (key, trace) => {
-          const { traceId, payload } = encodeTrace(key, trace);
-          writeSync(payloads, JSON.stringify(payload) + "\n");
-          return traceId;
+      const range = await writeSnapshot(resolve(input), join(staging, "dashboard.sqlite"), scratch, requestedRepository,
+        cutoff, (_key, _trace, encode) => {
+          const { trace_id, payload_bytes } = encode();
+          writeSync(payloads, payload_bytes + "\n", null, "latin1");
+          return trace_id;
         }, undefined, timingCutoff, join(staging, "review-policy.mjs"));
       const provision = join(staging, "dashboards");
       mkdirSync(provision);
-      for (const [name, config] of Object.entries(dashboards(range, repo))) {
+      for (const [name, config] of Object.entries(dashboards(range, range.repository))) {
         writeFileSync(join(provision, name + ".json"), JSON.stringify(config), { flag: "wx" });
       }
       writeFileSync(join(staging, "snapshot.json"), JSON.stringify(range.manifest) + "\n", { flag: "wx" });

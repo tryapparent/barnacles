@@ -1,17 +1,19 @@
 import type { DatabaseSync, SQLOutputValue } from "node:sqlite";
+import type { IntervalClock } from "./intervals.ts";
 import type { List } from "../storage/sources.ts";
-import type { IntervalClock, ObservedInterval } from "./intervals.ts";
 
 type Ratio = { numerator: number; denominator: number };
 export const seconds = ({ numerator, denominator }: Ratio) => denominator ? numerator / denominator / 1000 : null;
 export type Stats = { $: "Stats"; count: number; total: number; missing: number };
-export type Timing = { clock: string; workflow: number; operation: string; stats: Stats };
-const epochMillis = (time: SQLOutputValue) => time === null ? null : Number(time) * 1000;
-export const millis = (time: SQLOutputValue) => epochMillis(time) ?? 0;
+type Timing = { clock: string; workflow: number; operation: string; stats: Stats };
+export const millis = (time: SQLOutputValue) => Number(time ?? 0) * 1000;
 
 type Bounds = { $: "Window"; from: number; to: number };
 type WindowRow = Pick<Timing, "clock" | "workflow" | "operation"> & { occupancy: { stats: Stats; union: number; unplaced: number } };
-type Span = { clock: IntervalClock; workflow: number; operation: string; start: number; end: number; codex: boolean };
+
+type WindowSummary = { clocks: List<WindowRow>; operations: List<WindowRow>; workflows: List<WindowRow>;
+  totals: List<WindowRow>; mixed: List<WindowRow> };
+type TimingSelector = { workflow: string; operation: string };
 
 export type ProcessAttribution = {
   $: "ProcessAttribution";
@@ -23,27 +25,27 @@ export type ProcessAttribution = {
 };
 
 export type TimingPolicy = {
-  timing_codex_operation(categories: string, attribution: ProcessAttribution): string;
-  interval_clock(clock: IntervalClock): string;
-  timing_windows(cutoff: number): List<{ key: string; bounds: Bounds }>;
-  starts_before(left: number, right: number): boolean;
+  repository_name(value: string): string;
   observe_timestamp(bounds: Bounds, at: number): Bounds;
   source_position(bounds: Bounds, latest: number): string;
-  start_window_groups(): unknown;
-  window_observe(state: unknown, bounds: Bounds, clock: string, workflow: number, operation: string,
-    start: number, end: number, codex: boolean): unknown;
-  summarize_window(state: unknown): { clocks: List<WindowRow>; operations: List<WindowRow>; workflows: List<WindowRow>;
-    totals: List<WindowRow>; mixed: List<WindowRow> };
+  empty_window_spans(): unknown;
+  window_action_job(spans: unknown, workflow: number, name: string, created: number, queued: number,
+    started: number, ended: number): unknown;
+  window_action_step(spans: unknown, workflow: number, name: string, start: number, end: number): unknown;
+  window_codex_span(spans: unknown, clock: string, categories: string, attribution: ProcessAttribution, start: number, end: number): unknown;
+  window_reports(spans: unknown, cutoff: number): List<{ key: string; bounds: Bounds; summary: WindowSummary }>;
+  measured_union(occupancy: WindowRow["occupancy"]): Ratio;
+  window_operation_selectors(row: WindowRow, groups: List<WindowRow>, total: boolean): List<TimingSelector>;
+  window_mixed_selectors(row: WindowRow): List<TimingSelector>;
   mean(sample: Stats): Ratio;
   operation_area(sample: Stats): boolean;
   measured_total(sample: Stats): Ratio;
   empty_timing(): unknown;
-  timing_observe(state: unknown, clock: IntervalClock, workflow: number, name: string, start: number, end: number): unknown;
-  timing_codex(state: unknown, clock: IntervalClock, categories: string, start: number, end: number): unknown;
+  timing_action_job(state: unknown, workflow: number, name: string, created: number, queued: number,
+    started: number, ended: number): unknown;
+  timing_action_step(state: unknown, workflow: number, name: string, started: number, ended: number): unknown;
   timing_result(state: unknown): { operations: List<Timing>; workflows: List<Timing>; totals: List<Timing>; mixed: List<Timing> };
 };
-
-export const empty: Stats = { $: "Stats", count: 0, total: 0, missing: 0 };
 
 const sourceNames = ["Codex", "Actions", "T3", "Releases"] as const;
 type TimingSource = typeof sourceNames[number];
@@ -51,7 +53,7 @@ type TimingSource = typeof sourceNames[number];
 export function collectTiming(source: DatabaseSync, repo: string, metrics: TimingPolicy, windowed = false) {
   const all = (sql: string) => source.prepare(sql).all(repo);
   let state = metrics.empty_timing();
-  const spans: Span[] = [];
+  let spans = metrics.empty_window_spans();
   const emptyBounds: Bounds = { $: "Window", from: 0, to: 0 };
   const sourceClocks = new Map(sourceNames.map((name) => [name, { observed: emptyBounds, receipt: emptyBounds }]));
   function observe(name: TimingSource, ...timestamps: number[]) {
@@ -69,45 +71,42 @@ export function collectTiming(source: DatabaseSync, repo: string, metrics: Timin
       receive("Actions", millis(row.observed_at));
     }
   }
-  function add({ clock, start, end }: ObservedInterval, id: number, operation: string) {
-    if (windowed) {
-      observe("Actions", start ?? 0, end ?? 0);
-      spans.push({ clock, workflow: id, operation, start: start ?? 0, end: end ?? 0, codex: false });
-    } else {
-      state = metrics.timing_observe(state, clock, id, operation, start ?? 0, end ?? 0);
-    }
-  }
   if (exists.get("action_jobs")) {
     for (const row of all(`
-      SELECT workflow_id, run_id, attempt, job_id, label, action_jobs.created_at, queue_end, execution_start, execution_end
+      SELECT workflow_id, label, action_jobs.created_at, queue_end, execution_start, execution_end
       FROM action_jobs JOIN action_attempts USING (repository, run_id, attempt) WHERE repository = ?
     `)) {
-      const identity = { source: "github-actions" as const, repository: repo,
-        run: String(row.run_id), attempt: Number(row.attempt), job: String(row.job_id) };
-      add({ identity, clock: "ci_queue", start: epochMillis(row.created_at), end: epochMillis(row.queue_end) },
-        Number(row.workflow_id), String(row.label));
-      add({ identity, clock: "ci_execution", start: epochMillis(row.execution_start), end: epochMillis(row.execution_end) },
-        Number(row.workflow_id), String(row.label));
+      const workflow = Number(row.workflow_id);
+      const label = String(row.label);
+      const queued = millis(row.created_at);
+      const queueEnd = millis(row.queue_end);
+      const started = millis(row.execution_start);
+      const ended = millis(row.execution_end);
+      if (windowed) {
+        observe("Actions", queued, queueEnd, started, ended);
+        spans = metrics.window_action_job(spans, workflow, label, queued, queueEnd, started, ended);
+      } else {
+        state = metrics.timing_action_job(state, workflow, label, queued, queueEnd, started, ended);
+      }
     }
     for (const row of all(`
-      SELECT workflow_id, run_id, attempt, job_id, step_number, label, action_steps.started_at, action_steps.completed_at
+      SELECT workflow_id, label, action_steps.started_at, action_steps.completed_at
       FROM action_steps JOIN action_attempts USING (repository, run_id, attempt) WHERE repository = ?
     `)) {
-      const identity = { source: "github-actions" as const, repository: repo,
-        run: String(row.run_id), attempt: Number(row.attempt), job: String(row.job_id), step: Number(row.step_number) };
-      add({ identity, clock: "ci_step", start: epochMillis(row.started_at), end: epochMillis(row.completed_at) },
-        Number(row.workflow_id), String(row.label));
+      const workflow = Number(row.workflow_id);
+      const label = String(row.label);
+      const started = millis(row.started_at);
+      const ended = millis(row.completed_at);
+      if (windowed) {
+        observe("Actions", started, ended);
+        spans = metrics.window_action_step(spans, workflow, label, started, ended);
+      } else state = metrics.timing_action_step(state, workflow, label, started, ended);
     }
   }
   return {
-    observeCodex({ clock, start, end }: ObservedInterval, categories: string, attribution: ProcessAttribution) {
-      if (windowed) {
-        observe("Codex", start ?? 0, end ?? 0);
-        spans.push({ clock, workflow: 0, operation: metrics.timing_codex_operation(categories, attribution),
-          start: start ?? 0, end: end ?? 0, codex: true });
-      } else {
-        state = metrics.timing_codex(state, clock, categories, start ?? 0, end ?? 0);
-      }
+    observeCodex(clock: IntervalClock, categories: string, attribution: ProcessAttribution, start: number, end: number) {
+      observe("Codex", start, end);
+      spans = metrics.window_codex_span(spans, clock, categories, attribution, start, end);
     },
     result: () => metrics.timing_result(state),
     observe, receive,
@@ -126,6 +125,14 @@ export function collectTiming(source: DatabaseSync, repo: string, metrics: Timin
         total_seconds REAL, union_seconds REAL, unmeasured INTEGER, rank INTEGER);
       CREATE TABLE workflows(window TEXT, clock TEXT, workflow INTEGER, total_seconds REAL, union_seconds REAL,
         count INTEGER, mean_seconds REAL, unmeasured INTEGER, rank INTEGER);
+      CREATE TABLE timing_selection(window TEXT, clock TEXT, workflow_choice TEXT, operation_choice TEXT, kind INTEGER,
+        rank INTEGER, PRIMARY KEY (window, clock, workflow_choice, operation_choice, kind, rank));
+      CREATE VIEW timing_details AS
+        SELECT window, clock, 0 AS kind, rank, operation, count, mean_seconds, total_seconds, union_seconds, unmeasured FROM timing
+        UNION ALL
+        SELECT window, clock, 1 AS kind, rank, operation, count, mean_seconds, total_seconds, union_seconds, unmeasured FROM mixed_groups
+        UNION ALL
+        SELECT window, clock, 2 AS kind, rank, operation, count, mean_seconds, total_seconds, union_seconds, unmeasured FROM operation_totals;
     `);
       const windows = view.prepare("INSERT INTO timing_windows VALUES (?, ?, ?)");
       const sources = view.prepare("INSERT INTO source_bounds VALUES (?, ?, ?, ?, ?, ?, ?)");
@@ -134,37 +141,43 @@ export function collectTiming(source: DatabaseSync, repo: string, metrics: Timin
       const workflows = view.prepare("INSERT INTO workflows VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
       const totals = view.prepare("INSERT INTO operation_totals VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
       const mixed = view.prepare("INSERT INTO mixed_groups VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
-      const stats = ({ occupancy: { stats, union } }: WindowRow) => [
-        stats.count, seconds(metrics.mean(stats)), seconds(metrics.measured_total(stats)),
-        stats.count ? union / 1000 : null, stats.missing,
+      const selection = view.prepare("INSERT INTO timing_selection VALUES (?, ?, ?, ?, ?, ?)");
+      const stats = ({ occupancy }: WindowRow) => [
+        occupancy.stats.count, seconds(metrics.mean(occupancy.stats)), seconds(metrics.measured_total(occupancy.stats)),
+        seconds(metrics.measured_union(occupancy)), occupancy.stats.missing,
       ] as const;
-      spans.sort((a, b) => Number(metrics.starts_before(b.start, a.start)) - Number(metrics.starts_before(a.start, b.start)));
-      for (const { key, bounds } of rows(metrics.timing_windows(cutoff))) {
+      for (const { key, bounds, summary: report } of rows(metrics.window_reports(spans, cutoff))) {
         windows.run(key, bounds.from, bounds.to);
         sourceNames.forEach((name, ordinal) => {
           const { observed, receipt } = sourceClocks.get(name)!;
           sources.run(key, ordinal, name, observed.from || null, observed.to || null,
             receipt.to || null, metrics.source_position(bounds, observed.to));
         });
-        let state = metrics.start_window_groups();
-        for (const { clock, workflow, operation, start, end, codex } of spans) {
-          state = metrics.window_observe(state, bounds, clock, workflow, operation, start, end, codex);
-        }
-        const report = metrics.summarize_window(state);
         for (const row of rows(report.clocks)) {
           const [count, , total, union, missing] = stats(row);
           clocks.run(key, row.clock, count, total, union, missing, row.occupancy.unplaced);
         }
-        rows(report.operations).forEach((row, rank) =>
-          timing.run(key, row.clock, row.workflow, row.operation, ...stats(row), rank));
+        const select = (row: WindowRow, rank: number, kind: number, selectors: List<TimingSelector>) => {
+          for (const { workflow, operation } of rows(selectors)) {
+            selection.run(key, row.clock, workflow, operation, kind, rank);
+          }
+        };
+        rows(report.operations).forEach((row, rank) => {
+          timing.run(key, row.clock, row.workflow, row.operation, ...stats(row), rank);
+          select(row, rank, 0, metrics.window_operation_selectors(row, report.mixed, false));
+        });
         rows(report.workflows).forEach((row, rank) => {
           const [count, mean, total, union, missing] = stats(row);
           workflows.run(key, row.clock, row.workflow, total, union, count, mean, missing, rank);
         });
-        rows(report.totals).forEach((row, rank) =>
-          totals.run(key, row.clock, row.operation, ...stats(row), Number(metrics.operation_area(row.occupancy.stats)), rank));
-        rows(report.mixed).forEach((row, rank) =>
-          mixed.run(key, row.clock, row.operation, ...stats(row), rank));
+        rows(report.totals).forEach((row, rank) => {
+          totals.run(key, row.clock, row.operation, ...stats(row), Number(metrics.operation_area(row.occupancy.stats)), rank);
+          select(row, rank, 2, metrics.window_operation_selectors(row, report.mixed, true));
+        });
+        rows(report.mixed).forEach((row, rank) => {
+          mixed.run(key, row.clock, row.operation, ...stats(row), rank);
+          select(row, rank, 1, metrics.window_mixed_selectors(row));
+        });
       }
     },
   };

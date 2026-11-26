@@ -2,37 +2,36 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { prepareCompiler } from "./bend.ts";
+import { checkBoundaries, loadVerification, suiteDirectories, verificationInput } from "./check-boundaries.ts";
 
-const suites = {
-  hooks: [".githooks", "tooling/tests"],
-  collector: ["collector"],
-  evidence: ["evidence"],
-  dashboard: ["dashboard"],
-};
-const requested = process.argv.slice(2);
-const scopes = requested.length ? requested : Object.keys(suites);
-if (scopes.some((scope) => !Object.hasOwn(suites, scope))) {
-  throw Error("Usage: npm run verify -- [hooks] [collector] [evidence] [dashboard]");
-}
 const cwd = fileURLToPath(new URL("../", import.meta.url));
 const parent = process.env.BARNACLES_TEST_DIRECTORY;
 const job = mkdtempSync(parent ? join(parent, "verify-") : "/tmp/apparent-dev-barnacles-verify-");
 try {
+  const bundle = await prepareCompiler(job);
+  process.env.BARNACLES_BEND_BUNDLE = bundle;
   const env = { ...process.env, BARNACLES_TEST_DIRECTORY: job };
   delete env.NODE_TEST_CONTEXT;
-  execFileSync(process.execPath, ["tooling/check-boundaries.ts"], { cwd, env, stdio: "inherit" });
-  const tests = scopes.flatMap((scope) => suites[scope as keyof typeof suites]).flatMap((owner) => {
-    const directory = resolve(cwd, owner);
-    return readdirSync(directory, { recursive: true }).filter((file) => file.endsWith(".test.ts"))
-      .map((file) => join(directory, file)).sort();
-  });
-  if (!tests.length) throw Error("No tests found for the selected scopes");
-  if (scopes.includes("dashboard")) {
-    const harbor = join(job, "harbor");
-    execFileSync("npm", ["run", "build:harbor", "--", "--outDir", harbor], { cwd, env, stdio: "inherit" });
-    Object.assign(env, { BARNACLES_WEB_BUILD: harbor });
+  const policy = await loadVerification(job);
+  const requested = verificationInput(process.argv.slice(2));
+  const directories = suiteDirectories(policy, requested);
+  if (!await checkBoundaries(policy)) {
+    process.exitCode = 1;
+  } else {
+    const tests = directories.flatMap((owner) => {
+      const directory = resolve(cwd, owner);
+      return readdirSync(directory, { recursive: true }).filter((file) => policy.is_test(file))
+        .map((file) => join(directory, file)).sort();
+    });
+    if (!tests.length) throw Error("No tests found for the selected scopes");
+    if (policy.builds_harbor(requested)) {
+      const harbor = join(job, "harbor");
+      execFileSync("npm", ["run", "build:harbor", "--", "--outDir", harbor], { cwd, env, stdio: "inherit" });
+      Object.assign(env, { BARNACLES_WEB_BUILD: harbor });
+    }
+    execFileSync(process.execPath, ["--test", ...tests], { cwd, env, stdio: "inherit" });
   }
-  execFileSync(process.execPath, ["--test", ...tests], { cwd, env, stdio: "inherit" });
 } catch (error) {
   const status = (error as { status?: number }).status;
   if (typeof status !== "number") console.error(error);
