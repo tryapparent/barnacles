@@ -20,4 +20,6 @@ T3 metadata + local Codex rollouts + GitHub delivery evidence
 
 The [Actions import](collector/README.md#run-the-actions-import) and the [T3, Codex, and GitHub delivery imports](collector/README.md#import-t3-codex-and-github-delivery) write local SQLite evidence. Use the delivery report to inspect verified releases and thread-to-release coverage. The [local Grafana dashboards](dashboard/provisioning/README.md) visualize shipping, recorded time, and rollout spans.
 
+[Changed Code Analysis](collector/README.md#changed-code-analysis) ranks files by how often commits touched them. Use it to find frequently edited files worth investigating for maintenance bottlenecks.
+
 See [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md). Barnacles is licensed under [MIT](LICENSE).
