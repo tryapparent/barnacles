@@ -2,8 +2,8 @@ export { loadEvidence, type ChangedCodeFile, type EvidenceBatch } from "./storag
 export { deliveryReport, type PullRequest, type ReleaseEvidence } from "./delivery/delivery.ts";
 export { type ActionAttempt, type AttemptIdentity } from "./storage/actions.ts";
 export {
-  sourcePolicy,
+  sourcePolicy, rolloutCoverage,
   type CommandMix, type List, type Milestone, type Point,
-  type RolloutEvidence, type ShellCommand, type SourcePolicy, type ThreadEvidence, type ToolInvocation,
+  type RolloutAdmission, type RolloutImport, type RolloutEvidence, type ShellCommand, type SourcePolicy, type ThreadEvidence, type ToolInvocation,
 } from "./storage/sources.ts";
 export { repository } from "./repository.ts";

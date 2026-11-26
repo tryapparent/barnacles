@@ -1,6 +1,6 @@
 # Collector
 
-The first entry point imports one GitHub Actions attempt by repository, run ID, attempt, and expected head SHA. It uses Node 22.18+ and an authenticated GitHub CLI. Run it in a private job directory. Source readers own authentication, pagination, caps, timeouts, and conversion to allowlisted records. They return coverage alongside the records so a failed read cannot appear as an empty source.
+The Actions entry point imports an exact GitHub Actions attempt or samples attempts discovered in a creation-time window. It uses Node 22.18+ and an authenticated GitHub CLI. Run it in a private job directory. Source readers own authentication, pagination, caps, timeouts, and conversion to allowlisted records. They return coverage alongside the records so a failed read cannot appear as an empty source.
 
 Each adapter extracts bounded provider input and decodes its wire format. Bend2 transforms it into allowlisted evidence, retaining the source identifiers and coverage needed for replay. The import commands pass an `EvidenceBatch` to Evidence's `loadEvidence` entry point. A new source should use this path and prove replay, partial input, and the relevant consumer with synthetic fixtures.
 
@@ -44,9 +44,22 @@ node evidence/report-actions.ts "$job/evidence.sqlite" tryapparent/apparent
 
 These are the public landed CI and desktop release runs for Apparent #2071. The command reads metadata only. Bend2 matches source identities, filters status and display labels, and selects queue, execution, and step clocks. The CLI host uses Node for GitHub subprocess calls, JSON and timestamp decoding, loading the compiled Bend2 module, and SQLite writes. The pinned Bend2 build emits an ES module of policy exports for this caller. The host supplies the process, filesystem, and SQLite interfaces. The command builds that policy using the pinned, checksum-verified compiler and disables Bend telemetry. The import requires network access to fetch those pinned tools and read GitHub metadata. It downloads neither workflow logs nor artifacts.
 
-The importer checks the attempt and SHA, reads at most ten 100-job pages, and rejects changing counts, duplicate IDs, or partial inventories before writing. Replaying a complete snapshot replaces the same attempt atomically. Submission to runner allocation is distinct from execution. A cancelled job with an explicit unallocated runner ID can supply a terminal queue clock. Pending, skipped, and unresolved carried-over jobs supply no execution duration. Jobless attempts keep their status and zero job count with no inferred queue. Arbitrary job and step names are grouped under Other jobs or Other steps. The SQLite file stays local.
+The importer checks the run ID, attempt and SHA, then reads at most ten 100-job pages per pass. It confirms the job inventory with a second pass bracketed by exact attempt metadata reads. Missing rows, changing counts or snapshots, duplicate IDs, and identity mismatches abort before writing. Both forms write in one SQLite transaction. Replaying the same complete observation replaces the same attempt.
 
-Run the synthetic boundary checks with `npm run verify -- collector`. It compiles the actual Bend2 policy and exercises the importer and SQLite write path.
+Submission to runner allocation is distinct from execution. A cancelled job with an explicit unallocated runner ID can supply a terminal queue clock. Pending, skipped, and unresolved carried-over jobs supply no execution duration. Jobless attempts retain their status and zero job count with no inferred start or queue. Reruns leave the run-level start unknown because it can carry forward, while individually measured job clocks remain available. The Intel Mac platform and native acceptance jobs have exact allowlists for named packaging, setup, and test steps in their respective job contexts. Arbitrary job and step names are grouped under Other jobs or Other steps. The SQLite file stays local.
+
+### Discover by creation time
+
+```sh
+node collector/import-actions.ts "$job" OWNER/REPO --window \
+  2026-01-01T00:00:00Z 2026-01-01T00:59:59Z 2 5
+```
+
+The interval is inclusive and uses UTC seconds. Set the last two arguments to the maximum inventory pages (1–10, 100 runs per page) and maximum exact attempts (1–20). The importer lists the run inventory up to the page cap, then captures the first eligible entries in GitHub response order using each entry's reported attempt and SHA. This sample favors the start of that ordering. It covers the attempt reported during discovery for each selected run. Earlier attempts can be imported explicitly by exact identity. The GitHub list and the attempt reads require Actions read access and use GET. [GitHub workflow runs API](https://docs.github.com/en/rest/actions/workflow-runs)
+
+Successful window imports print a JSON receipt containing the window, requested limits, `pagesRead`, GitHub's `reportedTotal`, `eligible` unique in-window run records validated on those pages, and `captured` exact attempts committed. `inventoryComplete` indicates that the validated listing reached the reported count below GitHub's 1,000-result search ceiling. It describes discovery, so it can be true when the attempt sample cap limits capture. A valid empty result reports zero eligible and captured. If an inventory page or selected attempt is incomplete or changes during its checks, the command exits with an error and writes no attempt rows. Discovery uses offset pagination and can detect inconsistent totals, short pages, and duplicate runs, with no point-in-time guarantee from GitHub.
+
+Run the synthetic checks with `npm run verify -- collector`. They compile the actual Bend2 policy and exercise pagination, partial and changing inventories, the command-line entry point, and SQLite replay.
 
 ## Apparent donor code
 
@@ -65,6 +78,7 @@ Use the same private job directory and SQLite file as the Actions import. Each c
 ```sh
 node collector/import-sources.ts "$job" t3 "$job/t3.json"
 node collector/import-sources.ts "$job" rollout local-codex "$rollout"
+node collector/import-sources.ts "$job" rollout-coverage
 node collector/import-sources.ts "$job" github tryapparent/apparent 2085 \
   linux-main-v2-fad85e0d1ad703cc04bdf0392f9a411498dec22b
 node collector/import-sources.ts "$job" github tryapparent/apparent 2071 \
@@ -94,14 +108,20 @@ Use a stable instance name per T3 environment. Follow and combine link pages bef
 
 ### Codex rollout
 
-Set `rollout` to one permitted retained JSONL file by exact session or workspace evidence. Install the pinned syntax parsers with `npm ci --ignore-scripts` before importing. The host streams one file of up to 128 MiB, including original provider timestamps when present. Bend2 pairs calls with results, handles missing and ambiguous endpoints, and correlates a yielded tool cell with an unambiguous terminal wait receipt. A cell span ends when the terminal result was observed and can overlap the envelope and other work. Malformed records prevent async pairing for that rollout. Independently observed tool envelopes and reasoning timestamps remain available. Other process receipt formats remain outside this slice. No titles, messages, raw arguments, outputs, or file paths go into SQLite. A rollout import by itself establishes no T3 or GitHub link.
+Set `rollout` to one permitted retained JSONL file by exact session or workspace evidence. Install the pinned syntax parsers with `npm ci --ignore-scripts` before importing. The reader uses the size observed at open, rejects files over 128 MiB, and retains complete LF-delimited UTF-8 JSON records of at most 8 MiB each. It records oversized lines and trailing bytes without LF separately. A short read rejects the snapshot. Call and reasoning line numbers are one-based physical lines in the original file.
+
+A file with conflicting session metadata is rejected unless it has the explicit Codex subagent history layout. The first record names the child thread, the shared parent, matching fork and parent thread IDs, and the first child history ordinal. The second record identifies that parent. Complete records must have contiguous ordinals starting at zero, with no further session headers. Only the child suffix is admitted under the original child thread ID. The inherited prefix remains in the source file and contributes no child spans or clocks. Calls and results cannot pair across the boundary. Files with unexplained conflicts, nested headers, missing or invalid ordinals, or no complete child record remain unsupported. A truncation without an LF never supplies a record, including when its bytes form valid JSON.
+
+Bend2 pairs stable call and result IDs and correlates a yielded tool cell with an unambiguous terminal wait receipt. An async cell ends when the terminal result was observed and can overlap the tool envelope and other work. Malformed, oversized, cutoff, or pre-metadata records suppress async pairing for the admitted file. Independently observed tool envelopes and reasoning timestamps remain available. Other process receipt formats remain outside this slice. A rollout import establishes no T3 or GitHub link.
+
+Pass an optional stable `SOURCE_ID` after the file to track retries, including across a move. Without it, the importer uses a local SHA-256 key derived from the absolute input path. The SQLite evidence and CLI coverage output are private. They contain allowlisted source identities and counts. File paths, titles, messages, raw arguments, and outputs are omitted. An admission rejection records its receipt and exits nonzero. A replay replaces the receipt for that source key. A failed replay leaves the previous admitted session snapshot in place.
 
 Timestamped Codex `reasoning` response items contribute a source line and one observed time. The source provides no measured start and end for these items. The importer discards content and summaries.
 When reasoning immediately follows a tool output in the response items, the importer retains the preceding call identity for the waterfall estimate. Turn boundaries and intervening response items clear this association. Reimport an older rollout to add this evidence.
 
 The collector decodes direct tool arguments, JavaScript tool calls, and literal Bash commands with Tree-sitter. Bend2 classifies submitted operations through an allowlist, including each supported operation in compound commands or parallel scripts. It recognizes simple `env` prefixes and puts Rust and Git push categories first for the waterfall. Dynamic or unsupported commands receive an unknown category. The parser bounds each submitted script or shell command to 64 KiB and can see calls in conditional code. Category labels describe submitted syntax. Clocks still measure the envelope or the observed async cell. Command source and arguments stay in the original local rollout. Reimport under the same instance to add categories to an older snapshot.
 
-For estimates, the collector accepts one literal shell command or a simple `&&` chain, submitted by one awaited `tools.exec_command` with its result printed directly or through a single binding. A matched successful structured receipt supplies elapsed shell time. Pipelines, parallel calls, substitutions, other operations, incomplete receipts, and ambiguous launches have no model sample. Bend2 counts repeated operations. SQLite retains counts and duration only.
+For estimates, the collector accepts one literal shell command or a simple `&&` chain, submitted by one awaited `tools.exec_command` with its result printed directly or through a single binding. A matched successful structured receipt supplies elapsed shell time. Pipelines, parallel calls, substitutions, other operations, incomplete receipts, and ambiguous launches have no model sample. Bend2 counts repeated operations. SQLite retains counts and the whole receipt duration. Coverage counts eligible receipt syntax, accepted receipts, and mixed-category calls with a missing receipt. Submission categories share the measured span. A receipt supplies no per-command clock, so the coverage report has no apportioned times.
 
 ### GitHub PR and release
 
@@ -109,7 +129,7 @@ Pass a PR number alone to capture PR, commit, and review metadata. For release e
 
 The CLI also reads a single bounded page of PR workflow runs for the PR branch and open-to-merge window. First PR CI is the earliest observed first-attempt workflow start with a PR link, or an exact repository, branch, and PR commit match when GitHub supplies no PR links. It measures the workflow clock. When a verified release tag is supplied, a unique successful Linux Main publishing workflow with matching source and run identity supplies its dispatch time. Unavailable or ambiguous clocks remain unknown.
 
-Bend2 selects the first commit, first observed review, and earliest **observed and verified** release per PR and surface from decoded evidence. Publication and access observation have separate timestamps. For PR #2085 the T3 metadata projection supplies one owning link. PR #2071 has PR-to-release data with no verified T3 owner. The report can be regenerated without rereading GitHub.
+Bend2 selects the first commit, first observed review, and earliest **observed and verified** release per PR and surface from decoded evidence. Publication and access observation have separate timestamps. For PR #2085 the T3 metadata projection supplies one owning link. PR #2071 has PR-to-release data with no verified T3 owner. The report can be regenerated without rereading GitHub. Each row exposes endpoint and stage coverage, source-link gaps, and unknown causal fields. Thread-to-commit and thread-to-publication are elapsed intervals from thread creation. Older threads can contribute idle time. The report has no active-work duration or verified link from a rollout wait or landed CI attempt to a delivery stage. See the [coverage contract](../evidence/README.md#coverage-contract).
 
 Run both integration tests with:
 

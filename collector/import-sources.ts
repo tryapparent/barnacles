@@ -1,20 +1,20 @@
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { sourcePolicy, deliveryReport, loadEvidence, type SourcePolicy } from "../evidence/index.ts";
+import { sourcePolicy, deliveryReport, rolloutCoverage, loadEvidence, type SourcePolicy } from "../evidence/index.ts";
 import { buildPolicy, loadPolicy } from "../tooling/bend.ts";
 import { positiveInt } from "./github/attempt.ts";
 import { pullRequest, releaseEvidence } from "./github/delivery.ts";
-import { readRollout } from "./codex/rollout.ts";
+import { inspectRollout } from "./codex/rollout.ts";
 import { t3Snapshot } from "./t3.ts";
 
 async function main() {
   const [directory, command, first, second, third, ...extra] = process.argv.slice(2);
   if (!directory || extra.length || !(
-    (command === "report" && !first) ||
+    ((command === "report" || command === "rollout-coverage") && !first) ||
     (command === "t3" && first && !second) ||
-    (command === "rollout" && first && second && !third) ||
+    (command === "rollout" && first && second) ||
     (command === "github" && first && second)
-  )) throw Error("Usage: import-sources.ts JOB_DIRECTORY { t3 SNAPSHOT | rollout INSTANCE FILE | github OWNER/REPO PR [TAG] | report }");
+  )) throw Error("Usage: import-sources.ts JOB_DIRECTORY { t3 SNAPSHOT | rollout INSTANCE FILE [SOURCE_ID] | github OWNER/REPO PR [TAG] | report | rollout-coverage }");
 
   const scratch = mkdtempSync(join(resolve(directory), "build-"));
   try {
@@ -28,9 +28,14 @@ async function main() {
       loadEvidence(db, { source: "t3", thread: data });
       console.log(`Imported T3 metadata with ${data.runs.length} runs and ${data.pullRequests.length} PR links`);
     } else if (command === "rollout") {
-      const data = await readRollout(second, first, policy);
+      const { receipt, data } = await inspectRollout(second, first, policy, third);
+      if (!data) {
+        loadEvidence(db, { source: "codex-rejected", receipt });
+        throw Error(`Rollout admission failed (${receipt.status})`);
+      }
       loadEvidence(db, { source: "codex", rollout: data });
-      console.log(`Imported ${data.calls.length} tool calls, ${data.calls.filter((call) => call.asyncEnd !== null).length} linked async cells, and ${data.markers.length} reasoning markers`);
+      console.log(JSON.stringify({ ...receipt, calls: data.calls.length, markers: data.markers.length,
+        orphans: data.orphans, quality: data.quality }));
     } else if (command === "github") {
       const pr = pullRequest(first, positiveInt(second), policy, undefined, true);
       loadEvidence(db, { source: "github-delivery", pullRequest: pr });
@@ -39,7 +44,7 @@ async function main() {
       console.log(release ? `Imported pull request and release evidence (access: ${release.accessible ? "verified" : "unverified"})`
         : "Imported pull request metadata");
     } else {
-      console.log(JSON.stringify(deliveryReport(db, policy), null, 2));
+      console.log(JSON.stringify(command === "report" ? deliveryReport(db, policy) : rolloutCoverage(db), null, 2));
     }
   } finally {
     rmSync(scratch, { recursive: true, force: true });

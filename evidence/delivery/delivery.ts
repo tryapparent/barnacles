@@ -1,5 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
-import { writeSources, type Elapsed, type ReleaseOrder, type SourcePolicy } from "../storage/sources.ts";
+import { writeSources, type DeliveryClocks, type Elapsed, type Point, type ReleaseOrder, type SourcePolicy } from "../storage/sources.ts";
 
 export type PullRequest = {
   repository: string; number: number; opened: number; merged: number | null;
@@ -41,6 +41,27 @@ export function saveDelivery(path: string, pr: PullRequest, release?: ReleaseEvi
       release.http ?? 0, release.bytes ?? 0, Number(release.accessible), release.ancestry, Number(release.shipped),
       release.dispatch?.id ?? 0, release.dispatch?.at ?? 0);
   });
+}
+
+function point(ms: number): Point {
+  return { $: "Time", s: Math.floor(ms / 1000), ms: ms % 1000 };
+}
+
+function deliveryCoverage(policy: SourcePolicy, clocks: DeliveryClocks, threadLink: string, releaseLink: string) {
+  const { $: _endpointTag, ...endpoints } = policy.delivery_endpoints(clocks);
+  const { $: _stageTag, ...stages } = policy.delivery_stages(clocks, threadLink);
+  return {
+    thread_link: threadLink,
+    release_link: releaseLink,
+    thread_clock_kind: "creation_to_milestone_elapsed",
+    active_thread_work: "unknown",
+    landed_ci_lineage: "unknown",
+    rollout_delivery_lineage: "unknown",
+    human_blocking: "unknown",
+    critical_path: "unknown",
+    endpoints,
+    stages,
+  };
 }
 
 export function deliveryReport(path: string, policy: SourcePolicy) {
@@ -87,7 +108,8 @@ export function readDelivery(db: DatabaseSync, policy: SourcePolicy, repository?
   return pullRequests.flatMap(({ merge_sha, ...pr }) => {
     const key = [pr.repository, pr.pr_number] as const;
     const firstCI = ci?.get(...key);
-    const groups = Map.groupBy([...(current?.all(...key) ?? []), ...(legacy?.all(...key) ?? [])], (release) => release.channel);
+    const proofs = [...(current?.all(...key) ?? []), ...(legacy?.all(...key) ?? [])];
+    const groups = Map.groupBy(proofs, (release) => release.channel);
     const selected = [];
     for (const releases of groups.values()) {
       const first = releases.reduce((best, candidate, index) => policy.pick_release(best, {
@@ -99,7 +121,8 @@ export function readDelivery(db: DatabaseSync, policy: SourcePolicy, repository?
         String(candidate.release_asset_id ?? "0"), Number(candidate.observation_count))), none);
       if (first.index) selected.push(releases[first.index - 1]);
     }
-    const owner = owners.all(...key).reduce((value, row) => {
+    const links = owners.all(...key);
+    const owner = links.reduce((value, row) => {
       const ms = Number(row.created_ms);
       return policy.count_owner(value, row.owning === 1, Math.floor(ms / 1000), ms % 1000);
     }, { $: "Owners" as const, count: 0, s: 0, ms: 0 });
@@ -107,13 +130,29 @@ export function readDelivery(db: DatabaseSync, policy: SourcePolicy, repository?
       const opened = Number(pr.opened_at);
       const published = Number(release?.published_at ?? 0);
       const cycle = policy.thread_to_release(owner.count, owner.s, owner.ms, opened, published);
+      const threadStart: Point = { $: "Time", s: owner.s, ms: owner.ms };
+      const threadLink = policy.delivery_thread_link(owner.count, links.length, threadStart, point(opened * 1000));
+      const releaseLink = policy.delivery_release_link(release !== null, proofs.length > 0,
+        proofs.some((proof) => policy.proof_matches_merge(String(proof.merge_sha ?? ""), String(merge_sha ?? ""))));
+      const coverage = deliveryCoverage(policy, {
+        $: "DeliveryTimes",
+        thread_started: threadStart,
+        first_commit: point(Number(pr.first_commit_at ?? 0) * 1000),
+        pr_opened: point(opened * 1000),
+        first_ci: point(Number(firstCI?.started_at ?? 0) * 1000),
+        first_review: point(Number(pr.first_review_at ?? 0) * 1000),
+        pr_merged: point(Number(pr.merged_at ?? 0) * 1000),
+        release_dispatched: point(Number(release?.dispatched_at ?? 0) * 1000),
+        published: point(published * 1000),
+        access_checked: point(Number(release?.checked_at ?? 0) * 1000),
+      }, threadLink, releaseLink);
       return {
         ...pr, channel: release?.channel ?? null, published_at: release?.published_at ?? null,
         first_ci_at: firstCI?.started_at ?? null, first_ci_run: firstCI?.run_id ?? null,
         release_dispatched_at: release?.dispatched_at || null, release_run: release?.dispatch_run || null,
         checked_at: release?.checked_at ?? null, ancestry: release?.ancestry ?? null,
         release_id: release?.release_id ?? null, asset_id: release?.asset_id ?? null,
-        owner_count: owner.count, thread_started_ms: owner.s ? owner.s * 1000 + owner.ms : null,
+        coverage, owner_count: owner.count, thread_started_ms: owner.s ? owner.s * 1000 + owner.ms : null,
         pr_to_release_seconds: secondsFromElapsed(policy.pr_to_release(opened, published)),
         thread_to_release_seconds: secondsFromElapsed(cycle),
       };

@@ -20,7 +20,41 @@ export type Milestone = { $: "Milestone"; id: string; at: number };
 type Owners = { $: "Owners"; count: number; s: number; ms: number };
 export type ReleaseOrder = { $: "Release"; published: number; checked: number; id: string; dispatch: number; index: number };
 
+export type RolloutAdmission = {
+  $: "Gate"; status: string; session: string; parent: string; boundary: number; inherited: number;
+  unassigned: number; keep: boolean;
+};
+
+type RolloutQuality = {
+  $: "Quality"; missing_start: number; missing_end: number; missing_async_end: number; ambiguous_calls: number;
+  mix_candidates: number; mix_receipts: number; mixed_calls: number; mixed_without_receipt: number;
+};
+
+type RolloutClocks = { $: "Clocks"; first: Point; last: Point };
+
+type DeliveryEndpoint = "thread_started" | "first_commit" | "pr_opened" | "first_ci" | "first_review" |
+  "pr_merged" | "release_dispatched" | "published" | "access_checked";
+type DeliveryStage = "thread_to_commit" | "commit_to_open" | "open_to_first_ci" | "first_ci_to_merge" |
+  "merge_to_dispatch" | "dispatch_to_publication" | "open_to_merge" | "merge_to_publication" |
+  "thread_to_publication" | "publication_to_access_check";
+export type DeliveryClocks = { $: "DeliveryTimes" } & Record<DeliveryEndpoint, Point>;
+
 export type SourcePolicy = {
+  rollout_file_status(available: boolean, regular: boolean, empty: boolean, oversized: boolean): string;
+  rollout_line(state: RolloutAdmission, meta: boolean, id: string, parent: string, fork: string, shared: string,
+    boundary: number, line: number, ordinalOk: boolean, decoded: boolean): RolloutAdmission;
+  rollout_status(state: RolloutAdmission, lines: number, completeRead: boolean): string;
+  rollout_admitted(status: string): boolean;
+  rollout_call_quality(state: RolloutQuality, start: Point, finish: Point, launched: boolean, asyncEnd: Point,
+    ambiguous: boolean, categories: string, candidate: CommandMix, received: boolean): RolloutQuality;
+  rollout_clock(clocks: RolloutClocks, at: Point): RolloutClocks;
+  rollout_pairing_gaps(malformed: number, oversized: number, cutoff: number, unassigned: number): number;
+  delivery_thread_link(ownerCount: number, linkCount: number, start: Point, opened: Point): string;
+  proof_matches_merge(proofMerge: string, currentMerge: string): boolean;
+  delivery_release_link(selected: boolean, hasProof: boolean, matchingMerge: boolean): string;
+  delivery_endpoints(clocks: DeliveryClocks): { $: "Endpoints" } & Record<DeliveryEndpoint, string>;
+  delivery_stages(clocks: DeliveryClocks, threadLink: string): { $: "Stages" } & Record<DeliveryStage, string>;
+  delivery_thread_window(created: Point, windowStart: Point): string;
   reasoning(event: string, point: Point): boolean;
   model_wait_input(previous: string, envelope: string, kind: string, callId: string): string;
   tool(name: string, direct: List<ShellCommand>, wrapped: List<ToolInvocation>): unknown;
@@ -70,7 +104,15 @@ export type ThreadEvidence = {
   pullRequests: { repository: string; number: number; source: string; state: string; owning: boolean }[];
 };
 
+export type RolloutImport = {
+  instance: string; sourceKey: string; status: string; session: string | null;
+  parent: string | null; historyStartOrdinal: number | null; fileBytes: number | null; readBytes: number; lines: number; inherited: number; unassigned: number;
+  malformed: number; oversized: number; cutoffLines: number; cutoffBytes: number;
+};
+
 export type RolloutEvidence = {
+  receipt?: RolloutImport;
+  quality?: RolloutQuality & { first: number | null; last: number | null };
   instance: string; session: string; lines: number; malformed: number; orphans: number;
   markers: { line: number; at: number; resultCall?: string }[];
   calls: { id: string; line: number; tool: string; command: string | null; start: number | null; end: number | null;
@@ -112,6 +154,18 @@ export function saveThread(path: string, data: ThreadEvidence) {
   });
 }
 
+function writeRolloutReceipt(db: DatabaseSync, receipt: RolloutImport) {
+  db.prepare("INSERT OR REPLACE INTO codex_rollout_imports VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+    receipt.instance, receipt.sourceKey, receipt.status, receipt.session, receipt.parent, receipt.historyStartOrdinal,
+    receipt.fileBytes, receipt.readBytes,
+    receipt.lines, receipt.inherited, receipt.unassigned, receipt.malformed, receipt.oversized,
+    receipt.cutoffLines, receipt.cutoffBytes);
+}
+
+export function saveRejectedRollout(path: string, receipt: RolloutImport) {
+  writeSources(path, (db) => writeRolloutReceipt(db, receipt));
+}
+
 export function saveRollout(path: string, data: RolloutEvidence) {
   writeSources(path, (db) => {
     const key = [data.instance, data.session] as const;
@@ -121,6 +175,15 @@ export function saveRollout(path: string, data: RolloutEvidence) {
       ON CONFLICT(instance, session_id) DO UPDATE SET line_count=excluded.line_count,
       malformed_count=excluded.malformed_count, orphan_count=excluded.orphan_count`).run(
       ...key, data.lines, data.malformed, data.orphans);
+    db.prepare("DELETE FROM codex_rollout_quality WHERE instance=? AND session_id=?").run(...key);
+    if (data.receipt && data.quality) {
+      writeRolloutReceipt(db, data.receipt);
+      const quality = data.quality;
+      db.prepare("INSERT INTO codex_rollout_quality VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+        ...key, data.receipt.sourceKey, quality.first, quality.last, quality.missing_start, quality.missing_end,
+        quality.missing_async_end, quality.ambiguous_calls, quality.mix_candidates, quality.mix_receipts,
+        quality.mixed_calls, quality.mixed_without_receipt);
+    }
     db.prepare("DELETE FROM codex_commands WHERE instance=? AND session_id=?").run(...key);
     db.prepare("DELETE FROM codex_categories WHERE instance=? AND session_id=?").run(...key);
     db.prepare("DELETE FROM codex_command_mixes WHERE instance=? AND session_id=?").run(...key);
@@ -146,4 +209,20 @@ export function saveRollout(path: string, data: RolloutEvidence) {
       if (marker.resultCall) inputs.run(...key, marker.line, marker.resultCall);
     }
   });
+}
+
+export function rolloutCoverage(path: string) {
+  const db = new DatabaseSync(path, { readOnly: true });
+  try {
+    const table = db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?");
+    return {
+      imports: table.get("codex_rollout_imports")
+        ? db.prepare("SELECT * FROM codex_rollout_imports ORDER BY instance, source_key").all() : null,
+      sessions: table.get("codex_rollout_quality")
+        ? db.prepare(`SELECT quality.*, rollout.orphan_count FROM codex_rollout_quality quality
+            JOIN codex_rollouts rollout USING (instance, session_id) ORDER BY instance, session_id`).all() : null,
+    };
+  } finally {
+    db.close();
+  }
 }
