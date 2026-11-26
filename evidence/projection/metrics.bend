@@ -539,9 +539,15 @@ def review_in_range(+at: Nat, from: Nat, to: Nat) -> Bool:
 type ReviewWeek is Data:
   ReviewBucket{start: Nat, sample: ShippingSample}
 
+type ReviewStageSample is Data:
+  StageSample{phase: String, sample: Sample}
+
+type ReviewDay is Data:
+  ReviewDayBucket{start: Nat, shipped: Nat, stages: List<&2, ReviewStageSample>}
+
 type ReviewFold is Data:
   ReviewAccum{deliveries: List<&2, ReviewItem>, fleet: List<&2, ReviewItem>, verified: ShippingSample,
-    weeks: Map<&2, ReviewWeek>}
+    weeks: Map<&2, ReviewWeek>, days: Map<&2, ReviewDay>}
 
 def review_empty_shipments() -> ShippingSample:
   Delivery{0n, Stats{0n, 0n, 0n}}
@@ -552,39 +558,58 @@ def review_week_add(found: Map<&2, ReviewWeek> & ReviewWeek, key: String, linked
     case Tuple{weeks, ReviewBucket{start, sample}}:
       Map.set(&2, ReviewWeek, weeks, key, ReviewBucket{start, record_release(sample, linked, cycle_ms)})
 
-def review_add_shipment(published: Nat, +linked: Bool, +cycle: Nat, accum: ReviewFold) -> ReviewFold:
+def review_stage_samples(events: List<&2, ReviewMoment>, samples: List<&2, ReviewStageSample>) -> List<&2, ReviewStageSample>:
+  match events:
+    case []: []
+    case Event{key, +phase, clock, +elapsed} <> +rest:
+      match samples:
+        case []: StageSample{phase, count_cycle_stage(Stats{0n, 0n, 0n}, elapsed)} <> review_stage_samples(rest, [])
+        case StageSample{prior_phase, sample} <> remaining:
+          StageSample{phase, count_cycle_stage(sample, elapsed)} <> review_stage_samples(rest, remaining)
+
+def review_day_add(found: Map<&2, ReviewDay> & ReviewDay, key: String, item: ReviewItem) -> Map<&2, ReviewDay>:
+  match found item:
+    case Tuple{days, ReviewDayBucket{start, shipped, stages}} Item{pr, order, changed, stage, events}:
+      Map.set(&2, ReviewDay, days, key, ReviewDayBucket{start, Nat.add(shipped, 1n),
+        review_stage_samples(List.drop(&2, ReviewMoment, events, 1n), stages)})
+
+def review_add_shipment(+published: Nat, +linked: Bool, +cycle: Nat, item: ReviewItem, accum: ReviewFold) -> ReviewFold:
   match accum:
-    case ReviewAccum{deliveries, fleet, verified, weeks}:
+    case ReviewAccum{deliveries, fleet, verified, weeks, days}:
       +bucket = week(Nat.div(published, 1000n))
       +key = Nat.show(bucket)
+      +day = Nat.sub(published, Nat.mod(published, 86400000n))
+      +day_key = Nat.show(day)
       ReviewAccum{deliveries, fleet, record_release(verified, linked, cycle),
-        review_week_add(Map.get(ReviewWeek, ReviewBucket{bucket, review_empty_shipments()}, weeks, key), key, linked, cycle)}
+        review_week_add(Map.get(ReviewWeek, ReviewBucket{bucket, review_empty_shipments()}, weeks, key), key, linked, cycle),
+        review_day_add(Map.get(ReviewDay, ReviewDayBucket{day, 0n, []}, days, day_key), day_key, item)}
 
-def review_count_shipment(include: Bool, published: Nat, linked: Bool, cycle: Nat, accum: ReviewFold) -> ReviewFold:
+def review_count_shipment(include: Bool, published: Nat, linked: Bool, cycle: Nat, item: ReviewItem, accum: ReviewFold) -> ReviewFold:
   match include:
     case False{}: accum
-    case True{}: review_add_shipment(published, linked, cycle, accum)
+    case True{}: review_add_shipment(published, linked, cycle, item, accum)
 
-def review_ship(fact: ReviewFact, from: Nat, +to: Nat, accum: ReviewFold) -> ReviewFold:
+def review_ship(fact: ReviewFact, item: ReviewItem, from: Nat, +to: Nat, accum: ReviewFold) -> ReviewFold:
   match fact:
     case ReviewPR{pr, release, t, c, o, i, m, d, +p, +a, linked, cycle}:
       review_count_shipment(Bool.and(release, Bool.and(review_in_range(p, from, to),
-        Bool.and(interval_valid(p, a), Nat.is_le(a, to)))), p, linked, cycle, accum)
+        Bool.and(interval_valid(p, a), Nat.is_le(a, to)))), p, linked, cycle, item, accum)
 
 def review_add_item(+item: ReviewItem, +from: Nat, +fleet_from: Nat, accum: ReviewFold) -> ReviewFold:
   match item accum:
-    case Item{pr, order, +when, stage, milestones} ReviewAccum{+deliveries, +fleet, verified, weeks}:
+    case Item{pr, order, +when, stage, milestones} ReviewAccum{+deliveries, +fleet, verified, weeks, days}:
       ReviewAccum{
         Bool.pick(List<&2, ReviewItem>, Bool.and(Nat.is_lt(0n, when), Nat.is_le(from, when)), item <> deliveries, deliveries),
         Bool.pick(List<&2, ReviewItem>, Bool.and(Nat.is_lt(0n, when), Nat.is_le(fleet_from, when)), item <> fleet, fleet),
-        verified, weeks}
+        verified, weeks, days}
 
 def review_collect(facts: List<&2, ReviewFact>, +from: Nat, +to: Nat, +fleet_from: Nat, accum: ReviewFold) -> ReviewFold:
   match facts:
     case []: accum
     case +head <> tail:
-      review_collect(tail, from, to, fleet_from, review_add_item(review_item(head, to), from, fleet_from,
-        review_ship(head, from, to, accum)))
+      +item = review_item(head, to)
+      review_collect(tail, from, to, fleet_from, review_add_item(item, from, fleet_from,
+        review_ship(head, item, from, to, accum)))
 
 def review_weeks(weeks: List<&2, Sigma<&2, &2, String, _ => ReviewWeek>>) -> List<&2, ReviewWeek>:
   match weeks:
@@ -595,9 +620,18 @@ def review_week_before(a: ReviewWeek, b: ReviewWeek) -> Bool:
   match a b:
     case ReviewBucket{left, ignored} ReviewBucket{right, also_ignored}: Nat.is_le(left, right)
 
+def review_days(days: List<&2, Sigma<&2, &2, String, _ => ReviewDay>>) -> List<&2, ReviewDay>:
+  match days:
+    case []: []
+    case Tuple{key, value} <> rest: value <> review_days(rest)
+
+def review_day_newest(a: ReviewDay, b: ReviewDay) -> Bool:
+  match a b:
+    case ReviewDayBucket{left, count_a, stages_a} ReviewDayBucket{right, count_b, stages_b}: Nat.is_le(right, left)
+
 type ReviewResult is Data:
   ReviewReport{total: Nat, next_offset: Nat, max_measured_ms: Nat, deliveries: List<&2, ReviewItem>, fleet: List<&2, ReviewItem>,
-    verified: ShippingSample, weeks: List<&2, ReviewWeek>}
+    verified: ShippingSample, weeks: List<&2, ReviewWeek>, days: List<&2, ReviewDay>}
 
 def review_count_facts(facts: List<&2, ReviewFact>) -> Nat:
   List.length(&2, ReviewFact, facts)
@@ -618,14 +652,15 @@ def review_max_measured(items: List<&2, ReviewItem>, +maximum: Nat) -> Nat:
 
 def review_page(accum: ReviewFold, +limit: Nat, +offset: Nat) -> ReviewResult:
   match accum:
-    case ReviewAccum{+deliveries, fleet, verified, weeks}:
+    case ReviewAccum{+deliveries, fleet, verified, weeks, days}:
       +total = List.length(&2, ReviewItem, deliveries)
       +next = Nat.add(offset, limit)
       ReviewReport{total, Bool.pick(Nat, Nat.is_lt(next, total), next, 0n), review_max_measured(deliveries, 0n),
         List.take(&2, ReviewItem, List.drop(&2, ReviewItem, List.sort(~ReviewItem, ~review_newest, deliveries), offset), limit),
         List.sort(~ReviewItem, ~review_newest, fleet), verified,
-        List.sort(~ReviewWeek, ~review_week_before, review_weeks(Map.to_list(&2, ReviewWeek, weeks)))}
+        List.sort(~ReviewWeek, ~review_week_before, review_weeks(Map.to_list(&2, ReviewWeek, weeks))),
+        List.sort(~ReviewDay, ~review_day_newest, review_days(Map.to_list(&2, ReviewDay, days)))}
 
 def review_report(facts: List<&2, ReviewFact>, from: Nat, to: Nat, fleet_from: Nat, limit: Nat, offset: Nat) -> ReviewResult:
   review_page(review_collect(facts, from, to, fleet_from,
-    ReviewAccum{[], [], review_empty_shipments(), Map.new(&2, ReviewWeek)}), limit, offset)
+    ReviewAccum{[], [], review_empty_shipments(), Map.new(&2, ReviewWeek), Map.new(&2, ReviewDay)}), limit, offset)

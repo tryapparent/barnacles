@@ -4,7 +4,7 @@ import {
   dayLabel, deliveryPage, fetchEvidence, milestoneLabel, pagePath,
   shippingPath, stageLabel, stages, utcLabel, wholeMinutes, type Detail, type Milestone, type Review,
 } from "./api";
-import { Overview } from "./visual/charts";
+import { DailyStages, Overview, StageKey } from "./visual/charts";
 import { Button, NativeSelect } from "./controls";
 import { Fleet } from "./visual/fleet";
 import "./style.css";
@@ -187,8 +187,7 @@ function DeliveryTimeline({ review, selection }: { review: Review; selection: { 
   return <section className="delivery" aria-labelledby="delivery-title">
     <h2 id="delivery-title">Delivery cycle time</h2>
     {items.length ? <>
-      <ul className="stage-key" aria-label="Delivery stages">{stages.map(([key, label, color]) =>
-        <li key={key} className={`stage-${color}`}>{label}</li>)}</ul>
+      <StageKey />
       <div className="delivery-list">{items.map((item) => {
         const hasThread = item.milestones.some((entry) => entry.key === "thread-started" && entry.observedAt);
         const measured = item.milestones.flatMap((entry) => entry.elapsedMillis !== null && entry.elapsedMillis > 0 ?
@@ -277,6 +276,7 @@ function App() {
       </div>
       <Fleet fleet={review.fleet} onSelect={select} />
       <Overview review={review} />
+      <DailyStages days={review.shipments.dailyStages} />
       <DeliveryTimeline review={review} selection={selection} />
     </>}
   </main>;
