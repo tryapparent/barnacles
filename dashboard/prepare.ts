@@ -1,7 +1,7 @@
 import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { once } from "node:events";
 import { createServer, type ServerResponse } from "node:http";
-import { dirname, join, resolve } from "node:path";
+import { dirname, extname, join, resolve } from "node:path";
 import { openShippingReview, repository, snapshotFormatVersion, writeSnapshot } from "../evidence/read.ts";
 import { dashboards } from "./panels.ts";
 import { encodeTrace } from "./trace.ts";
@@ -120,12 +120,40 @@ function natural(value: string, label: string) {
   return number;
 }
 
+const webTypes: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".woff2": "font/woff2",
+  ".webp": "image/webp",
+};
+
+function serveWeb(root: string, path: string, response: ServerResponse) {
+  if (path !== "/" && !/^\/assets\/[a-zA-Z0-9_-]+[.][a-z0-9]+$/.test(path)) return false;
+  const file = path === "/" ? "index.html" : path.slice(1);
+  const type = webTypes[extname(file)];
+  const target = join(root, file);
+  if (!type || !statSync(target, { throwIfNoEntry: false })?.isFile()) return false;
+  const body = readFileSync(target);
+  response.writeHead(200, {
+    "Content-Type": type,
+    "X-Content-Type-Options": "nosniff",
+    "Cache-Control": path === "/" ? "no-cache" : "public, max-age=31536000, immutable",
+  });
+  response.end(body);
+  return true;
+}
+
 async function serve(args: string[]) {
-  const [directory, requestedPort = "3031", ...extra] = args;
-  if (!directory || extra.length) throw Error("Usage: node dashboard/prepare.ts --serve SNAPSHOT_DIRECTORY [PORT]");
+  const [directory, requestedPort = "3031", webDirectory, ...extra] = args;
+  if (!directory || extra.length) throw Error("Usage: node dashboard/prepare.ts --serve SNAPSHOT_DIRECTORY [PORT] [WEB_BUILD_DIRECTORY]");
   const port = natural(requestedPort, "Port");
   if (port > 65535) throw Error("Port must be at most 65535");
   if (!existsSync(join(directory, "review-policy.mjs"))) throw Error("Run dashboard/prepare.ts to build a review API snapshot first.");
+  const webRoot = webDirectory ? resolve(webDirectory) : undefined;
+  if (webRoot && !statSync(join(webRoot, "index.html"), { throwIfNoEntry: false })?.isFile()) {
+    throw Error("Build the harbor frontend and pass its output directory.");
+  }
   const review = await openShippingReview(resolve(directory));
   const server = createServer((request, response) => {
     const address = server.address();
@@ -140,6 +168,7 @@ async function serve(args: string[]) {
     try {
       if (!request.url?.startsWith("/")) throw new InvalidRequest("Use a documented API path.");
       const url = new URL(`http://127.0.0.1${request.url}`);
+      if (webRoot && serveWeb(webRoot, url.pathname, response)) return;
       if (url.pathname === "/api/v1") {
         queryParams(url.searchParams, []);
         return json(response, 200, {
@@ -176,7 +205,11 @@ async function serve(args: string[]) {
   server.listen(port, "127.0.0.1");
   await once(server, "listening");
   const address = server.address();
-  if (address && typeof address !== "string") console.log(`Barnacles API http://127.0.0.1:${address.port}/api/v1`);
+  if (address && typeof address !== "string") {
+    const origin = `http://127.0.0.1:${address.port}`;
+    console.log(`Barnacles API ${origin}/api/v1`);
+    if (webRoot) console.log(`Barnacles harbor ${origin}/`);
+  }
 }
 
 const args = process.argv.slice(2);

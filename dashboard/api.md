@@ -20,6 +20,37 @@ Each request opens a read transaction against the current database, so an
 atomic replacement of `dashboard.sqlite` prepared with the same code becomes
 visible on the next request.
 
+## Open the harbor dashboard
+
+Build the React client into the private job directory and serve it on the API's
+origin.
+
+```sh
+npm ci --ignore-scripts
+npm run build:harbor -- --outDir "$job/harbor"
+node dashboard/prepare.ts --serve "$job/grafana" 3031 "$job/harbor"
+```
+
+Open [Shipping review](http://127.0.0.1:3031/). The browser requests the same
+JSON as an agent. Review filters and PR detail links are encoded in the URL.
+The page shows the snapshot timestamp and supports keyboard navigation and
+reduced motion. Grafana remains the reader for its provisioned drilldowns.
+
+The scene uses the approved generated artwork for the two working shores.
+Its references are the [Clyde shipyard archive](https://i.rcahms.gov.uk/canmore/x/SC01268607.jpg)
+and the [Historic England Whitby archive](https://historicengland.org.uk/images-books/photos/item/AA63/04965).
+The canvas draws at most four ships per stage for readability. The Fleet
+manifest lists every observed PR with a link to its evidence. Vessel size uses
+depth perspective because the evidence source does not retain PR diff sizes.
+
+The browser presentation uses React, Vite, Canvas and SVG. TypeScript decodes
+API responses and renders the shared evidence. The local Button and
+NativeSelect adapt the [shadcn registry](https://ui.shadcn.com/docs/components/native-select)
+under its [MIT license](web/assets/SHADCN-LICENSE). The gauge adapts the
+[dithercn dial](https://dithercn.dev/docs/charts/gauge) under its
+[MIT license](web/assets/DITHERCN-LICENSE). The self-hosted Geist Pixel Square
+font carries its [OFL license](web/assets/OFL.txt).
+
 ## Read the evidence
 
 Start at [the API index](http://127.0.0.1:3031/api/v1) to discover routes and

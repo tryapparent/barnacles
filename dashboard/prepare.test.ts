@@ -493,7 +493,9 @@ test("shipping API preserves historical and partial evidence and reads a replace
       pullRequests: [{ repository: repo, number: 101, source: "created", state: "merged", owning: true }],
     } });
     await prepare(snapshot);
-    server = spawn(process.execPath, ["dashboard/prepare.ts", "--serve", snapshot, "0"], { stdio: ["ignore", "pipe", "pipe"] });
+    const web = process.env.BARNACLES_WEB_BUILD;
+    server = spawn(process.execPath, ["dashboard/prepare.ts", "--serve", snapshot, "0", ...(web ? [web] : [])],
+      { stdio: ["ignore", "pipe", "pipe"] });
     server.stderr?.resume();
     stopped = once(server, "exit");
     const [announcement] = await once(server.stdout!, "data", { signal: AbortSignal.timeout(10_000) });
@@ -507,6 +509,18 @@ test("shipping API preserves historical and partial evidence and reads a replace
       return result.json();
     };
 
+    if (web) {
+      const page = await call("/");
+      assert.equal(page.status, 200);
+      assert.match(page.headers.get("content-type") ?? "", /text\/html/);
+      const script = (await page.text()).match(/src="(\/assets\/[^"]+\.js)"/)?.[1];
+      assert.ok(script);
+      const bundle = await call(script);
+      assert.equal(bundle.status, 200);
+      assert.match(bundle.headers.get("content-type") ?? "", /text\/javascript/);
+      await bundle.arrayBuffer();
+      assert.equal((await call("/dashboard.sqlite")).status, 404);
+    }
     assert.equal((await get("/api/v1")).endpoints.shipping.path, "/api/v1/shipping");
     const report = await get("/api/v1/shipping?limit=1");
     assert.deepEqual(report.snapshotCoverage, { observedPullRequests: 2, verifiedShipments: 1, attributedShipments: 1 });
