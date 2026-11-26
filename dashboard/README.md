@@ -7,3 +7,13 @@ Use built-in gauge, time-series, and table panels. Evaluate the [SQLite data sou
 For an initial waterfall, try [Grafana's trace-file import](https://grafana.com/docs/grafana/latest/datasources/jaeger/query-editor/) with sanitized timestamps, display labels, and parent IDs. Add a trace backend if file import cannot support the intended workflow. Keep the waterfall on one time axis and retain nested and overlapping spans.
 
 Document the exact Grafana and plugin versions, local launch and import commands, and UI verification when the first provisioned build lands.
+
+## Codex waterfall
+
+Import a permitted rollout with `node collector/import-sources.ts "$job" rollout local-codex "$rollout"`.
+Prepare the local view with `node dashboard/prepare.ts "$job/evidence.sqlite" "$job/grafana" OWNER/REPO`.
+Start Grafana with `dashboard/run.sh "$job/grafana"` and open `/d/barnacles-trace/trace`.
+
+Select a session under **Imported sessions** and use the time picker to inspect later activity. Purple lines mark
+when Codex recorded reasoning. **Reasoning timestamps** lists the same events by timestamp and source line.
+Their durations are unknown. Reimport older rollouts to pick up the marker and label changes.

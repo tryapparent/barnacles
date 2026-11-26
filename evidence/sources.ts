@@ -15,7 +15,9 @@ type Owners = { $: "Owners"; count: number; s: number; ms: number };
 export type ReleaseOrder = { $: "Release"; published: number; checked: number; id: string; index: number };
 
 export type SourcePolicy = {
-  start_call(state: unknown, line: number, tool: string, start: Point, target: string): unknown;
+  reasoning(event: string, point: Point): boolean;
+  tool(name: string, wrapped: string, parallel: boolean): unknown;
+  start_call(state: unknown, line: number, tool: unknown, start: Point, target: string): unknown;
   finish_call(state: unknown, end: Point, yielded: string, completed: boolean): unknown;
   cell_fact(id: string, state: unknown): CellFact;
   add_cell_fact(pair: unknown, fact: CellFact): unknown;
@@ -60,6 +62,7 @@ export type ThreadEvidence = {
 
 export type RolloutEvidence = {
   instance: string; session: string; lines: number; malformed: number; orphans: number;
+  markers: { line: number; at: number }[];
   calls: { id: string; line: number; tool: string; start: number | null; end: number | null;
     async: boolean; asyncEnd: number | null; terminalCall: string | null; ambiguous: boolean }[];
 };
@@ -114,7 +117,9 @@ export function saveRollout(path: string, data: RolloutEvidence) {
     const key = [data.instance, data.session] as const;
     const previous = db.prepare("SELECT line_count FROM codex_rollouts WHERE instance=? AND session_id=?").get(...key);
     if (previous && Number(previous.line_count) > data.lines) throw Error("Shorter rollout snapshot");
-    db.prepare("INSERT OR REPLACE INTO codex_rollouts VALUES (?, ?, ?, ?, ?)").run(
+    db.prepare(`INSERT INTO codex_rollouts VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(instance, session_id) DO UPDATE SET line_count=excluded.line_count,
+      malformed_count=excluded.malformed_count, orphan_count=excluded.orphan_count`).run(
       ...key, data.lines, data.malformed, data.orphans);
     db.prepare("DELETE FROM codex_calls WHERE instance=? AND session_id=?").run(...key);
     const calls = db.prepare("INSERT INTO codex_calls VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
@@ -122,6 +127,9 @@ export function saveRollout(path: string, data: RolloutEvidence) {
       calls.run(...key, call.id, call.line, call.tool, call.start, call.end, Number(call.async),
         call.asyncEnd, call.terminalCall, Number(call.ambiguous));
     }
+    db.prepare("DELETE FROM codex_reasoning WHERE instance=? AND session_id=?").run(...key);
+    const markers = db.prepare("INSERT INTO codex_reasoning VALUES (?, ?, ?, ?)");
+    for (const marker of data.markers) markers.run(...key, marker.line, marker.at);
   });
 }
 

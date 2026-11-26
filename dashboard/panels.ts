@@ -139,25 +139,34 @@ export function dashboards(range: Range) {
 
   const first = range.traceWindows[0];
   const session = "${session:sqlstring}";
+  const reasoningTime = "strftime('%Y-%m-%dT%H:%M:%fZ', observed / 1000.0, 'unixepoch')";
+  const reasoningWindow = `FROM trace_reasoning WHERE session = CAST(${session} AS INTEGER)
+    AND observed BETWEEN $__from AND $__to ORDER BY observed, source_line`;
   const trace = board("barnacles-trace", "Barnacles · Rollout waterfall",
     first ? new Date(first.from).toISOString() : from, first ? new Date(first.to).toISOString() : to, [
       block(1, "Local Codex evidence", [0, 0, 24, 3],
-        "The default window starts around the first verified async cell. Change the time range to inspect other spans. Async end means the terminal wait was observed."),
+        "Reasoning markers show when Codex logged an event. They have no measured duration. Async spans end when the terminal wait was observed."),
       data(2, "state-timeline", "Spans in the selected window", [0, 3, 24, 14],
         `SELECT started / 1000.0 AS time, ended / 1000.0 AS timeEnd, lane AS "Lane", clock AS "Clock"
           FROM trace WHERE CAST(session AS TEXT) = ${session} AND ended IS NOT NULL
           AND started <= $__to AND ended >= $__from
           ORDER BY started, lane LIMIT 24`,
         { mergeValues: false, showValue: "never", rowHeight: 0.84, legend: { showLegend: false } },
-        { color: { mode: "fixed", fixedColor: "#C09046" },
+        { displayName: "${__field.labels.Lane}", color: { mode: "fixed", fixedColor: "#C09046" },
           mappings: [{ type: "value", options: {
             "Async cells": { color: green, text: "Async cell" },
             "Tool envelopes": { color: yellow, text: "Tool envelope" },
           } }] }, [], ["time", "timeEnd"], "Shows the first 24 completed spans that overlap the window."),
-      data(3, "table", "Missing terminal observations", [0, 17, 24, 5],
+      data(3, "table", "Missing terminal observations", [0, 17, 12, 5],
         `SELECT lane AS "Span", started / 1000.0 AS "Started" FROM trace
           WHERE CAST(session AS TEXT) = ${session} AND ended IS NULL ORDER BY started`,
         { showHeader: true }, {}, [], ["Started"]),
+      data(5, "table", "Reasoning timestamps", [12, 17, 12, 5],
+        `SELECT ${reasoningTime} AS "Observed", source_line AS "Source line" ${reasoningWindow}`,
+        { showHeader: true }, {}, [
+          byName("Observed", unit("time:YYYY-MM-DD HH:mm:ss.SSS")), byName("Source line", width(88)),
+        ], ["Observed"],
+        "Events in the selected session and time range. Reimport older rollouts to add reasoning coverage."),
       data(4, "table", "Imported sessions", [0, 22, 24, 5],
         'SELECT session AS "Session", started AS "From", ended AS "To" FROM trace_windows',
         { showHeader: true }, {}, [
@@ -167,8 +176,15 @@ export function dashboards(range: Range) {
           byName("To", { id: "custom.hidden", value: true }),
         ]),
     ], [link("Shipping review", "/d/barnacles-shipping/shipping")], [
-      { ...variable("session", "Local session", "SELECT DISTINCT CAST(session AS TEXT) FROM trace ORDER BY session", "1"), hide: 2 },
+      { ...variable("session", "Local session", "SELECT CAST(session AS TEXT) FROM trace_windows ORDER BY session", "1"), hide: 2 },
     ]);
+  const annotationQuery = `SELECT ${reasoningTime} AS time, 'Reasoning recorded · line ' || source_line AS text
+    ${reasoningWindow}`;
+  Object.assign(trace, { annotations: { list: [{
+    name: "Reasoning recorded", datasource, enable: true, hide: false, iconColor: "#B997EF",
+    target: { datasource, refId: "Anno", rawQueryText: annotationQuery, queryText: annotationQuery,
+      queryType: "table", timeColumns: ["time"] },
+  }] } });
   Object.assign(trace.panels[1], { transformations: [
     { id: "partitionByValues", options: { fields: ["Lane"], keepFields: false } },
   ] });

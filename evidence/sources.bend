@@ -59,11 +59,24 @@ def thread_to_release(owner_count: U32, +started: U32, +offset_ms: U32, +opened:
     Bool.and(interval_ms(started, offset_ms, opened, 0), ordered(opened, published))),
     started, offset_ms, published)
 
-def tool_label(+name: String) -> String:
-  Bool.pick(String, String.eq(name, "wait"), "cell wait",
-    Bool.pick(String, String.eq(name, "exec"), "tool wrapper",
-      Bool.pick(String, String.eq(name, "exec_command"), "command",
-        Bool.pick(String, String.eq(name, "write_stdin"), "process wait", "other tool"))))
+def tool_label(+name: String, fallback: String) -> String:
+  Bool.pick(String, String.eq(name, "exec_command"), "Shell command",
+    Bool.pick(String, String.eq(name, "write_stdin"), "Process I/O",
+      Bool.pick(String, String.eq(name, "apply_patch"), "Apply patch",
+        Bool.pick(String, String.eq(name, "update_plan"), "Update plan",
+          Bool.pick(String, String.eq(name, "view_image"), "Inspect image",
+            Bool.pick(String, String.eq(name, "web__run"), "Web lookup",
+              Bool.pick(String, String.starts_with(name, "mcp__t3_code__"), "T3 operation",
+                Bool.pick(String, String.starts_with(name, "mcp__codex_apps__github__"), "GitHub operation", fallback))))))))
+
+type ToolContext is Data:
+  Tool{label: String, wrapper: Bool, cell_wait: Bool}
+
+def tool(+name: String, wrapped: String, parallel: Bool) -> ToolContext:
+  Bool.pick(ToolContext, String.eq(name, "exec"),
+    Tool{Bool.pick(String, parallel, "Parallel tool script", tool_label(wrapped, "Tool script")), True{}, False{}},
+    Bool.pick(ToolContext, String.eq(name, "wait"), Tool{"Cell wait", False{}, True{}},
+      Tool{tool_label(name, "Other tool"), False{}, False{}}))
 
 def merged_at(opened: U32, +merged: U32, confirmed: Bool) -> U32:
   Bool.pick(U32, Bool.and(confirmed, ordered(opened, merged)), merged, 0)
@@ -89,24 +102,29 @@ def has_time(point: Point) -> Bool:
   match point:
     case Time{s, ms}: U32.is_ne(s, 0)
 
+def reasoning(event: String, point: Point) -> Bool:
+  Bool.and(String.eq(event, "reasoning"), has_time(point))
+
 type CallState is Data:
   Unseen{orphans: U32}
-  Seen{orphans: U32, line: U32, tool: String, start: Point, finish: Point, target: String, cell: String, terminal: Bool, ambiguous: Bool}
+  Seen{orphans: U32, line: U32, tool: ToolContext, start: Point, finish: Point, target: String, cell: String, terminal: Bool, ambiguous: Bool}
 
-def start_call(state: CallState, line: U32, name: String, start: Point, target: String) -> CallState:
+def start_call(state: CallState, line: U32, observed: ToolContext, start: Point, target: String) -> CallState:
   match state:
     case Unseen{orphans}:
-      Seen{orphans, line, tool_label(name), start, Time{0, 0}, target, "", False{}, False{}}
+      Seen{orphans, line, observed, start, Time{0, 0}, target, "", False{}, False{}}
     case Seen{orphans, old_line, tool, old_start, finish, old_target, cell, terminal, ambiguous}:
       Seen{orphans, old_line, tool, old_start, finish, old_target, cell, terminal, True{}}
 
-def finish_seen(+accept: Bool, orphans: U32, line: U32, +tool: String, start: Point, finish: Point,
+def finish_seen(+accept: Bool, orphans: U32, line: U32, observed: ToolContext, start: Point, finish: Point,
   target: String, cell: String, terminal: Bool, ambiguous: Bool, ended: Point,
   yielded: String, completed: Bool) -> CallState:
-  Seen{orphans, line, tool, start, Bool.pick(Point, accept, ended, finish), target,
-    Bool.pick(String, Bool.and(accept, String.eq(tool, "tool wrapper")), yielded, cell),
-    Bool.or(terminal, Bool.and(accept, Bool.and(String.eq(tool, "cell wait"), completed))),
-    Bool.or(ambiguous, Bool.not(accept))}
+  match observed:
+    case Tool{label, +wrapper, +cell_wait}:
+      Seen{orphans, line, Tool{label, wrapper, cell_wait}, start, Bool.pick(Point, accept, ended, finish), target,
+        Bool.pick(String, Bool.and(accept, wrapper), yielded, cell),
+        Bool.or(terminal, Bool.and(accept, Bool.and(cell_wait, completed))),
+        Bool.or(ambiguous, Bool.not(accept))}
 
 def finish_call(state: CallState, +ended: Point, yielded: String, completed: Bool) -> CallState:
   match state:
@@ -160,8 +178,8 @@ type CallRecord is Data:
 def call_record(state: CallState) -> CallRecord:
   match state:
     case Unseen{orphans}: Ignored{orphans}
-    case Seen{orphans, line, tool, start, finish, target, cell, terminal, +ambiguous}:
-      Observed{orphans, line, tool, start, Bool.pick(Point, ambiguous, Time{0, 0}, finish),
+    case Seen{orphans, line, Tool{label, wrapper, cell_wait}, start, finish, target, cell, terminal, +ambiguous}:
+      Observed{orphans, line, label, start, Bool.pick(Point, ambiguous, Time{0, 0}, finish),
         Bool.not(String.eq(cell, "")), ambiguous}
 
 type Milestone is Data:
