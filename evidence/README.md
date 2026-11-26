@@ -1,6 +1,6 @@
 # Evidence
 
-SQLite will hold exact source identities, observations, and read views for the dashboard. Apply each bounded import in a transaction. Replaying the same source observations must preserve row counts and derived results. Keep collection time, observation time, and source event time distinct.
+SQLite holds exact Actions source identities, observations, and an occupancy view. The following table also describes the planned records for later importers. Apply each bounded import in a transaction. Replaying the same source observations must preserve row counts and derived results. Keep collection time, observation time, and source event time distinct.
 
 | Record | Identity and payload |
 | --- | --- |
@@ -11,6 +11,12 @@ SQLite will hold exact source identities, observations, and read views for the d
 | Release and access | Repository + release ID, asset ID, channel, source SHA and publication time. Keep each asset access check with its observation time and result. |
 | Rollout spans | Source instance + stable session and call IDs, with separate clock kinds for tool envelopes and observed processes. Preserve parent links where supported. |
 | Import coverage | Source scope, requested window and cutoff, collection time, and gaps such as capped, unavailable, or partial input. |
+
+## Actions tables
+
+[action_attempts, action_jobs, and action_steps](actions.sql) retain the exact GitHub keys and normalized clocks in UTC Unix seconds. Attempt rows carry expected head SHA, workflow ID, source status, conclusion, update time, observation time, and captured job count. Job rows retain provider creation time, measured endpoints, and a flag for execution timestamps predating job creation. Step intervals are retained when the measured job execution bounds contain them. Missing measured endpoints are SQL NULL. The importer re-reads the selected attempt, so it cannot reconstruct earlier queue or active-job snapshots.
+
+The `action_occupancy` view groups measured durations by repository, workflow, clock, and operation. `unmeasured_count` counts rows without a completed measured span, including skipped or inapplicable clocks. Query one clock at a time for totals. The underlying tables retain IDs for drilldown.
 
 ## Read views
 
