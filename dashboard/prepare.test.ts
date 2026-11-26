@@ -611,6 +611,19 @@ test("shipping API preserves historical and partial evidence and reads a replace
     assert.equal(report.snapshotAt, iso(cutoff));
     assert.deepEqual(report.snapshotCoverage, { observedPullRequests: 2, verifiedShipments: 1, attributedShipments: 1 });
     assert.equal(report.shipments.weekly[0].meanCycleSeconds, 600);
+    const publicationDay = iso(proof.published).slice(0, 10) + "T00:00:00.000Z";
+    assert.deepEqual(report.shipments.dailyStages, [{
+      startsAt: publicationDay, verified: 1,
+      stages: [
+        { phase: "pre-commit", measured: 1, meanSeconds: 100 },
+        { phase: "pr-opened", measured: 1, meanSeconds: 100 },
+        { phase: "first-ci", measured: 1, meanSeconds: 50 },
+        { phase: "merged", measured: 1, meanSeconds: 150 },
+        { phase: "dispatched", measured: 1, meanSeconds: 100 },
+        { phase: "published", measured: 1, meanSeconds: 100 },
+        { phase: "access-verified", measured: 1, meanSeconds: 100 },
+      ],
+    }]);
     assert.deepEqual(report.fleet.items.map((item: { number: number; stage: string }) => [item.number, item.stage]),
       [[202, "pr-opened"], [101, "access-verified"]]);
     assert.equal(report.deliveries.nextOffset, 1);
@@ -618,6 +631,7 @@ test("shipping API preserves historical and partial evidence and reads a replace
     assert.deepEqual(report.operations.items, []);
     assert.equal(report.operations.window, "24h");
     const page = await get("/api/v1/shipping?limit=1&offset=1");
+    assert.deepEqual(page.shipments.dailyStages, report.shipments.dailyStages);
     assert.equal(page.deliveries.nextOffset, null);
     assert.equal(page.deliveries.maxMeasuredMillis, report.deliveries.maxMeasuredMillis);
     const detail = await get(page.deliveries.items[0].detailPath);
@@ -628,6 +642,7 @@ test("shipping API preserves historical and partial evidence and reads a replace
     const historical = await get("/api/v1/shipping?to=" + time(at - 399));
     assert.equal(historical.shipments.verified, 0);
     assert.deepEqual(historical.shipments.weekly, []);
+    assert.deepEqual(historical.shipments.dailyStages, []);
     assert.equal(historical.fleet.items[0].stage, "published");
     assert.equal(historical.deliveries.items[0].milestones[7].observedAt, null);
     assert.equal((await get("/api/v1/pull-requests/202?asOf=" + time(at - 399), 404)).error.code,
@@ -645,12 +660,24 @@ test("shipping API preserves historical and partial evidence and reads a replace
     assert.equal((await call("/api/v1/shipping", { method: "POST" })).status, 405);
 
     save({ ...open, state: "merged", merged: at - 50, mergeSha: "c".repeat(40), updated: at - 50 });
+    const partialShipment = { ...shipped, number: 303, firstCommit: null, firstCI: null };
+    save(partialShipment, { ...proof, checked: proof.published, dispatch: null });
+    save({ ...partialShipment, number: 404, opened: shipped.opened - 86400, merged: shipped.merged! - 86400 },
+      { ...proof, id: 23, tag: "previous-day-release", published: proof.published - 86400, checked: proof.checked - 86400,
+        dispatch: null });
     await prepare(replacement);
     renameSync(join(replacement, "dashboard.sqlite"), join(snapshot, "dashboard.sqlite"));
     const refreshed = await get("/api/v1/pull-requests/202");
     assert.equal(refreshed.stage, "merged");
     assert.equal(refreshed.milestones[4].observedAt, iso(at - 50));
     assert.equal(refreshed.milestones[4].elapsedMillis, null);
+    const { shipments } = await get("/api/v1/shipping");
+    assert.equal(shipments.verified, 3);
+    assert.deepEqual(shipments.dailyStages.map(({ startsAt, verified }: { startsAt: string; verified: number }) =>
+      [startsAt, verified]), [[publicationDay, 2], [iso(Date.parse(publicationDay) / 1000 - 86400), 1]]);
+    assert.deepEqual(shipments.dailyStages[0].stages[0], { phase: "pre-commit", measured: 1, meanSeconds: 100 });
+    assert.deepEqual(shipments.dailyStages[0].stages.at(-1), { phase: "access-verified", measured: 2, meanSeconds: 50 });
+    assert.deepEqual(shipments.dailyStages[1].stages[0], { phase: "pre-commit", measured: 0, meanSeconds: null });
   } finally {
     server?.kill();
     if (stopped) await stopped;

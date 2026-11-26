@@ -1,5 +1,5 @@
 import { useEffect, useRef, type CSSProperties } from "react";
-import { countLabel, dayLabel, duration, pagePath, type Review, type Operation, type Week } from "../api";
+import { countLabel, dayLabel, duration, pagePath, stages, type DeliveryDay, type Review, type Operation, type Week } from "../api";
 
 function sector(inner: number, outer: number, from: number, to: number) {
   function point(radius: number, degrees: number) {
@@ -272,6 +272,54 @@ function Weekly({ weeks }: { weeks: Week[] }) {
   </figure>;
 }
 
+export function StageKey() {
+  return <ul className="stage-key" aria-label="Delivery stages">{stages.map(([key, label, color]) =>
+    <li key={key} className={`stage-${color}`}>{label}</li>)}</ul>;
+}
+
+export function DailyStages({ days }: { days: DeliveryDay[] | undefined }) {
+  const longest = Math.max(0, ...(days ?? []).map(({ stages }) =>
+    stages.reduce((total, stage) => total + (stage.meanSeconds ?? 0), 0)));
+  const step = longest >= 3600 ? 1800 : longest >= 60 ? 30 : 1;
+  const scale = Math.max(2, Math.ceil(longest / (2 * step))) * 2 * step;
+  return <section className="delivery daily-chart" aria-labelledby="daily-title">
+    <h2 id="daily-title">Mean delivery stages by day</h2>
+    {days === undefined ? <p className="fine">Daily stage data needs a refreshed evidence snapshot.</p> :
+      !days.length ? <p className="fine">No verified shipments in this review window.</p> : <>
+        <p className="fine daily-intro">By publication day (UTC). Each stage averages the PRs with both clocks. Open a day for counts and times.</p>
+        <StageKey />
+        {longest > 0 && <div className="daily-axis" aria-hidden="true">
+          <span>0 s</span><span>{duration(scale / 2)}</span><span>{duration(scale)}</span>
+        </div>}
+        {days.map((day) => <details key={day.startsAt} className="daily-row">
+          <summary>
+            <span className="daily-label"><time dateTime={day.startsAt}>{dayLabel(day.startsAt)}</time>
+              <span>{countLabel(day.verified)} verified</span></span>
+            <span className="daily-bar" aria-hidden="true">
+              {day.stages.every(({ meanSeconds }) => meanSeconds === null) ? <span>Unknown</span> :
+                day.stages.every(({ meanSeconds }) => !meanSeconds) ? <span>0 s</span> :
+                  stages.map(([phase, label, color]) => {
+                    const mean = day.stages.find((stage) => stage.phase === phase)?.meanSeconds;
+                    return mean ? <span key={phase} className={`daily-segment stage-${color}`}
+                      style={{ width: `${100 * mean / scale}%` }} title={`${label} · ${duration(mean)}`} /> : null;
+                  })}
+            </span>
+          </summary>
+          <table className="daily-values">
+            <caption className="sr-only">Stage means for {dayLabel(day.startsAt)}</caption>
+            <thead><tr><th scope="col">Stage</th><th scope="col">Mean</th><th scope="col">Measured</th></tr></thead>
+            <tbody>{stages.map(([phase, label, color]) => {
+              const sample = day.stages.find((stage) => stage.phase === phase);
+              return <tr key={phase}><th scope="row" className={`stage-${color}`}>{label}</th>
+                <td>{duration(sample?.meanSeconds ?? null)}</td>
+                <td>{countLabel(sample?.measured ?? 0)} / {countLabel(day.verified)}</td></tr>;
+            })}</tbody>
+          </table>
+        </details>)}
+      </>}
+  </section>;
+}
+
 export function Overview({ review }: { review: Review }) {
   return <div className="board">
     <Gauge comparison={review.cycleComparison} />
@@ -279,6 +327,7 @@ export function Overview({ review }: { review: Review }) {
     <section className="panel shipped" aria-labelledby="ship-title">
       <h2 id="ship-title">Shipped to users</h2>
       <p className="shipped-count">{countLabel(review.shipments.verified)}</p>
+      <p className="fine">Verified PRs in the review window</p>
     </section>
     <Weekly weeks={review.shipments.weekly} />
   </div>;
