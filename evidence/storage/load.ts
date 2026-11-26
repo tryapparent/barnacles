@@ -26,10 +26,10 @@ export type EvidenceBatch =
   | { source: "github-delivery"; pullRequest: PullRequest; release?: ReleaseEvidence }
   | { source: "codex"; rollout: RolloutEvidence }
   | { source: "codex-rejected"; receipt: RolloutImport }
-  | { source: "git-change-scan"; repository: string; report: ChangedCodeReport }
+  | { source: "git-change-scan"; repository: string; report: ChangedCodeReport; inventory?: ChangedCodeFile[] }
   | { source: "t3"; thread: ThreadEvidence };
 
-function saveChangedCode(database: string, repository: string, report: ChangedCodeReport) {
+function saveChangedCode(database: string, repository: string, report: ChangedCodeReport, inventory?: ChangedCodeFile[]) {
   writeSources(database, (db) => {
     db.prepare(`
       INSERT INTO git_change_scans VALUES (?, ?, ?, ?, ?)
@@ -40,6 +40,8 @@ function saveChangedCode(database: string, repository: string, report: ChangedCo
     const insert = db.prepare("INSERT INTO git_changed_files VALUES (?, ?, ?, ?, ?)");
     report.files.forEach((file, rank) => insert.run(repository, rank, "path" in file ? file.path : null,
       "pathBytesBase64" in file ? file.pathBytesBase64 : null, file.commits));
+    db.prepare("INSERT OR REPLACE INTO git_change_inventory VALUES (?, ?)").run(repository,
+      inventory === undefined ? null : JSON.stringify(inventory));
   });
 }
 
@@ -50,7 +52,7 @@ export function loadEvidence(database: string, batch: EvidenceBatch, policy: Adm
     case "github-actions": return saveAttempt(database, batch.attempt, policy);
     case "github-delivery": return saveDelivery(database, batch.pullRequest, batch.release, policy);
     case "codex": return saveRollout(database, batch.rollout, policy);
-    case "git-change-scan": return saveChangedCode(database, batch.repository, batch.report);
+    case "git-change-scan": return saveChangedCode(database, batch.repository, batch.report, batch.inventory);
     case "t3": return saveThread(database, batch.thread, policy);
   }
 }

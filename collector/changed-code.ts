@@ -14,6 +14,7 @@ type Policy = {
   shallow_boundaries(ids: List<string>): unknown;
   scan_commit(state: Scan, limit: number, commit: string, paths: List<string>, boundaries: unknown): Scan;
   scan_paths(state: Scan): List<PathCount>;
+  scan_inventory(state: Scan): List<PathCount>;
 };
 
 function* decodeLog(output: string) {
@@ -77,8 +78,12 @@ async function main() {
     const files: ChangedCodeFile[] = Array.from(bendValues(policy.scan_paths(scan)),
       ({ path, commits }) => ({ ...encodePath(path), commits }));
     const report = { revision: tip, commitsScanned: scan.count, hasMoreCommits: scan.more, shallow, files };
-    if (saveAs !== null) loadEvidence(join(resolve(directory), "evidence.sqlite"),
-      { source: "git-change-scan", repository: saveAs, report }, await buildAdmissionPolicy(scratch));
+    if (saveAs !== null) {
+      const inventory = Array.from(bendValues(policy.scan_inventory(scan)),
+        ({ path, commits }) => ({ ...encodePath(path), commits }));
+      loadEvidence(join(resolve(directory), "evidence.sqlite"),
+        { source: "git-change-scan", repository: saveAs, report, inventory }, await buildAdmissionPolicy(scratch));
+    }
     console.log(JSON.stringify(report, null, 2));
   } finally {
     rmSync(scratch, { recursive: true, force: true });

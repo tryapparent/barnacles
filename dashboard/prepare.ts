@@ -149,8 +149,9 @@ function pollingSettings(file: string, url: URL, method: string | undefined,
 }
 
 function serveWeb(root: string, path: string, response: ServerResponse) {
-  if (path !== "/" && !/^\/assets\/[a-zA-Z0-9_-]+[.][a-z0-9]+$/.test(path)) return false;
-  const file = path === "/" ? "index.html" : path.slice(1);
+  const page = path === "/" || path === "/changed-code";
+  if (!page && !/^\/assets\/[a-zA-Z0-9_-]+[.][a-z0-9]+$/.test(path)) return false;
+  const file = page ? "index.html" : path.slice(1);
   const type = webTypes[extname(file)];
   const target = join(root, file);
   if (!type || !statSync(target, { throwIfNoEntry: false })?.isFile()) return false;
@@ -158,7 +159,7 @@ function serveWeb(root: string, path: string, response: ServerResponse) {
   response.writeHead(200, {
     "Content-Type": type,
     "X-Content-Type-Options": "nosniff",
-    "Cache-Control": path === "/" ? "no-cache" : "public, max-age=31536000, immutable",
+    "Cache-Control": page ? "no-cache" : "public, max-age=31536000, immutable",
   });
   response.end(body);
   return true;
@@ -208,6 +209,7 @@ async function serve(args: string[]) {
           pollingSettings: pollSettings ? "/settings/polling" : undefined,
           endpoints: {
             shipping: { path: "/api/v1/shipping", parameters: ["from", "to", "clock", "operation", "limit", "offset"] },
+            changedCode: { path: "/api/v1/changed-code" },
             processTimings: { path: "/api/v1/process-timings" },
             pullRequest: { path: "/api/v1/pull-requests/{number}", parameters: ["asOf"] },
           },
@@ -217,6 +219,10 @@ async function serve(args: string[]) {
       if (url.pathname === "/api/v1/process-timings") {
         queryParams(url.searchParams, []);
         return json(response, 200, review.processTimings());
+      }
+      if (url.pathname === "/api/v1/changed-code") {
+        queryParams(url.searchParams, []);
+        return json(response, 200, review.changedCode());
       }
       const pr = /^\/api\/v1\/pull-requests\/(\d+)$/.exec(url.pathname);
       let result;

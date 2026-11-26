@@ -68,6 +68,13 @@ test("changed-code CLI ranks Git paths and reports bounded and shallow coverage"
       ],
     });
     assert.deepEqual(analyze(repository, "--save-as", "Synthetic/Example"), report);
+    const full = new DatabaseSync(join(job, "evidence.sqlite"), { readOnly: true });
+    try {
+      const stored = full.prepare("SELECT paths FROM git_change_inventory WHERE repository = ?").get("synthetic/example");
+      const inventory = JSON.parse(String(stored?.paths));
+      assert.ok(inventory.length > report.files.length);
+      assert.ok(inventory.some((file: { path?: string }) => file.path === "padding-29.ts"));
+    } finally { full.close(); }
     assert.deepEqual(analyze(repository, side, "2"), {
       revision: side, commitsScanned: 2, hasMoreCommits: true, shallow: false,
       files: [{ path: "nested/hot.ts", commits: 1 }],
@@ -83,6 +90,8 @@ test("changed-code CLI ranks Git paths and reports bounded and shallow coverage"
         [["synthetic/example", rename, 1, 1, 0]]);
       assert.deepEqual(db.prepare("SELECT path, path_base64, commits FROM git_changed_files ORDER BY rank").all().map(Object.values),
         [["cold.ts", null, 1], ["renamed.ts", null, 1], [null, "/w==", 1]]);
+      const inventory = JSON.parse(String(db.prepare("SELECT paths FROM git_change_inventory").get()?.paths));
+      assert.equal(inventory.length, 3);
     } finally { db.close(); }
 
     git("clone", "--quiet", "--no-local", "--depth=2", "--branch=side", repository, shallow);

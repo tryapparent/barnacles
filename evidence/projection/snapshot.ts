@@ -310,10 +310,18 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
         PRIMARY KEY (session, source_line));
       CREATE INDEX trace_reasoning_window ON trace_reasoning(session, observed);
       CREATE TABLE changed_files(rank INTEGER PRIMARY KEY, path TEXT, path_base64 TEXT, commits INTEGER NOT NULL);
+      CREATE TABLE changed_code_scan(revision TEXT, commits_scanned INTEGER, truncated INTEGER, shallow INTEGER, paths TEXT);
     `);
     const gitScan = table("git_change_scans")
       ? source.prepare("SELECT revision, commits_scanned, truncated, shallow FROM git_change_scans WHERE repository = ?").get(repo)
       : undefined;
+    if (gitScan) {
+      const inventory = table("git_change_inventory")
+        ? source.prepare("SELECT paths FROM git_change_inventory WHERE repository = ?").get(repo)
+        : undefined;
+      view.prepare("INSERT INTO changed_code_scan VALUES (?, ?, ?, ?, ?)").run(
+        gitScan.revision, gitScan.commits_scanned, gitScan.truncated, gitScan.shallow, inventory?.paths ?? null);
+    }
     const gitFiles = gitScan ? all("SELECT rank, path, path_base64, commits FROM git_changed_files WHERE repository = ?", repo) : [];
     const changedFile = view.prepare("INSERT INTO changed_files VALUES (?, ?, ?, ?)");
     for (const row of gitFiles) changedFile.run(row.rank, row.path, row.path_base64, row.commits);
@@ -591,6 +599,17 @@ export async function openShippingReview(directory: string) {
   read(() => undefined);
 
   return {
+    changedCode() {
+      return read((db, repository) => {
+        const available = db.prepare("SELECT 1 FROM sqlite_schema WHERE name='changed_code_scan' AND type='table'").get();
+        const scan = available ? db.prepare("SELECT * FROM changed_code_scan").get() : undefined;
+        return { repository, scan: scan ? {
+          revision: String(scan.revision), commitsScanned: Number(scan.commits_scanned),
+          hasMoreCommits: Boolean(scan.truncated), shallow: Boolean(scan.shallow),
+          files: scan.paths === null ? null : JSON.parse(String(scan.paths)),
+        } : null };
+      });
+    },
     processTimings() {
       return read((db) => {
         const available = db.prepare("SELECT 1 FROM sqlite_schema WHERE name='process_timings' AND type='table'").get();
