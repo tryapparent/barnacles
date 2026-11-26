@@ -20,6 +20,7 @@ export function Fleet({ fleet, onSelect }: { fleet: Review["fleet"];
   useEffect(() => {
     const media = matchMedia("(prefers-reduced-motion: reduce)");
     const review = canvas.current!.closest("main")!;
+    review.toggleAttribute("data-motion-paused", paused.current);
     const painter = mountHarbor(canvas.current!, contacts.map(({ item, ...contact }) =>
       ({ ...contact, link: shipLinks.current.get(item.number) })));
     const clockFormat = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
@@ -61,11 +62,13 @@ export function Fleet({ fleet, onSelect }: { fleet: Review["fleet"];
       media.removeEventListener("change", onPreference);
       painter.dispose();
       review.style.removeProperty("--swell");
+      review.removeAttribute("data-motion-paused");
     };
   }, [fleet]);
 
   const toggle = () => {
     paused.current = !paused.current;
+    canvas.current?.closest("main")?.toggleAttribute("data-motion-paused", paused.current);
     setPaused(paused.current);
   };
 
