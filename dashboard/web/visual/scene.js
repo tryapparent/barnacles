@@ -3,7 +3,6 @@ import townArtwork from '../assets/town.webp';
 import hullArtwork from '../assets/tide-worn-oak.webp';
 
 const bayer = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
-const depthAt = (y, horizon, height) => Math.max(0, Math.min(1, (y - horizon) / (height - horizon)));
 const perspectiveScale = depth => .44 + .56 * depth;
 const nearLight = depth => .18 + .82 * Math.min(1, depth / .56) ** .9;
 
@@ -377,9 +376,8 @@ export function mountHarbor(scene, contacts) {
   function placeShips() {
     const scale = scene.width * .105 / 152;
     for (const vessel of vessels) {
-      const {sprite} = vessel;
-      const anchorage = scene.height * vessel.row;
-      const depth = depthAt(anchorage, horizon, scene.height);
+      const {sprite, depth} = vessel;
+      const anchorage = horizon + (scene.height - horizon) * depth;
       const width = scale * perspectiveScale(depth) * 104 * 300 / 226;
       sprite.width = Math.round(width);
       sprite.height = Math.round(width * .6);
@@ -567,7 +565,7 @@ export function mountHarbor(scene, contacts) {
     fog.width = Math.ceil(width / 2);
     fog.height = Math.ceil(height / 2);
     haze = fogContext.createImageData(fog.width, fog.height);
-    horizon = Math.round(height * .28);
+    horizon = Math.round(height * .33);
     projection = shoreProjection(width,height,horizon);
     shores = projection.banks;
     const [left, right] = shores;

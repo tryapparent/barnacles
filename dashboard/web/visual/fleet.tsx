@@ -16,7 +16,7 @@ export function Fleet({ fleet, onSelect, children }: { fleet: Review["fleet"];
   const groups = stages.map(([stage, label]) => ({ stage, label, items: fleet.items.filter((item) => item.stage === stage) }));
   const contacts = groups.flatMap(({ items }, position) => items.slice(0, shipsPerStage)
     .map((item, index) => ({ item, column: .15 + position * .116 + Math.sin(index * 2.6 + position) * .025,
-      row: .44 + index * .137 + Math.sin(position * 2 + index) * .040, drift: .7 + index * .19 })));
+      depth: .22 + index * .19 + Math.sin(position * 2 + index) * .055, drift: .7 + index * .19 })));
 
   useEffect(() => {
     const media = matchMedia("(prefers-reduced-motion: reduce)");
