@@ -2,16 +2,16 @@ import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
 import { setTimeout } from "node:timers/promises";
 
-function localUrl(address: string, path: string) {
-  if (!/^127\.0\.0\.1:[0-9]{1,5}$/.test(address)) throw Error("Expected a local Tempo port");
+function localUrl(address: string, path: string, service: string) {
+  if (address !== service && !/^127\.0\.0\.1:[0-9]{1,5}$/.test(address)) throw Error("Expected a local Tempo endpoint");
   return new URL(path, `http://${address}`);
 }
 
 async function main() {
   const [file, query, ingest, ...extra] = process.argv.slice(2);
   if (!file || !query || !ingest || extra.length) throw Error("Usage: load-tempo.ts OTLP_NDJSON QUERY_ADDRESS INGEST_ADDRESS");
-  const ready = localUrl(query, "/ready");
-  const endpoint = localUrl(ingest, "/v1/traces");
+  const ready = localUrl(query, "/ready", "tempo:3200");
+  const endpoint = localUrl(ingest, "/v1/traces", "tempo:4318");
   const deadline = Date.now() + 45_000;
   for (;;) {
     const response = await fetch(ready, { signal: AbortSignal.timeout(2000), redirect: "error" }).catch(() => null);

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { closeSync, openSync } from "node:fs";
 import { DatabaseSync, type SQLInputValue, type SQLOutputValue } from "node:sqlite";
 import { buildPolicies, buildPolicy, loadPolicy } from "../../tooling/bend.ts";
@@ -60,6 +61,7 @@ type Metrics = TracePolicy & TimingPolicy & {
 };
 
 const emptyShipping: Shipping = { $: "Delivery", shipped: 0, cycles: empty };
+export const snapshotFormatVersion = 1;
 
 const actionsWaitPolicy = new URL("./actions-wait.bend", import.meta.url);
 
@@ -389,8 +391,12 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
     writeActionsWait(source, view, repo,
       actionsWaitWindow ? { $: "Window", ...actionsWaitWindow } : waits.report_window(timingCutoff), waits);
     view.exec("COMMIT");
-    return { from: Math.min(priorWeek, ...weeks.keys()), to: cutoff, defaultTrace, traceSessions,
-      timingCutoff, rolloutCount, changedCode };
+    const from = Math.min(priorWeek, ...weeks.keys());
+    const manifest = { formatVersion: snapshotFormatVersion, generation: randomUUID(), createdAt: new Date().toISOString(),
+      coverage: { from, to: cutoff, timingCutoffMs: timingCutoff, pullRequests: prs.length,
+        shipped: delivery.shipped, linked: delivery.cycles.count,
+        rollouts: rolloutCount, traceSessions } };
+    return { from, to: cutoff, defaultTrace, traceSessions, timingCutoff, rolloutCount, changedCode, manifest };
   } finally {
     source.close();
     view.close();
