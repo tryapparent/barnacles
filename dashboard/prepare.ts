@@ -70,7 +70,7 @@ function writeSnapshot(input: string, output: string, otlp: string, repo: string
     const weeks = new Map<number, Shipping>();
     const release = view.prepare("INSERT INTO releases VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
     const milestone = view.prepare("INSERT INTO delivery_milestones VALUES (?, ?, ?, ?, ?)");
-    const milestoneNames = ["Thread started", "First commit", "PR opened", "First PR CI", "PR merged", "Release dispatched", "Shipped", "Access verified"];
+    const milestoneNames = ["Thread started", "First commit", "PR opened", "First PR CI", "PR merged", "Release dispatch", "Shipped", "Access verified"];
     const stageNames = ["Thread → commit", "Commit → PR open", "PR open → first CI", "First CI → merge", "Merge → dispatch",
       "Dispatch → ship", "PR open → merge", "Merge → ship", "Thread → ship"];
     const stageStats = stageNames.map(() => empty);

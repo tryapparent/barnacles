@@ -64,7 +64,7 @@ test("dashboard derives a covered comparison and preserves missing source covera
           [500, 2, 0], [500, 2, 0], [3600, 2, 0]]);
       assert.deepEqual(db.prepare("SELECT name, elapsed_seconds FROM delivery_milestones WHERE pr=2 ORDER BY ordinal").all().map(Object.values),
         [["Thread started", null], ["First commit", 4700], ["PR opened", null], ["First PR CI", null],
-          ["PR merged", null], ["Release dispatched", null], ["Shipped", null], ["Access verified", null]]);
+          ["PR merged", null], ["Release dispatch", null], ["Shipped", null], ["Access verified", null]]);
       assert.equal(db.prepare("SELECT count(*) AS n FROM time_map").get()?.n, 2);
       assert.equal(db.prepare("SELECT count(*) AS n FROM trace WHERE ended IS NULL").get()?.n, 1);
       assert.deepEqual(db.prepare("SELECT started, ended, measured FROM trace_windows ORDER BY session").all().map(Object.values),
