@@ -31,7 +31,7 @@ export type Review = {
   shipments: { verified: number; attributed: number; weekly: Week[] };
   operations: { clock: string; operation: string | null; clockOptions: string[]; operationOptions: string[]; items: Operation[] };
   fleet: { from: string; to: string; items: Vessel[] };
-  deliveries: { total: number; limit: number; offset: number; nextOffset: number | null; items: Delivery[] };
+  deliveries: { total: number; limit: number; offset: number; nextOffset: number | null; maxMeasuredMillis: number; items: Delivery[] };
 };
 
 const fields = ["from", "to", "clock", "operation", "limit", "offset"];
@@ -43,6 +43,14 @@ function filters(query: URLSearchParams) {
 
 export function shippingPath(query = route) {
   return "/api/v1/shipping?" + filters(query);
+}
+
+export function deliveryPage(review: Review, offset: number) {
+  const query = new URLSearchParams(route);
+  query.set("from", review.window.from);
+  query.set("to", review.window.to);
+  query.set("offset", String(offset));
+  return shippingPath(query);
 }
 
 export function pagePath(changes: Record<string, string | number | null>, anchor = "") {
@@ -75,6 +83,10 @@ export const dayLabel = (value: string) => dayDisplay.format(new Date(value));
 export const stageLabel = (key: string) => stages.find(([stage]) => key === stage)?.[1] ?? "Unknown stage";
 export const milestoneLabel = (key: string) => milestoneLabels[key] ?? key;
 export const countLabel = (value: number) => value.toLocaleString();
+
+export function wholeMinutes(milliseconds: number) {
+  return milliseconds < 30_000 ? "<1 m" : countLabel(Math.round(milliseconds / 60_000)) + " m";
+}
 
 export function duration(seconds: number | null) {
   if (seconds === null) return "Unknown";

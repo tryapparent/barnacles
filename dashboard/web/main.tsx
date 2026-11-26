@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { createRoot } from "react-dom/client";
 import {
-  countLabel, dayLabel, detailPage, duration, fetchEvidence, milestoneLabel, pagePath, route,
-  shippingPath, stageLabel, stages, utcLabel, type Detail, type Milestone, type Review,
+  dayLabel, deliveryPage, detailPage, fetchEvidence, milestoneLabel, pagePath, route,
+  shippingPath, stageLabel, stages, utcLabel, wholeMinutes, type Detail, type Milestone, type Review,
 } from "./api";
 import { Overview } from "./visual/charts";
 import { Button, NativeSelect } from "./controls";
@@ -47,23 +47,38 @@ function Filters({ review }: { review: Review }) {
   </details>;
 }
 
-function MilestoneTable({ milestones, sources = false }: { milestones: Milestone[]; sources?: boolean }) {
-  const evidence = (item: Milestone) => item.provenance?.url ?
-    <a href={item.provenance.url}>{provenanceLabel(item.provenance.source)}</a> :
-    item.provenance ? provenanceLabel(item.provenance.source) : "Unknown";
-  return <div className="table-scroll"><table className="milestone-table">
-    <caption className="sr-only">Delivery milestones</caption>
-    <thead><tr><th scope="col">Milestone</th><th scope="col">Observed (UTC)</th>
-      <th scope="col">Elapsed</th>{sources && <th scope="col" className="evidence-col">Evidence</th>}</tr></thead>
-    <tbody>{milestones.map((item) => <tr key={item.key}>
-      <th scope="row">{milestoneLabel(item.key)}
-        {sources && item.provenance && <small className="milestone-source">{evidence(item)}</small>}
-      </th>
-      <td>{item.observedAt ? <time dateTime={item.observedAt}>{item.observedAt.slice(0, 23).replace("T", " ")}</time> : "Unknown"}</td>
-      <td>{duration(item.elapsedMillis === null ? null : item.elapsedMillis / 1000)}</td>
-      {sources && <td className="evidence-col">{evidence(item)}</td>}
-    </tr>)}</tbody>
-  </table></div>;
+function Waterfall({ milestones }: { milestones: Milestone[] }) {
+  const observed = milestones.flatMap((item) => item.observedAt ?
+    [{ ...item, observedAt: item.observedAt, time: Date.parse(item.observedAt) }] : []);
+  const start = Math.min(...observed.map((item) => item.time));
+  const span = Math.max(1, ...observed.map((item) => item.time - start));
+  const missing = milestones.filter((item) => !item.observedAt);
+  return <div className="waterfall">
+    <ol className="waterfall-rows" aria-label="Delivery milestones">
+      {observed.map((item) => {
+        const end = (item.time - start) / span * 100;
+        const width = (item.elapsedMillis ?? 0) / span * 100;
+        const label = milestoneLabel(item.key);
+        return <li key={item.key} className={phaseClass(item)}>
+          <div className="waterfall-label">
+            <span>{item.provenance?.url ? <a href={item.provenance.url} title={provenanceLabel(item.provenance.source)}>{label}</a> : label}</span>
+            <time dateTime={item.observedAt} title={utcLabel(item.observedAt)}>{dayLabel(item.observedAt)} · {item.observedAt.slice(11, 19)} UTC</time>
+          </div>
+          <span className="waterfall-plot" aria-hidden="true">
+            <span className="waterfall-fill" data-point={width <= 0} style={{ "--position": `${end - width}%`, "--duration": `${width}%` } as CSSProperties} />
+          </span>
+          <span className="waterfall-duration">{item.elapsedMillis === null ? <span className="sr-only">Interval unknown</span> : wholeMinutes(item.elapsedMillis)}</span>
+        </li>;
+      })}
+    </ol>
+    {missing.length > 0 && <details className="unobserved"><summary>Unobserved milestones</summary>
+      <ul>{missing.map((item) => <li key={item.key}>{milestoneLabel(item.key)}</li>)}</ul>
+    </details>}
+  </div>;
+}
+
+function phaseClass(entry: Milestone) {
+  return `stage-${stages.find(([key]) => key === entry.phase)?.[2]}`;
 }
 
 function provenanceLabel(source: string) {
@@ -113,7 +128,7 @@ function PullRequest({ number, asOf }: { number: string; asOf: string }) {
       <Button className="retry" onClick={retry}>Retry PR details</Button></div>}
     {result.state === "ready" && <>
       <p className="fine">{stageLabel(result.data.stage)} · As of {utcLabel(result.data.asOf)}</p>
-      <MilestoneTable milestones={result.data.milestones} sources />
+      <Waterfall milestones={result.data.milestones} />
       <div className="detail-links"><a href={result.data.pullRequestUrl}>Open PR on GitHub</a>
         <a href={path}>PR evidence JSON</a></div>
     </>}
@@ -121,48 +136,75 @@ function PullRequest({ number, asOf }: { number: string; asOf: string }) {
 }
 
 function DeliveryTimeline({ review }: { review: Review }) {
-  const { items, offset, limit, total, nextOffset } = review.deliveries;
-  const extent = Math.max(1, ...items.map((item) => {
-    const first = Math.min(...item.milestones.flatMap((entry) => entry.observedAt ? [Date.parse(entry.observedAt)] : []));
-    return Date.parse(item.lastObservedAt) - first;
-  }));
+  const [pages, setPages] = useState(review.deliveries);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const sentinel = useRef<HTMLDivElement>(null);
+  const request = useRef<AbortController | null>(null);
+  const { items, offset, nextOffset, maxMeasuredMillis } = pages;
+  const loadMore = () => {
+    if (nextOffset === null || request.current) return;
+    const controller = new AbortController();
+    request.current = controller;
+    setLoading(true);
+    setError("");
+    fetchEvidence<Review>(deliveryPage(review, nextOffset), controller.signal).then(({ deliveries }) => {
+      setPages((prior) => ({ ...prior, nextOffset: deliveries.nextOffset,
+        items: [...prior.items, ...deliveries.items.filter((item) => !prior.items.some((row) => row.number === item.number))] }));
+    }).catch((failure: Error) => {
+      if (!controller.signal.aborted) setError(failure.message);
+    }).finally(() => {
+      request.current = null;
+      if (!controller.signal.aborted) setLoading(false);
+    });
+  };
+  useEffect(() => () => request.current?.abort(), []);
+  useEffect(() => {
+    if (loading || error || nextOffset === null || !sentinel.current || !window.IntersectionObserver) return;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) loadMore();
+    }, { rootMargin: "160px" });
+    observer.observe(sentinel.current);
+    return () => observer.disconnect();
+  }, [loading, error, nextOffset]);
   return <section className="delivery" aria-labelledby="delivery-title">
-    <div className="delivery-header"><h2 id="delivery-title">Delivery cycle time</h2>
-      <p>{countLabel(total)} observed · Newest first</p></div>
+    <h2 id="delivery-title">Delivery cycle time</h2>
     {items.length ? <>
       <ul className="stage-key" aria-label="Delivery stages">{stages.map(([key, label, color]) =>
         <li key={key} className={`stage-${color}`}>{label}</li>)}</ul>
-      <div className="thread-scale"><span>{duration(extent / 1000 / 4)}</span></div>
-      {items.map((item) => <details key={item.number} className="thread">
-        <summary>
-          <span className="thread-meta"><span className="thread-name">PR #{item.number}</span>
-            <time dateTime={item.lastObservedAt}>{dayLabel(item.lastObservedAt)}</time></span>
-          <span className="thread-stages">
-            <span className="thread-bar" aria-hidden="true">{item.milestones.map((entry) => {
-              if (!entry.observedAt || entry.elapsedMillis === null) return null;
-              const color = stages.find(([key]) => key === entry.phase)?.[2];
-              const right = (Date.parse(item.lastObservedAt) - Date.parse(entry.observedAt)) / extent * 100;
-              return <span key={entry.key} className={`stage-segment stage-${color}`}
-                style={{ right: right + "%", width: entry.elapsedMillis / extent * 100 + "%" } as CSSProperties}
-                title={`${milestoneLabel(entry.key)} · ${duration(entry.elapsedMillis / 1000)}`}>
-                <span>{duration(entry.elapsedMillis / 1000)}</span>
-              </span>;
-            })}</span>
-            <span className="thread-result">{stageLabel(item.stage)}</span>
-          </span>
-        </summary>
-        <MilestoneTable milestones={item.milestones} />
-        <div className="detail-links"><a href={detailPage(item.number, review.window.to)}>View PR #{item.number} evidence</a></div>
-      </details>)}
-      {(offset > 0 || nextOffset !== null) && <nav className="pager" aria-label="Delivery pages">
-        <span>{countLabel(offset + 1)}–{countLabel(offset + items.length)} of {countLabel(total)}</span>
-        {offset > 0 && <Button variant="outline" asChild>
-          <a href={pagePath({ offset: Math.max(0, offset - limit), to: review.window.to }, "#delivery-title")}>Previous page</a>
+      <div className="delivery-list">{items.map((item) => {
+        const hasThread = item.milestones.some((entry) => entry.key === "thread-started" && entry.observedAt);
+        const measured = item.milestones.flatMap((entry) => entry.elapsedMillis !== null && entry.elapsedMillis > 0 ?
+          [{ ...entry, elapsedMillis: entry.elapsedMillis }] : []);
+        const total = measured.reduce((sum, entry) => sum + entry.elapsedMillis, 0);
+        const rowWidth = 100 * Math.log1p(total / 60_000) / Math.log1p(Math.max(1, maxMeasuredMillis) / 60_000);
+        return <details key={item.number} className="thread">
+          <summary>
+            <span className="thread-meta">
+              <span className="thread-name" aria-label={hasThread ? `Thread linked to PR #${item.number}` : undefined}>
+                {hasThread ? `Thread · #${item.number}` : `PR #${item.number}`}
+              </span>
+              <span className="sr-only">{stageLabel(item.stage)}</span>
+              <time dateTime={item.lastObservedAt}>{dayLabel(item.lastObservedAt)}</time>
+            </span>
+            <span className="thread-bar" aria-hidden="true">{measured.length ? measured.map((entry) => {
+              const elapsed = entry.elapsedMillis;
+              return <span key={entry.key} className={`stage-segment ${phaseClass(entry)}`}
+                style={{ width: `${rowWidth * elapsed / total}%` }}
+                title={`${milestoneLabel(entry.key)} · ${wholeMinutes(elapsed)}`}><span>{wholeMinutes(elapsed)}</span></span>;
+            }) : <span className="thread-unmeasured">—</span>}</span>
+          </summary>
+          <Waterfall milestones={item.milestones} />
+          <div className="detail-links"><a href={detailPage(item.number, review.window.to)}>View PR #{item.number} evidence</a></div>
+        </details>;
+      })}</div>
+      {nextOffset !== null && <div ref={sentinel} className="delivery-tail">
+        {loading && <span role="status" className="fine">Loading more deliveries…</span>}
+        {error && <p role="alert">{error}</p>}
+        {!loading && <Button className={error || !window.IntersectionObserver ? "" : "scroll-keyboard"} onClick={loadMore}>
+          {error ? "Retry loading deliveries" : "Load more deliveries"}
         </Button>}
-        {nextOffset !== null && <Button variant="outline" asChild>
-          <a href={pagePath({ offset: nextOffset, to: review.window.to }, "#delivery-title")}>Next page</a>
-        </Button>}
-      </nav>}
+      </div>}
     </> : offset > 0 ? <p className="fine">No pull requests on this page.{" "}
       <a href={pagePath({ offset: null, to: review.window.to }, "#delivery-title")}>First page</a></p> :
       <p className="fine">No delivery milestones were observed in this window.</p>}

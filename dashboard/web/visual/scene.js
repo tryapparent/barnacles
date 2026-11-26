@@ -386,6 +386,14 @@ export function mountHarbor(scene, contacts) {
         shore.subarray(top, bottom + 1).reduce((reach, x) => Math.max(reach, x), 0));
       const clearance = sprite.width / 2 + 10;
       vessel.x = Math.max(left + clearance, Math.min(scene.width * vessel.column, scene.width - right - clearance));
+      if (vessel.link) {
+        const width = Math.max(24, sprite.width * .79);
+        const height = Math.max(24, sprite.height * .86 + 8);
+        vessel.link.style.left = `${vessel.x - width / 2}px`;
+        vessel.link.style.top = `${vessel.y - height / 2}px`;
+        vessel.link.style.width = `${width}px`;
+        vessel.link.style.height = `${height}px`;
+      }
     }
   }
 
@@ -425,16 +433,18 @@ export function mountHarbor(scene, contacts) {
       for (let patch = 0; patch < 8; patch++) {
         const begin = left[offset] + segment * (patch - .7 + .20 * Math.sin(row * 2.1 + patch));
         const end = begin + segment * (.41 + .25 * Math.sin(row + patch * 2.3) ** 2);
-        const bend = (1.2 + depth * 8.5) * Math.sin(phase + row * 1.25 + patch * 2);
-        const shift = (2 + depth * 4) * Math.sin(phase + row * .51);
+        const wind = phase * (2 + patch % 2) + row * 1.25 + patch * 2;
+        const bend = (1.8 + depth * 12) * (Math.sin(wind) + .26 * Math.cos(wind * 2 + row));
+        const shift = (2 + depth * 8) * Math.sin(phase * 2 - row * .51 + patch * .64);
+        const lift = (1 + depth * 5) * Math.sin(wind - 1.1);
         context.beginPath();
-        context.moveTo(begin + shift, y + bend * .25 + swell);
-        context.quadraticCurveTo((begin + end) / 2 + shift, y + bend, end + shift, y + bend * .38);
-        const alpha = (.14 + depth * .26) * (.58 + .42 * Math.sin(row + patch * 1.4) ** 2);
+        context.moveTo(begin + shift, y + lift + bend * .25);
+        context.quadraticCurveTo((begin + end) / 2 + shift, y + lift + bend, end + shift, y + bend * .38);
+        const alpha = (.15 + depth * .31) * (.58 + .42 * Math.sin(wind + patch * 1.4) ** 2);
         context.strokeStyle = `rgba(130,167,183,${alpha})`;
         context.lineWidth = .8 + depth * .83;
         context.setLineDash([1.8 + depth * 2.7, 2.6]);
-        context.lineDashOffset = swell * 2;
+        context.lineDashOffset = Math.sin(wind) * (2 + depth * 4);
         context.stroke();
       }
     }
@@ -491,15 +501,14 @@ export function mountHarbor(scene, contacts) {
     if (!water) return;
     const { width, height } = scene;
     const phase = progress * 2 * Math.PI;
-    const drift = Math.sin(phase);
     context.drawImage(ground, 0, 0);
     paintSea(width, height, phase);
     for (const vessel of vessels) {
       const {sprite, x, y} = vessel;
       if (!sprite.width || !sprite.height) continue;
       context.globalAlpha = .57 + vessel.light * .43;
-      context.drawImage(sprite, Math.round(x - sprite.width / 2 + drift * vessel.drift * 4),
-        Math.round(y - sprite.height / 2 + drift * vessel.drift * 2));
+      const bob = Math.sin(phase * 2 + vessel.column * 5) * vessel.drift * 3;
+      context.drawImage(sprite, Math.round(x - sprite.width / 2), Math.round(y - sprite.height / 2 + bob));
     }
     context.globalAlpha = 1;
     context.drawImage(banks, 0, 0);

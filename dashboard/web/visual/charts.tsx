@@ -47,12 +47,10 @@ function Gauge({ comparison }: { comparison: Review["cycleComparison"] }) {
         <span>Gardening</span><span /><span>Shipping</span>
       </div>
     </div>
-    <dl className="comparison">{[prior, recent].map((week) => <div key={week.startsAt}>
+    {deltaSeconds !== null && <dl className="comparison">{[prior, recent].map((week) => <div key={week.startsAt}>
       <dt>Week of {dayLabel(week.startsAt)}</dt>
       <dd>{duration(week.meanSeconds)} <span>· {countLabel(week.attributedShipments)} measured</span></dd>
-    </div>)}</dl>
-    <p className="fine">{deltaSeconds === null ? "Insufficient coverage for comparison." :
-      deltaSeconds === 0 ? "No change in the measured mean." : `Direction · ${comparison.direction}`}</p>
+    </div>)}</dl>}
   </section>;
 }
 
@@ -89,13 +87,23 @@ function Operations({ operations }: { operations: Review["operations"] }) {
     <h2 id="operations-title">Where time went</h2>
     {tiles.length ? <div className="operation-map" aria-hidden="true">{tiles.map(({ item, index, x, y, w, h }) =>
       <div key={item.operation} className="operation-tile" title={`${item.operation} · ${duration(item.totalSeconds)}`}
+        onPointerMove={(event) => {
+          if (event.pointerType === "touch") return;
+          const tile = event.currentTarget;
+          const bounds = tile.getBoundingClientRect();
+          tile.style.setProperty("--cursor-x", `${event.clientX - bounds.left}px`);
+          tile.style.setProperty("--cursor-y", `${event.clientY - bounds.top}px`);
+        }} onPointerLeave={({ currentTarget }) => {
+          currentTarget.style.removeProperty("--cursor-x");
+          currentTarget.style.removeProperty("--cursor-y");
+        }}
         style={{ left: x + "%", top: y + "%", width: w + "%", height: h + "%", "--tile": inks[index % inks.length] } as CSSProperties}>
         {w > 15 && h > 14 && <div className="operation-label"><span>{item.operation}</span>
           <span>{duration(item.totalSeconds)}</span></div>}
       </div>)}</div> : <p className="empty-chart">No measured time for this selection.</p>}
-    <p className="fine">{operations.clock} · Snapshot totals · Durations can overlap</p>
     {!!items.length && <details className="chart-details">
       <summary>Recorded operations</summary>
+      <p className="fine">{operations.clock} · Snapshot totals · Durations can overlap</p>
       <div className="table-scroll"><table><caption className="sr-only">Recorded operations</caption>
         <thead><tr><th scope="col">Operation</th><th scope="col">Total</th><th scope="col">Measured</th><th scope="col">Untimed</th></tr></thead>
         <tbody>{items.map((item) => <tr key={item.operation}>
@@ -147,10 +155,10 @@ function Weekly({ weeks }: { weeks: Week[] }) {
             </li>)}</ol>
         </div>
       </div>
-      <details className="chart-details"><summary>Weekly counts</summary><ul className="weekly-values">
+      <ul className="sr-only" aria-label="Weekly shipments by date">
         {weeks.map((week) => <li key={week.startsAt}><time dateTime={week.startsAt}>{dayLabel(week.startsAt)}</time>
           <span>{countLabel(week.verified)} verified · {countLabel(week.attributed)} attributed</span></li>)}
-      </ul></details>
+      </ul>
     </> : <p className="empty-chart">No verified shipments in this window.</p>}
   </figure>;
 }
@@ -162,8 +170,6 @@ export function Overview({ review }: { review: Review }) {
     <section className="panel shipped" aria-labelledby="ship-title">
       <h2 id="ship-title">Shipped to users</h2>
       <p className="shipped-count">{countLabel(review.shipments.verified)}</p>
-      <p className="fine">Changes with verified access in this window</p>
-      <p className="fine">{countLabel(review.shipments.attributed)} linked to a measured thread</p>
     </section>
     <Weekly weeks={review.shipments.weekly} />
   </div>;

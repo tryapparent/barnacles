@@ -541,9 +541,11 @@ test("shipping API preserves historical and partial evidence and reads a replace
     assert.deepEqual(report.fleet.items.map((item: { number: number; stage: string }) => [item.number, item.stage]),
       [[202, "pr-opened"], [101, "access-verified"]]);
     assert.equal(report.deliveries.nextOffset, 1);
+    assert.equal(report.deliveries.maxMeasuredMillis, 700_000);
     assert.deepEqual(report.operations.items, []);
     const page = await get("/api/v1/shipping?limit=1&offset=1");
     assert.equal(page.deliveries.nextOffset, null);
+    assert.equal(page.deliveries.maxMeasuredMillis, report.deliveries.maxMeasuredMillis);
     const detail = await get(page.deliveries.items[0].detailPath);
     assert.equal(detail.milestones[0].observedAt, iso(at - 1000));
     assert.equal(detail.milestones[3].provenance.url, "https://github.com/synthetic/harbor/actions/runs/11");

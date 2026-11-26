@@ -7,17 +7,20 @@ export function Fleet({ fleet }: { fleet: Review["fleet"] }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const sky = useRef<HTMLDivElement>(null);
   const localClock = useRef<HTMLTimeElement>(null);
+  const shipLinks = useRef(new Map<number, HTMLAnchorElement>());
   const paused = useRef(false);
   const [isPaused, setPaused] = useState(false);
   const [reduced, setReduced] = useState(() => matchMedia("(prefers-reduced-motion: reduce)").matches);
   const groups = stages.map(([stage, label]) => ({ stage, label, items: fleet.items.filter((item) => item.stage === stage) }));
+  const contacts = groups.flatMap(({ items }, position) => items.slice(0, 4)
+    .map((item, index) => ({ item, column: .15 + position * .116 + Math.sin(index * 2.6 + position) * .025,
+      row: .44 + index * .137 + Math.sin(position * 2 + index) * .040, drift: .7 + index * .19 })));
 
   useEffect(() => {
-    const visible = stages.flatMap(([stage], position) => fleet.items.filter((item) => item.stage === stage).slice(0, 4)
-      .map((_, index) => ({ column: .15 + position * .116 + Math.sin(index * 2.6 + position) * .025,
-        row: .44 + index * .137 + Math.sin(position * 2 + index) * .040, drift: .7 + index * .19 })));
     const media = matchMedia("(prefers-reduced-motion: reduce)");
-    const painter = mountHarbor(canvas.current!, visible);
+    const review = canvas.current!.closest("main")!;
+    const painter = mountHarbor(canvas.current!, contacts.map(({ item, ...contact }) =>
+      ({ ...contact, link: shipLinks.current.get(item.number) })));
     const clockFormat = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
     const tick = () => {
       const now = new Date();
@@ -42,7 +45,9 @@ export function Fleet({ fleet }: { fleet: Review["fleet"] }) {
       if (now - last >= 40) {
         if (last && !paused.current && !media.matches && !document.hidden) {
           elapsed = (elapsed + Math.min(now - last, 100)) % 28_000;
-          painter.render(elapsed / 28_000);
+          const progress = elapsed / 28_000;
+          painter.render(progress);
+          review.style.setProperty("--swell", String((1 - Math.cos(progress * Math.PI * 2)) / 2));
         }
         last = now;
       }
@@ -54,6 +59,7 @@ export function Fleet({ fleet }: { fleet: Review["fleet"] }) {
       clearInterval(timer);
       media.removeEventListener("change", onPreference);
       painter.dispose();
+      review.style.removeProperty("--swell");
     };
   }, [fleet]);
 
@@ -73,6 +79,11 @@ export function Fleet({ fleet }: { fleet: Review["fleet"] }) {
     <div className="fleet-window">
       <canvas className="fleet-water" aria-hidden="true" ref={canvas} />
       <div className="fleet-celestial" aria-hidden="true" ref={sky} />
+      {contacts.map(({ item }) => <a key={item.number} className="fleet-ship" aria-label={`Open PR #${item.number} evidence`}
+        title={`PR #${item.number}`} href={detailPage(item.number, fleet.to)} ref={(link) => {
+          if (link) shipLinks.current.set(item.number, link);
+          else shipLinks.current.delete(item.number);
+        }} />)}
     </div>
     {fleet.items.length ? <details className="fleet-manifest">
       <summary>Fleet manifest</summary>

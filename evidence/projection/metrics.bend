@@ -551,18 +551,32 @@ def review_week_before(a: ReviewWeek, b: ReviewWeek) -> Bool:
     case ReviewBucket{left, ignored} ReviewBucket{right, also_ignored}: Nat.is_le(left, right)
 
 type ReviewResult is Data:
-  ReviewReport{total: Nat, next_offset: Nat, deliveries: List<&2, ReviewItem>, fleet: List<&2, ReviewItem>,
+  ReviewReport{total: Nat, next_offset: Nat, max_measured_ms: Nat, deliveries: List<&2, ReviewItem>, fleet: List<&2, ReviewItem>,
     verified: ShippingSample, weeks: List<&2, ReviewWeek>}
 
 def review_count_facts(facts: List<&2, ReviewFact>) -> Nat:
   List.length(&2, ReviewFact, facts)
+
+def review_measured_time(events: List<&2, ReviewMoment>, +total: Nat) -> Nat:
+  match events:
+    case []: total
+    case Event{key, phase, observed, elapsed} <> rest:
+      match elapsed:
+        case Missing{}: review_measured_time(rest, total)
+        case Measured{ms}: review_measured_time(rest, Nat.add(total, ms))
+
+def review_max_measured(items: List<&2, ReviewItem>, +maximum: Nat) -> Nat:
+  match items:
+    case []: maximum
+    case Item{pr, order, changed, stage, events} <> rest:
+      review_max_measured(rest, Nat.max(maximum, review_measured_time(events, 0n)))
 
 def review_page(accum: ReviewFold, +limit: Nat, +offset: Nat) -> ReviewResult:
   match accum:
     case ReviewAccum{+deliveries, fleet, verified, weeks}:
       +total = List.length(&2, ReviewItem, deliveries)
       +next = Nat.add(offset, limit)
-      ReviewReport{total, Bool.pick(Nat, Nat.is_lt(next, total), next, 0n),
+      ReviewReport{total, Bool.pick(Nat, Nat.is_lt(next, total), next, 0n), review_max_measured(deliveries, 0n),
         List.take(&2, ReviewItem, List.drop(&2, ReviewItem, List.sort(~ReviewItem, ~review_newest, deliveries), offset), limit),
         List.sort(~ReviewItem, ~review_newest, fleet), verified,
         List.sort(~ReviewWeek, ~review_week_before, review_weeks(Map.to_list(&2, ReviewWeek, weeks)))}

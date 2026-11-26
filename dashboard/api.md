@@ -92,6 +92,11 @@ for all rows of the selected clock, or use an exact name from
 `operations.operationOptions`. A clock without evidence returns an empty list.
 Use `limit` (1–100, default 25) and `offset` (default 0) to page through
 deliveries. Advance using `deliveries.nextOffset`, which is null at the end.
+`deliveries.maxMeasuredMillis` is the longest sum of observed consecutive
+intervals across the selected delivery rows, independent of pagination. The
+browser uses it to hold the scale steady as more rows enter the list. Row widths
+use a compressed scale so short intervals stay visible alongside long ones.
+Selecting a ship opens its PR milestone waterfall on a linear UTC scale.
 
 Follow a record's `detailPath` to read `/api/v1/pull-requests/{number}`. It
 carries an `asOf` cutoff so the summary and detail use the same time. You can

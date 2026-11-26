@@ -62,7 +62,8 @@ type ReviewPolicy = {
   review_operation_matches(selection: string, all: boolean, name: string): boolean;
   review_item(fact: ReviewFact, asOf: number): ReviewItem;
   review_report(facts: List<ReviewFact>, from: number, to: number, fleetFrom: number, limit: number, offset: number): {
-    $: "ReviewReport"; total: number; next_offset: number; deliveries: List<ReviewItem>; fleet: List<ReviewItem>; verified: Shipping;
+    $: "ReviewReport"; total: number; next_offset: number; max_measured_ms: number; deliveries: List<ReviewItem>;
+    fleet: List<ReviewItem>; verified: Shipping;
     weeks: List<{ start: number; sample: Shipping }>;
   };
   mean: TimingPolicy["mean"];
@@ -563,6 +564,7 @@ export async function openShippingReview(directory: string) {
           fleet: { from: utc(window.fleet_from), to: utc(window.to),
             items: rows(report.fleet).map((row) => encodeReviewReference(row, repo, window.to)) },
           deliveries: { total: report.total, limit: input.limit, offset: input.offset, nextOffset: report.next_offset || null,
+            maxMeasuredMillis: report.max_measured_ms,
             items: rows(report.deliveries).map((row) => encodeReviewItem(row, repo, window.to)) },
         };
       });
