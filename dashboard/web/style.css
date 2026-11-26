@@ -339,6 +339,13 @@ h2, figcaption { font-size: 17px; line-height: 1.24; }
   margin-inline-end: 8px;
   background: var(--stage);
 }
+@media (forced-colors: active) {
+  .daily-segment, .daily-chart .stage-key li::before, .daily-values th[scope="row"]::before {
+    forced-color-adjust: none;
+    outline: 1px solid CanvasText;
+    outline-offset: -1px;
+  }
+}
 
 .thread summary {
   display: grid;
