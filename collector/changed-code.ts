@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { loadEvidence, repository as repositoryKey, type ChangedCodeFile, type List } from "../evidence/index.ts";
+import { buildAdmissionPolicy, loadEvidence, repository as repositoryKey, type ChangedCodeFile, type List } from "../evidence/index.ts";
 import { buildPolicy, loadPolicy } from "../tooling/bend.ts";
 
 type PathCount = { $: "ChangedPath"; path: string; commits: number };
@@ -85,7 +85,7 @@ async function main() {
     }
     const report = { revision: tip, commitsScanned, hasMoreCommits, shallow, files };
     if (saveAs !== null) loadEvidence(join(resolve(directory), "evidence.sqlite"),
-      { source: "git-change-scan", repository: saveAs, report });
+      { source: "git-change-scan", repository: saveAs, report }, await buildAdmissionPolicy(scratch));
     console.log(JSON.stringify(report, null, 2));
   } finally {
     rmSync(scratch, { recursive: true, force: true });

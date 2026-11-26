@@ -1,8 +1,8 @@
 import { closeSync, openSync } from "node:fs";
 import { DatabaseSync, type SQLInputValue, type SQLOutputValue } from "node:sqlite";
 import { buildPolicies, loadPolicy } from "../../tooling/bend.ts";
-import { readDelivery } from "../delivery/delivery.ts";
-import { sourcePolicy, type List, type SourcePolicy } from "../storage/sources.ts";
+import { deliveryPolicy, readDelivery, type DeliveryPolicy } from "../delivery/delivery.ts";
+import { type List } from "../storage/sources.ts";
 import { collectTiming, empty, millis, rows, seconds, type Stats, type TimingPolicy } from "./timing.ts";
 import { projectTrace, type TracePolicy, type TraceProjection, type SpanRow } from "./trace.ts";
 
@@ -35,12 +35,12 @@ type Metrics = TracePolicy & TimingPolicy & {
 const emptyShipping: Shipping = { $: "Delivery", shipped: 0, cycles: empty };
 export async function writeSnapshot(input: string, output: string, scratch: string, repo: string, cutoff: number,
   writeTrace: (key: string, trace: TraceProjection) => string) {
-  const [sources, metricModule, modelModule] = await buildPolicies(scratch, [
-    [sourcePolicy, "sources.mjs"],
+  const [deliveryModule, metricModule, modelModule] = await buildPolicies(scratch, [
+    [deliveryPolicy, "delivery.mjs"],
     [new URL("./metrics.bend", import.meta.url), "metrics.mjs"],
     [new URL("./estimate.bend", import.meta.url), "estimate.mjs"],
   ]);
-  const policy: SourcePolicy = await loadPolicy(sources);
+  const policy = await loadPolicy<DeliveryPolicy>(deliveryModule);
   const metrics: Metrics = await loadPolicy(metricModule);
   const estimator: Estimator = await loadPolicy(modelModule);
   const source = new DatabaseSync(input, { readOnly: true });

@@ -1,5 +1,5 @@
-export { loadEvidence, type ChangedCodeFile, type EvidenceBatch } from "./storage/load.ts";
-export { deliveryReport, type PullRequest, type ReleaseEvidence } from "./delivery/delivery.ts";
+export { admissionPolicy, buildAdmissionPolicy, loadEvidence, type AdmissionPolicy, type ChangedCodeFile, type EvidenceBatch } from "./storage/load.ts";
+export { deliveryPolicy, deliveryReport, type DeliveryPolicy, type PullRequest, type ReleaseEvidence } from "./delivery/delivery.ts";
 export { type ActionAttempt, type AttemptIdentity } from "./storage/actions.ts";
 export {
   sourcePolicy,

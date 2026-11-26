@@ -2,8 +2,8 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildPolicy, loadPolicy } from "../tooling/bend.ts";
-import { loadEvidence, type ActionAttempt, type PullRequest, type ReleaseEvidence } from "../evidence/index.ts";
+import { buildPolicies, loadPolicy } from "../tooling/bend.ts";
+import { admissionPolicy, loadEvidence, type AdmissionPolicy, type ActionAttempt, type PullRequest, type ReleaseEvidence } from "../evidence/index.ts";
 
 type Pull = {
   number: number; published: number; opened: number; merged: number; first_commit: number; first_ci: number;
@@ -19,16 +19,20 @@ type DemoPolicy = {
 
 const job = mkdtempSync("/tmp/apparent-dev-barnacles-demo-");
 const database = join(job, "evidence.sqlite");
-const saveDelivery = (pullRequest: PullRequest, release?: ReleaseEvidence) =>
-  loadEvidence(database, { source: "github-delivery", pullRequest, release });
-const saveAttempt = (attempt: ActionAttempt) => loadEvidence(database, { source: "github-actions", attempt });
 const dashboard = join(job, "grafana");
 const run = (entry: string, ...args: string[]) =>
   execFileSync(process.execPath, [fileURLToPath(new URL("../" + entry, import.meta.url)), ...args],
     { stdio: "inherit" });
 
 try {
-  const output = await buildPolicy(job, new URL("./demo.bend", import.meta.url), "demo.mjs");
+  const [output, admissionFile] = await buildPolicies(job, [
+    [new URL("./demo.bend", import.meta.url), "demo.mjs"],
+    [admissionPolicy, "admission.mjs"],
+  ]);
+  const admission = await loadPolicy<AdmissionPolicy>(admissionFile);
+  const saveDelivery = (pullRequest: PullRequest, release?: ReleaseEvidence) =>
+    loadEvidence(database, { source: "github-delivery", pullRequest, release }, admission);
+  const saveAttempt = (attempt: ActionAttempt) => loadEvidence(database, { source: "github-actions", attempt }, admission);
   const policy = await loadPolicy<DemoPolicy>(output);
   const now = Math.floor(Date.now() / 1000);
   const fixtures = policy.fixtures(now);

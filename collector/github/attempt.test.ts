@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
-import { loadEvidence } from "../../evidence/index.ts";
+import { buildAdmissionPolicy, loadEvidence } from "../../evidence/index.ts";
 import { buildPolicy, loadPolicy } from "../../tooling/bend.ts";
 import { collectAttempt, type ClockPolicy } from "./attempt.ts";
 
@@ -14,6 +14,7 @@ test("Bend2 clocks reach SQLite through the exact-attempt importer", async () =>
   const directory = mkdtempSync(join(parent, "test-"));
   try {
     const policy = await loadPolicy<ClockPolicy>(await buildPolicy(directory, new URL("./clocks.bend", import.meta.url), "clocks.mjs"));
+    const admission = await buildAdmissionPolicy(directory);
     const identity = { repository: "synthetic/example", runId: 1, attempt: 2, sha: "a".repeat(40) };
     const time = (second: number) => `2026-01-01T12:00:${String(second).padStart(2, "0")}Z`;
     const run = { id: 1, run_attempt: 2, head_sha: identity.sha, workflow_id: 5,
@@ -40,8 +41,8 @@ test("Bend2 clocks reach SQLite through the exact-attempt importer", async () =>
     const read = (path: string) => path.includes("/jobs?") ? { total_count: jobs.length, jobs } : run;
     const observed = collectAttempt(identity, policy, read);
     const path = join(directory, "evidence.sqlite");
-    loadEvidence(path, { source: "github-actions", attempt: observed });
-    loadEvidence(path, { source: "github-actions", attempt: observed });
+    loadEvidence(path, { source: "github-actions", attempt: observed }, admission);
+    loadEvidence(path, { source: "github-actions", attempt: observed }, admission);
     const db = new DatabaseSync(path, { readOnly: true });
     try {
       const results = db.prepare("SELECT queue_end-created_at AS queue, execution_end-execution_start AS execution, prior_execution FROM action_jobs ORDER BY job_id").all();
@@ -54,7 +55,7 @@ test("Bend2 clocks reach SQLite through the exact-attempt importer", async () =>
         ["Assemble signed notarized candidate", null], ["Other steps", null],
       ]);
 
-      assert.throws(() => loadEvidence(path, { source: "github-actions", attempt: { ...observed, sourceUpdated: 0, jobs: [] } }), /older observation/);
+      assert.throws(() => loadEvidence(path, { source: "github-actions", attempt: { ...observed, sourceUpdated: 0, jobs: [] } }, admission), /older observation/);
       assert.equal(db.prepare("SELECT count(*) AS count FROM action_jobs").get()?.count, 5);
     } finally {
       db.close();

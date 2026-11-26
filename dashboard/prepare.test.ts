@@ -5,21 +5,22 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import {
-  loadEvidence, type ActionAttempt, type PullRequest, type ReleaseEvidence, type RolloutEvidence, type ThreadEvidence,
+  buildAdmissionPolicy, loadEvidence, type ActionAttempt, type PullRequest, type ReleaseEvidence, type RolloutEvidence, type ThreadEvidence,
 } from "../evidence/index.ts";
 
-test("dashboard derives a covered comparison and preserves missing source coverage", () => {
+test("dashboard derives a covered comparison and preserves missing source coverage", async () => {
   const parent = process.env.BARNACLES_TEST_DIRECTORY;
   assert.ok(parent, "Set BARNACLES_TEST_DIRECTORY to a private job directory");
   const job = mkdtempSync(join(parent, "dashboard-test-"));
   try {
+    const admission = await buildAdmissionPolicy(job);
     const repo = "synthetic/example";
     const source = join(job, "source.sqlite");
     const saveDelivery = (pullRequest: PullRequest, release?: ReleaseEvidence) =>
-      loadEvidence(source, { source: "github-delivery", pullRequest, release });
-    const saveRollout = (rollout: RolloutEvidence) => loadEvidence(source, { source: "codex", rollout });
-    const saveThread = (thread: ThreadEvidence) => loadEvidence(source, { source: "t3", thread });
-    const saveAttempt = (attempt: ActionAttempt) => loadEvidence(source, { source: "github-actions", attempt });
+      loadEvidence(source, { source: "github-delivery", pullRequest, release }, admission);
+    const saveRollout = (rollout: RolloutEvidence) => loadEvidence(source, { source: "codex", rollout }, admission);
+    const saveThread = (thread: ThreadEvidence) => loadEvidence(source, { source: "t3", thread }, admission);
+    const saveAttempt = (attempt: ActionAttempt) => loadEvidence(source, { source: "github-actions", attempt }, admission);
     const week = 7 * 86400;
     const cutoff = Math.floor(Date.now() / 1000);
     const monday = cutoff - ((cutoff + 3 * 86400) % week);
@@ -92,11 +93,11 @@ test("dashboard derives a covered comparison and preserves missing source covera
     loadEvidence(source, { source: "git-change-scan", repository: repo, report: {
       revision: "a".repeat(40), commitsScanned: 5, hasMoreCommits: true, shallow: true,
       files: [{ path: "src/frequent.ts", commits: 4 }, { pathBytesBase64: "/w==", commits: 2 }],
-    } });
+    } }, admission);
     loadEvidence(source, { source: "git-change-scan", repository: "synthetic/other", report: {
       revision: "b".repeat(40), commitsScanned: 5, hasMoreCommits: false, shallow: false,
       files: [{ path: "other.ts", commits: 5 }],
-    } });
+    } }, admission);
     const out = join(job, "out");
     assert.throws(() => execFileSync(process.execPath,
       ["dashboard/prepare.ts", join(job, "missing.sqlite"), out, repo], { stdio: "pipe" }), /existing evidence SQLite/);

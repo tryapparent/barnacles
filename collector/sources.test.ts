@@ -3,8 +3,8 @@ import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
-import { sourcePolicy, deliveryReport, loadEvidence, type PullRequest, type ReleaseEvidence, type RolloutEvidence, type SourcePolicy, type ThreadEvidence } from "../evidence/index.ts";
-import { buildPolicy, loadPolicy } from "../tooling/bend.ts";
+import { sourcePolicy, admissionPolicy, deliveryPolicy, type AdmissionPolicy, type DeliveryPolicy, deliveryReport, loadEvidence, type PullRequest, type ReleaseEvidence, type RolloutEvidence, type SourcePolicy, type ThreadEvidence } from "../evidence/index.ts";
+import { buildPolicies, loadPolicy } from "../tooling/bend.ts";
 import { pullRequest, releaseEvidence } from "./github/delivery.ts";
 import { readRollout } from "./codex/rollout.ts";
 import { t3Snapshot } from "./t3.ts";
@@ -14,7 +14,10 @@ test("compiled Bend2 source decisions through the SQLite import path", async () 
   assert.ok(root);
   const job = mkdtempSync(join(root, "sources-test-"));
   try {
-    const policy = await loadPolicy<SourcePolicy>(await buildPolicy(job, sourcePolicy, "sources.mjs"));
+    const [sourceFile, admissionFile, deliveryFile] = await buildPolicies(job, [[sourcePolicy, "sources.mjs"], [admissionPolicy, "admission.mjs"], [deliveryPolicy, "delivery.mjs"]]);
+    const policy = await loadPolicy<SourcePolicy>(sourceFile);
+    const admission = await loadPolicy<AdmissionPolicy>(admissionFile);
+    const reportPolicy = await loadPolicy<DeliveryPolicy>(deliveryFile);
     const time = (s: string) => `2026-01-01T12:00:${s}Z`;
     const repo = "synthetic/example";
     const merged = "a".repeat(40);
@@ -67,33 +70,33 @@ test("compiled Bend2 source decisions through the SQLite import path", async () 
     };
     const path = join(job, "evidence.sqlite");
     const saveDelivery = (pullRequest: PullRequest, release?: ReleaseEvidence) =>
-      loadEvidence(path, { source: "github-delivery", pullRequest, release });
-    const saveRollout = (rollout: RolloutEvidence) => loadEvidence(path, { source: "codex", rollout });
-    const saveThread = (thread: ThreadEvidence) => loadEvidence(path, { source: "t3", thread });
+      loadEvidence(path, { source: "github-delivery", pullRequest, release }, admission);
+    const saveRollout = (rollout: RolloutEvidence) => loadEvidence(path, { source: "codex", rollout }, admission);
+    const saveThread = (thread: ThreadEvidence) => loadEvidence(path, { source: "t3", thread }, admission);
     const pr = pullRequest(repo, 9, policy, read, true);
     assert.equal(pr.firstCommit?.sha, merged);
     assert.equal(pr.firstReview?.id, 7);
     assert.deepEqual(pr.firstCI, { id: 102, at: Date.parse(time("07")) / 1000 });
     const failure = releaseEvidence(pr, tag, policy, read, () => ({ http: 206, bytes: 1, range: false }));
     saveDelivery(pr, failure);
-    assert.equal(deliveryReport(path, policy)[0].pr_to_release_seconds, null);
+    assert.equal(deliveryReport(path, reportPolicy)[0].pr_to_release_seconds, null);
     const proof = releaseEvidence(pr, tag, policy, read, () => ({ http: 206, bytes: 1, range: true }), true);
     saveDelivery(pr, proof);
-    assert.equal(deliveryReport(path, policy)[0].first_ci_run, 102);
-    assert.equal(deliveryReport(path, policy)[0].release_run, 205);
+    assert.equal(deliveryReport(path, reportPolicy)[0].first_ci_run, 102);
+    assert.equal(deliveryReport(path, reportPolicy)[0].release_run, 205);
     saveDelivery(pr, { ...proof, id: 1, published: proof.published! + 1 });
     saveDelivery(pr, { ...proof, id: 12 });
-    assert.equal(deliveryReport(path, policy)[0].release_id, 2);
-    assert.equal(deliveryReport(path, policy)[0].pr_to_release_seconds, 5);
-    assert.equal(deliveryReport(path, policy)[0].thread_to_release_seconds, null);
+    assert.equal(deliveryReport(path, reportPolicy)[0].release_id, 2);
+    assert.equal(deliveryReport(path, reportPolicy)[0].pr_to_release_seconds, 5);
+    assert.equal(deliveryReport(path, reportPolicy)[0].thread_to_release_seconds, null);
 
     const thread = t3Snapshot(snapshot, policy);
     assert.equal(thread.origin, "manual_t3");
     saveThread(thread);
     saveThread(thread);
-    assert.equal(deliveryReport(path, policy)[0].thread_to_release_seconds, 8.875);
+    assert.equal(deliveryReport(path, reportPolicy)[0].thread_to_release_seconds, 8.875);
     saveThread({ ...thread, id: "thread-2" });
-    assert.equal(deliveryReport(path, policy)[0].thread_to_release_seconds, null);
+    assert.equal(deliveryReport(path, reportPolicy)[0].thread_to_release_seconds, null);
     assert.throws(() => t3Snapshot({ ...snapshot, links: { ...snapshot.links, nextCursor: "more" } }, policy),
       /Incomplete T3/);
 
