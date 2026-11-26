@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { countLabel, dayLabel, duration, pagePath, stages, type DeliveryDay, type Review, type Operation, type Week } from "../api";
+import { countLabel, dayLabel, duration, pagePath, stages, type DeliveryDay, type Review, type OperationTile, type Week } from "../api";
 
 function sector(inner: number, outer: number, from: number, to: number) {
   function point(radius: number, degrees: number) {
@@ -54,9 +54,9 @@ function Gauge({ comparison }: { comparison: Review["cycleComparison"] }) {
 }
 
 type Rectangle = { x: number; y: number; w: number; h: number };
-type Tile = Rectangle & { item: Operation; index: number };
+type Tile = Rectangle & { item: OperationTile };
 
-function layout(items: Array<{ item: Operation; weight: number; index: number }>, bounds: Rectangle): Tile[] {
+function layout(items: Array<{ item: OperationTile; weight: number }>, bounds: Rectangle): Tile[] {
   if (!items.length) return [];
   if (items.length === 1) return [{ ...bounds, ...items[0] }];
   const total = items.reduce((value, next) => value + next.weight, 0);
@@ -195,21 +195,71 @@ function DelayedBursts() {
   return <canvas className="operation-dither" ref={canvas} />;
 }
 
+function OperationMap({ items }: { items: OperationTile[] }) {
+  const [path, setPath] = useState<OperationTile[]>([]);
+  const [width, setWidth] = useState(0);
+  const scope = useRef<HTMLDivElement>(null);
+  const heading = useRef<HTMLHeadingElement>(null);
+  const moveFocus = useRef(false);
+  const current = path.at(-1);
+  const level = current?.children ?? items;
+  const tiles = layout(level.map((item) => ({ item, weight: item.totalSeconds })), { x: 0, y: 0, w: 100, h: 100 });
+  const compact = ({ item, w, h }: Tile) => w * width / 100 < (item.grouped ? 58 : 66) || h < 20;
+  const name = (item: OperationTile) => item.grouped ? `Other (${item.grouped})` : item.label;
+  const describe = (item: OperationTile) => `${name(item)} · ${duration(item.totalSeconds)}`;
+  const navigate = (next: OperationTile[]) => {
+    moveFocus.current = true;
+    setPath(next);
+  };
+
+  useEffect(() => {
+    const observer = new ResizeObserver(([entry]) => setWidth(entry.contentRect.width));
+    if (scope.current) observer.observe(scope.current);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (moveFocus.current) {
+      heading.current?.focus({ preventScroll: true });
+      moveFocus.current = false;
+    }
+  }, [path]);
+
+  return <>
+    <div className="operation-scope" ref={scope}>
+      <h3 ref={heading} tabIndex={-1}>{current ? name(current) : "All recorded time"}</h3>
+      {current && <button type="button" onClick={() => navigate(path.slice(0, -1))}>
+        ← {path.length > 1 ? name(path[path.length - 2]) : "All operations"}
+      </button>}
+    </div>
+    <div className="operation-map" key={path.length}>{tiles.map((tile) => {
+      const { item, x, y, w, h } = tile;
+      const style = { left: x + "%", top: y + "%", width: w + "%", height: h + "%",
+        "--tile": item.grouped ? "var(--operation-other)" : inks[item.index % inks.length] } as CSSProperties;
+      const label = <><DelayedBursts />{!compact(tile) && <span className="operation-label">
+        <span>{name(item)}</span><span>{duration(item.totalSeconds)}{item.children.length ? " ›" : ""}</span></span>}</>;
+      const key = item.grouped ? "other" : "tile-" + item.label;
+      return item.children.length && !compact(tile)
+        ? <button key={key} type="button" className="operation-tile" aria-label={`Open ${describe(item)}`}
+            title={describe(item)} style={style} onClick={() => navigate([...path, item])}>{label}</button>
+        : <div key={key} className="operation-tile" title={describe(item)} style={style}
+            aria-hidden={compact(tile) || undefined}>{label}</div>;
+    })}</div>
+    <ul className="operation-list">{tiles.map((tile) =>
+      <li key={tile.item.grouped ? "other" : "tile-" + tile.item.label} data-compact={compact(tile)}>
+        {tile.item.children.length
+          ? <button type="button" onClick={() => navigate([...path, tile.item])}>{describe(tile.item)} ›</button>
+          : describe(tile.item)}</li>)}</ul>
+  </>;
+}
+
 function Operations({ operations }: { operations: Review["operations"] }) {
-  const items = operations.items;
-  const measured = items.flatMap((item) => item.hasArea && item.totalSeconds ?
-    [{ item, weight: item.totalSeconds, index: operations.operationOptions.indexOf(item.operation) }] : []);
-  const tiles = layout(measured, { x: 0, y: 0, w: 100, h: 100 });
+  const { items, map } = operations;
   return <section className="panel time" aria-labelledby="operations-title">
     <h2 id="operations-title">Where time went</h2>
-    {tiles.length ? <div className="operation-map" aria-hidden="true">{tiles.map(({ item, index, x, y, w, h }) =>
-      <div key={item.operation} className="operation-tile" title={`${item.operation} · ${duration(item.totalSeconds)}`}
-        style={{ left: x + "%", top: y + "%", width: w + "%", height: h + "%", "--tile": inks[index % inks.length] } as CSSProperties}>
-        <DelayedBursts />
-        {w > 15 && h > 14 && <div className="operation-label"><span>{item.operation}</span>
-          <span>{duration(item.totalSeconds)}</span></div>}
-      </div>)}</div> : <p className="empty-chart">No measured time for this selection.</p>}
-    {!!items.length && <details className="chart-details">
+    {map?.length ? <OperationMap key={JSON.stringify([operations.clock, operations.operation, map])} items={map} />
+      : <p className="empty-chart">{map ? "No measured time for this selection." : "The time map needs a refreshed evidence snapshot."}</p>}
+    {!!items.length && <details className="chart-details" open={map === undefined ? true : undefined}>
       <summary>Recorded operations</summary>
       <p className="fine">{operations.clock} · {operations.window} · Durations can overlap</p>
       <div className="table-scroll"><table><caption className="sr-only">Recorded operations</caption>
