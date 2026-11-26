@@ -77,5 +77,15 @@ def scan_paths(scan: HistoryScan) -> List<&2, PathCount>:
   match scan:
     case Scan{count, more, counts}: top_paths(counts)
 
+def inventory(counts: Map<&2, U32>, tail: List<&2, PathCount>) -> List<&2, PathCount>:
+  match counts:
+    case MTip{}: tail
+    case MLeaf{path, commits}: ChangedPath{path, commits} <> tail
+    case MNode{position, lo, hi}: inventory(lo, inventory(hi, tail))
+
+def scan_inventory(scan: HistoryScan) -> List<&2, PathCount>:
+  match scan:
+    case Scan{count, more, counts}: inventory(counts, [])
+
 def repository_name(value: String) -> String:
   Repository.normalized(value)

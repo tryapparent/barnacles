@@ -11,6 +11,8 @@ Each adapter extracts bounded provider input and decodes its wire format. Bend2 
 | GitHub | Read PR and commit metadata, exact Actions attempts and jobs, and release assets. Check tag ancestry where applicable. Verify the intended asset with a bounded anonymous range request when the surface is public. Store publication and access observation timestamps. |
 | Local Git | Read commit IDs and changed paths reachable from one revision. Emit a local Changed Code Analysis report. |
 
+Saving a Git scan also retains the full observed path inventory for Harbor's folder analysis. The printed report and Grafana ranking still show the top 25 paths. Reimport scans saved before the inventory was introduced to populate the Harbor page.
+
 ## Changed Code Analysis
 
 From the Barnacles checkout, with Node 22.18+ and Git installed:

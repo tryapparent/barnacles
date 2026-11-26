@@ -22,6 +22,10 @@ visible on the next request.
 
 ## Open the harbor dashboard
 
+**Changed Code Analysis** opens from Shipping review or directly at `/changed-code`. Select a folder segment to fan out its children. Older levels keep readable columns, with sideways scrolling and a breadcrumb for navigating deep paths. The file table shows the ten most changed files in the selected folder and updates as you search. Selecting a file reveals its path and shares.
+
+Use [the Git scan command](../collector/README.md#changed-code-analysis) with `--save-as OWNER/REPO`, then prepare a fresh snapshot for the same repository. The prepared `GET /api/v1/changed-code` endpoint returns the repository, scan coverage, and changed paths. Its `scan` is null when the repository has no scan, and `scan.files` is null for older ranked-only imports. A successful scan with no observed file changes returns an empty array. Keep snapshots for private repositories local.
+
 Build the React client into the private job directory and serve it on the API's
 origin.
 

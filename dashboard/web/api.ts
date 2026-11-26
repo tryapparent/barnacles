@@ -27,6 +27,33 @@ export type ProcessCapture = {
 export type Detail = Delivery & { asOf: string; snapshotAt: string };
 export type Operation = { operation: string; measuredSpans: number; meanSeconds: number | null; totalSeconds: number | null;
   unmeasuredSpans: number; hasArea: boolean };
+export type ChangeFile = ({ path: string } | { pathBytesBase64: string }) & { commits: number };
+export type ChangeReview = { repository: string; scan: {
+  revision: string; commitsScanned: number; hasMoreCommits: boolean; shallow: boolean; files: ChangeFile[] | null;
+} | null };
+export type ChangeList<T> = { $: "Nil" } | { $: "Con"; head: T; tail: ChangeList<T> };
+export type ChangeNode = { $: "Count"; name: string; touches: number; directory: boolean; children: unknown };
+type ChangeInput = { $: "Path"; path: string; touches: number; encoded: boolean };
+type ChangePolicy = {
+  tree(files: ChangeList<ChangeInput>): ChangeNode;
+  initial_route(node: ChangeNode): ChangeList<ChangeNode>;
+  sorted(node: ChangeNode): ChangeList<ChangeNode>;
+  bands(nodes: ChangeList<ChangeNode>, total: number, used: number): ChangeList<{ node: ChangeNode; top: number; size: number }>;
+  share(touches: number, total: number): number;
+  search(node: ChangeNode, query: string): { count: number; rows: ChangeList<{ path: string; touches: number; route: ChangeList<ChangeNode> }> };
+};
+export const changePolicy = import.meta.glob<ChangePolicy>("./changed-code.bend", { eager: true, import: "default" })["./changed-code.bend"];
+export function changeValues<T>(list: ChangeList<T>) {
+  const values: T[] = [];
+  for (let item = list; item.$ === "Con"; item = item.tail) values.push(item.head);
+  return values;
+}
+export function changeTree(files: ChangeFile[]) {
+  return changePolicy.tree(files.reduceRight<ChangeList<ChangeInput>>((tail, file) => ({
+    $: "Con", tail, head: { $: "Path", touches: file.commits, encoded: "pathBytesBase64" in file,
+      path: "path" in file ? file.path : file.pathBytesBase64 },
+  }), { $: "Nil" }));
+}
 export type OperationTile = { label: string; totalSeconds: number; index: number; grouped: number; children: OperationTile[] };
 export type Week = { startsAt: string; verified: number; attributed: number; meanCycleSeconds: number | null };
 export type DeliveryChart = { from: string; days: DeliveryDay[] };

@@ -848,3 +848,77 @@ th[scope="col"] { color: var(--quiet); }
 @media (forced-colors: active) {
   .process-bar { border: 1px solid CanvasText; }
 }
+
+.change-body { padding: 14px clamp(12px, 2vw, 24px) 24px; }
+.change-muted, .change-stage p, .change-selection p { color: var(--quiet); font-size: 13px; }
+.change-crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin: 10px 0 12px; overflow-wrap: anywhere; }
+.change-crumbs button, #change-search {
+  border: 1px solid var(--rule);
+  background: #071421;
+  color: var(--ink);
+  font: inherit;
+  padding: 5px 8px;
+}
+.change-crumbs button { min-height: 28px; cursor: pointer; }
+.change-crumbs [aria-current] { color: var(--quiet); }
+.change-scroll { overflow-x: auto; padding: 3px 3px 8px; scrollbar-color: #5b7393 #142033; }
+.change-chart { display: flex; width: max-content; min-width: 100%; gap: 20px; }
+.change-stage { flex: 0 0 160px; width: 160px; }
+.change-stage.change-ancestor { flex-basis: 126px; width: 126px; }
+.change-stage[data-level="1"] { flex-basis: 180px; width: 180px; }
+.change-stage[data-level="2"] { flex-basis: 210px; width: 210px; }
+.change-stage h2 { font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.change-stage p { margin-bottom: 6px; white-space: nowrap; font-size: 11px; }
+.change-stack { position: relative; background: #101c2b; }
+.change-band {
+  position: absolute;
+  inset-inline-start: 0;
+  width: 100%;
+  border: 1px solid #0a111b;
+  padding: 0;
+  background: #e88a7e;
+  color: #090a11;
+  font: 12px var(--pixel);
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+}
+.change-band[data-root="true"] { background: #9dc8ff; }
+.change-band[aria-pressed="true"] { background: var(--red); box-shadow: inset 0 0 0 3px var(--ink); z-index: 1; }
+.change-band::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--pixel-dither) 0 0 / 4px 4px;
+  mask-image: linear-gradient(95deg, transparent 45%, #000 94%);
+  opacity: .58;
+  pointer-events: none;
+}
+.change-band span { display: block; position: relative; z-index: 1; padding: 0 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.change-band[data-small="true"] span { display: none; }
+.change-band:focus-visible { outline: 2px solid #071421; outline-offset: -4px; z-index: 2; }
+.change-connector { position: absolute; inset: 0 auto auto 100%; width: 20px; background: #713938; pointer-events: none; }
+.change-selection { margin: 12px 0 20px; padding: 10px 0; border-block: 1px solid var(--rule); overflow-wrap: anywhere; }
+.change-selection h2 { font-size: 16px; }
+.change-review { display: grid; grid-template-columns: minmax(0, 2.25fr) minmax(190px, 1fr); gap: 20px; align-items: start; }
+.change-review > * { min-width: 0; border-top: 1px solid var(--rule); padding-top: 12px; }
+.change-review h2 { margin-bottom: 7px; }
+.change-review p { overflow-wrap: anywhere; margin-bottom: 8px; }
+.change-review label { display: block; color: var(--quiet); font-size: 13px; margin-top: 12px; }
+#change-search { width: 100%; font-size: 16px; min-height: 37px; margin: 4px 0 7px; }
+.change-review table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.change-review th, .change-review td { border-bottom: 1px solid var(--rule); padding: 6px 5px; font-size: 12px; vertical-align: top; text-align: left; }
+.change-review th { color: var(--quiet); font-weight: 400; }
+.change-review th:nth-child(n+2), .change-review td:nth-child(n+2) { text-align: right; width: 73px; }
+.change-review td button { font: inherit; color: var(--ink); background: none; border: 0; padding: 3px 1px; min-height: 26px; text-align: left; cursor: pointer; overflow-wrap: anywhere; text-decoration: underline; text-underline-offset: 3px; }
+.change-review td button[aria-pressed="true"] { color: #ffaca1; }
+.change-review dl div { border-bottom: 1px solid var(--rule); padding: 7px 0; }
+.change-review dt { font-size: 12px; color: var(--quiet); }
+.change-review dd { font-size: 13px; overflow-wrap: anywhere; }
+.change-review aside > p { margin-top: 10px; }
+.change-page :is(.change-crumbs button, .change-scroll, #change-search, td button):focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+@media (max-width: 600px) {
+  .change-review { grid-template-columns: 1fr; gap: 16px; }
+  .change-review th:nth-child(n+2), .change-review td:nth-child(n+2) { width: 56px; }
+}

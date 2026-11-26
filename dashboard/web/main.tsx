@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent } from "react";
 import { createRoot } from "react-dom/client";
 import {
   dayLabel, deliveryPage, fetchEvidence, milestoneLabel, pagePath,
   shippingPath, stageLabel, stages, utcLabel, durationMillis, processMillis,
-  type Detail, type Milestone, type ProcessCapture, type Review,
+  changePolicy, changeValues, changeTree, countLabel,
+  type ChangeReview, type ChangeNode, type ChangeFile, type Detail, type Milestone, type ProcessCapture, type Review,
 } from "./api";
 import { DailyStages, Overview, StageKey } from "./visual/charts";
 import { Button, NativeSelect } from "./controls";
@@ -405,6 +406,7 @@ function App() {
         <div className="scope">
           <span>{review.repository} · Linux Main x86_64</span>
           <a href={path}>Review API JSON</a>
+          <a href="/changed-code">Changed Code Analysis</a>
           {settingsToggle}
           <a href="#process-timing">Process timings</a>
         </div>
@@ -424,4 +426,169 @@ function App() {
   </main>;
 }
 
-createRoot(document.getElementById("root")!).render(<App />);
+const changePercent = new Intl.NumberFormat(undefined, { style: "percent", maximumFractionDigits: 1 });
+const changeRatio = (part: number, total: number) => changePercent.format(changePolicy.share(part, total));
+const nodeLabel = (node: ChangeNode) => node.name + (node.directory ? "/" : "");
+const nodeKey = (node: ChangeNode) => JSON.stringify([node.directory, node.name]);
+const sameNode = (left: ChangeNode, right?: ChangeNode) => Boolean(right && nodeKey(left) === nodeKey(right));
+const chartHeight = (index: number) => [172, 218, 263][index];
+
+function ChangeActivity({ repository, scan, files }: {
+  repository: string; scan: NonNullable<ChangeReview["scan"]>; files: ChangeFile[];
+}) {
+  const root = useMemo(() => changeTree(files), [files]);
+  const [path, setPath] = useState(() => changeValues(changePolicy.initial_route(root)));
+  const [scope, setScope] = useState(path);
+  const [query, setQuery] = useState("");
+  const view = useRef<HTMLDivElement>(null);
+  const selectedDetail = useRef<HTMLElement>(null);
+  const destination = useRef<{ depth: number; kind: "segment" | "row" | "crumb"; advance: boolean } | null>(null);
+  const directories = [root, ...path.filter((node) => node.directory)];
+  const active = path.at(-1) ?? root;
+  const parent = path.at(-2) ?? root;
+  const folder = scope.at(-1) ?? root;
+  const results = useMemo(() => changePolicy.search(folder, query), [folder, query]);
+  const matches = changeValues(results.rows);
+  const crumbs = useRef<HTMLElement>(null);
+  const [wideChart, setWideChart] = useState(false);
+  useLayoutEffect(() => {
+    const target = view.current;
+    if (!target) return;
+    const update = () => setWideChart(target.scrollWidth > target.clientWidth);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(target);
+    observer.observe(target.firstElementChild!);
+    return () => observer.disconnect();
+  }, []);
+  useLayoutEffect(() => {
+    const target = destination.current;
+    if (!target || !view.current) return;
+    destination.current = null;
+    if (target.advance) view.current.scrollLeft = view.current.scrollWidth;
+    if (target.kind === "row") selectedDetail.current?.focus();
+    else if (target.kind === "crumb") crumbs.current?.querySelector<HTMLElement>("[aria-current]")?.focus();
+    else {
+      const stage = target.advance
+        ? `[data-depth="${target.depth + 1}"] h2`
+        : `[data-depth="${target.depth}"] [aria-pressed="true"]`;
+      view.current.querySelector<HTMLElement>(stage)?.focus({ preventScroll: true });
+    }
+  }, [path]);
+  function choose(node: ChangeNode, depth: number) {
+    const next = [...path.slice(0, depth), node];
+    destination.current = { depth, kind: "segment", advance: node.directory };
+    setPath(next);
+    if (node.directory) { setScope(next); setQuery(""); }
+  }
+  function goBack(depth: number) {
+    const next = path.slice(0, depth);
+    destination.current = { depth, kind: "crumb", advance: false };
+    setPath(next);
+    setScope(next);
+    setQuery("");
+  }
+  const columnOffset = Math.max(0, directories.length - 3);
+  const selectedPath = path.map((node) => node.name).join("/");
+  const fileScope = scope.length ? scope.map((node) => node.name).join("/") + "/" : "Entire repository";
+  return <div className="change-body">
+    <p className="change-muted">{repository} · {countLabel(scan.commitsScanned)} non-merge commits</p>
+    <nav className="change-crumbs" aria-label="Folder path" ref={crumbs}>
+      {directories.map((node, depth) => <span key={depth}>
+        {depth > 0 && <span aria-hidden="true"> / </span>}
+        {depth === directories.length - 1 ? <span tabIndex={-1} aria-current="location">{node.name}</span>
+          : <button type="button" onClick={() => goBack(depth)}>{node.name}</button>}
+      </span>)}
+    </nav>
+    <div className="change-scroll" ref={view} role="region" aria-label="Folder activity chart" tabIndex={0}>
+      <div className="change-chart">
+        {directories.map((node, depth) => {
+          const level = Math.max(0, depth - columnOffset), bands = changeValues(changePolicy.bands(changePolicy.sorted(node), node.touches, 0));
+          const height = chartHeight(level);
+          const nextHeight = chartHeight(Math.max(0, depth + 1 - columnOffset));
+          return <section className={"change-stage" + (depth < columnOffset ? " change-ancestor" : "")}
+            data-depth={depth} data-level={level} key={depth}>
+            <h2 title={nodeLabel(node)} tabIndex={-1}>{depth ? nodeLabel(node) : node.name}</h2>
+            <p>{countLabel(node.touches)} touches · 100%</p>
+            <div className="change-stack" style={{ height }}>
+              {bands.map(({ node: child, top, size }) => {
+                const selected = sameNode(child, path[depth]);
+                const share = changePercent.format(size);
+                return <button type="button" key={nodeKey(child)} aria-pressed={selected}
+                  aria-label={`${nodeLabel(child)}, ${share} of ${node.name}`} title={`${nodeLabel(child)} ${share}`}
+                  data-small={size < .1} data-root={depth === 0} className="change-band"
+                  style={{ top: `${top * 100}%`, height: `${size * 100}%` }}
+                  onClick={() => choose(child, depth)}><span>{nodeLabel(child)} {share}</span></button>;
+              })}
+              {depth < directories.length - 1 && bands.filter(({ node: child }) => sameNode(child, path[depth]))
+                .map(({ top, size }) => <span aria-hidden="true" key="connector" className="change-connector"
+                  style={{ height: Math.max(height, nextHeight),
+                    clipPath: `polygon(0 ${top * height}px, 100% 0, 100% ${nextHeight}px, 0 ${(top + size) * height}px)` }} />)}
+            </div>
+          </section>;
+        })}
+      </div>
+    </div>
+    {wideChart && <p className="change-muted">Scroll sideways to see all folder levels.</p>}
+    <section className="change-selection" aria-label="Selected path" aria-live="polite" ref={selectedDetail} tabIndex={-1}>
+      <h2>{selectedPath ? selectedPath + (active.directory ? "/" : "") : root.name}</h2>
+      <p>{countLabel(active.touches)} file touches{active !== root && <> · {changeRatio(active.touches, parent.touches)} of {parent === root ? "the repository" : nodeLabel(parent)}
+        {parent !== root && <> · {changeRatio(active.touches, root.touches)} of all touches</>}</>}</p>
+    </section>
+    <div className="change-review">
+      <section aria-labelledby="changed-files-title">
+        <h2 id="changed-files-title">Most changed files</h2>
+        <p className="change-muted">{fileScope}</p>
+        <label htmlFor="change-search">Find a file in this folder</label>
+        <input id="change-search" type="search" value={query} onChange={(event) => setQuery(event.target.value)} />
+        <p role="status" className="change-muted">{results.count
+          ? `Showing ${matches.length} of ${countLabel(results.count)} ${query.trim() ? "matches" : "changed files"}`
+          : "No matching files. Try a different name."}</p>
+        {matches.length > 0 && <table aria-labelledby="changed-files-title"><thead>
+          <tr><th scope="col">File path</th><th scope="col">Commits</th><th scope="col">Folder share</th></tr>
+        </thead><tbody>{matches.map((row) => {
+          const next = [...scope, ...changeValues(row.route)];
+          const selected = !active.directory && next.length === path.length &&
+            next.every((node, depth) => sameNode(node, path[depth]));
+          return <tr key={row.path}><td><button type="button" aria-pressed={selected} onClick={() => {
+            destination.current = { kind: "row", depth: next.length, advance: true };
+            setPath(next);
+          }}>{row.path}</button></td><td>{countLabel(row.touches)}</td><td>{changeRatio(row.touches, folder.touches)}</td></tr>;
+        })}</tbody></table>}
+      </section>
+      <aside aria-labelledby="change-coverage-title"><h2 id="change-coverage-title">Scan coverage</h2>
+        <dl>
+          <div><dt>Repository</dt><dd>{repository}</dd></div>
+          <div><dt>Revision</dt><dd title={scan.revision}>{scan.revision.slice(0, 12)}</dd></div>
+          <div><dt>History</dt><dd>{countLabel(scan.commitsScanned)} non-merge commits{scan.hasMoreCommits && " · limit reached"}</dd></div>
+          <div><dt>Changed paths</dt><dd>{countLabel(files.length)}</dd></div>
+          <div><dt>File touches</dt><dd>{countLabel(root.touches)}</dd></div>
+        </dl>
+        {scan.shallow && <p className="change-muted">Shallow history. File changes at the checkout boundary are unavailable.</p>}
+        <p className="change-muted">One file touch is one commit changing one file. Each chart column shows 100% of its folder.</p>
+      </aside>
+    </div>
+  </div>;
+}
+
+function ChangedCodePage() {
+  const { result, retry } = useEvidence<ChangeReview>("/api/v1/changed-code");
+  const scan = result.state === "ready" ? result.data.scan : null;
+  return <main className="change-page">
+    <header className="masthead"><h1>Changed Code Analysis</h1><a href="/">Shipping review</a></header>
+    {result.state === "loading" && <div className="page-message"><p role="status">Loading the Git scan…</p></div>}
+    {result.state === "error" && <div className="page-message" role="alert"><p>{result.message}</p>
+      <Button onClick={retry}>Retry Git scan</Button></div>}
+    {result.state === "ready" && <>{!scan?.files ? <div className="page-message"><p>
+      {scan ? "This snapshot contains the ranked report. Save a fresh Git scan and rebuild the snapshot to see the folder analysis."
+        : "Save a Git scan for this repository and rebuild the snapshot to see changed files."}</p>
+    </div> : scan.files.length ? <ChangeActivity repository={result.data.repository} scan={scan} files={scan.files} />
+      : <div className="page-message"><p>No file changes were observed in this scan.</p>
+        <p>Revision {scan.revision.slice(0, 12)} · {countLabel(scan.commitsScanned)} commits scanned
+          {scan.hasMoreCommits && " · limit reached"}{scan.shallow && " · shallow history"}</p></div>}</>}
+  </main>;
+}
+
+const isChanges = location.pathname === "/changed-code";
+if (isChanges) document.title = "Barnacles · Changed Code Analysis";
+createRoot(document.getElementById("root")!).render(isChanges ? <ChangedCodePage /> : <App />);

@@ -153,6 +153,11 @@ CREATE TABLE IF NOT EXISTS git_changed_files(
   CHECK ((path IS NULL) <> (path_base64 IS NULL))
 ) STRICT;
 
+CREATE TABLE IF NOT EXISTS git_change_inventory(
+  repository TEXT PRIMARY KEY REFERENCES git_change_scans(repository),
+  paths TEXT
+) STRICT;
+
 CREATE VIEW IF NOT EXISTS codex_spans AS
 SELECT instance, session_id, call_id, source_line, tool, 'tool_envelope' AS clock,
        started_ms, ended_ms, NULL AS terminal_call_id

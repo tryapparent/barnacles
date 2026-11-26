@@ -653,6 +653,10 @@ test("shipping API preserves historical and partial evidence and reads a replace
             start, end: start + seconds }] }],
       } }, admission);
     }
+    const changes = [{ path: "src/routes/main.ts", commits: 4 }, { pathBytesBase64: "/w==", commits: 2 }];
+    loadEvidence(source, { source: "git-change-scan", repository: repo,
+      report: { revision: "a".repeat(40), commitsScanned: 5, hasMoreCommits: true, shallow: true, files: changes.slice(0, 1) },
+      inventory: changes }, admission);
     await prepare(snapshot);
     const db = new DatabaseSync(join(snapshot, "dashboard.sqlite"), { readOnly: true });
     try {
@@ -685,6 +689,7 @@ test("shipping API preserves historical and partial evidence and reads a replace
     if (web) {
       const page = await call("/");
       assert.equal(page.status, 200);
+      assert.equal((await call("/changed-code")).status, 200);
       assert.match(page.headers.get("content-type") ?? "", /text\/html/);
       const script = (await page.text()).match(/src="(\/assets\/[^"]+\.js)"/)?.[1];
       assert.ok(script);
@@ -697,6 +702,8 @@ test("shipping API preserves historical and partial evidence and reads a replace
     const discovery = await get("/api/v1");
     const { endpoints } = discovery;
     assert.equal(endpoints.shipping.path, "/api/v1/shipping");
+    assert.deepEqual(await get(endpoints.changedCode.path), { repository: repo,
+      scan: { revision: "a".repeat(40), commitsScanned: 5, hasMoreCommits: true, shallow: true, files: changes } });
     assert.equal(endpoints.processTimings.path, "/api/v1/process-timings");
     assert.deepEqual(await get(endpoints.processTimings.path), { captures: [] });
     const settingsPath = discovery.pollingSettings;
