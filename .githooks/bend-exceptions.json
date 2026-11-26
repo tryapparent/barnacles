@@ -64,5 +64,23 @@
     "evidence/delivery/delivery.test.ts",
     "examples/demo.ts",
     "tooling/tests/directory-width.test.ts"
+  ],
+  "React, shadcn and Canvas presentation requested for the harbor web client": [
+    "dashboard/web/api.ts",
+    "dashboard/web/assets/DITHERCN-LICENSE",
+    "dashboard/web/assets/GeistPixel-Square.woff2",
+    "dashboard/web/assets/OFL.txt",
+    "dashboard/web/assets/SHADCN-LICENSE",
+    "dashboard/web/assets/town.webp",
+    "dashboard/web/assets/yard.webp",
+    "dashboard/web/controls.tsx",
+    "dashboard/web/index.html",
+    "dashboard/web/main.tsx",
+    "dashboard/web/style.css",
+    "dashboard/web/tsconfig.json",
+    "dashboard/web/visual/charts.tsx",
+    "dashboard/web/visual/fleet.tsx",
+    "dashboard/web/visual/scene.js",
+    "dashboard/web/vite.config.ts"
   ]
 }

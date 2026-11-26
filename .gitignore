@@ -1,2 +1,4 @@
 /.barnacles/
 /node_modules/
+
+/dashboard/web/dist/
