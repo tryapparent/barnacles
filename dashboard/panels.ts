@@ -1,4 +1,5 @@
 const datasource = { uid: "barnacles", type: "frser-sqlite-datasource" };
+const tempo = { uid: "barnacles-tempo", type: "tempo" };
 const yellow = "#F2B826";
 const green = "#4DAE79";
 const ink = "#D3D8D2";
@@ -6,7 +7,7 @@ const timingPath = "/d/barnacles-timing/timing";
 const tracePath = "/d/barnacles-trace/trace";
 
 type Window = { from: number; to: number };
-type Range = Window & { traceWindows: (Window & { session: number })[] };
+type Range = Window & { traceWindows: (Window & { session: number; traceId: string })[] };
 type FieldProperty = { id: string; value: unknown };
 type Override = { matcher: { id: string; options: string }; properties: FieldProperty[] };
 
@@ -140,54 +141,39 @@ export function dashboards(range: Range) {
   const first = range.traceWindows[0];
   const session = "${session:sqlstring}";
   const reasoningTime = "strftime('%Y-%m-%dT%H:%M:%fZ', observed / 1000.0, 'unixepoch')";
-  const reasoningWindow = `FROM trace_reasoning WHERE session = CAST(${session} AS INTEGER)
-    AND observed BETWEEN $__from AND $__to ORDER BY observed, source_line`;
   const trace = board("barnacles-trace", "Barnacles · Rollout waterfall",
     first ? new Date(first.from).toISOString() : from, first ? new Date(first.to).toISOString() : to, [
-      block(1, "Local Codex evidence", [0, 0, 24, 3],
-        "Dashed lines mark reasoning events. Duration unknown."),
-      data(2, "state-timeline", "Spans in the selected window", [0, 3, 24, 14],
-        `SELECT started / 1000.0 AS time, ended / 1000.0 AS timeEnd, lane AS "Lane", clock AS "Clock"
-          FROM trace WHERE CAST(session AS TEXT) = ${session} AND ended IS NOT NULL
-          AND started <= $__to AND ended >= $__from
-          ORDER BY started, lane LIMIT 24`,
-        { mergeValues: false, showValue: "never", rowHeight: 0.84, legend: { showLegend: false } },
-        { displayName: "${__field.labels.Lane}", color: { mode: "fixed", fixedColor: "#C09046" },
-          mappings: [{ type: "value", options: {
-            "Async cells": { color: green, text: "Async cell" },
-            "Tool envelopes": { color: yellow, text: "Tool envelope" },
-          } }] }, [], ["time", "timeEnd"],
-        "Shows the first 24 completed spans that overlap the window. Async spans end when the terminal wait was observed."),
-      data(3, "table", "Missing terminal observations", [0, 17, 12, 5],
-        `SELECT lane AS "Span", started / 1000.0 AS "Started" FROM trace
-          WHERE CAST(session AS TEXT) = ${session} AND ended IS NULL ORDER BY started`,
-        { showHeader: true }, {}, [], ["Started"]),
-      data(5, "table", "Reasoning timestamps", [12, 17, 12, 5],
-        `SELECT ${reasoningTime} AS "Observed", source_line AS "Line" ${reasoningWindow}`,
+      block(1, "Local Codex evidence", [0, 0, 24, 3], first
+        ? "Reasoning events mark observed times. Their duration is unknown."
+        : "Import a Codex rollout and rebuild this snapshot to view a trace."),
+      {
+        id: 2, type: "traces", title: "Session trace", datasource: tempo,
+        gridPos: { x: 0, y: 3, w: 24, h: 14 },
+        description: "The root groups the observed clocks and events. Async cells end at the observed terminal wait. Command labels describe submitted operations.",
+        targets: [{ datasource: tempo, refId: "A", queryType: "traceql", query: "${traceId}" }],
+      },
+      data(4, "table", "Completed spans", [0, 17, 24, 6],
+        `SELECT operation AS "Operation", source_line AS "Line" FROM trace
+          WHERE CAST(session AS TEXT) = ${session} AND started IS NOT NULL AND ended IS NOT NULL
+          ORDER BY started, source_line, clock`,
+        { showHeader: true }, {}, [byName("Line", width(72))]),
+      data(3, "table", "Spans with missing clocks", [0, 23, 12, 5],
+        `SELECT source_line || ' · ' || operation AS "Span",
+          started / 1000.0 AS "Started", ended / 1000.0 AS "Ended" FROM trace
+          WHERE CAST(session AS TEXT) = ${session} AND (started IS NULL OR ended IS NULL) ORDER BY started`,
+        { showHeader: true }, { noValue: "Unknown", custom: { minWidth: 70 } }, [], ["Started", "Ended"]),
+      data(5, "table", "Reasoning timestamps", [12, 23, 12, 5],
+        `SELECT ${reasoningTime} AS "Observed UTC", source_line AS "Line"
+          FROM trace_reasoning WHERE CAST(session AS TEXT) = ${session} ORDER BY observed, source_line`,
         { showHeader: true }, {}, [
-          byName("Observed", unit("time:YYYY-MM-DD HH:mm:ss.SSS")), byName("Line", width(72)),
-        ], ["Observed"],
-        "Events in the selected time range with their rollout source lines. Reimport older rollouts to add reasoning coverage."),
-      data(4, "table", "Imported sessions", [0, 22, 24, 5],
-        'SELECT session AS "Session", started AS "From", ended AS "To" FROM trace_windows',
-        { showHeader: true }, {}, [
-          byName("Session", links(link("Focus session", tracePath +
-            '?var-session=${__value.raw}&from=${__data.fields["From"]}&to=${__data.fields["To"]}'))),
-          byName("From", { id: "custom.hidden", value: true }),
-          byName("To", { id: "custom.hidden", value: true }),
-        ]),
+          byName("Observed UTC", unit("time:YYYY-MM-DD HH:mm:ss.SSS")), byName("Line", width(72)),
+        ], ["Observed UTC"],
+        "Point events in the selected session with their rollout source lines. Reimport older rollouts to add reasoning coverage."),
     ], [link("Shipping review", "/d/barnacles-shipping/shipping")], [
-      { ...variable("session", "Local session", "SELECT CAST(session AS TEXT) FROM trace_windows ORDER BY session", "1"), hide: 2 },
+      variable("session", "Session", "SELECT CAST(session AS TEXT) FROM trace_windows ORDER BY session", "1"),
+      { ...variable("traceId", "Trace ID", `SELECT COALESCE((SELECT trace_id FROM trace_windows
+        WHERE CAST(session AS TEXT) = ${session}), '')`, first?.traceId ?? ""), hide: 2 },
     ]);
-  const annotationQuery = `SELECT ${reasoningTime} AS time, 'Reasoning recorded · line ' || source_line AS text
-    ${reasoningWindow}`;
-  Object.assign(trace, { annotations: { list: [{
-    name: "Reasoning recorded", datasource, enable: true, hide: false, iconColor: "#B997EF",
-    target: { datasource, refId: "Anno", rawQueryText: annotationQuery, queryText: annotationQuery,
-      queryType: "table", timeColumns: ["time"] },
-  }] } });
-  Object.assign(trace.panels[1], { transformations: [
-    { id: "partitionByValues", options: { fields: ["Lane"], keepFields: false } },
-  ] });
+  Object.assign(trace, { timepicker: { hidden: true } });
   return { shipping, timing, trace };
 }

@@ -70,13 +70,31 @@ def tool_label(+name: String, fallback: String) -> String:
                 Bool.pick(String, String.starts_with(name, "mcp__codex_apps__github__"), "GitHub operation", fallback))))))))
 
 type ToolContext is Data:
-  Tool{label: String, wrapper: Bool, cell_wait: Bool}
+  Tool{label: String, command: String, wrapper: Bool, cell_wait: Bool}
 
-def tool(+name: String, wrapped: String, parallel: Bool) -> ToolContext:
+def known_command(+program: String, +action: String) -> String:
+  Bool.pick(String, String.eq(program, "unknown"), "",
+    Bool.pick(String, Bool.or(String.eq(action, "unknown"), String.eq(action, "")), program,
+      String.append(program, String.append(" ", action))))
+
+def command_label(+program: String, +word: String) -> String:
+  known = label(program, ["git", "gh", "node", "npm", "docker", "rg", "sed", "cat", "curl", "python3", "ffmpeg", "ffprobe", "ls", "jq", "t3-build"])
+  action = Bool.pick(String, String.eq(program, "git"), label(word, ["status", "diff", "log", "show", "fetch", "add", "commit", "push", "switch", "rev-parse"]),
+    Bool.pick(String, String.eq(program, "gh"), label(word, ["pr", "run", "api"]),
+      Bool.pick(String, String.eq(program, "node"), label(word, ["--test"]),
+        Bool.pick(String, String.eq(program, "npm"), label(word, ["ci", "test", "run"]),
+          Bool.pick(String, String.eq(program, "docker"), label(word, ["ps", "run", "inspect", "pull", "compose"]), "")))))
+  known_command(known, action)
+
+def tool_command(+name: String, program: String, word: String) -> String:
+  Bool.pick(String, String.eq(name, "exec_command"), command_label(program, word), "")
+
+def tool(+name: String, +wrapped: String, +parallel: Bool, +program: String, +word: String) -> ToolContext:
   Bool.pick(ToolContext, String.eq(name, "exec"),
-    Tool{Bool.pick(String, parallel, "Parallel tool script", tool_label(wrapped, "Tool script")), True{}, False{}},
-    Bool.pick(ToolContext, String.eq(name, "wait"), Tool{"Cell wait", False{}, True{}},
-      Tool{tool_label(name, "Other tool"), False{}, False{}}))
+    Tool{Bool.pick(String, parallel, "Parallel tool script", tool_label(wrapped, "Tool script")),
+      tool_command(wrapped, program, word), True{}, False{}},
+    Bool.pick(ToolContext, String.eq(name, "wait"), Tool{"Cell wait", "", False{}, True{}},
+      Tool{tool_label(name, "Other tool"), tool_command(name, program, word), False{}, False{}}))
 
 def merged_at(opened: U32, +merged: U32, confirmed: Bool) -> U32:
   Bool.pick(U32, Bool.and(confirmed, ordered(opened, merged)), merged, 0)
@@ -120,8 +138,8 @@ def finish_seen(+accept: Bool, orphans: U32, line: U32, observed: ToolContext, s
   target: String, cell: String, terminal: Bool, ambiguous: Bool, ended: Point,
   yielded: String, completed: Bool) -> CallState:
   match observed:
-    case Tool{label, +wrapper, +cell_wait}:
-      Seen{orphans, line, Tool{label, wrapper, cell_wait}, start, Bool.pick(Point, accept, ended, finish), target,
+    case Tool{label, command, +wrapper, +cell_wait}:
+      Seen{orphans, line, Tool{label, command, wrapper, cell_wait}, start, Bool.pick(Point, accept, ended, finish), target,
         Bool.pick(String, Bool.and(accept, wrapper), yielded, cell),
         Bool.or(terminal, Bool.and(accept, Bool.and(cell_wait, completed))),
         Bool.or(ambiguous, Bool.not(accept))}
@@ -173,13 +191,13 @@ def cell_link(pair: CellPair, malformed: U32) -> CellLink:
 
 type CallRecord is Data:
   Ignored{orphans: U32}
-  Observed{orphans: U32, line: U32, tool: String, start: Point, finish: Point, launched: Bool, ambiguous: Bool}
+  Observed{orphans: U32, line: U32, tool: String, command: String, start: Point, finish: Point, launched: Bool, ambiguous: Bool}
 
 def call_record(state: CallState) -> CallRecord:
   match state:
     case Unseen{orphans}: Ignored{orphans}
-    case Seen{orphans, line, Tool{label, wrapper, cell_wait}, start, finish, target, cell, terminal, +ambiguous}:
-      Observed{orphans, line, label, start, Bool.pick(Point, ambiguous, Time{0, 0}, finish),
+    case Seen{orphans, line, Tool{label, command, wrapper, cell_wait}, start, finish, target, cell, terminal, +ambiguous}:
+      Observed{orphans, line, label, command, start, Bool.pick(Point, ambiguous, Time{0, 0}, finish),
         Bool.not(String.eq(cell, "")), ambiguous}
 
 type Milestone is Data:
