@@ -69,3 +69,11 @@ In `deliveryReport(db, policy)`, each row retains the existing clocks and adds `
 - **Direction.** Compare mean cycle time across adjacent completed weeks in UTC for the same surface. Show the signed difference and both sample counts. Longer moves toward Gardening, flat or shorter toward Shipping. Missing samples produce an unknown direction.
 
 Prometheus can later carry bounded service metrics. Exact thread, PR, SHA, and command identities belong in local evidence.
+
+### Wait drilldown fields
+
+- `codex_wait_coverage(instance, session_id)` marks rollouts imported with wait attribution. Join to `codex_rollouts` for malformed and orphan counts. An absent marker means unknown coverage.
+- `codex_wait_attribution` has one row per wait call, keyed by `(instance, session_id, call_id)`. Join to `codex_calls` on that key for the wait's source line and clock. `cell_id` is the literal target and `cell_status` explains linkage. `cell_launch_call_id` is available for `linked_cell`.
+- `codex_process_receipts` has one row per submitted process operation considered for attribution. Join on the same instance and session using `codex_wait_attribution.cell_launch_call_id = codex_process_receipts.call_id`. The row describes the **cell owner's** operation. Several interim waits can share it. `result_call_id` and `receipt_source_line` identify the selected tool response, which can be a later terminal wait. Receipt kind distinguishes a valid receipt from absent or unsupported payloads.
+- `process_handle` is scoped to the rollout and may be recycled. `process_launch_call_id` identifies the linked generation, while `process_status` describes the outcome or the reason attribution is missing. `process_category` is an allowlisted label for the submitted command. Receipt kind, seconds, echoed handle, and exit code retain only the bounded structured fields.
+- `repository`, `run_id`, `head_sha`, and `attempt` carry the exact submitted watcher identity when established. Run and attempt are decimal strings. `poll_started_ms` and `poll_result_ms` are populated only for a linked read-only poll with a consistent structured running or exit receipt and exact watcher identity. They use an observation envelope in UTC milliseconds, which has different bounds from the inner tool receipt's elapsed seconds.

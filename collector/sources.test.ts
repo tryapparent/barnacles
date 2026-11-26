@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { appendFileSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { sourcePolicy, deliveryReport, loadEvidence, type PullRequest, type ReleaseEvidence, type RolloutEvidence, type SourcePolicy, type ThreadEvidence } from "../evidence/index.ts";
+import { sourcePolicy, deliveryReport, loadEvidence, waitReport, watchOverlaps, type PullRequest, type ReleaseEvidence, type RolloutEvidence, type SourcePolicy, type ThreadEvidence } from "../evidence/index.ts";
 import { buildPolicy, loadPolicy } from "../tooling/bend.ts";
 import { pullRequest, releaseEvidence } from "./github/delivery.ts";
 import { inspectRollout, readRollout } from "./codex/rollout.ts";
@@ -293,4 +293,156 @@ test("rollout CLI keeps fork lineage, rejects unproven input, and preserves repl
   } finally {
     rmSync(job, { recursive: true, force: true });
   }
+});
+
+test("nested wait receipts, recycled handles and exact watcher overlap through the source importer", async () => {
+  const root = process.env.BARNACLES_TEST_DIRECTORY;
+  assert.ok(root);
+  const job = mkdtempSync(join(root, "waits-test-"));
+  try {
+    const rollout = join(job, "waits.jsonl");
+    const sha = "a".repeat(40);
+    const epoch = Date.parse("2026-01-01T12:00:00Z");
+    const event = (s: number, payload: object) => ({
+      timestamp: new Date(epoch + s * 1000).toISOString(), type: "response_item", payload,
+    });
+    const body = (fields: object) => JSON.stringify({
+      chunk_id: "fixture", original_token_count: 0, wall_time_seconds: 0.25,
+      output: "private process output", ...fields,
+    });
+    const wrapped = (fields: object) => [
+      { type: "input_text", text: "Script completed\nWall time 1 seconds\nOutput:\n" },
+      { type: "input_text", text: body(fields) },
+    ];
+    const script = (t: number, id: string, input: string) =>
+      event(t, { type: "custom_tool_call", name: "exec", call_id: id, input });
+    const result = (t: number, id: string, output: unknown) =>
+      event(t, { type: "custom_tool_call_output", call_id: id, output });
+    const call = (t: number, id: string, name: string, args: object) =>
+      event(t, { type: "function_call", name, call_id: id, arguments: JSON.stringify(args) });
+    const wait = (t: number, id: string, cell_id: string) => call(t, id, "wait", { cell_id });
+    const watcher = (attempt: number) => `umask 077; python3 /private/gh_owned_wait.py 12345678901 --repo Synthetic/Example --head ${sha} --attempt ${attempt} --timeout 600 --interval 15 > /private/log 2>&1`;
+    const direct = (t: number, id: string, attempt: number) => call(t, id, "exec_command", { cmd: watcher(attempt) });
+    const poll = (t: number, id: string, session_id: number) => call(t, id, "write_stdin", { session_id, chars: "" });
+    const entries = [
+      { type: "session_meta", payload: { id: "test-session" } },
+      script(1, "launch-a", `const r = await tools.exec_command({cmd:${JSON.stringify(watcher(1))}}); text(r);`),
+      result(2, "launch-a", "Script running with cell ID c:1"),
+      wait(3, "wait-launch", "c:1"),
+      result(4, "wait-launch", wrapped({ session_id: 41 })),
+      direct(5, "launch-b", 1),
+      result(6, "launch-b", body({ session_id: 42 })),
+      direct(7, "launch-c", 2),
+      result(8, "launch-c", body({ session_id: 43 })),
+      script(9, "poll-a", 'for(let i=0;i<2;i++){const r=await tools.write_stdin({session_id:41,chars:""});if(!r.session_id || i===1){text(r);break;}}'),
+      result(10, "poll-a", "Script running with cell ID c:2"),
+      wait(11, "interim-a", "c:2"),
+      poll(12, "poll-b", 42),
+      result(12.5, "interim-a", "Script running with cell ID c:2"),
+      wait(13, "terminal-a", "c:2"),
+      poll(13.5, "poll-c", 43),
+      result(14, "poll-c", body({ exit_code: 0 })),
+      result(15, "poll-b", body({ session_id: 42 })),
+      result(16, "terminal-a", wrapped({ exit_code: 0 })),
+      direct(17, "recycled", 1),
+      result(18, "recycled", body({ session_id: 41 })),
+      poll(19, "poll-recycled", 41),
+      result(20, "poll-recycled", body({ exit_code: 0 })),
+      direct(21, "handle-collision", 1),
+      result(22, "handle-collision", body({ session_id: 42 })),
+      script(23, "poll-collision", "text(await tools.write_stdin({session_id:42}));"),
+      result(24, "poll-collision", "Script running with cell ID c:3"),
+      wait(25, "wait-collision", "c:3"),
+      result(26, "wait-collision", wrapped({ exit_code: 0 })),
+      script(27, "dynamic", "text(await tools.write_stdin({session_id:load('private-key')}));"),
+      result(28, "dynamic", "Script running with cell ID c:4"),
+      wait(29, "wait-dynamic", "c:4"),
+      result(30, "wait-dynamic", wrapped({ exit_code: 0 })),
+      script(31, "multiple", "text(await Promise.all([tools.write_stdin({session_id:56}), tools.write_stdin({session_id:57})]));"),
+      result(32, "multiple", "Script running with cell ID c:5"),
+      wait(33, "wait-multiple", "c:5"),
+      result(34, "wait-multiple", wrapped({ output: "x".repeat(256 * 1024), exit_code: 0 })),
+      script(35, "loop", "for(let i=0;i<2;i++) text(await tools.write_stdin({session_id:56}));"),
+      result(36, "loop", "Script running with cell ID c:6"),
+      wait(37, "wait-loop", "c:6"),
+      result(38, "wait-loop", wrapped({ exit_code: 0 })),
+      wait(39, "wait-missing", "c:7"),
+      result(40, "wait-missing", wrapped({ exit_code: 0 })),
+      call(41, "unqualified", "exec_command", { cmd: "gh run watch 12345678901 --repo synthetic/example" }),
+      result(42, "unqualified", body({ session_id: 44 })),
+      poll(43, "poll-unqualified", 44),
+      result(44, "poll-unqualified", body({ exit_code: 0 })),
+      direct(45, "missing-receipt-launch", 1),
+      result(46, "missing-receipt-launch", "raw output"),
+      poll(47, "missing-receipt-poll", 45),
+      result(48, "missing-receipt-poll", body({ exit_code: 0 })),
+      direct(49, "contradictory-launch", 1),
+      result(50, "contradictory-launch", body({ session_id: 46 })),
+      poll(51, "contradictory-poll", 46),
+      result(52, "contradictory-poll", body({ session_id: 47 })),
+      poll(53, "ambiguous-poll", 47),
+      result(54, "ambiguous-poll", body({ exit_code: 0 })),
+    ];
+    writeFileSync(rollout, entries.map((item) => JSON.stringify(item)).join("\n") + "\n");
+    const importer = (args: string[]) => execFileSync(process.execPath, [
+      new URL("./import-sources.ts", import.meta.url).pathname, job, ...args,
+    ], { encoding: "utf8", env: { ...process.env, TMPDIR: job } });
+    assert.equal(JSON.parse(importer(["rollout", "test-instance", rollout])).status, "admitted");
+    const path = join(job, "evidence.sqlite");
+    const policy = await loadPolicy<SourcePolicy>(await buildPolicy(job, sourcePolicy, "test-sources.mjs"));
+    const saveRollout = (rollout: RolloutEvidence) => loadEvidence(path, { source: "codex", rollout });
+    const report = waitReport(path, "test-session", null);
+    assert.deepEqual(report.waits.map((row) => [row.call_id, row.cell_status, row.process_status]), [
+      ["wait-launch", "linked_cell", "process_opened"],
+      ["interim-a", "linked_cell", "process_exited"],
+      ["terminal-a", "linked_cell", "process_exited"],
+      ["wait-collision", "linked_cell", "ambiguous_process_handle"],
+      ["wait-dynamic", "linked_cell", "dynamic_process_handle"],
+      ["wait-multiple", "linked_cell", "multiple_process_invocations"],
+      ["wait-loop", "linked_cell", "unsupported_process_wrapper"],
+      ["wait-missing", "missing_cell_launch", null],
+    ]);
+    const terminal = report.waits.find((row) => row.call_id === "terminal-a");
+    assert.equal(terminal?.process_launch_call_id, "launch-a");
+    assert.equal(terminal?.receipt_kind, "ExitReceipt");
+    assert.equal(terminal?.result_call_id, "terminal-a");
+    const lookup = JSON.parse(importer(["waits", "test-session", "terminal-a"]));
+    assert.deepEqual(lookup.waits.map((row: { call_id: string }) => row.call_id), ["terminal-a"]);
+    assert.deepEqual([terminal?.repository, terminal?.run_id, terminal?.head_sha, terminal?.attempt],
+      ["synthetic/example", "12345678901", sha, "1"]);
+    assert.equal(report.waits.find((row) => row.call_id === "wait-multiple")?.receipt_kind, "InvalidReceipt");
+    const key = policy.watch_identity("SYNTHETIC/example", "12345678901", sha, "1");
+    const overlap = watchOverlaps(path, policy, key);
+    assert.equal(overlap.observations, 3);
+    assert.equal(importer(["watch-overlaps", "synthetic/example", "12345678901", sha, "1"]),
+      JSON.stringify(overlap, null, 2) + "\n");
+    assert.equal(watchOverlaps(path, policy, policy.watch_identity("synthetic/example", "12345678901", "b".repeat(40), "1")).observations, 0);
+    assert.deepEqual(overlap.overlaps.map((row) => [
+      row.first.process_launch_call_id, row.second.process_launch_call_id, row.started_ms, row.ended_ms,
+    ]), [["launch-a", "launch-b", epoch + 12000, epoch + 15000]]);
+    assert.equal(watchOverlaps(path, policy, policy.watch_identity("synthetic/example", "12345678901", sha, "2")).overlaps.length, 0);
+    const data = await readRollout(rollout, "test-instance", policy);
+    assert.ok(!JSON.stringify(data).includes("private process output"));
+    assert.ok(!JSON.stringify(data).includes("/private/"));
+    saveRollout(data);
+    assert.deepEqual(waitReport(path, "test-session", null), report);
+    const db = new DatabaseSync(path, { readOnly: true });
+    try {
+      assert.equal(db.prepare("SELECT process_launch_call_id FROM codex_process_receipts WHERE call_id='poll-recycled'").get()?.process_launch_call_id, "recycled");
+      assert.deepEqual(Object.values(db.prepare("SELECT process_category, repository FROM codex_process_receipts WHERE call_id='poll-unqualified'").get()!),
+        ["GitHub watcher with incomplete identity", null]);
+      assert.equal(db.prepare("SELECT process_status FROM codex_process_receipts WHERE call_id='missing-receipt-poll'").get()?.process_status, "missing_process_launch");
+      assert.deepEqual(db.prepare("SELECT process_status, process_launch_call_id FROM codex_process_receipts WHERE call_id IN ('contradictory-poll', 'ambiguous-poll') ORDER BY call_id").all().map(Object.values),
+        [["ambiguous_process_handle", null], ["contradictory_process_receipt", null]]);
+      const facts = db.prepare("SELECT run_id, attempt, identity_exact FROM actions_wait_facts ORDER BY started_ms").all();
+      assert.deepEqual(facts.map(Object.values), ["1", "1", "2", "1"].map((attempt) => ["12345678901", attempt, 1]));
+      assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
+    } finally { db.close(); }
+    appendFileSync(rollout, "{malformed\n");
+    saveRollout(await readRollout(rollout, "test-instance", policy));
+    const incomplete = waitReport(path, "test-session", "terminal-a");
+    assert.equal(incomplete.coverage[0].malformed_count, 1);
+    assert.equal(incomplete.waits[0].cell_status, "incomplete_rollout");
+    assert.equal(watchOverlaps(path, policy, key).observations, 0);
+  } finally { rmSync(job, { recursive: true, force: true }); }
 });

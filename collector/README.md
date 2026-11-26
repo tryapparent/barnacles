@@ -136,3 +136,26 @@ Run both integration tests with:
 ```sh
 npm run verify -- collector
 ```
+
+### Cell waits and nested command sessions
+
+Reimport a rollout with `node collector/import-sources.ts "$job" rollout INSTANCE FILE`. The importer recognizes a bounded Codex cell receipt and looks up the wait's literal `cell_id` within that rollout. Repeated waits may observe a cell still running. A unique, ordered completion supplies the cell endpoint. Duplicate claims, missing launches, and incomplete rollouts remain visible as coverage gaps.
+
+Command-session attribution accepts a direct command or process-I/O tool result, or one result printed by an awaited `tools.exec_command` or `tools.write_stdin` call inside `functions.exec`. The wrapper may print the result directly or through one local binding. A fixed, bounded `for` loop may poll the same read-only handle and print its terminating result once. A nested receipt can arrive inline or at the cell's terminal wait. Structured receipts allow one process payload up to 256 KiB and an elapsed value from zero through 86,400 seconds. An open receipt supplies a numeric session handle. A paired read-only poll must use a literal handle and submit no input. A confirmed exit closes that generation of the handle. Conflicting claims and unresolved process activity suppress subsequent joins that could reuse uncertain handles. Parallel calls, other loops and compound wrappers, dynamic handles, and unstructured process output can still produce cell evidence.
+
+The standalone `gh_owned_wait.py RUN --repo OWNER/REPO --head SHA --attempt ATTEMPT --timeout SECONDS --interval SECONDS` form, with optional `python` or `python3` invocation and simple output redirection and literal `umask 077` or `set -e` preambles, supplies an exact **requested** GitHub workflow identity. This recognizes the submitted argv and checks its four identity fields. It records neither the helper's contents nor independent GitHub attestation of the target. Bare `gh run watch` has a watcher category with incomplete identity. Other shell chains, quoted code, substitutions, and helpers with dynamic identity fields receive no exact identity. Generic categories describe submitted operations and may contain several operations sharing a clock.
+
+```sh
+node collector/import-sources.ts "$job" waits SESSION [CALL]
+node collector/import-sources.ts "$job" watch-overlaps OWNER/REPO RUN HEAD_SHA ATTEMPT
+BARNACLES_TEST_DIRECTORY="$job" node --test collector/sources.test.ts
+```
+
+The lookup returns the wait's tool-envelope timestamps and its cell and process evidence. The overlap report compares observed read-only poll envelopes across distinct process launches for one exact workflow identity. A nested poll envelope begins at the wrapper request and ends at its matched result. Reported intervals are pairwise intersections and may themselves overlap. They establish concurrent observation only. They supply no estimate of resource savings, delivery delay, or critical-path impact.
+
+The checksum-pinned Bend2 compiler recursively lowers nested patterns in the source policy. The compiler subprocess uses a 4 MiB V8 stack because the default stack overflowed during that lowering on Node 22. The generated policy still runs in the normal collector process.
+
+
+### Fetch attempts named by rollout watchers
+
+After importing the rollouts into a private job directory, run `node collector/import-actions.ts JOB_DIRECTORY OWNER/REPO --from-waits FROM TO MAX_ATTEMPTS` with UTC seconds and a limit of 1–20. The read-only GitHub collector fetches missing exact attempts named by confirmed watcher receipts that overlap the interval. The JSON receipt gives the number missing before capture and the number imported. See [the Actions wait dashboard and evidence contract](../evidence/actions-wait.md).

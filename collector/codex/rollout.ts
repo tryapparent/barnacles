@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import { open, type FileHandle } from "node:fs/promises";
 import { resolve } from "node:path";
 import { constants } from "node:fs";
-import type { CommandMix, Point, RolloutAdmission, RolloutEvidence, RolloutImport, SourcePolicy } from "../../evidence/index.ts";
-import { rolloutSyntax } from "./rollout-syntax.ts";
+import type { CallRecord, CommandMix, Point, ProcessInput, ProcessReceipt, RolloutAdmission, RolloutEvidence, RolloutImport, SourcePolicy } from "../../evidence/index.ts";
+import { processReceipt, rolloutArguments, rolloutSyntax, sessionHandle } from "./rollout-syntax.ts";
 import { millis, row, str, timeParts, token, validMillis } from "../wire.ts";
 
 const fileLimit = 128 * 1024 * 1024;
@@ -97,31 +97,12 @@ function outputHeader(output: unknown): string {
   return typeof item === "string" ? item.slice(0, 256).split("\n", 1)[0] : "";
 }
 
-function waitTarget(input: unknown): string {
-  if (typeof input !== "string" || input.length > 1024) return "";
-  try {
-    const args = row(JSON.parse(input));
-    const cell = str(args.cell_id);
-    return /^[\w:.-]+$/.test(cell) ? cell : "";
-  } catch { return ""; }
+function cellId(value: unknown): string {
+  const id = str(value);
+  return /^[\w:.-]+$/.test(id) ? id : "";
 }
 
-function execReceipt(output: unknown) {
-  if (!Array.isArray(output) || output.length !== 2) return undefined;
-  const [header, body] = output;
-  if (header?.type !== "input_text" || body?.type !== "input_text" || typeof body.text !== "string" ||
-      body.text.length > 256 * 1024 ||
-      !/^Script completed\nWall time \d+(?:\.\d+)? seconds\nOutput:\n$/.test(str(header.text))) return undefined;
-  try {
-    const result = row(JSON.parse(body.text));
-    const seconds = result.wall_time_seconds;
-    const code = result.exit_code;
-    if (typeof seconds !== "number" || !Number.isFinite(seconds) || typeof code !== "number" ||
-        !Number.isInteger(code) || code < 0 || code > 255 || typeof result.chunk_id !== "string" ||
-        typeof result.output !== "string" || !Number.isSafeInteger(result.original_token_count)) return undefined;
-    return { seconds, code, running: Object.hasOwn(result, "session_id") };
-  } catch { return undefined; }
-}
+const absentReceipt: ProcessReceipt = { $: "MissingReceipt" };
 
 export async function inspectRollout(path: string, instance: string, policy: SourcePolicy, source?: string):
   Promise<{ receipt: RolloutImport; data?: RolloutEvidence }> {
@@ -133,7 +114,9 @@ export async function inspectRollout(path: string, instance: string, policy: Sou
   }
   const calls = new Map<string, unknown>();
   const mixes = new Map<string, CommandMix>();
-  const receipts = new Map<string, NonNullable<ReturnType<typeof execReceipt>>>();
+  const inputs = new Map<string, ProcessInput>();
+  const receipts = new Map<number, ProcessReceipt>();
+  const directCalls = new Set<string>();
   const markers: RolloutEvidence["markers"] = [];
   let admission = awaitingMetadata;
   let clocks = { $: "Clocks" as const, first: point(0), last: point(0) };
@@ -180,20 +163,24 @@ export async function inspectRollout(path: string, instance: string, policy: Sou
       if (!/^[\w:-]+$/.test(id)) { receipt.malformed++; continue; }
       const state = calls.get(id) ?? unseen;
       if (type === "function_call" || type === "custom_tool_call") {
-        const observed = policy.tool(str(event.name), syntax.direct(event.arguments), syntax.wrapped(event.input));
-        if (event.name === "exec") {
+        const name = str(event.name);
+        const args = rolloutArguments(event.arguments);
+        const wrapped = syntax.wrapped(event.input);
+        const observed = policy.tool(name, syntax.direct(args.cmd), wrapped);
+        if (name === "exec") {
           const mix = policy.command_mix(syntax.sequential(event.input));
           if (mix.$ === "Mix") mixes.set(id, mix);
         }
-        calls.set(id, policy.start_call(state, lineNumber, observed, at, waitTarget(event.arguments)));
+        if (name === "exec_command" || name === "write_stdin") directCalls.add(id);
+        if (!inputs.has(id)) inputs.set(id, policy.process_input(name, syntax.exact(args.cmd), wrapped, sessionHandle(args.session_id),
+          !Object.hasOwn(args, "chars") || args.chars === "", observed));
+        calls.set(id, policy.start_call(state, lineNumber, observed, at, cellId(args.cell_id)));
       } else {
         const header = outputHeader(event.output);
-        const yielded = /^Script running with cell ID ([\w:.-]+)/.exec(header)?.[1] ?? "";
-        if (mixes.has(id)) {
-          const receipt = execReceipt(event.output);
-          if (receipt) receipts.set(id, receipt);
-        }
-        calls.set(id, policy.finish_call(state, at, yielded, /^Script completed(?:\s|$)/.test(header)));
+        const yielded = cellId(/^Script running with cell ID (\S+)$/.exec(header)?.[1]);
+        const receipt = processReceipt(event.output, directCalls.has(id), policy);
+        if (receipt.$ !== "MissingReceipt") receipts.set(lineNumber, receipt);
+        calls.set(id, policy.finish_call(state, lineNumber, at, yielded, /^Script completed(?:\s|$)/.test(header)));
       }
     }
   } catch (error) {
@@ -211,33 +198,68 @@ export async function inspectRollout(path: string, instance: string, policy: Sou
   if (!policy.rollout_admitted(receipt.status)) return { receipt };
   const malformed = policy.rollout_pairing_gaps(receipt.malformed, receipt.oversized, receipt.cutoffLines, receipt.unassigned);
   const cells = new Map<string, unknown>();
-  for (const [id, state] of calls) {
-    const fact = policy.cell_fact(id, state);
-    if (fact.$ !== "NoCell") cells.set(fact.key, policy.add_cell_fact(cells.get(fact.key) ?? noPair, fact));
-  }
-  const links = new Map<string, { asyncEnd: number | null; terminalCall: string | null }>();
-  for (const pair of cells.values()) {
-    const link = policy.cell_link(pair, malformed);
-    if (link.$ === "Linked") links.set(link.owner, { asyncEnd: toMillis(link.end), terminalCall: link.call_id });
-  }
+  const observations = new Map<string, Extract<CallRecord, { $: "Observed" }>>();
   let orphans = 0;
-  const records: RolloutEvidence["calls"] = [];
   for (const [id, state] of calls) {
     const record = policy.call_record(state);
     orphans += record.orphans;
-    if (record.$ === "Ignored") continue;
+    if (record.$ === "Observed") observations.set(id, record);
+    const fact = policy.cell_fact(id, state);
+    if (fact.$ !== "NoCell") cells.set(fact.key, policy.add_cell_fact(cells.get(fact.key) ?? noPair, fact));
+  }
+  const clean = policy.clean_rollout(malformed, orphans);
+  const links = new Map<string, { asyncEnd: number | null; terminalCall: string | null }>();
+  for (const pair of cells.values()) {
+    const link = policy.cell_link(pair, clean);
+    if (link.$ === "Linked") links.set(link.owner, { asyncEnd: toMillis(link.end), terminalCall: link.call_id });
+  }
+  const waitAttribution: NonNullable<RolloutEvidence["waitAttribution"]> = { waits: [], observations: [] };
+  const records: RolloutEvidence["calls"] = [];
+  const processOperations = [];
+  for (const [id, record] of observations) {
+    const link = links.get(id) ?? { asyncEnd: null, terminalCall: null };
+    const wait = policy.wait_cell(calls.get(id), cells.get(record.target) ?? noPair, clean);
+    if (wait.$ === "WaitCell") waitAttribution.waits.push({
+      call: id, cell: record.target || null, status: wait.status, owner: wait.owner || null,
+    });
     const mix = mixes.get(id);
-    const receipt = receipts.get(id);
-    const measured = mix?.$ === "Mix" && receipt &&
-      policy.keep_mix_receipt(receipt.seconds, receipt.code, receipt.running,
+    const receipt = receipts.get(record.result_line) ?? absentReceipt;
+    const measured = mix?.$ === "Mix" && receipt.$ === "ExitReceipt" &&
+      policy.keep_mix_receipt(receipt.seconds, receipt.code, false,
         toMillis(record.finish) !== null, record.ambiguous) ? { ...mix, seconds: receipt.seconds } : undefined;
-    records.push({ id, line: record.line, tool: record.tool, command: record.command || null, categories: record.categories, start: toMillis(record.start),
-      end: toMillis(record.finish), async: record.launched, ambiguous: record.ambiguous,
-      mix: measured,
-      ...(links.get(id) ?? { asyncEnd: null, terminalCall: null }) });
+    records.push({ id, line: record.line, tool: record.tool, command: record.command || null, categories: record.categories,
+      start: toMillis(record.start), end: toMillis(record.finish), async: record.launched, ambiguous: record.ambiguous,
+      mix: measured, ...link });
+    const input = inputs.get(id);
+    if (!input || input.$ === "NoProcess") continue;
+    const result = observations.get(link.terminalCall ?? id) ?? record;
+    processOperations.push({ id, record, input, result, resultCall: link.terminalCall ?? id });
+  }
+
+  const slots = new Map<string, ReturnType<SourcePolicy["process_result"]>["slot"]>();
+  let barrier = 0;
+  for (const { id, record, input, result, resultCall } of processOperations.sort(
+    (a, b) => (a.result.result_line || a.record.line) - (b.result.result_line || b.record.line),
+  )) {
+    const receipt = receipts.get(result.result_line) ?? absentReceipt;
+    const handle = policy.process_key(input, receipt);
+    const ambiguous = record.ambiguous || result.ambiguous;
+    const slot = policy.observed_slot(slots.get(handle) ?? { $: "Vacant" }, barrier);
+    const step = policy.process_result(input, slot, receipt, id,
+      record.line, record.start, result.result_line, result.finish,
+      policy.valid_process_result(clean, ambiguous, record.start, result.finish));
+    if (policy.process_barrier(input, receipt, handle, ambiguous)) barrier = result.result_line || record.line;
+    if (handle) slots.set(handle, step.slot);
+    const extra = policy.process_taint(input, receipt);
+    if (extra) slots.set(extra, { $: "Conflict" });
+    waitAttribution.observations.push({
+      call: id, resultCall: result.result_line ? resultCall : null, resultLine: result.result_line || null,
+      handle: handle || null, fact: step.fact, observer: policy.process_observer(step.fact),
+      start: toMillis(record.start), end: toMillis(result.finish),
+    });
   }
   return { receipt, data: { instance: receipt.instance, session: admission.session, lines: receipt.lines,
-    malformed, orphans, calls: records, markers, receipt,
+    malformed, orphans, calls: records, markers, receipt, waitAttribution,
     quality: { ...callCoverage(policy, records, mixes, point), first: toMillis(clocks.first), last: toMillis(clocks.last) } } };
 }
 

@@ -5,9 +5,13 @@ import { dashboards } from "./panels.ts";
 import { encodeTrace } from "./trace.ts";
 
 async function main() {
-  const [input, output, requestedRepository, ...extra] = process.argv.slice(2);
+  const [input, output, requestedRepository, asOf, ...extra] = process.argv.slice(2);
   if (!input || !output || !requestedRepository || extra.length) {
-    throw Error("Usage: node dashboard/prepare.ts EVIDENCE_SQLITE NEW_OUTPUT_DIRECTORY OWNER/REPO");
+    throw Error("Usage: node dashboard/prepare.ts EVIDENCE_SQLITE NEW_OUTPUT_DIRECTORY OWNER/REPO [AS_OF_UTC]");
+  }
+  const cutoff = asOf === undefined ? Date.now() : Date.parse(asOf);
+  if (!Number.isFinite(cutoff) || (asOf !== undefined && new Date(cutoff).toISOString() !== asOf.replace(/Z$/, ".000Z"))) {
+    throw Error("Expected AS_OF_UTC in YYYY-MM-DDTHH:MM:SSZ format");
   }
   const repo = repository(requestedRepository);
   const directory = resolve(output);
@@ -19,7 +23,7 @@ async function main() {
     const payloads = openSync(join(staging, "tempo.ndjson"), "wx", 0o600);
     try {
       const range = await writeSnapshot(resolve(input), join(staging, "dashboard.sqlite"), scratch, repo,
-        Math.floor(Date.now() / 1000), (key, trace) => {
+        Math.floor(cutoff / 1000), (key, trace) => {
           const { traceId, payload } = encodeTrace(key, trace);
           writeSync(payloads, JSON.stringify(payload) + "\n");
           return traceId;

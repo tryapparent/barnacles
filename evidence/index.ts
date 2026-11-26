@@ -2,8 +2,9 @@ export { loadEvidence, type ChangedCodeFile, type EvidenceBatch } from "./storag
 export { deliveryReport, type PullRequest, type ReleaseEvidence } from "./delivery/delivery.ts";
 export { type ActionAttempt, type AttemptIdentity } from "./storage/actions.ts";
 export {
-  sourcePolicy, rolloutCoverage,
-  type CommandMix, type List, type Milestone, type Point,
+  sourcePolicy, rolloutCoverage, waitReport, watchOverlaps,
+  type CallRecord, type CommandMix, type ProcessInput, type ProcessReceipt, type List, type Milestone, type Point,
   type RolloutAdmission, type RolloutImport, type RolloutEvidence, type ShellCommand, type SourcePolicy, type ThreadEvidence, type ToolInvocation,
 } from "./storage/sources.ts";
 export { repository } from "./repository.ts";
+export { actionsWaitCapturePlan } from "./projection/snapshot.ts";
