@@ -76,6 +76,44 @@ function propertyCmd(object: Node | null | undefined): string {
   return matches.length === 1 ? javascriptLiteral(matches[0].childForFieldName("value")) : "";
 }
 
+function shellCommand(node: Node): ShellCommand {
+  return { $: "Command",
+    name: shellWord(node.childForFieldName("name")?.namedChild(0) ?? null),
+    args: list(node.childrenForFieldName("argument").map(shellWord)) };
+}
+
+function andSeries(node: Node): Node[] {
+  if (node.type === "command") {
+    return Array.from(nodes(node)).some((part) => ["command_substitution", "process_substitution"].includes(part.type))
+      ? [] : [node];
+  }
+  if (node.type !== "list" || node.children.some((part) => !part.isNamed && part.type !== "&&")) return [];
+  const parts = node.namedChildren.map(andSeries);
+  return parts.length === 2 && parts.every((part) => part.length) ? parts.flat() : [];
+}
+
+function printedCommand(root: Node): string {
+  const statements = root.namedChildren.filter((node) => node.type !== "comment");
+  const print = statements.at(-1)?.namedChild(0);
+  const printArgs = print?.childForFieldName("arguments");
+  if (statements.at(-1)?.type !== "expression_statement" ||
+      print?.childForFieldName("function")?.text !== "text" || printArgs?.namedChildCount !== 1) return "";
+  const arg = printArgs.namedChild(0);
+  let awaited = arg;
+  if (statements.length === 2) {
+    const declaration = statements[0];
+    const binding = declaration.namedChild(0);
+    const name = binding?.childForFieldName("name");
+    if (declaration.type !== "lexical_declaration" || declaration.namedChildCount !== 1 ||
+        name?.type !== "identifier" || arg?.type !== "identifier" || name.text !== arg.text) return "";
+    awaited = binding?.childForFieldName("value") ?? null;
+  } else if (statements.length !== 1) return "";
+  const call = awaited?.namedChild(0);
+  const args = call?.childForFieldName("arguments");
+  if (awaited?.type !== "await_expression" || call?.childForFieldName("function")?.text !== "tools.exec_command") return "";
+  return args?.namedChildCount === 1 ? propertyCmd(args.namedChild(0)) : "";
+}
+
 async function loadParsers() {
   await Parser.init();
   return Promise.all([
@@ -87,14 +125,17 @@ async function loadParsers() {
 export async function rolloutSyntax() {
   const [js, bash] = await (parsers ??= loadParsers());
   const shell = (input: unknown) => decode<ShellCommand>(bash, input, (root) =>
-    Array.from(nodes(root)).flatMap((node) => node.type === "command" ? [{
-      $: "Command",
-      name: shellWord(node.childForFieldName("name")?.namedChild(0) ?? null),
-      args: list(node.childrenForFieldName("argument").map(shellWord)),
-    }] : []));
+    Array.from(nodes(root)).flatMap((node) => node.type === "command" ? [shellCommand(node)] : []));
 
   return {
     direct: (input: unknown) => shell(argumentCmd(input)),
+    sequential: (input: unknown): List<ShellCommand> => {
+      const decoded = decode<string>(js, input, (root) => [printedCommand(root)]);
+      return decode<ShellCommand>(bash, decoded.$ === "Con" ? decoded.head : "", (root) => {
+        const statements = root.namedChildren.filter((node) => node.type !== "comment");
+        return statements.length === 1 ? andSeries(statements[0]).map(shellCommand) : [];
+      });
+    },
     wrapped: (input: unknown) => decode<ToolInvocation>(js, input, (root) => {
       const invocations: ToolInvocation[] = [];
       for (const node of nodes(root)) {

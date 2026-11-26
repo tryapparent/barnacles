@@ -54,9 +54,18 @@ test("dashboard derives a covered comparison and preserves missing source covera
       ], markers: [{ line: 7, at: at + 650 }],
     });
     saveRollout(source, {
-      instance: "local", session: "newer-envelope-only", lines: 6, malformed: 1, orphans: 0,
+      instance: "local", session: "newer-envelope-only", lines: 10, malformed: 0, orphans: 0,
       calls: [{ id: "launch", line: 2, tool: "Tool script", command: null, start: at + 800, end: at + 900,
-        async: true, asyncEnd: null, terminalCall: null, ambiguous: false }],
+        async: true, asyncEnd: null, terminalCall: null, ambiguous: false },
+      ...Array.from({ length: 6 }, (_, index) => {
+        const file_count = 1 + index % 3;
+        const seconds = 5 + file_count * 2;
+        const start = at + 1000 + index * 20000;
+        return { id: "mix-" + index, line: index + 3, tool: "Shell command", command: null,
+          start, end: start + seconds * 1000, async: false, asyncEnd: null, terminalCall: null, ambiguous: false,
+          categories: "File inspection + Rust build",
+          mix: { $: "Mix" as const, file_count, git_count: 0, build_count: 1, push_count: 0, seconds } };
+      })],
       markers: [],
     });
     const out = join(job, "out");
@@ -72,12 +81,16 @@ test("dashboard derives a covered comparison and preserves missing source covera
         [["Thread started", null], ["First commit", 4700], ["PR opened", null], ["First PR CI", null],
           ["PR merged", null], ["Release dispatch", null], ["Shipped", null], ["Access verified", null]]);
       assert.equal(db.prepare("SELECT count(*) AS n FROM time_map").get()?.n, 2);
+      const estimated = db.prepare("SELECT seconds, total, samples FROM category_estimates WHERE name=?");
+      assert.deepEqual(Object.values(estimated.get("File inspection")!), [2, 24, 6]);
+      assert.deepEqual(Object.values(estimated.get("Rust build")!), [null, null, 0]);
+      assert.equal(db.prepare("SELECT count FROM timing WHERE clock='Tool envelopes' AND operation='Mixed'").get()?.count, 7);
       assert.equal(db.prepare("SELECT count(*) AS n FROM trace WHERE ended IS NULL").get()?.n, 2);
       assert.deepEqual(db.prepare("SELECT started, ended, measured FROM trace_windows ORDER BY session").all().map(Object.values),
-        [[at, at + 650, 3], [at + 800, at + 900, 1], [at, at, 0]]);
+        [[at, at + 650, 3], [at + 800, at + 112000, 7], [at, at, 0]]);
       assert.deepEqual(db.prepare("SELECT kind, observed, missing FROM trace_coverage ORDER BY session, ordinal").all().map(Object.values),
         [["Tool envelopes", 2, 1], ["Async cells", 1, 0], ["Reasoning events", 1, null],
-          ["Tool envelopes", 1, 0], ["Async cells", 0, 1], ["Reasoning events", 0, null],
+          ["Tool envelopes", 7, 0], ["Async cells", 0, 1], ["Reasoning events", 0, null],
           ["Tool envelopes", 0, 0], ["Async cells", 0, 0], ["Reasoning events", 1, null]]);
       assert.deepEqual(db.prepare("SELECT source_line, observed FROM trace_reasoning ORDER BY session").all().map(Object.values),
         [[7, at + 650], [3, at]]);
@@ -86,7 +99,7 @@ test("dashboard derives a covered comparison and preserves missing source covera
       const [full, envelopeOnly, eventOnly] = otlp.trim().split("\n").map((line) => JSON.parse(line).resourceSpans[0].scopeSpans[0].spans);
       assert.equal(full.length, 4);
       assert.ok(!JSON.stringify(full).includes("Tool script"));
-      assert.equal(envelopeOnly.length, 2);
+      assert.equal(envelopeOnly.length, 8);
       const [window, ...spans] = full;
       const cell = spans.find((span: { name: string }) => span.name === "Async cell · Git inspection +1");
       const launch = spans.find((span: { name: string }) => span.name === "Git inspection +1");
