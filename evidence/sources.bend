@@ -312,6 +312,15 @@ def has_time(point: Point) -> Bool:
 def reasoning(event: String, point: Point) -> Bool:
   Bool.and(String.eq(event, "reasoning"), has_time(point))
 
+def is_turn_boundary(+kind: String) -> Bool:
+  Bool.or(Bool.or(String.eq(kind, "task_started"), String.eq(kind, "task_complete")),
+    Bool.or(String.eq(kind, "turn_aborted"), Bool.or(String.eq(kind, "user_message"), String.eq(kind, "agent_message"))))
+
+def model_wait_input(previous: String, +envelope: String, +kind: String, call_id: String) -> String:
+  Bool.pick(String, Bool.and(String.eq(envelope, "response_item"),
+    Bool.or(String.eq(kind, "function_call_output"), String.eq(kind, "custom_tool_call_output"))), call_id,
+    Bool.pick(String, Bool.and(String.eq(envelope, "event_msg"), Bool.not(is_turn_boundary(kind))), previous, ""))
+
 type CallState is Data:
   Unseen{orphans: U32}
   Seen{orphans: U32, line: U32, tool: ToolContext, start: Point, finish: Point, target: String, cell: String, terminal: Bool, ambiguous: Bool}

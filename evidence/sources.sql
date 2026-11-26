@@ -40,6 +40,12 @@ CREATE TABLE IF NOT EXISTS codex_reasoning (
   FOREIGN KEY (instance, session_id) REFERENCES codex_rollouts
 ) STRICT;
 
+CREATE TABLE IF NOT EXISTS codex_reasoning_inputs (
+  instance TEXT NOT NULL, session_id TEXT NOT NULL, source_line INTEGER NOT NULL, result_call_id TEXT NOT NULL,
+  PRIMARY KEY (instance, session_id, source_line),
+  FOREIGN KEY (instance, session_id, source_line) REFERENCES codex_reasoning
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS codex_commands (
   instance TEXT NOT NULL, session_id TEXT NOT NULL, call_id TEXT NOT NULL, command TEXT NOT NULL,
   PRIMARY KEY (instance, session_id, call_id),

@@ -17,6 +17,7 @@ type Metrics = TracePolicy & {
   record_release(sample: Shipping, linked: boolean, elapsedMs: number): Shipping;
   visible_release(channel: string, published: number): boolean;
   codex_clock(clock: string): string;
+  rollout_clean(malformed: number, orphans: number): boolean;
   record_interval(sample: Stats, start: number, end: number): Stats;
   trace_preference(asyncSpans: number, reasoningEvents: number): boolean;
   trace_preferred(ended: number, mixed: boolean, otherEnded: number, otherMixed: boolean): boolean;
@@ -164,10 +165,17 @@ function writeSnapshot(input: string, output: string, otlp: string, repo: string
       const joins = ["codex_commands", "codex_categories"].filter(table)
         .map((name) => `LEFT JOIN ${name} USING (instance, session_id, call_id)`);
       const spans = all(`SELECT * FROM codex_spans ${joins.join(" ")} ORDER BY started_ms, source_line, clock`);
-      const markers = table("codex_reasoning") ? all("SELECT * FROM codex_reasoning ORDER BY observed_ms, source_line") : [];
+      const markers = table("codex_reasoning") ? all(table("codex_reasoning_inputs") ? `
+        SELECT reasoning.*, calls.ended_ms AS result_at, calls.source_line AS result_call_line
+        FROM codex_reasoning reasoning LEFT JOIN codex_reasoning_inputs USING (instance, session_id, source_line)
+        LEFT JOIN codex_calls calls ON calls.instance = reasoning.instance AND calls.session_id = reasoning.session_id
+          AND calls.call_id = result_call_id
+        ORDER BY observed_ms, reasoning.source_line
+      ` : "SELECT * FROM codex_reasoning ORDER BY observed_ms, source_line") : [];
       const sessionKey = (row: Record<string, SQLOutputValue>) => JSON.stringify([row.instance, row.session_id]);
       const sessions = Map.groupBy(spans, sessionKey);
       const bySession = Map.groupBy(markers, sessionKey);
+      const rollouts = new Map(all("SELECT * FROM codex_rollouts").map((row) => [sessionKey(row), row]));
       for (const key of bySession.keys()) if (!sessions.has(key)) sessions.set(key, []);
       const insert = view.prepare("INSERT INTO trace VALUES (?, ?, ?, ?, ?, ?)");
       const mark = view.prepare("INSERT INTO trace_reasoning VALUES (?, ?, ?)");
@@ -179,7 +187,8 @@ function writeSnapshot(input: string, output: string, otlp: string, repo: string
           line: Number(row.source_line), tool: String(row.tool), command: String(row.command ?? ""),
           categories: String(row.categories ?? ""), clock: String(row.clock),
           start: row.started_ms as number | null, end: row.ended_ms as number | null }));
-        const events = (bySession.get(key) ?? []).map((row) => ({ line: Number(row.source_line), at: Number(row.observed_ms) }));
+        const events = (bySession.get(key) ?? []).map((row) => ({ line: Number(row.source_line), at: Number(row.observed_ms),
+          resultAt: Number(row.result_at ?? 0), resultCallLine: Number(row.result_call_line ?? 0) }));
         const clocks = new Map([["Tool envelopes", empty], ["Async cells", empty]]);
         for (const row of observations) {
           const clock = metrics.codex_clock(row.clock);
@@ -194,7 +203,9 @@ function writeSnapshot(input: string, output: string, otlp: string, repo: string
         for (const [clock, stats] of clocks) coverage.run(session, ordinal++, clock, stats.count, stats.missing);
         coverage.run(session, ordinal, "Reasoning events", events.length, null);
         for (const event of events) mark.run(session, event.line, event.at);
-        const trace = encodeTrace(key, observations, events, metrics);
+        const rollout = rollouts.get(key);
+        const trace = encodeTrace(key, observations, events, metrics.rollout_clean(
+          Number(rollout?.malformed_count ?? 1), Number(rollout?.orphan_count ?? 1)), metrics);
         if (trace) {
           writeSync(payloads, JSON.stringify(trace.payload) + "\n");
         }

@@ -14,4 +14,5 @@ Start Grafana with `dashboard/run.sh "$job/grafana"` and open `/d/barnacles-trac
 
 Choose a **Session** and select a span to see its clock, source line, and any recognized command.
 Open the recorded session window's **Events** to inspect reasoning observations. Their durations are unknown.
+**Estimated model wait** shows the gap from a tool result to an immediately following reasoning item when retained tool activity leaves the gap clear. The gap can include harness delays, network time, provider queueing and inference. Select the span for the source lines. Estimates appear only in the waterfall and are excluded from measured totals. Reimport older rollouts and rebuild the snapshot to add estimates.
 The tables below the waterfall show completed operations, timestamped reasoning, and spans with missing clocks. Reimport older rollouts to add command details.

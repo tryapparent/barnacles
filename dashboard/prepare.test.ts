@@ -49,9 +49,11 @@ test("dashboard derives a covered comparison and preserves missing source covera
           async: true, asyncEnd: at + 600, terminalCall: "wait", ambiguous: false, categories: "Git inspection + File inspection" },
         { id: "wait", line: 4, tool: "Cell wait", command: null, start: at + 500, end: at + 600,
           async: false, asyncEnd: null, terminalCall: null, ambiguous: false },
-        { id: "pending", line: 6, tool: "Tool script", command: null, start: at + 550, end: null,
+        { id: "later", line: 7, tool: "Shell command", command: null, start: at + 750, end: at + 800,
           async: false, asyncEnd: null, terminalCall: null, ambiguous: false },
-      ], markers: [{ line: 7, at: at + 650 }],
+        { id: "pending", line: 8, tool: "Tool script", command: null, start: at + 760, end: null,
+          async: false, asyncEnd: null, terminalCall: null, ambiguous: false },
+      ], markers: [{ line: 6, at: at + 650, resultCall: "wait" }, { line: 10, at: at + 850, resultCall: "later" }],
     });
     saveRollout(source, {
       instance: "local", session: "newer-envelope-only", lines: 6, malformed: 1, orphans: 0,
@@ -74,20 +76,25 @@ test("dashboard derives a covered comparison and preserves missing source covera
       assert.equal(db.prepare("SELECT count(*) AS n FROM time_map").get()?.n, 2);
       assert.equal(db.prepare("SELECT count(*) AS n FROM trace WHERE ended IS NULL").get()?.n, 2);
       assert.deepEqual(db.prepare("SELECT started, ended, measured FROM trace_windows ORDER BY session").all().map(Object.values),
-        [[at, at + 650, 3], [at + 800, at + 900, 1], [at, at, 0]]);
+        [[at, at + 850, 4], [at + 800, at + 900, 1], [at, at, 0]]);
       assert.deepEqual(db.prepare("SELECT kind, observed, missing FROM trace_coverage ORDER BY session, ordinal").all().map(Object.values),
-        [["Tool envelopes", 2, 1], ["Async cells", 1, 0], ["Reasoning events", 1, null],
+        [["Tool envelopes", 3, 1], ["Async cells", 1, 0], ["Reasoning events", 2, null],
           ["Tool envelopes", 1, 0], ["Async cells", 0, 1], ["Reasoning events", 0, null],
           ["Tool envelopes", 0, 0], ["Async cells", 0, 0], ["Reasoning events", 1, null]]);
       assert.deepEqual(db.prepare("SELECT source_line, observed FROM trace_reasoning ORDER BY session").all().map(Object.values),
-        [[7, at + 650], [3, at]]);
+        [[6, at + 650], [10, at + 850], [3, at]]);
       const otlp = readFileSync(join(out, "tempo.ndjson"), "utf8");
       assert.ok(!otlp.includes("test-session"));
       const [full, envelopeOnly, eventOnly] = otlp.trim().split("\n").map((line) => JSON.parse(line).resourceSpans[0].scopeSpans[0].spans);
-      assert.equal(full.length, 4);
+      assert.equal(full.length, 6);
       assert.ok(!JSON.stringify(full).includes("Tool script"));
       assert.equal(envelopeOnly.length, 2);
       const [window, ...spans] = full;
+      const estimates = spans.filter((span: { name: string }) => span.name === "Estimated model wait");
+      assert.equal(estimates.length, 1);
+      assert.equal(estimates[0].parentSpanId, window.spanId);
+      assert.equal(estimates[0].startTimeUnixNano, ((BigInt(at) + 600n) * 1_000_000n).toString());
+      assert.equal(estimates[0].endTimeUnixNano, ((BigInt(at) + 650n) * 1_000_000n).toString());
       const cell = spans.find((span: { name: string }) => span.name === "Async cell · Git inspection +1");
       const launch = spans.find((span: { name: string }) => span.name === "Git inspection +1");
       assert.equal(window.traceId, db.prepare("SELECT trace_id FROM trace_windows WHERE session=1").get()?.trace_id);

@@ -106,6 +106,9 @@ test("compiled Bend2 source decisions through the SQLite import path", async () 
       event("unknown", { type: "reasoning", content: [{ text: "unclocked reasoning" }] }),
       event("04", { type: "function_call", name: "wait", call_id: "wait", arguments: '{"cell_id":"g10:11"}' }),
       event("05", { type: "function_call_output", call_id: "wait", output: [{ text: "Script completed\nraw result" }] }),
+      { type: "event_msg", payload: { type: "token_count" } },
+      event("05.100", { type: "reasoning" }),
+      event("05.200", { type: "reasoning" }),
       event("06", { type: "custom_tool_call", name: "exec", call_id: "pending", input: 'text("await tools.apply_patch(");' }),
       event("06.200", { type: "function_call", name: "exec_command", call_id: "direct",
         arguments: '{"cmd":"node --test /private/source"}' }),
@@ -121,7 +124,9 @@ test("compiled Bend2 source decisions through the SQLite import path", async () 
         arguments: '{"cmd":"echo cargo build"}' }),
     ].map((line) => JSON.stringify(line)).join("\n") + "\n");
     const data = await readRollout(rollout, "codex-test", policy);
-    assert.deepEqual(data.markers, [{ line: 3, at: Date.parse(time("02.500")) }]);
+    assert.deepEqual(data.markers, [{ line: 3, at: Date.parse(time("02.500")) },
+      { line: 9, at: Date.parse(time("05.100")), resultCall: "wait" },
+      { line: 10, at: Date.parse(time("05.200")) }]);
     assert.deepEqual(data.calls.map(({ tool, command }) => [tool, command]),
       [["Shell command", "git status"], ["Cell wait", null], ["Tool script", null],
         ["Shell command", "node --test"], ["Shell command", null], ["Shell command", null],
@@ -137,7 +142,10 @@ test("compiled Bend2 source decisions through the SQLite import path", async () 
       assert.equal(db.prepare("SELECT ended_ms-started_ms duration FROM codex_spans WHERE clock='async_cell'").get()?.duration, 2877);
       assert.equal(db.prepare("SELECT ended_ms FROM codex_calls WHERE call_id='pending'").get()?.ended_ms, null);
       const marker = db.prepare("SELECT source_line, observed_ms FROM codex_reasoning").all();
-      assert.deepEqual(marker.map(Object.values), [[3, Date.parse(time("02.500"))]]);
+      assert.deepEqual(marker.map(Object.values),
+        [[3, Date.parse(time("02.500"))], [9, Date.parse(time("05.100"))], [10, Date.parse(time("05.200"))]]);
+      assert.deepEqual(db.prepare("SELECT source_line, result_call_id FROM codex_reasoning_inputs").all().map(Object.values),
+        [[9, "wait"]]);
       assert.deepEqual(db.prepare("SELECT command FROM codex_commands ORDER BY command").all().map(Object.values),
         [["git status"], ["node --test"]]);
       assert.equal(db.prepare("SELECT count(*) n FROM codex_categories").get()?.n, data.calls.length);

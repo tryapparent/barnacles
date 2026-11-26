@@ -19,6 +19,7 @@ export type ReleaseOrder = { $: "Release"; published: number; checked: number; i
 
 export type SourcePolicy = {
   reasoning(event: string, point: Point): boolean;
+  model_wait_input(previous: string, envelope: string, kind: string, callId: string): string;
   tool(name: string, direct: List<ShellCommand>, wrapped: List<ToolInvocation>): unknown;
   start_call(state: unknown, line: number, tool: unknown, start: Point, target: string): unknown;
   finish_call(state: unknown, end: Point, yielded: string, completed: boolean): unknown;
@@ -69,7 +70,7 @@ export type ThreadEvidence = {
 
 export type RolloutEvidence = {
   instance: string; session: string; lines: number; malformed: number; orphans: number;
-  markers: { line: number; at: number }[];
+  markers: { line: number; at: number; resultCall?: string }[];
   calls: { id: string; line: number; tool: string; command: string | null; start: number | null; end: number | null;
     async: boolean; asyncEnd: number | null; terminalCall: string | null; ambiguous: boolean; categories?: string }[];
 };
@@ -142,9 +143,14 @@ export function saveRollout(path: string, data: RolloutEvidence) {
       if (call.command) commands.run(...key, call.id, call.command);
       if (call.categories) categories.run(...key, call.id, call.categories);
     }
+    db.prepare("DELETE FROM codex_reasoning_inputs WHERE instance=? AND session_id=?").run(...key);
     db.prepare("DELETE FROM codex_reasoning WHERE instance=? AND session_id=?").run(...key);
     const markers = db.prepare("INSERT INTO codex_reasoning VALUES (?, ?, ?, ?)");
-    for (const marker of data.markers) markers.run(...key, marker.line, marker.at);
+    const inputs = db.prepare("INSERT INTO codex_reasoning_inputs VALUES (?, ?, ?, ?)");
+    for (const marker of data.markers) {
+      markers.run(...key, marker.line, marker.at);
+      if (marker.resultCall) inputs.run(...key, marker.line, marker.resultCall);
+    }
   });
 }
 

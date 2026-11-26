@@ -38,6 +38,7 @@ export async function readRollout(path: string, instance: string, policy: Source
   let session = "";
   let lineNumber = 0;
   let malformed = 0;
+  let previousResult = "";
   try {
     const info = await file.stat();
     if (!info.isFile() || info.size === 0 || info.size > 128 * 1024 * 1024) {
@@ -50,25 +51,29 @@ export async function readRollout(path: string, instance: string, policy: Source
       let envelope, event;
       try {
         envelope = row(JSON.parse(line));
-        if (envelope.type !== "session_meta" && envelope.type !== "response_item") continue;
-        event = row(envelope.payload);
+        event = envelope.type === "session_meta" || envelope.type === "response_item" || envelope.type === "event_msg"
+          ? row(envelope.payload) : {};
       } catch { malformed++; continue; }
+      const type = str(event.type);
+      const id = str(event.call_id);
+      const resultCall = previousResult;
+      previousResult = policy.model_wait_input(previousResult, str(envelope.type), type, id);
       if (envelope.type === "session_meta") {
         const observed = token(event.id ?? event.session_id);
         if (session && observed !== session) throw Error("Rollout contains conflicting session IDs");
         session = observed;
         continue;
       }
+      if (envelope.type !== "response_item") continue;
       if (!session) { malformed++; continue; }
-      const type = str(event.type);
       const metadata = event.internal_chat_message_metadata_passthrough as { create_time?: unknown } | undefined;
       const original = metadata?.create_time;
       const timestamp = (typeof original === "number" ? validMillis(Math.round(original * 1000)) : 0) || millis(envelope.timestamp);
       const at = point(timestamp);
-      if (policy.reasoning(type, at)) markers.push({ line: lineNumber, at: timestamp });
+      if (policy.reasoning(type, at)) markers.push({ line: lineNumber, at: timestamp,
+        ...(resultCall ? { resultCall } : {}) });
       if (type !== "function_call" && type !== "custom_tool_call" &&
           type !== "function_call_output" && type !== "custom_tool_call_output") continue;
-      const id = str(event.call_id);
       if (!/^[\w:-]+$/.test(id)) { malformed++; continue; }
       const state = calls.get(id) ?? unseen;
       if (type === "function_call" || type === "custom_tool_call") {
