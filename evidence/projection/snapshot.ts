@@ -5,7 +5,7 @@ import { buildPolicies, buildPolicy, loadPolicy } from "../../tooling/bend.ts";
 import { readDelivery } from "../delivery/delivery.ts";
 import type { AttemptIdentity } from "../storage/actions.ts";
 import { sourcePolicy, type List, type SourcePolicy } from "../storage/sources.ts";
-import { collectTiming, empty, millis, rows, seconds, type Stats, type TimingPolicy } from "./timing.ts";
+import { collectTiming, empty, millis, rows, seconds, type ProcessAttribution, type Stats, type TimingPolicy } from "./timing.ts";
 import { projectTrace, type TracePolicy, type TraceProjection, type SpanRow } from "./trace.ts";
 
 type SessionTiming = { $: "SessionTiming"; envelopes: Stats; cells: Stats };
@@ -376,9 +376,28 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
     let traceSessions = 0;
     const rolloutCount = table("codex_rollouts") ? Number(all("SELECT count(*) AS count FROM codex_rollouts")[0].count) : 0;
     if (table("codex_spans")) {
-      const joins = ["codex_commands", "codex_categories"].filter(table)
-        .map((name) => `LEFT JOIN ${name} USING (instance, session_id, call_id)`);
-      const spans = all(`SELECT * FROM codex_spans ${joins.join(" ")} ORDER BY started_ms, source_line, clock`);
+      const columns = ["span.*"];
+      const joins = [];
+      for (const [name, column] of [["codex_commands", "command"], ["codex_categories", "categories"]]) {
+        if (table(name)) {
+          columns.push(`${name}.${column}`);
+          joins.push(`LEFT JOIN ${name} USING (instance, session_id, call_id)`);
+        }
+      }
+      if (table("codex_process_receipts")) {
+        columns.push("direct.process_status AS io_status", "direct.process_category AS io_category");
+        joins.push(`LEFT JOIN codex_process_receipts direct
+          ON (direct.instance, direct.session_id, direct.call_id) = (span.instance, span.session_id, span.call_id)`);
+        if (table("codex_wait_attribution")) {
+          columns.push("wait.cell_status", "launch.process_status AS wait_status", "launch.process_category AS wait_category");
+          joins.push(`LEFT JOIN codex_wait_attribution wait
+            ON (wait.instance, wait.session_id, wait.call_id) = (span.instance, span.session_id, span.call_id)
+            LEFT JOIN codex_process_receipts launch
+            ON (launch.instance, launch.session_id, launch.call_id) = (wait.instance, wait.session_id, wait.cell_launch_call_id)`);
+        }
+      }
+      const spans = all(`SELECT ${columns.join(", ")} FROM codex_spans span ${joins.join(" ")}
+        ORDER BY span.started_ms, span.source_line, span.clock`);
       const markers = table("codex_reasoning") ? all(table("codex_reasoning_inputs") ? `
         SELECT reasoning.*, calls.ended_ms AS result_at, calls.source_line AS result_call_line
         FROM codex_reasoning reasoning LEFT JOIN codex_reasoning_inputs USING (instance, session_id, source_line)
@@ -398,12 +417,21 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
       const coverage = view.prepare("INSERT INTO trace_coverage VALUES (?, ?, ?, ?, ?)");
       for (const [key, rows] of sessions) {
         const session = ++traceSessions;
-        const observations = rows.map((row): SpanRow => ({
+        const observations = rows.map((row): SpanRow & { attribution: ProcessAttribution } => ({
           identity: { source: "codex", instance: String(row.instance), session: String(row.session_id), call: String(row.call_id) },
           terminal: row.terminal_call_id as string | null,
           line: Number(row.source_line), tool: String(row.tool), command: String(row.command ?? ""),
           categories: String(row.categories ?? ""), clock: row.clock as SpanRow["clock"],
-          start: row.started_ms as number | null, end: row.ended_ms as number | null }));
+          start: row.started_ms as number | null, end: row.ended_ms as number | null,
+          attribution: {
+            $: "ProcessAttribution",
+            cell_status: String(row.cell_status ?? ""),
+            wait_status: String(row.wait_status ?? ""),
+            wait_category: String(row.wait_category ?? ""),
+            io_status: String(row.io_status ?? ""),
+            io_category: String(row.io_category ?? ""),
+          },
+        }));
         const events = (bySession.get(key) ?? []).map((row) => ({ line: Number(row.source_line), at: Number(row.observed_ms),
           resultAt: Number(row.result_at ?? 0), resultCallLine: Number(row.result_call_line ?? 0) }));
         let clocks = metrics.empty_session_timing();
@@ -411,7 +439,7 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
           const clock = metrics.interval_clock(row.clock);
           const start = row.start ?? 0;
           const end = row.end ?? 0;
-          timing.observeCodex(row, row.categories);
+          timing.observeCodex(row, row.categories, row.attribution);
           clocks = metrics.session_timing_observe(clocks, row.clock, start, end);
           insert.run(session, row.line, metrics.trace_operation(row.clock, row.tool, row.command, row.categories),
             clock, row.start, row.end);
