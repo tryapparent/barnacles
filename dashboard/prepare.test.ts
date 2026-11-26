@@ -464,11 +464,12 @@ test("shipping API preserves historical and partial evidence and reads a replace
   const repo = "synthetic/harbor";
   const at = Math.floor(Date.now() / 1000) - 60;
   const iso = (seconds: number) => new Date(seconds * 1000).toISOString();
+  const cutoff = at + 60;
   const time = (seconds: number) => encodeURIComponent(iso(seconds));
   const save = (pullRequest: PullRequest, release?: ReleaseEvidence) =>
     loadEvidence(source, { source: "github-delivery", pullRequest, release });
-  const prepare = (path: string) =>
-    promisify(execFile)(process.execPath, ["dashboard/prepare.ts", source, path, repo], { timeout: 60_000 });
+  const prepare = (path: string) => promisify(execFile)(process.execPath,
+    ["dashboard/prepare.ts", source, path, repo, iso(cutoff).replace(".000Z", "Z")], { timeout: 60_000 });
   let server: ReturnType<typeof spawn> | undefined;
   let stopped: Promise<unknown> | undefined;
   try {
@@ -493,6 +494,10 @@ test("shipping API preserves historical and partial evidence and reads a replace
       pullRequests: [{ repository: repo, number: 101, source: "created", state: "merged", owning: true }],
     } });
     await prepare(snapshot);
+    const db = new DatabaseSync(join(snapshot, "dashboard.sqlite"), { readOnly: true });
+    try {
+      assert.equal(db.prepare("SELECT window_end_ms FROM actions_wait_coverage").get()?.window_end_ms, cutoff * 1000);
+    } finally { db.close(); }
     const web = process.env.BARNACLES_WEB_BUILD;
     const proxyUser = "owner@example.invalid";
     server = spawn(process.execPath, ["dashboard/prepare.ts", "--serve", snapshot, "0", ...(web ? [web] : [])], {
@@ -530,6 +535,7 @@ test("shipping API preserves historical and partial evidence and reads a replace
     }
     assert.equal((await get("/api/v1")).endpoints.shipping.path, "/api/v1/shipping");
     const report = await get("/api/v1/shipping?limit=1");
+    assert.equal(report.snapshotAt, iso(cutoff));
     assert.deepEqual(report.snapshotCoverage, { observedPullRequests: 2, verifiedShipments: 1, attributedShipments: 1 });
     assert.equal(report.shipments.weekly[0].meanCycleSeconds, 600);
     assert.deepEqual(report.fleet.items.map((item: { number: number; stage: string }) => [item.number, item.stage]),
