@@ -24,7 +24,7 @@ type Metrics = TracePolicy & {
   visible_release(channel: string, published: number): boolean;
   codex_clock(clock: string): string;
   rollout_clean(malformed: number, orphans: number): boolean;
-  observed_category(categories: string): string;
+  observed_category(categories: string): { $: "Category"; name: string } | { $: "MixedCommand"; name: string; group: string };
   record_interval(sample: Stats, start: number, end: number): Stats;
   trace_preference(asyncSpans: number, reasoningEvents: number): boolean;
   trace_preferred(ended: number, mixed: boolean, otherEnded: number, otherMixed: boolean): boolean;
@@ -34,7 +34,8 @@ type Metrics = TracePolicy & {
   week(epoch: number): number;
   previous_week(epoch: number): number;
   direction(recent: Stats, prior: Stats): { $: "Insufficient" } | { $: "Gardening" | "Shipping"; delta: Ratio };
-  count_in_map(clock: string): boolean;
+  operation_area(sample: Stats): boolean;
+  measured_total(sample: Stats): Ratio;
   ranks_before(total: number, key: string, otherTotal: number, otherKey: string): boolean;
   visible_open(owning: boolean, state: string, settled: boolean): boolean;
 };
@@ -67,7 +68,10 @@ function writeSnapshot(input: string, output: string, otlp: string, repo: string
       CREATE TABLE work(pr INTEGER, status TEXT, created INTEGER, url TEXT);
       CREATE TABLE timing(clock TEXT, workflow INTEGER, operation TEXT, count INTEGER,
         mean_seconds REAL, total_seconds REAL, unmeasured INTEGER, rank INTEGER);
-      CREATE TABLE time_map(clock TEXT, total_seconds REAL, rank INTEGER);
+      CREATE TABLE operation_totals(clock TEXT, operation TEXT, count INTEGER, mean_seconds REAL,
+        total_seconds REAL, unmeasured INTEGER, has_area INTEGER, rank INTEGER);
+      CREATE TABLE mixed_groups(clock TEXT, operation TEXT, count INTEGER, mean_seconds REAL,
+        total_seconds REAL, unmeasured INTEGER, rank INTEGER);
       CREATE TABLE category_estimates(name TEXT, seconds REAL, total REAL, error REAL, samples INTEGER);
       CREATE TABLE workflows(clock TEXT, workflow INTEGER, total_seconds REAL, count INTEGER,
         mean_seconds REAL, unmeasured INTEGER, rank INTEGER);
@@ -142,15 +146,18 @@ function writeSnapshot(input: string, output: string, otlp: string, repo: string
 
     const timing = new Map<string, Timing>();
     const workflow = new Map<string, Timing>();
-    const totals = new Map<string, Stats>();
+    const operations = new Map<string, Timing>();
+    const mixes = new Map<string, Timing>();
+    function record(collection: Map<string, Timing>, key: string, clock: string, id: number, operation: string,
+      start: number, end: number) {
+      const row = collection.get(key) ?? { clock, workflow: id, operation, stats: empty };
+      row.stats = metrics.record_interval(row.stats, start, end);
+      collection.set(key, row);
+    }
     function add(clock: string, id: number, operation: string, start: number, end: number) {
-      const operationKey = JSON.stringify([clock, id, operation]);
-      for (const [collection, key] of [[timing, operationKey], [workflow, JSON.stringify([clock, id])]] as const) {
-        const row = collection.get(key) ?? { clock, workflow: id, operation, stats: empty };
-        row.stats = metrics.record_interval(row.stats, start, end);
-        collection.set(key, row);
-      }
-      if (metrics.count_in_map(clock)) totals.set(clock, metrics.record_interval(totals.get(clock) ?? empty, start, end));
+      record(timing, JSON.stringify([clock, id, operation]), clock, id, operation, start, end);
+      record(workflow, JSON.stringify([clock, id]), clock, id, operation, start, end);
+      record(operations, JSON.stringify([clock, operation]), clock, id, operation, start, end);
     }
     if (table("action_jobs")) {
       for (const row of all(`
@@ -216,7 +223,11 @@ function writeSnapshot(input: string, output: string, otlp: string, repo: string
           const clock = metrics.codex_clock(row.clock);
           const start = row.start ?? 0;
           const end = row.end ?? 0;
-          add(clock, 0, metrics.observed_category(row.categories), start, end);
+          const category = metrics.observed_category(row.categories);
+          if (category.$ === "MixedCommand") {
+            record(mixes, JSON.stringify([clock, category.group]), clock, 0, category.group, start, end);
+          }
+          add(clock, 0, category.name, start, end);
           clocks.set(clock, metrics.record_interval(clocks.get(clock) ?? empty, start, end));
           insert.run(session, row.line, metrics.trace_operation(row.clock, row.tool, row.command, row.categories),
             clock, row.start, row.end);
@@ -249,10 +260,14 @@ function writeSnapshot(input: string, output: string, otlp: string, repo: string
     [...workflow].sort((a, b) => compare(a, b, (row) => row.stats.total)).forEach(([, row], rank) =>
       workflowInsert.run(row.clock, row.workflow, row.stats.total / 1000,
         row.stats.count, seconds(metrics.mean(row.stats)), row.stats.missing, rank));
-    const mapInsert = view.prepare("INSERT INTO time_map VALUES (?, ?, ?)");
-    [...totals].sort((a, b) => compare(a, b, (stats) => stats.total)).forEach(([clock, stats], rank) => {
-      if (stats.total) mapInsert.run(clock, stats.total / 1000, rank);
-    });
+    const overviewInsert = view.prepare("INSERT INTO operation_totals VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+    [...operations].sort((a, b) => compare(a, b, (row) => row.stats.total)).forEach(([, row], rank) =>
+      overviewInsert.run(row.clock, row.operation, row.stats.count, seconds(metrics.mean(row.stats)),
+        seconds(metrics.measured_total(row.stats)), row.stats.missing, Number(metrics.operation_area(row.stats)), rank));
+    const mixInsert = view.prepare("INSERT INTO mixed_groups VALUES (?, ?, ?, ?, ?, ?, ?)");
+    [...mixes].sort((a, b) => compare(a, b, (row) => row.stats.total)).forEach(([, row], rank) =>
+      mixInsert.run(row.clock, row.operation, row.stats.count, seconds(metrics.mean(row.stats)),
+        seconds(metrics.measured_total(row.stats)), row.stats.missing, rank));
 
     view.exec("COMMIT");
     return { from: Math.min(priorWeek, ...weeks.keys()), to: cutoff, defaultTrace, traceSessions };
