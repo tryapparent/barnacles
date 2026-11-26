@@ -7,6 +7,26 @@ The first entry point imports one GitHub Actions attempt by repository, run ID, 
 | T3 | Import metadata from supported thread and PR-link tools. Retain source identity, thread start, status, run clocks, explicit PR links, and origin when established. Omit messages and titles. |
 | Codex | Read selected local rollouts. Pair stable call and result IDs and preserve a separate endpoint for a correlated async process. Discard raw arguments and outputs after deriving timing. |
 | GitHub | Read PR and commit metadata, exact Actions attempts and jobs, and release assets. Check tag ancestry where applicable. Verify the intended asset with a bounded anonymous range request when the surface is public. Store publication and access observation timestamps. |
+| Local Git | Read commit IDs and changed paths reachable from one revision. Emit a local Changed Code Analysis report. |
+
+## Changed Code Analysis
+
+From the Barnacles checkout, with Node 22.18+ and Git installed:
+
+```sh
+job=$(mktemp -d /tmp/apparent-dev-barnacles-changes-XXXXXX)
+node collector/changed-code.ts "$job" /path/to/repository HEAD 1000
+```
+
+Pass a local repository and optionally a revision and commit limit. The defaults are `HEAD` and 1,000 commits. The limit accepts 1–10,000. Git reads reachable non-merge commits in topological order, starting from the selected revision. The CLI bounds the Git read to 30 seconds and 32 MiB. A failed read exits with an error.
+
+Bend2 ranks up to 25 paths by commit count, breaking ties by path byte order. Each commit touching a path adds one, whether the change is an addition, edit, or deletion. Renames contribute to the old and new paths independently. Merge commits and any changes made only during merge resolution are outside the count. Empty commits contribute to scan coverage. Paths use UTF-8 when possible and `pathBytesBase64` for other filenames.
+
+The JSON report includes the resolved revision, commits scanned, whether more commits exist beyond the limit, and whether the checkout is shallow. Shallow boundary commits contribute to scan coverage, and their file counts are omitted because their parent diffs are unavailable. High change frequency is a place to start inspecting coupling and recurring edits. It can also reflect normal work on a busy feature or generated file.
+
+History reads stay local. The command fetches the checksum-pinned Bend2 compiler, writes its temporary build under the job directory, and prints the report to stdout. Keep reports for private repositories local.
+
+Verify with `BARNACLES_TEST_DIRECTORY="$job" node --test collector/changed-code.test.ts`.
 
 ## Run the Actions import
 

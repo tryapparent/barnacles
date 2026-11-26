@@ -74,7 +74,7 @@ PATHS
     fi
     if [ -n "$collector_tests" ]; then
       printf 'pre-push: checking collector tests at %s\n' "$head" >&2
-      node --test collector/github/attempt.test.ts collector/sources.test.ts
+      node --test collector/github/attempt.test.ts collector/*.test.ts
     fi
     if [ -n "$dashboard_tests" ]; then
       if [ -f dashboard/prepare.test.ts ]; then
