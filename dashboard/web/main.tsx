@@ -257,24 +257,28 @@ function App() {
     if (review && location.hash === "#delivery-title") document.getElementById("delivery-title")?.scrollIntoView();
   }, [review]);
   return <main className="review">
-    <header className="masthead">
-      <h1>Shipping review</h1>
+    {!review && <header className="masthead">
+      <h1>Barnacles</h1>
       <div className="scope">
-        {review && <span>{review.repository} · Linux Main x86_64</span>}
         <a href={path}>Review API JSON</a>
       </div>
-    </header>
+    </header>}
     {result.state === "loading" && <div className="page-message"><p role="status">Loading prepared evidence…</p></div>}
     {result.state === "error" && <div className="page-message" role="alert"><p>{result.message}</p>
       <div className="detail-links"><Button onClick={retry}>Retry review</Button><a href="/">Reset filters</a></div>
     </div>}
     {review && <>
-      <div className="review-info">
-        <span>{dayLabel(review.window.from)}–{dayLabel(review.window.to)} UTC</span>
-        <span>Snapshot · <time dateTime={review.snapshotAt}>{utcLabel(review.snapshotAt)}</time></span>
-        <Filters review={review} />
-      </div>
-      <Fleet fleet={review.fleet} onSelect={select} />
+      <Fleet fleet={review.fleet} onSelect={select}>
+        <div className="review-info">
+          <span>{dayLabel(review.window.from)}–{dayLabel(review.window.to)} UTC</span>
+          <span>Snapshot · <time dateTime={review.snapshotAt}>{utcLabel(review.snapshotAt)}</time></span>
+          <Filters review={review} />
+          <div className="scope">
+            <span>{review.repository} · Linux Main x86_64</span>
+            <a href={path}>Review API JSON</a>
+          </div>
+        </div>
+      </Fleet>
       <Overview review={review} />
       <DailyStages days={review.shipments.dailyStages} />
       <DeliveryTimeline review={review} selection={selection} />

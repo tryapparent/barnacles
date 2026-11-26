@@ -43,8 +43,15 @@ bound to loopback and requires the trusted Serve identity on every request,
 including the assets and JSON routes. Use these settings only when the
 proxy strips client-supplied identity headers and sets its own.
 
-The scene uses the approved generated artwork for the two working shores.
-Its references are the [Clyde shipyard archive](https://i.rcahms.gov.uk/canmore/x/SC01268607.jpg)
+The Barnacles title shares the scene with the selected Tide-worn Oak hull.
+The artwork uses two equally sized WebP frames stacked vertically, one for the
+hull with outward-facing shells and one for its reflected ripples. The pale
+shells and shaded wood use the same blue-gray palette as the harbor. The hull
+fades into that scene at its leading and lower edges. The reflection draws
+through the live water path before the shores and fleet, using the same pause
+and reduced-motion behavior as the rest of the scene.
+
+The reference images for the two working shores are the [Clyde shipyard archive](https://i.rcahms.gov.uk/canmore/x/SC01268607.jpg)
 and the [Historic England Whitby archive](https://historicengland.org.uk/images-books/photos/item/AA63/04965).
 The canvas draws at most four ships per stage for readability. The Fleet
 manifest lists every observed PR with a link to its evidence. Vessel size uses

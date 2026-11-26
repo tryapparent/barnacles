@@ -1,5 +1,6 @@
 import yardArtwork from '../assets/yard.webp';
 import townArtwork from '../assets/town.webp';
+import hullArtwork from '../assets/tide-worn-oak.webp';
 
 const bayer = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
 const depthAt = (y, horizon, height) => Math.max(0, Math.min(1, (y - horizon) / (height - horizon)));
@@ -359,6 +360,8 @@ export function mountHarbor(scene, contacts) {
   };
   const vessels = contacts.map(contact => ({...contact, sprite: document.createElement('canvas')}));
   const exhaust = makeExhaust();
+  const hull = new Image();
+  let hullReady = false;
   let realShores;
   let projection;
   let shores;
@@ -367,6 +370,8 @@ export function mountHarbor(scene, contacts) {
   let horizon;
   let progress = 0;
   let day = true;
+  let skyX = .5;
+  let skyY = .12;
   let disposed = false;
 
   function placeShips() {
@@ -498,13 +503,49 @@ export function mountHarbor(scene, contacts) {
     context.drawImage(fog, 0, 0, width, height);
   }
 
+  function paintSkyMarker(width, height) {
+    const radius = Math.max(6.5, Math.min(12, width * .0115));
+    const x = width * skyX;
+    const y = height * skyY;
+    const disc = new Path2D();
+    disc.arc(x, y, radius, 0, 2 * Math.PI);
+    context.save();
+    context.fillStyle = day ? '#e4d3a4' : '#dceaff';
+    if (day) context.fill(disc);
+    else {
+      context.clip(disc);
+      const crescent = new Path2D(disc);
+      crescent.moveTo(x + radius * 1.48, y - radius * .44);
+      crescent.arc(x + radius * .48, y - radius * .44, radius, 0, 2 * Math.PI);
+      context.fill(crescent, 'evenodd');
+    }
+    context.restore();
+  }
+
+  function paintHull(width, height, phase, reflection) {
+    if (!hullReady) return;
+    const slice = hull.naturalHeight / 2;
+    const span = Math.min(width * .61, 720);
+    const depth = (horizon + height * .035) / .67;
+    context.save();
+    if (reflection) context.clip(water);
+    context.globalAlpha = reflection ? .52 + .13 * Math.sin(phase) : .94;
+    context.drawImage(hull, 0, reflection ? slice : 0, hull.naturalWidth, slice,
+      width - span, 0, span, depth);
+    context.restore();
+  }
+
   function render(nextProgress) {
     progress = nextProgress;
     if (!water) return;
     const { width, height } = scene;
     const phase = progress * 2 * Math.PI;
     context.drawImage(ground, 0, 0);
+    paintSkyMarker(width, height);
     paintSea(width, height, phase);
+    paintHull(width, height, phase, true);
+    context.drawImage(banks, 0, 0);
+    paintHull(width, height, phase, false);
     for (const vessel of vessels) {
       const {sprite, x, y} = vessel;
       if (!sprite.width || !sprite.height) continue;
@@ -513,7 +554,6 @@ export function mountHarbor(scene, contacts) {
       context.drawImage(sprite, Math.round(x - sprite.width / 2), Math.round(y - sprite.height / 2 + bob));
     }
     context.globalAlpha = 1;
-    context.drawImage(banks, 0, 0);
     if (realShores) paintHarborExhaust(context, projection, exhaust, phase, day);
     paintFog(width, height, phase, day);
   }
@@ -548,6 +588,16 @@ export function mountHarbor(scene, contacts) {
     render(progress);
   }
 
+  hull.src = hullArtwork;
+  hull.decode().then(() => {
+    if (disposed) return;
+    hullReady = true;
+    scene.dataset.hullArtwork = 'ready';
+    render(progress);
+  }).catch(() => {
+    if (!disposed) scene.dataset.hullArtwork = 'unavailable';
+  });
+
   Promise.all([yardArtwork, townArtwork].map(decodeHarborShore)).then(images => {
     if (disposed) return;
     realShores = images;
@@ -561,10 +611,14 @@ export function mountHarbor(scene, contacts) {
   rebuild();
   return {
     render,
-    setLight(light) {
-      if (light === day) return;
+    setLight(light, x, y) {
+      skyX = x;
+      skyY = y;
+      scene.dataset.light = light ? 'day' : 'night';
+      const changed = light !== day;
       day = light;
-      rebuild();
+      if (changed) rebuild();
+      else render(progress);
     },
     dispose() {
       disposed = true;
