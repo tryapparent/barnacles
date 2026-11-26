@@ -49,6 +49,8 @@ and the [Historic England Whitby archive](https://historicengland.org.uk/images-
 The canvas draws at most four ships per stage for readability. The Fleet
 manifest lists every observed PR with a link to its evidence. Vessel size uses
 depth perspective because the evidence source does not retain PR diff sizes.
+The shore artwork uses the same silver highlights and blue-black shadows as
+the ships, with softer tones in the distance and lower exposure at night.
 
 The browser presentation uses React, Vite, Canvas and SVG. TypeScript decodes
 API responses and renders the shared evidence. The local Button and

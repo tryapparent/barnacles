@@ -251,6 +251,8 @@ function shoreProjection(width, height, horizon) {
 function paintRealShore(ctx, sources, width, height, projection, day, threshold) {
   const frame = ctx.createImageData(width, height);
   const samples = [[-.31,-.26],[.31,-.26],[-.31,.26],[.31,.26]];
+  const [shadow, , highlight] = silverShipColors;
+  const exposure = day ? .94 : .78;
   for (const [bank, source] of sources.entries()) {
     const right = bank === 1;
     for (let y = 0; y < height; y++) {
@@ -275,12 +277,12 @@ function paintRealShore(ctx, sources, width, height, projection, day, threshold)
         if (alpha < .01) continue;
         const col = right ? width - 1 - x : x;
         const index = (y * width + col) * 4;
-        const light = Math.max(0, luma / (255 * alpha) - .037) ** (day ? 1.15 : 1.34);
+        const light = smoothHarbor(.12, .80, luma / (255 * alpha)) ** 1.65;
         const grain = (threshold(col,y) - .5) * (4.5 + light * 6);
-        frame.data[index] = (day ? 16 : 10) + light * (day ? 163 : 122) + grain;
-        frame.data[index+1] = (day ? 25 : 17) + light * (day ? 165 : 132) + grain;
-        frame.data[index+2] = (day ? 32 : 24) + light * (day ? 168 : 140) + grain;
-        frame.data[index+3] = alpha * .25 * clarity * 255;
+        for (let channel = 0; channel < 3; channel++) {
+          frame.data[index + channel] = shadow[channel] + (highlight[channel] - shadow[channel]) * light + grain;
+        }
+        frame.data[index+3] = alpha * exposure * clarity * 255;
       }
     }
   }
