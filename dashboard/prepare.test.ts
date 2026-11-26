@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -61,8 +62,9 @@ test("dashboard derives a covered comparison and preserves missing source covera
         }],
       });
     }
+    const pointSession = "point-only\b\f\\u0008😀";
     saveRollout({
-      instance: "local", session: "point-only", lines: 5, malformed: 0, orphans: 0,
+      instance: "local", session: pointSession, lines: 5, malformed: 0, orphans: 0,
       calls: [], markers: [{ line: 3, at }],
     });
     saveRollout({
@@ -188,6 +190,9 @@ test("dashboard derives a covered comparison and preserves missing source covera
       assert.equal(spans.find((span: { name: string }) => span.name === "Cell wait").parentSpanId, cell.spanId);
       assert.equal(window.events[0].timeUnixNano, ((BigInt(at) + 650n) * 1_000_000n).toString());
       assert.equal(eventOnly.length, 1);
+      const pointKey = JSON.stringify(["local", pointSession]);
+      const traceId = createHash("sha256").update(JSON.stringify(["barnacles-codex-trace", pointKey])).digest("hex").slice(0, 32);
+      assert.equal(eventOnly[0].traceId, traceId);
       assert.equal(eventOnly[0].startTimeUnixNano, eventOnly[0].endTimeUnixNano);
       const config = JSON.parse(readFileSync(join(out, "dashboards/shipping.json"), "utf8"));
       assert.equal(config.uid, "barnacles-shipping");

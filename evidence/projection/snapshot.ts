@@ -5,7 +5,7 @@ import { deliveryPolicy, readDelivery, type DeliveryPolicy } from "../delivery/d
 import type { AttemptIdentity } from "../storage/actions.ts";
 import type { List } from "../storage/sources.ts";
 import { collectTiming, millis, rows, seconds, type Stats, type TimingPolicy } from "./timing.ts";
-import { writeTraces, type TracePolicy, type TraceWriter } from "./trace.ts";
+import { writeTraces, type OtlpPolicy, type TracePolicy, type TraceWriter } from "./trace.ts";
 
 type Shipping = { $: "Delivery"; shipped: number; cycles: Stats };
 type CycleStage = { $: "Measured"; ms: number } | { $: "Missing" };
@@ -178,16 +178,18 @@ function writeActionsWait(source: DatabaseSync, view: DatabaseSync, repo: string
 
 export async function writeSnapshot(input: string, output: string, scratch: string, repo: string, cutoff: number,
   writeTrace: TraceWriter, actionsWaitWindow?: ActionWaitWindow, timingCutoff = cutoff * 1000) {
-  const [deliveryModule, metricModule, modelModule, traceModule, waitModule] = await buildPolicies(scratch, [
+  const [deliveryModule, metricModule, modelModule, traceModule, otlpModule, waitModule] = await buildPolicies(scratch, [
     [deliveryPolicy, "delivery.mjs"],
     [new URL("./metrics.bend", import.meta.url), "metrics.mjs"],
     [new URL("./estimate.bend", import.meta.url), "estimate.mjs"],
     [new URL("./trace.bend", import.meta.url), "trace.mjs"],
+    [new URL("./otlp.bend", import.meta.url), "otlp.mjs"],
     [actionsWaitPolicy, "actions-wait.mjs"],
   ]);
   const policy = await loadPolicy<DeliveryPolicy>(deliveryModule);
   const metrics: Metrics = await loadPolicy(metricModule);
   const tracePolicy: TracePolicy = await loadPolicy(traceModule);
+  const otlp: OtlpPolicy = await loadPolicy(otlpModule);
   const estimator: Estimator = await loadPolicy(modelModule);
   const waits: WaitPolicy = await loadPolicy(waitModule);
   const source = new DatabaseSync(input, { readOnly: true });
@@ -303,7 +305,7 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
       measure.run(name, supported ? seconds : null, supported ? total : null, supported ? error : null, samples);
     }
 
-    const traces = writeTraces(source, view, tracePolicy, timing, writeTrace);
+    const traces = writeTraces(source, view, tracePolicy, otlp, timing, writeTrace);
     timing.write(view, timingCutoff);
 
     writeActionsWait(source, view, repo,

@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync,
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { comments } from "./comment-syntax.ts";
+import { withCommentSyntax } from "./comment-syntax.ts";
 
 test("lexical comment parsers distinguish comments from literals", async () => {
   const fixtures = [
@@ -21,14 +21,16 @@ test("lexical comment parsers distinguish comments from literals", async () => {
     ["README.md", '```html\n<!-- example -->\n```', 0],
     [".gitignore", "# comment\n\\#pattern\npath#literal", 1],
   ] as const;
-  for (const [name, text, count] of fixtures) {
-    assert.equal((await comments(name, Buffer.from(text))).length, count, name);
-  }
-  await assert.rejects(comments("example.unknown", Buffer.from("x")), /Unsupported comment syntax/);
-  await assert.rejects(comments("example.json", Buffer.from('{"x":1 /* marked */}')));
-  for (const path of ["evidence/storage/actions.sql", "evidence/storage/sources.sql", ".githooks/pre-commit"]) {
-    assert.deepEqual(await comments(path, readFileSync(path)), []);
-  }
+  await withCommentSyntax(async (comments) => {
+    for (const [name, text, count] of fixtures) {
+      assert.equal((await comments(name, Buffer.from(text))).length, count, name);
+    }
+    await assert.rejects(comments("example.unknown", Buffer.from("x")), /Unsupported comment syntax/);
+    await assert.rejects(comments("example.json", Buffer.from('{"x":1 /* marked */}')));
+    for (const path of ["evidence/storage/actions.sql", "evidence/storage/sources.sql", ".githooks/pre-commit"]) {
+      assert.deepEqual(await comments(path, readFileSync(path)), []);
+    }
+  });
 });
 
 test("real Git commits check the staged tree and enforce comment multiplicity", () => {
@@ -65,7 +67,7 @@ test("real Git commits check the staged tree and enforce comment multiplicity", 
     for (const file of ["pre-commit", "check-comments.ts", "check-bend-paths.ts"]) {
       symlinkSync(fileURLToPath(new URL(file, import.meta.url)), join(cwd, ".githooks", file));
     }
-    write(".githooks/bend-exceptions.json", '{"Host fixture":[".githooks/bend-exceptions.json","renamed.ts"]}\n');
+    write(".githooks/bend-exceptions.json", '{"Host fixture":[".githooks/bend-exceptions.json","renamed.ts","grün.ts"]}\n');
     pass("add", ".githooks/bend-exceptions.json");
     pass("config", "core.hooksPath", ".githooks");
     write("a.ts", "// rejected on an unborn branch\nconst value = 1;\n");
@@ -116,6 +118,9 @@ test("real Git commits check the staged tree and enforce comment multiplicity", 
     reject(/Expected an exception registry with unique groups of path strings/);
     pass("restore", "--staged", "--worktree", "--", ".githooks/bend-exceptions.json");
     pass("rm", "-f", "policy.ts");
+    write("grün.ts", "const value = 1;\n");
+    pass("add", "grün.ts");
+    pass("commit", "-qm", "Unicode exception path");
     write("policy.bend", "def value() -> U32: 1\n");
     pass("add", "policy.bend");
     pass("commit", "-qm", "Bend2 feature");

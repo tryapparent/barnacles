@@ -2,7 +2,6 @@ import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, renameSync, rm
 import { dirname, join, resolve } from "node:path";
 import { repository, writeSnapshot } from "../evidence/read.ts";
 import { dashboards } from "./panels.ts";
-import { encodeTrace } from "./trace.ts";
 
 async function main() {
   const [input, output, requestedRepository, asOf, ...extra] = process.argv.slice(2);
@@ -25,10 +24,10 @@ async function main() {
     const payloads = openSync(join(staging, "tempo.ndjson"), "wx", 0o600);
     try {
       const range = await writeSnapshot(resolve(input), join(staging, "dashboard.sqlite"), scratch, repo,
-        cutoff, (_key, _trace, wire) => {
-          const { traceId, payload } = encodeTrace(wire());
-          writeSync(payloads, JSON.stringify(payload) + "\n");
-          return traceId;
+        cutoff, (_key, _trace, encode) => {
+          const { trace_id, payload_bytes } = encode();
+          writeSync(payloads, payload_bytes + "\n", null, "latin1");
+          return trace_id;
         }, undefined, timingCutoff);
       const provision = join(staging, "dashboards");
       mkdirSync(provision);

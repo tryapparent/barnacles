@@ -1,8 +1,8 @@
 import { withHookPolicy } from "../tooling/bend.ts";
 import { candidateTrees, git, gitFields, gitText, list, rulesFile, type HookRules } from "./check-bend-paths.ts";
-import { comments } from "./comment-syntax.ts";
+import { withCommentSyntax } from "./comment-syntax.ts";
 
-async function check(rules: HookRules) {
+async function check(rules: HookRules, comments: (path: string, bytes: Buffer) => Promise<string[]>) {
   const { base, staged, fromIndex } = candidateTrees(rules, process.argv.slice(2));
   const fields = gitFields("diff", "--raw", "--no-abbrev", "-z", "-M50%", base, staged, "--");
   let failed = false;
@@ -29,7 +29,7 @@ async function check(rules: HookRules) {
   if (failed) process.exitCode = 1;
 }
 
-await withHookPolicy<HookRules>(rulesFile, check).catch((error: Error) => {
+await withHookPolicy<HookRules>(rulesFile, (rules) => withCommentSyntax((comments) => check(rules, comments))).catch((error: Error) => {
   console.error(`comment check: ${error.message}`);
   process.exitCode = 1;
 });

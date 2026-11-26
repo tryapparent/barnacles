@@ -50,7 +50,7 @@ test("pre-push routes the outgoing commit and blocks failed verification", () =>
     write(".githooks/check-comments.ts", "process.exit(0)\n");
     write(".githooks/bend-exceptions.json", "{}\n");
     mkdirSync(join(cwd, ".githooks/policy"));
-    for (const file of ["paths.bend", "rules.bend"]) {
+    for (const file of ["paths.bend", "rules.bend", "width.bend"]) {
       copyFileSync(new URL("./policy/" + file, import.meta.url), join(cwd, ".githooks/policy", file));
     }
     write("README.md", "Baseline\n");

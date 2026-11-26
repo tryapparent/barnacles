@@ -33,8 +33,7 @@
     "dashboard/provisioning/dashboards/barnacles.yml",
     "dashboard/provisioning/datasources/barnacles.yml",
     "dashboard/provisioning/tempo.yml",
-    "dashboard/run.sh",
-    "dashboard/trace.ts"
+    "dashboard/run.sh"
   ],
   "Node, Git, compiler, and verification tooling (see tooling/README.md)": [
     ".githooks/bend-exceptions.json",

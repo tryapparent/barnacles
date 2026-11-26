@@ -13,7 +13,7 @@ def path_allowed(+path: String, found: Map<&2, Bool> & Bool) -> Bool:
         Bool.or(String.eq(path, "LICENSE"), String.ends_with(path, "/LICENSE")))))
 
 def allowed_path(directory: Map<&2, Bool>, +path: String) -> Bool:
-  path_allowed(path, Map.get(Bool, False{}, directory, path))
+  path_allowed(path, Map.get(Bool, False{}, directory, Bytes.to_string(Json.utf8(path))))
 
 def reject_paths(+approved: Map<&2, Bool>, added: List<&2, String>, +rejected: List<&2, String>) -> List<&2, String>:
   match added:

@@ -28,7 +28,7 @@ export type TracePolicy = {
   note_trace_marker(sessions: unknown, key: SessionKey, marker: { $: "Marker"; line: number; at: number }): unknown;
   trace_sessions(sessions: unknown): List<SessionKey>;
   project_trace(sessions: unknown, key: SessionKey, facts: unknown): TraceResult;
-  trace_wire(key: string, result: TraceResult): TraceWire;
+  trace_wire(key: string, result: TraceResult): unknown;
   empty_trace_choice(): TraceChoice;
   choose_trace(best: TraceChoice, session: number, traceId: string, bounds: TraceWindow, coverage: SessionTiming, count: number):
     TraceChoice;
@@ -38,12 +38,12 @@ type ReasoningRow = { line: number; at: number; resultAt: number; resultCallLine
 type SpanRow = ObservedInterval<Extract<IntervalIdentity, { source: "codex" }>, Span["clock"]> &
   Omit<Measured, "$" | "call" | "parent" | "terminal"> & { parent: string | null; terminal: string | null };
 export type TraceProjection = { bounds: TraceWindow; spans: SpanRow[]; markers: ReasoningRow[]; estimates: ReasoningRow[] };
-export type TraceAttribute = { $: "TextAttribute" | "IntAttribute"; key: string; value: string };
-type TraceEvent = { name: string; time: string; attributes: List<TraceAttribute> };
-type TraceWireSpan = { id: List<string>; parent: Optional<List<string>>; name: string; kind: number; start: string;
-  end: string; attributes: List<TraceAttribute>; events: Optional<List<TraceEvent>> };
-export type TraceWire = { id: List<string>; resource: List<TraceAttribute>; scope: string; spans: List<TraceWireSpan> };
-export type TraceWriter = (key: string, trace: TraceProjection, wire: () => TraceWire) => string;
+type TracePayload = { trace_id: string; payload_bytes: string };
+export type OtlpPolicy = {
+  wire_key_bytes(instance: string, session: string): string;
+  encode(wire: unknown): TracePayload;
+};
+export type TraceWriter = (key: string, trace: TraceProjection, encode: () => TracePayload) => string;
 
 const decode = <T>(value: Optional<T>) => value.$ === "Some" ? value.value : null;
 const encode = <T>(value: SQLOutputValue, convert: (value: SQLOutputValue) => T): Optional<T> =>
@@ -53,7 +53,7 @@ const identity = (row: Record<string, SQLOutputValue>): SessionKey =>
 const reasoning = ({ line, at, result_at, result_call_line }: Reasoning): ReasoningRow =>
   ({ line, at, resultAt: result_at, resultCallLine: result_call_line });
 
-export function writeTraces(source: DatabaseSync, view: DatabaseSync, policy: TracePolicy, timing: ReturnType<typeof collectTiming>,
+export function writeTraces(source: DatabaseSync, view: DatabaseSync, policy: TracePolicy, otlp: OtlpPolicy, timing: ReturnType<typeof collectTiming>,
   writeTrace: TraceWriter) {
   const table = (name: string) => Boolean(source.prepare("SELECT 1 FROM sqlite_schema WHERE name=?").get(name));
   const scan = (sql: string) => source.prepare(sql).iterate();
@@ -119,9 +119,9 @@ export function writeTraces(source: DatabaseSync, view: DatabaseSync, policy: Tr
       identity: { source: "codex", instance: key.instance, session: key.session, call },
     }));
     const { bounds } = result;
-    const wireKey = JSON.stringify([key.instance, key.session]);
+    const wireKey = Buffer.from(otlp.wire_key_bytes(key.instance, key.session), "latin1").toString("utf8");
     const traceId = bounds.from ? writeTrace(wireKey, { bounds, spans, markers, estimates: rows(result.estimates).map(reasoning) },
-      () => policy.trace_wire(wireKey, result)) : null;
+      () => otlp.encode(policy.trace_wire(wireKey, result))) : null;
     windows.run(session, traceId, bounds.from || null, bounds.from ? bounds.to : null, spans.length);
     choice = policy.choose_trace(choice, session, traceId ?? "", bounds, result.coverage, result.reasoning_count);
   }

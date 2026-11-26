@@ -1,4 +1,8 @@
 import Base
+import ./rules.bend as Rules
+
+def valid_tree_pair(from: String, to: String) -> Bool:
+  Rules.valid_tree_pair(from, to)
 
 type TreeEntry is Data:
   Entry{mode: String, kind: String, path: String}
