@@ -145,7 +145,7 @@ export function dashboards(range: Range) {
   const trace = board("barnacles-trace", "Barnacles · Rollout waterfall",
     first ? new Date(first.from).toISOString() : from, first ? new Date(first.to).toISOString() : to, [
       block(1, "Local Codex evidence", [0, 0, 24, 3],
-        "Dashed lines mark when Codex recorded reasoning. The duration is unknown."),
+        "Dashed lines mark reasoning events. Duration unknown."),
       data(2, "state-timeline", "Spans in the selected window", [0, 3, 24, 14],
         `SELECT started / 1000.0 AS time, ended / 1000.0 AS timeEnd, lane AS "Lane", clock AS "Clock"
           FROM trace WHERE CAST(session AS TEXT) = ${session} AND ended IS NOT NULL
