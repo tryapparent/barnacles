@@ -1,11 +1,19 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 
-import type { ActionAttempt, AttemptIdentity } from "../../evidence/index.ts";
+import type { ActionAttempt, AttemptIdentity, List } from "../../evidence/index.ts";
+import { bendList } from "../wire.ts";
+
+type Inventory = { $: "More" | "Complete" | "Invalid" | "Duplicate" | "Partial" };
 type Json = Record<string, unknown>;
 type MatchIdentity = (run: string, attempt: string, sha: string,
   expectedRun: string, expectedAttempt: string, expectedSha: string) => boolean;
 export type ClockPolicy = {
+  valid_repository(value: string): boolean;
+  empty_inventory(): Inventory;
+  valid_job_page(previous: Inventory, expected: string, size: number, arraySeen: boolean): boolean;
+  job_page(previous: Inventory, expected: string, total: number, page: number, size: number, ids: List<string>): Inventory;
+  unique_steps(ids: List<string>): boolean;
   attempt_matches: MatchIdentity;
   job_matches: (...args: [...Parameters<MatchIdentity>, missingAttempt: boolean]) => boolean;
   job_clocks: (created: number, started: number, completed: number, status: string,
@@ -79,10 +87,8 @@ export function wireCount(value: unknown): number {
   return value;
 }
 
-export function checkRepository(repository: string) {
-  if (!/^[\w.-]+\/[\w.-]+$/.test(repository) || repository.split("/").some((part) => part === "." || part === "..")) {
-    throw new Error("Expected owner/repository");
-  }
+export function checkRepository(repository: string, policy: ClockPolicy) {
+  if (!policy.valid_repository(repository)) throw Error("Expected owner/repository");
 }
 
 export function fullSha(value: unknown): string {
@@ -116,7 +122,7 @@ function normalizeJob(job: Json, firstAttempt: boolean, policy: ClockPolicy) {
     return { number, label: policy.step_label(label, wireText(step.name)), status, conclusion,
       start: known ? start : null, end: known ? end : null };
   });
-  if (!policy.same_count(steps.length, new Set(steps.map((step) => step.number)).size)) {
+  if (!policy.unique_steps(bendList(steps.map(({ number }) => String(number))))) {
     throw new Error("Duplicate GitHub step number");
   }
   return {
@@ -140,31 +146,28 @@ function inventoryDigest(jobs: Map<number, Json>): string {
 
 function readJobs(path: string, policy: ClockPolicy, read: typeof readGitHub) {
   const jobs = new Map<number, Json>();
-  let total: number | undefined;
-  for (let page = 1; page <= 10; page++) {
+  let state = policy.empty_inventory();
+  for (let page = 1; state.$ === "More"; page++) {
     const response = object(read(`${path}/jobs?per_page=100&page=${page}`));
     const count = wireCount(response.total_count);
-    total ??= count;
-    const offset = (page - 1) * 100;
-    if (!Array.isArray(response.jobs) || !policy.same_count(count, total) ||
-        !policy.page_matches(total, offset, response.jobs.length)) {
+    const rows = Array.isArray(response.jobs) ? response.jobs.map(object) : null;
+    const expectedCount = String(count);
+    if (!policy.valid_job_page(state, expectedCount, rows?.length ?? 0, rows !== null) ||
+        !policy.page_matches(count, (page - 1) * 100, rows?.length ?? 0)) {
       throw new Error("Partial or changing GitHub job inventory. No evidence was written.");
     }
-    for (const item of response.jobs) {
-      const job = object(item);
-      jobs.set(positiveInt(job.id), job);
-    }
-    if (!policy.same_count(offset + response.jobs.length, jobs.size)) {
-      throw new Error("Duplicate GitHub job ID");
-    }
-    if (policy.same_count(jobs.size, total)) return jobs;
+    const ids = rows!.map((job) => positiveInt(job.id));
+    state = policy.job_page(state, expectedCount, count, page, ids.length, bendList(ids.map(String)));
+    if (state.$ === "Duplicate") throw new Error("Duplicate GitHub job ID");
+    rows!.forEach((job, index) => jobs.set(ids[index], job));
+    if (state.$ === "Complete") return jobs;
   }
   throw new Error("Partial GitHub job inventory. No evidence was written.");
 }
 
 export function collectAttempt(identity: AttemptIdentity, policy: ClockPolicy, read = readGitHub): ActionAttempt {
   const { repository, runId, attempt, sha } = identity;
-  checkRepository(repository);
+  checkRepository(repository, policy);
   fullSha(sha);
   positiveInt(runId);
   positiveInt(attempt);
@@ -207,7 +210,7 @@ export function collectAttempt(identity: AttemptIdentity, policy: ClockPolicy, r
 
 export function collectWindow(repository: string, from: string, to: string, maxPages: number, maxAttempts: number,
   policy: ClockPolicy, read = readGitHub) {
-  checkRepository(repository);
+  checkRepository(repository, policy);
   const start = clock(from);
   const end = clock(to);
   if (!policy.window_valid(start, end, wireCount(maxPages), wireCount(maxAttempts))) {

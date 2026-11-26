@@ -15,8 +15,7 @@ function Gauge({ comparison }: { comparison: Review["cycleComparison"] }) {
   const bound = Math.max(20, Math.ceil(Math.abs(deltaSeconds ?? 0) / 3600 / 10) * 10);
   const amount = Math.abs(deltaSeconds ?? 0) / (bound * 3600);
   const negative = comparison.direction === "Gardening";
-  const signed = deltaSeconds === null ? "Unknown" :
-    deltaSeconds === 0 ? "0 s" : (deltaSeconds > 0 ? "+" : "−") + duration(deltaSeconds);
+  const label = duration(deltaSeconds, true);
   const segmentCount = 15;
   const blocks = Array.from({ length: segmentCount }, (_, index) => {
     const start = index * 6 + .65;
@@ -41,9 +40,9 @@ function Gauge({ comparison }: { comparison: Review["cycleComparison"] }) {
         </pattern></defs>
         {blocks}<path className="center-tick" d="M120 2v24" />
       </svg>
-      <span className="readout">{signed}</span>
+      <span className="readout" style={{ "--label-length": label.length } as CSSProperties}>{label}</span>
       <div className="scale" aria-hidden="true">
-        <span>+{bound} h</span><span>0</span><span>−{bound} h</span>
+        <span>{duration(bound * 3600, true)}</span><span>{duration(0)}</span><span>{duration(-bound * 3600, true)}</span>
         <span>Gardening</span><span /><span>Shipping</span>
       </div>
     </div>
@@ -304,15 +303,15 @@ function DailyColumns({ days, window }: { days: DeliveryDay[]; window: Review["w
   const byDate = new Map(stacks.map((stack) => [stack.day.startsAt, stack]));
   const detail = selected === null ? undefined : byDate.get(selected)?.day;
   const longest = Math.max(...stacks.map(({ height }) => height));
-  const step = longest >= 3600 ? 1800 : longest >= 60 ? 30 : 1;
-  const scale = Math.max(2, Math.ceil(longest / (2 * step))) * 2 * step;
+  const step = longest >= 3600 ? 1800 : 60;
+  const scale = Math.max(1, Math.ceil(longest / (2 * step))) * 2 * step;
   return <>
     <p className="fine daily-intro">Publication day (UTC). Gaps have no verified shipments in this window.
       Select a column for stage means and counts.</p>
     <StageKey />
     <div className="daily-figure">
       <div className="daily-axis" aria-hidden="true">
-        <span>{duration(scale)}</span><span>{duration(scale / 2)}</span><span>0 s</span>
+        <span>{duration(scale)}</span><span>{duration(scale / 2)}</span><span>{duration(0)}</span>
       </div>
       <div className="daily-scroll" role="region" aria-label="Daily duration columns" tabIndex={0}>
         <div className="daily-columns" data-dense={count > 5} style={{ "--daily-count": count } as CSSProperties}>
@@ -336,7 +335,7 @@ function DailyColumns({ days, window }: { days: DeliveryDay[]; window: Review["w
                       style={{ height: `${100 * mean / stack.height}%` }} title={`${name} · ${duration(mean)}`} /> : null;
                   })}
                 </span> : <span className="daily-zero" aria-hidden="true"
-                  title={stack.day.stages.some(({ meanSeconds }) => meanSeconds === 0) ? "0 s measured" : "Stage times unknown"} />}
+                  title={stack.day.stages.some(({ meanSeconds }) => meanSeconds === 0) ? `${duration(0)} measured` : "Stage times unknown"} />}
               </button> : <span className="daily-gap" title={`${label} · No verified shipments`} />}
               {tick && <time className="daily-tick" dateTime={date} aria-hidden="true">{dayLabel(date)}</time>}
             </div>;

@@ -1,4 +1,5 @@
 import Base
+import ../repository.bend as Repository
 
 type Sample is Data:
   Stats{count: Nat, total: Nat, missing: Nat}
@@ -231,21 +232,49 @@ def timing_observe(groups: TimingGroups, raw_clock: String, workflow: Nat, name:
     TimingGroups:
   timing_add(groups, interval_clock(raw_clock), workflow, name, "", start, end)
 
-def timing_codex_category(groups: TimingGroups, raw_clock: String, category: Operation, start: Nat, end: Nat) -> TimingGroups:
-  match category:
-    case Category{name}: timing_observe(groups, raw_clock, 0n, name, start, end)
-    case MixedCommand{name, group}: timing_add(groups, interval_clock(raw_clock), 0n, name, group, start, end)
+def timing_action_job(groups: TimingGroups, +workflow: Nat, +name: String, created: Nat, queued: Nat,
+                      started: Nat, ended: Nat) -> TimingGroups:
+  timing_observe(timing_observe(groups, "ci_queue", workflow, name, created, queued),
+    "ci_execution", workflow, name, started, ended)
 
-def timing_codex(groups: TimingGroups, raw_clock: String, categories: String, start: Nat, end: Nat) -> TimingGroups:
-  timing_codex_category(groups, raw_clock, observed_category(categories), start, end)
+def timing_action_step(groups: TimingGroups, workflow: Nat, name: String, started: Nat, ended: Nat) -> TimingGroups:
+  timing_observe(groups, "ci_step", workflow, name, started, ended)
 
 def timing_before(left: TimingRow, right: TimingRow) -> Bool:
   match left right:
     case Timing{a, ac, aw, ao, Stats{an, x, am}} Timing{b, bc, bw, bo, Stats{bn, y, bm}}:
       ranks_before(x, a, y, b)
 
+def sort_merge_pass(~A: Data, ~before: A -> A -> Bool, +size: Nat, runs: List<&2, List<&2, A>>,
+                    output: List<&2, List<&2, A>>) -> List<&2, List<&2, A>>:
+  match runs:
+    case []: List.reverse(&2, List<&2, A>, output)
+    case [run]: List.reverse(&2, List<&2, A>, run <> output)
+    case first <> second <> tail:
+      sort_merge_pass(~A, ~before, size, tail, List.merge.go(~A, ~before, size, ([], first, second)) <> output)
+
+def sort_merge_runs(~A: Data, ~before: A -> A -> Bool, fuel: Nat, +size: Nat, runs: List<&2, List<&2, A>>) ->
+    List<&2, A>:
+  match fuel:
+    case 0n: List.concat(&2, A, runs)
+    case 1n+remaining:
+      match runs:
+        case []: []
+        case [run]: run
+        case _:
+          sort_merge_runs(~A, ~before, remaining, size, sort_merge_pass(~A, ~before, size, runs, []))
+
+def sort_runs(~A: Data, ~before: A -> A -> Bool, input: List<&2, A>, +size: Nat,
+              runs: List<&2, List<&2, A>>) -> List<&2, A>:
+  match input:
+    case []: sort_merge_runs(~A, ~before, size, size, List.reverse(&2, List<&2, A>, runs))
+    case item <> tail: sort_runs(~A, ~before, tail, Nat.add(size, 1n), [item] <> runs)
+
+def sort_timing(~A: Data, ~before: A -> A -> Bool, input: List<&2, A>) -> List<&2, A>:
+  sort_runs(~A, ~before, input, 0n, [])
+
 def timing_rank(groups: Map<&2, TimingRow>) -> List<&2, TimingRow>:
-  List.sort(~TimingRow, ~timing_before, Map.values(&2, TimingRow, groups))
+  sort_timing(~TimingRow, ~timing_before, Map.values(&2, TimingRow, groups))
 
 def timing_result(groups: TimingGroups) -> TimingResult:
   match groups:
@@ -264,6 +293,126 @@ def session_timing_observe(state: SessionTiming, clock: String, +start: Nat, +en
       Bool.pick(SessionTiming, String.eq(clock, "async_cell"),
         SessionTiming{envelopes, record_interval(cells, start, end)},
         SessionTiming{record_interval(envelopes, start, end), cells})
+
+type StageSummary is Data:
+  StageSummary{name: String, stats: Sample}
+
+type WeekSummary is Data:
+  WeekSummary{week: Nat, summary: ShippingSample}
+
+type ShippingReport is Data:
+  ShippingReport{delivery: ShippingSample, weeks: Map<&2, WeekSummary>, stages: List<&2, StageSummary>, earliest: Maybe<&2, Nat>}
+
+type ReleaseClocks is Data:
+  ReleaseClocks{thread: Nat, commit: Nat, opened: Nat, ci: Nat, merged: Nat, dispatch: Nat, published: Nat, checked: Nat}
+
+type Milestone is Data:
+  Milestone{ordinal: U32, name: String, clock: Nat, elapsed: CycleStage}
+
+type Shipment is Data:
+  Unpublished{report: ShippingReport}
+  Published{report: ShippingReport, milestones: List<&2, Milestone>}
+
+type ShippingSummary is Data:
+  ShippingSummary{delivery: ShippingSample, weeks: List<&2, WeekSummary>, stages: List<&2, StageSummary>,
+    from: Nat, prior_week: Nat, recent_week: Nat, prior: Sample, recent: Sample, direction: Direction}
+
+def empty_shipping_sample() -> ShippingSample:
+  Delivery{0n, Stats{0n, 0n, 0n}}
+
+def initial_stages(stages: List<&2, DeliveryStage>) -> List<&2, StageSummary>:
+  match stages:
+    case []: []
+    case Stage{ending, name, value} <> tail:
+      StageSummary{name, Stats{0n, 0n, 0n}} <> initial_stages(tail)
+
+def empty_shipping_report() -> ShippingReport:
+  ShippingReport{empty_shipping_sample(), Map.new(&2, WeekSummary),
+    initial_stages(delivery_stages(0n, 0n, 0n, 0n, 0n, 0n, 0n, False{})), None{}}
+
+def stage_summaries(summaries: List<&2, StageSummary>, stages: List<&2, DeliveryStage>) -> List<&2, StageSummary>:
+  match summaries:
+    case []: []
+    case StageSummary{name, stats} <> tail:
+      match stages:
+        case []: []
+        case Stage{ending, stage_name, value} <> rest:
+          StageSummary{name, count_cycle_stage(stats, value)} <> stage_summaries(tail, rest)
+
+def shipment_week_record(found: Map<&2, WeekSummary> & WeekSummary, key: String, linked: Bool, elapsed: Nat) ->
+    Map<&2, WeekSummary>:
+  match found:
+    case (table, WeekSummary{when, sample}):
+      Map.set(&2, WeekSummary, table, key, WeekSummary{when, record_release(sample, linked, elapsed)})
+
+def shipment_week(weeks: Map<&2, WeekSummary>, +epoch: Nat, linked: Bool, elapsed: Nat) -> Map<&2, WeekSummary>:
+  +key = Nat.show(epoch)
+  shipment_week_record(Map.get(WeekSummary, WeekSummary{epoch, empty_shipping_sample()}, weeks, key), key, linked, elapsed)
+
+def earlier(earliest: Maybe<&2, Nat>, epoch: Nat) -> Nat:
+  match earliest:
+    case None{}: epoch
+    case Some{when}: Nat.min(when, epoch)
+
+def shipment_summary(report: ShippingReport, +published: Nat, +linked: Bool, +elapsed: Nat,
+                      stages: List<&2, DeliveryStage>) -> ShippingReport:
+  match report:
+    case ShippingReport{delivery, weeks, summaries, +earliest}:
+      +epoch = week(published)
+      ShippingReport{record_release(delivery, linked, elapsed), shipment_week(weeks, epoch, linked, elapsed),
+        stage_summaries(summaries, stages), Some{earlier(earliest, epoch)}}
+
+def milestone_elapsed(+ordinal: U32, stages: List<&2, DeliveryStage>) -> CycleStage:
+  match stages:
+    case []: Missing{}
+    case Stage{ending, name, value} <> tail:
+      Bool.pick(CycleStage, U32.is_eq(ordinal, ending), value, milestone_elapsed(ordinal, tail))
+
+def release_milestones(clocks: ReleaseClocks, +stages: List<&2, DeliveryStage>) -> List<&2, Milestone>:
+  match clocks:
+    case ReleaseClocks{thread, commit, opened, ci, merged, dispatch, published, checked}:
+      Milestone{0, "Thread started", thread, Missing{}} <>
+      Milestone{1, "First commit", commit, milestone_elapsed(1, stages)} <>
+      Milestone{2, "PR opened", opened, milestone_elapsed(2, stages)} <>
+      Milestone{3, "First PR CI", ci, milestone_elapsed(3, stages)} <>
+      Milestone{4, "PR merged", merged, milestone_elapsed(4, stages)} <>
+      Milestone{5, "Release dispatch", dispatch, milestone_elapsed(5, stages)} <>
+      Milestone{6, "Shipped", published, milestone_elapsed(6, stages)} <>
+      Milestone{7, "Access verified", checked, Missing{}} <> []
+
+def shipping_observe_release(report: ShippingReport, +clocks: ReleaseClocks, published: Nat,
+                              +linked: Bool, elapsed: Nat) -> Shipment:
+  match clocks:
+    case ReleaseClocks{thread, commit, opened, ci, merged, dispatch, ship, checked}:
+      +stages = delivery_stages(thread, commit, opened, ci, merged, dispatch, ship, linked)
+      Published{shipment_summary(report, published, linked, elapsed, stages), release_milestones(clocks, stages)}
+
+def shipping_choice(visible: Bool, report: ShippingReport, published: Nat,
+                     clocks: ReleaseClocks, linked: Bool, elapsed: Nat) -> Shipment:
+  match visible:
+    case True{}: shipping_observe_release(report, clocks, published, linked, elapsed)
+    case False{}: Unpublished{report}
+
+def shipping_observe(report: ShippingReport, surface: String, +published: Nat,
+                     clocks: ReleaseClocks, linked: Bool, elapsed: Nat) -> Shipment:
+  shipping_choice(visible_release(surface, published), report, published, clocks, linked, elapsed)
+
+def week_cycles(found: Map<&2, WeekSummary> & WeekSummary) -> Sample:
+  match found:
+    case (table, WeekSummary{when, Delivery{shipped, cycles}}): cycles
+
+def shipping_cycles(weeks: Map<&2, WeekSummary>, +epoch: Nat) -> Sample:
+  week_cycles(Map.get(WeekSummary, WeekSummary{epoch, empty_shipping_sample()}, weeks, Nat.show(epoch)))
+
+def shipping_result(report: ShippingReport, cutoff: Nat) -> ShippingSummary:
+  match report:
+    case ShippingReport{delivery, +weeks, stages, +earliest}:
+      +recent = previous_week(cutoff)
+      +prior = previous_week(recent)
+      +a = shipping_cycles(weeks, prior)
+      +b = shipping_cycles(weeks, recent)
+      +from = earlier(earliest, prior)
+      ShippingSummary{delivery, Map.values(&2, WeekSummary, weeks), stages, from, prior, recent, a, b, direction(b, a)}
 
 type WindowedInterval is Data:
   Outside{}
@@ -320,9 +469,6 @@ def source_position(window: Focus, +latest: Nat) -> String:
 
 def timing_clocks() -> List<&2, String>:
   ["Tool envelopes", "Async cells", "CI queue", "CI execution", "CI steps"]
-
-def starts_before(left: Nat, right: Nat) -> Bool:
-  Nat.is_lt(left, right)
 
 type WindowRow is Data:
   WindowRow{key: String, clock: String, workflow: Nat, operation: String, occupancy: Occupancy}
@@ -387,17 +533,16 @@ def one_process_purpose(parts: List<&2, String>) -> String:
     case name <> []: name
     case _: ""
 
+def string_in(+value: String, allowed: List<&2, String>) -> Bool:
+  match allowed:
+    case []: False{}
+    case head <> rest: Bool.or(String.eq(value, head), string_in(value, rest))
+
 def process_purpose(+category: String) -> String:
-  match category:
-    case "Exact GitHub watcher request": "GitHub Actions"
-    case "GitHub watcher with incomplete identity": "GitHub Actions"
-    case "Unknown": ""
-    case "Unknown tool": ""
-    case "Unknown script": ""
-    case "Unknown command": ""
-    case "Cell wait": ""
-    case "Process I/O": ""
-    case _: one_process_purpose(String.split(category, '+'))
+  watcher = string_in(category, ["Exact GitHub watcher request", "GitHub watcher with incomplete identity"])
+  unresolved = string_in(category, ["Unknown", "Unknown tool", "Unknown script", "Unknown command", "Cell wait", "Process I/O"])
+  Bool.pick(String, watcher, "GitHub Actions",
+    Bool.pick(String, unresolved, "", one_process_purpose(String.split(category, '+'))))
 
 def process_label(+purpose: String, waiting: Bool) -> String:
   match waiting:
@@ -435,13 +580,88 @@ def window_before(left: WindowRow, right: WindowRow) -> Bool:
       ranks_before(x, a, y, b)
 
 def rank_window_rows(table: Map<&2, WindowRow>) -> List<&2, WindowRow>:
-  List.sort(~WindowRow, ~window_before, Map.values(&2, WindowRow, table))
+  sort_timing(~WindowRow, ~window_before, Map.values(&2, WindowRow, table))
 
 def summarize_window(groups: WindowGroups) -> WindowSummary:
   match groups:
     case WindowGroups{clocks, ops, flows, totals, mixed}:
       WindowSummary{rank_window_rows(clocks), rank_window_rows(ops), rank_window_rows(flows),
         rank_window_rows(totals), rank_window_rows(mixed)}
+
+type TimingSelector is Data:
+  Selector{workflow: String, operation: String}
+
+def window_has_mixed(groups: List<&2, WindowRow>, +clock: String) -> Bool:
+  match groups:
+    case []: False{}
+    case WindowRow{key, label, workflow, operation, occupancy} <> tail:
+      Bool.or(String.eq(label, clock), window_has_mixed(tail, clock))
+
+def operation_selectors(+workflow: String, +operation: String, exact: Bool) -> List<&2, TimingSelector>:
+  +all : List<&2, TimingSelector> = [Selector{workflow, "*"}, Selector{workflow, "All operations"}]
+  reserved = Bool.or(String.eq(operation, "*"), String.eq(operation, "All operations"))
+  Bool.pick(List<&2, TimingSelector>, Bool.and(exact, Bool.not(reserved)), Selector{workflow, operation} <> all, all)
+
+def window_operation_selectors(row: WindowRow, groups: List<&2, WindowRow>, total: Bool) -> List<&2, TimingSelector>:
+  match row:
+    case WindowRow{key, clock, workflow, +operation, occupancy}:
+      operation_selectors(Bool.pick(String, total, "*", Nat.show(workflow)), operation,
+        Bool.not(Bool.and(String.eq(operation, "Mixed"), window_has_mixed(groups, clock))))
+
+def window_mixed_selectors(row: WindowRow) -> List<&2, TimingSelector>:
+  match row:
+    case WindowRow{key, clock, workflow, +operation, occupancy}:
+      [Selector{"*", "Mixed"}, Selector{"0", "Mixed"}, Selector{"*", operation}, Selector{"0", operation}]
+
+type TimingSpan is Data:
+  TimingSpan{clock: String, workflow: Nat, operation: String, start: Nat, end: Nat, codex: Bool}
+
+type WindowReport is Data:
+  WindowReport{key: String, bounds: Focus, summary: WindowSummary}
+
+def empty_window_spans() -> List<&2, TimingSpan>:
+  []
+
+def window_action_job(spans: List<&2, TimingSpan>, +workflow: Nat, +name: String, created: Nat, queued: Nat,
+                      started: Nat, ended: Nat) -> List<&2, TimingSpan>:
+  TimingSpan{"ci_execution", workflow, name, started, ended, False{}} <>
+    TimingSpan{"ci_queue", workflow, name, created, queued, False{}} <> spans
+
+def window_action_step(spans: List<&2, TimingSpan>, workflow: Nat, name: String, started: Nat, ended: Nat) ->
+    List<&2, TimingSpan>:
+  TimingSpan{"ci_step", workflow, name, started, ended, False{}} <> spans
+
+def window_codex_span(spans: List<&2, TimingSpan>, clock: String, categories: String, attribution: ProcessAttribution, start: Nat, end: Nat) ->
+    List<&2, TimingSpan>:
+  TimingSpan{clock, 0n, timing_codex_operation(categories, attribution), start, end, True{}} <> spans
+
+def window_span_before(left: TimingSpan, right: TimingSpan) -> Bool:
+  match left right:
+    case TimingSpan{a, b, c, start, d, e} TimingSpan{f, g, h, other_start, i, j}:
+      Nat.is_lt(start, other_start)
+
+def window_group_spans(spans: List<&2, TimingSpan>, +bounds: Focus, state: WindowGroups) -> WindowSummary:
+  match spans:
+    case []: summarize_window(state)
+    case TimingSpan{clock, workflow, operation, start, end, codex} <> tail:
+      window_group_spans(tail, bounds, window_observe(state, bounds, clock, workflow, operation, start, end, codex))
+
+def window_reports_for(windows: List<&2, TimingWindow>, +spans: List<&2, TimingSpan>) -> List<&2, WindowReport>:
+  match windows:
+    case []: []
+    case TimingWindow{key, +bounds} <> tail:
+      WindowReport{key, bounds, window_group_spans(spans, bounds, start_window_groups())} <> window_reports_for(tail, spans)
+
+def window_reports(spans: List<&2, TimingSpan>, cutoff: Nat) -> List<&2, WindowReport>:
+  window_reports_for(timing_windows(cutoff), sort_timing(~TimingSpan, ~window_span_before, spans))
+
+def measured_union(occupancy: Occupancy) -> Ratio:
+  match occupancy:
+    case Occupied{Stats{count, total, missing}, union, latest_end, unplaced}:
+      Fraction{union, Nat.min(1n, count)}
+
+def repository_name(value: String) -> String:
+  Repository.normalized(value)
 
 type ReviewFact is Data:
   ReviewPR{pr: Nat, release: Bool, thread: Nat, commit: Nat, opened: Nat, ci: Nat, merged: Nat,
@@ -475,13 +695,8 @@ def review_clock_options() -> List<&2, String>:
 def review_timing_window() -> String:
   "24h"
 
-def review_clock_in(+clock: String, allowed: List<&2, String>) -> Bool:
-  match allowed:
-    case []: False{}
-    case head <> rest: Bool.or(String.eq(clock, head), review_clock_in(clock, rest))
-
 def review_clock_valid(clock: String) -> Bool:
-  review_clock_in(clock, review_clock_options())
+  string_in(clock, review_clock_options())
 
 def review_operation_matches(selection: String, all: Bool, name: String) -> Bool:
   Bool.or(all, String.eq(selection, name))

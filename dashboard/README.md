@@ -66,3 +66,34 @@ Choose a **Session** and select a span to see its clock, source line, and any re
 Open the recorded session window's **Events** to inspect reasoning observations. Their durations are unknown.
 **Estimated model wait** shows the gap from a tool result to an immediately following reasoning item when retained tool activity leaves the gap clear. The gap can include harness delays, network time, provider queueing and inference. Select the span for the source lines. Estimates appear only in the waterfall and are excluded from measured totals. Reimport older rollouts and rebuild the snapshot to add estimates.
 The tables below the waterfall show completed operations, timestamped reasoning, and spans with missing clocks. Reimport older rollouts to add command details.
+
+## Snapshot policy
+
+The snapshot runs the compiled Bend2 projections in `evidence/projection/`. The
+shipping policy groups observed releases by UTC week, counts missing clocks per
+delivery stage, and assembles milestones. The trace policy joins optional labels
+and reasoning provenance by the source instance and session, projects parent
+spans and model-wait estimates, and ranks the default session. The timing policy expands Actions jobs into queue and execution intervals,
+orders all intervals by start, and builds the ranked reports for both windows.
+Its merge passes use tail recursion because the pinned Bend2 list sort
+exhausts the JavaScript call stack on large imports.
+It projects the timing detail selectors before Grafana binds the chosen clock,
+workflow, and operation, including the **Mixed** drilldown.
+
+The existing host paths `evidence/projection/snapshot.ts`,
+`evidence/projection/timing.ts`, `evidence/projection/trace.ts`, and
+`evidence/report-actions.ts` read SQLite, pass decoded rows and opaque state to
+Bend2, and encode rows and JSON for consumers. The raw trace read uses the
+existing `codex_spans` storage view. The Actions and T3 reads resolve foreign
+keys to retrieve recorded workflow and thread fields. The dashboard adapter
+keeps Grafana provisioning and parameter binding in `dashboard/panels.ts` and
+writes the OTLP NDJSON from `dashboard/prepare.ts`. Bend2 applies SHA-256,
+builds the OTLP JSON fields, and produces UTF-8 bytes with the existing stable
+trace IDs. [OTLP policy](../evidence/projection/otlp.bend).
+
+Run `npm run verify -- evidence dashboard` to exercise the compiled policies
+through snapshot preparation and the Actions report CLI with synthetic evidence.
+The dashboard fixture covers Mixed selectors, incomplete clocks, a reasoning-only
+session, and a source without optional trace metadata. The timing fixture
+checks that 20,000 CI steps with overlapping clocks produce the expected
+summed and union durations.

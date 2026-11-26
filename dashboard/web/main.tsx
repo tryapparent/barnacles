@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties, type FormEvent, type M
 import { createRoot } from "react-dom/client";
 import {
   dayLabel, deliveryPage, fetchEvidence, milestoneLabel, pagePath,
-  shippingPath, stageLabel, stages, utcLabel, wholeMinutes, type Detail, type Milestone, type Review,
+  shippingPath, stageLabel, stages, utcLabel, durationMillis, type Detail, type Milestone, type Review,
 } from "./api";
 import { DailyStages, Overview, StageKey } from "./visual/charts";
 import { Button, NativeSelect } from "./controls";
@@ -67,7 +67,7 @@ function Waterfall({ milestones }: { milestones: Milestone[] }) {
           <span className="waterfall-plot" aria-hidden="true">
             <span className="waterfall-fill" data-point={width <= 0} style={{ "--position": `${end - width}%`, "--duration": `${width}%` } as CSSProperties} />
           </span>
-          <span className="waterfall-duration">{item.elapsedMillis === null ? <span className="sr-only">Interval unknown</span> : wholeMinutes(item.elapsedMillis)}</span>
+          <span className="waterfall-duration">{item.elapsedMillis === null ? <span className="sr-only">Interval unknown</span> : durationMillis(item.elapsedMillis)}</span>
         </li>;
       })}
     </ol>
@@ -205,9 +205,10 @@ function DeliveryTimeline({ review, selection }: { review: Review; selection: { 
             </span>
             <span className="thread-bar" aria-hidden="true">{measured.length ? measured.map((entry) => {
               const elapsed = entry.elapsedMillis;
+              const label = durationMillis(elapsed);
               return <span key={entry.key} className={`stage-segment ${phaseClass(entry)}`}
                 style={{ width: `${rowWidth * elapsed / total}%` }}
-                title={`${milestoneLabel(entry.key)} · ${wholeMinutes(elapsed)}`}><span>{wholeMinutes(elapsed)}</span></span>;
+                title={`${milestoneLabel(entry.key)} · ${label}`}><span>{label}</span></span>;
             }) : <span className="thread-unmeasured">—</span>}</span>
           </summary>
           {selected === item.number ? <PullRequestEvidence path={item.detailPath} milestones={item.milestones} /> :

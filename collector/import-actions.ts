@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { actionsWaitCapturePlan, loadEvidence } from "../evidence/index.ts";
-import { buildPolicy, loadPolicy } from "../tooling/bend.ts";
+import { actionsWaitCapturePlan, admissionPolicy, loadEvidence, type AdmissionPolicy } from "../evidence/index.ts";
+import { buildPolicies, loadPolicy } from "../tooling/bend.ts";
 import { checkRepository, clock, collectAttempt, collectWindow, positiveInt, type ClockPolicy } from "./github/attempt.ts";
 
 async function main() {
@@ -17,11 +17,15 @@ async function main() {
   }
   const scratch = mkdtempSync(join(resolve(directory), "build-"));
   try {
-    const source = await buildPolicy(scratch, new URL("./github/clocks.bend", import.meta.url), "clocks.mjs");
+    const [source, admissionFile] = await buildPolicies(scratch, [
+      [new URL("./github/clocks.bend", import.meta.url), "clocks.mjs"],
+      [admissionPolicy, "admission.mjs"],
+    ]);
+    const admission = await loadPolicy<AdmissionPolicy>(admissionFile);
     const policy = await loadPolicy<ClockPolicy>(source);
     const database = join(resolve(directory), "evidence.sqlite");
     if (waitMode) {
-      checkRepository(repository);
+      checkRepository(repository, policy);
       const start = clock(args[0]);
       const end = clock(args[1]);
       const limit = positiveInt(args[2]);
@@ -30,7 +34,7 @@ async function main() {
       }
       const plan = await actionsWaitCapturePlan(database, scratch, repository, { start: start * 1000, end: end * 1000 }, limit);
       const attempts = plan.attempts.map((identity) => collectAttempt(identity, policy));
-      if (attempts.length) loadEvidence(database, { source: "github-actions-window", attempts });
+      if (attempts.length) loadEvidence(database, { source: "github-actions-window", attempts }, admission);
       console.log(JSON.stringify({ sourceAvailable: plan.sourceAvailable, missingBeforeCapture: plan.missing, captured: attempts.length }));
       return;
     }
@@ -39,7 +43,7 @@ async function main() {
       : { attempts: [collectAttempt({
         repository, runId: positiveInt(mode), attempt: positiveInt(args[0]), sha: args[1],
       }, policy)], coverage: null };
-    loadEvidence(database, { source: "github-actions-window", attempts });
+    loadEvidence(database, { source: "github-actions-window", attempts }, admission);
     console.log(coverage ? JSON.stringify(coverage)
       : `Imported attempt ${attempts[0].attempt} with ${attempts[0].jobs.length} jobs into evidence.sqlite`);
   } finally {
