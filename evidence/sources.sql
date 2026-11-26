@@ -61,10 +61,22 @@ CREATE TABLE IF NOT EXISTS github_releases (
   PRIMARY KEY (repository, release_id, channel)
 ) STRICT;
 
+CREATE TABLE IF NOT EXISTS github_pr_ci (
+  repository TEXT NOT NULL, pr_number INTEGER NOT NULL, run_id INTEGER NOT NULL, started_at INTEGER NOT NULL,
+  PRIMARY KEY (repository, pr_number),
+  FOREIGN KEY (repository, pr_number) REFERENCES github_prs
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS github_asset_checks (
   repository TEXT NOT NULL, release_id INTEGER NOT NULL, channel TEXT NOT NULL, checked_at INTEGER NOT NULL,
   asset_id INTEGER, http_status INTEGER, bytes INTEGER, accessible INTEGER NOT NULL,
   PRIMARY KEY (repository, release_id, channel, checked_at),
+  FOREIGN KEY (repository, release_id, channel) REFERENCES github_releases
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS github_release_dispatch (
+  repository TEXT NOT NULL, release_id INTEGER NOT NULL, channel TEXT NOT NULL, run_id INTEGER NOT NULL, created_at INTEGER NOT NULL,
+  PRIMARY KEY (repository, release_id, channel),
   FOREIGN KEY (repository, release_id, channel) REFERENCES github_releases
 ) STRICT;
 

@@ -70,6 +70,7 @@ export function dashboards(range: Range) {
   const from = new Date(range.from * 1000).toISOString();
   const to = new Date((range.to + 1) * 1000).toISOString();
   const timestamps = ["PR opened", "Merged", "Published", "Access checked"];
+  const cyclePR = "${cycle_pr:sqlstring}";
   const shipping = board("barnacles-shipping", "Barnacles · Shipping review", from, to, [
     block(1, "Linux Main · x86_64", [0, 0, 9, 3],
       "Verified AppImage releases in the imported sample."),
@@ -98,21 +99,41 @@ export function dashboards(range: Range) {
       'SELECT pr_count AS "PRs observed", shipped AS "Access verified", linked AS "Thread linked" FROM coverage',
       { reduceOptions, colorMode: "none", graphMode: "none", justifyMode: "center" },
       { color: { mode: "fixed", fixedColor: ink } }),
-    data(8, "table", "Recently shipped", [0, 20, 24, 7],
+    block(11, "Delivery cycle time", [0, 20, 24, 3],
+      "Choose a PR for details. Coverage shows measured shipments."),
+    data(12, "table", "Time by stage", [0, 23, 12, 12],
+      `SELECT name AS "Stage", mean_seconds AS "Mean", observed || ' / ' || (SELECT shipped FROM coverage) AS "Coverage"
+        FROM delivery_stages ORDER BY ordinal`,
+      { showHeader: true, enablePagination: true }, { noValue: "—", custom: { minWidth: 55 } }, [
+        byName("Stage", { id: "custom.wrapText", value: true }),
+        byName("Mean", unit("dthms"), width(86)), byName("Coverage", width(78)),
+      ], [], "Coverage is shipments with both clocks in order out of all imported shipments. Overall intervals overlap the individual stages."),
+    data(13, "table", "Milestones for selected PR", [12, 23, 12, 12],
+      `SELECT name AS "Event", strftime('%Y-%m-%dT%H:%M:%fZ', observed_ms / 1000.0, 'unixepoch') AS "UTC",
+        elapsed_seconds AS "Elapsed" FROM delivery_milestones
+        WHERE CAST(pr AS TEXT) = ${cyclePR} ORDER BY ordinal`,
+      { showHeader: true, enablePagination: true }, { noValue: "Unknown", custom: { minWidth: 70 } }, [
+        byName("Event", { id: "custom.wrapText", value: true }),
+        byName("UTC", unit("time:MM-DD HH:mm:ss"), width(113)),
+        byName("Elapsed", unit("dthms"), width(84), { id: "noValue", value: "—" }),
+      ], ["UTC"], "Elapsed is from the preceding milestone. First PR CI is the earliest linked workflow start observed. Shipped uses publication backed by an access check. The check time is listed separately."),
+    data(8, "table", "Recently shipped", [0, 35, 24, 7],
       `SELECT pr AS "PR", cycle_seconds AS "Thread → release", pr_seconds AS "PR → release",
         published AS "Published", verified AS "Access checked", opened AS "PR opened", merged AS "Merged", url AS "URL"
         FROM releases ORDER BY published DESC`,
       { showHeader: true }, { noValue: "Unknown" },
       [...prLinks, byName("Thread → release", unit("s"), width(128)),
         byName("PR → release", unit("s"), width(112)), ...timestamps.map((field) => byName(field, width(161)))], timestamps),
-    data(9, "table", "Open delivery threads", [0, 27, 24, 6],
+    data(9, "table", "Open delivery threads", [0, 42, 24, 6],
       'SELECT pr AS "PR", status AS "T3 status", created AS "Thread started", url AS "URL" FROM work ORDER BY created DESC',
       { showHeader: true }, {}, prLinks, ["Thread started"],
       "Only imported T3 threads with an explicit owning link to an observed open pull request."),
     data(10, "table", "Explore timing by clock", [9, 8, 15, 6],
       'SELECT clock AS "Clock", total_seconds AS "Duration" FROM time_map ORDER BY rank',
       { showHeader: true }, {}, [byName("Clock", links(timingLink)), byName("Duration", unit("s"))]),
-  ], [link("Timing breakdown", timingPath), link("Rollout waterfall", tracePath)]);
+  ], [link("Timing breakdown", timingPath), link("Rollout waterfall", tracePath)], [
+    variable("cycle_pr", "Cycle-time PR", "SELECT CAST(pr AS TEXT) FROM releases ORDER BY published DESC, pr DESC", ""),
+  ]);
 
   const clock = "${clock:sqlstring}";
   const workflow = "${workflow:sqlstring}";

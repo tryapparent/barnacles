@@ -40,7 +40,23 @@ test("compiled Bend2 source decisions through the SQLite import path", async () 
         { id: 8, submitted_at: time("07") }, { id: 1, submitted_at: time("01") },
         { id: 7, submitted_at: time("06") },
       ];
-      if (path.includes("/pulls/")) return { number: 9, base: { repo: { full_name: repo } },
+      if (path.includes("/actions/runs?")) {
+        const workflow = { event: "pull_request", status: "completed", conclusion: "success", run_attempt: 1,
+          repository: { id: 4 }, head_repository: { id: 5 }, head_branch: "stage-test", head_sha: released,
+          pull_requests: [], run_started_at: time("07") };
+        return { total_count: 4, workflow_runs: [
+          { ...workflow, id: 102 },
+          { ...workflow, id: 103, head_sha: "d".repeat(40), run_started_at: time("06") },
+          { ...workflow, id: 104, run_attempt: 2, run_started_at: time("06") },
+          { ...workflow, id: 105, pull_requests: [{ number: 8, base: { repo: { id: 4 } } }], run_started_at: time("06") },
+        ] };
+      }
+      if (path.includes("/actions/workflows/verification.yml/runs?")) return { total_count: 1, workflow_runs: [{
+        id: 205, event: "workflow_dispatch", conclusion: "success", display_title: `main · source ${released} · candidate run 205`,
+        created_at: time("09"), updated_at: time("11"),
+      }] };
+      if (path.includes("/pulls/")) return { number: 9, base: { repo: { full_name: repo, id: 4 } },
+        head: { ref: "stage-test", repo: { id: 5 } },
         merged: true, created_at: time("05"), merged_at: time("09"),
         merge_commit_sha: merged, commits: 2, updated_at: time("09") };
       if (path.includes("/releases/")) return { id: 2, tag_name: tag, draft: false,
@@ -52,14 +68,17 @@ test("compiled Bend2 source decisions through the SQLite import path", async () 
       throw Error("Unexpected synthetic route");
     };
     const path = join(job, "evidence.sqlite");
-    const pr = pullRequest(repo, 9, policy, read);
+    const pr = pullRequest(repo, 9, policy, read, true);
     assert.equal(pr.firstCommit?.sha, merged);
     assert.equal(pr.firstReview?.id, 7);
+    assert.deepEqual(pr.firstCI, { id: 102, at: Date.parse(time("07")) / 1000 });
     const failure = releaseEvidence(pr, tag, policy, read, () => ({ http: 206, bytes: 1, range: false }));
     saveDelivery(path, pr, failure);
     assert.equal(deliveryReport(path, policy)[0].pr_to_release_seconds, null);
-    const proof = releaseEvidence(pr, tag, policy, read, () => ({ http: 206, bytes: 1, range: true }));
+    const proof = releaseEvidence(pr, tag, policy, read, () => ({ http: 206, bytes: 1, range: true }), true);
     saveDelivery(path, pr, proof);
+    assert.equal(deliveryReport(path, policy)[0].first_ci_run, 102);
+    assert.equal(deliveryReport(path, policy)[0].release_run, 205);
     saveDelivery(path, pr, { ...proof, id: 1, published: proof.published! + 1 });
     saveDelivery(path, pr, { ...proof, id: 12 });
     assert.equal(deliveryReport(path, policy)[0].release_id, 2);

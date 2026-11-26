@@ -219,6 +219,18 @@ def pick_review(+best: Milestone, +next: Milestone, opened: U32) -> Milestone:
 def commit_complete(expected: U32, observed: U32) -> Bool:
   U32.is_eq(expected, observed)
 
+def pr_ci_start(event: String, status: String, +conclusion: String, attempt: U32, matched: Bool,
+  opened: U32, +started: U32, merged: U32) -> Bool:
+  Bool.and(Bool.and(String.eq(event, "pull_request"), U32.is_eq(attempt, 1)),
+    Bool.and(Bool.or(String.eq(status, "in_progress"),
+      Bool.or(String.eq(conclusion, "success"), String.eq(conclusion, "failure"))),
+      Bool.and(matched, Bool.and(ordered(opened, started), ordered(started, merged)))))
+
+def publishing_run(event: String, conclusion: String, +created: U32, +published: U32, updated: U32,
+  source_matches: Bool, run_matches: Bool) -> Bool:
+  Bool.and(Bool.and(String.eq(event, "workflow_dispatch"), String.eq(conclusion, "success")),
+    Bool.and(Bool.and(source_matches, run_matches), Bool.and(ordered(created, published), ordered(published, updated))))
+
 def keep_commit(complete: Bool, milestone: Milestone) -> Bool:
   match milestone:
     case Milestone{id, at}: Bool.and(complete, Bool.and(U32.is_ne(at, 0), Bool.not(String.eq(id, ""))))

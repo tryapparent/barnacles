@@ -33,9 +33,9 @@ async function main() {
       saveRollout(db, data);
       console.log(`Imported ${data.calls.length} tool calls, ${data.calls.filter((call) => call.asyncEnd !== null).length} linked async cells, and ${data.markers.length} reasoning markers`);
     } else if (command === "github") {
-      const pr = pullRequest(first, positiveInt(second), policy);
+      const pr = pullRequest(first, positiveInt(second), policy, undefined, true);
       saveDelivery(db, pr);
-      const release = third ? releaseEvidence(pr, third, policy) : undefined;
+      const release = third ? releaseEvidence(pr, third, policy, undefined, undefined, true) : undefined;
       if (release) saveDelivery(db, pr, release);
       console.log(release ? `Imported pull request and release evidence (access: ${release.accessible ? "verified" : "unverified"})`
         : "Imported pull request metadata");

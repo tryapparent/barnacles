@@ -86,6 +86,8 @@ Direct shell calls and recognizable wrappers with a literal `cmd` can contribute
 
 Pass a PR number alone to capture PR, commit, and review metadata. For release evidence, pass an explicit Linux Main tag. The adapter checks the tag's direct Git ref, equality or ancestry with the PR merge SHA, one uploaded x86_64 AppImage, and an anonymous one-byte Range receipt. It preserves PR metadata when release collection fails. The first 100 commit and review records are sufficient for the verified examples. Counts and caps qualify the first observed review and whether the commit sample is complete. Other channels and annotated tags need their own eligibility support.
 
+The CLI also reads a single bounded page of PR workflow runs for the PR branch and open-to-merge window. First PR CI is the earliest observed first-attempt workflow start with a PR link, or an exact repository, branch, and PR commit match when GitHub supplies no PR links. It measures the workflow clock. When a verified release tag is supplied, a unique successful Linux Main publishing workflow with matching source and run identity supplies its dispatch time. Unavailable or ambiguous clocks remain unknown.
+
 Bend2 selects the first commit, first observed review, and earliest **observed and verified** release per PR and surface from decoded evidence. Publication and access observation have separate timestamps. For PR #2085 the T3 metadata projection supplies one owning link. PR #2071 has PR-to-release data with no verified T3 owner. The report can be regenerated without rereading GitHub.
 
 Run both integration tests with:
