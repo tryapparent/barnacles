@@ -145,7 +145,7 @@ export function dashboards(range: Range) {
   const trace = board("barnacles-trace", "Barnacles · Rollout waterfall",
     first ? new Date(first.from).toISOString() : from, first ? new Date(first.to).toISOString() : to, [
       block(1, "Local Codex evidence", [0, 0, 24, 3],
-        "Reasoning markers show when Codex logged an event. They have no measured duration. Async spans end when the terminal wait was observed."),
+        "Dashed lines mark when Codex recorded reasoning. The duration is unknown."),
       data(2, "state-timeline", "Spans in the selected window", [0, 3, 24, 14],
         `SELECT started / 1000.0 AS time, ended / 1000.0 AS timeEnd, lane AS "Lane", clock AS "Clock"
           FROM trace WHERE CAST(session AS TEXT) = ${session} AND ended IS NOT NULL
@@ -156,17 +156,18 @@ export function dashboards(range: Range) {
           mappings: [{ type: "value", options: {
             "Async cells": { color: green, text: "Async cell" },
             "Tool envelopes": { color: yellow, text: "Tool envelope" },
-          } }] }, [], ["time", "timeEnd"], "Shows the first 24 completed spans that overlap the window."),
+          } }] }, [], ["time", "timeEnd"],
+        "Shows the first 24 completed spans that overlap the window. Async spans end when the terminal wait was observed."),
       data(3, "table", "Missing terminal observations", [0, 17, 12, 5],
         `SELECT lane AS "Span", started / 1000.0 AS "Started" FROM trace
           WHERE CAST(session AS TEXT) = ${session} AND ended IS NULL ORDER BY started`,
         { showHeader: true }, {}, [], ["Started"]),
       data(5, "table", "Reasoning timestamps", [12, 17, 12, 5],
-        `SELECT ${reasoningTime} AS "Observed", source_line AS "Source line" ${reasoningWindow}`,
+        `SELECT ${reasoningTime} AS "Observed", source_line AS "Line" ${reasoningWindow}`,
         { showHeader: true }, {}, [
-          byName("Observed", unit("time:YYYY-MM-DD HH:mm:ss.SSS")), byName("Source line", width(88)),
+          byName("Observed", unit("time:YYYY-MM-DD HH:mm:ss.SSS")), byName("Line", width(72)),
         ], ["Observed"],
-        "Events in the selected session and time range. Reimport older rollouts to add reasoning coverage."),
+        "Events in the selected time range with their rollout source lines. Reimport older rollouts to add reasoning coverage."),
       data(4, "table", "Imported sessions", [0, 22, 24, 5],
         'SELECT session AS "Session", started AS "From", ended AS "To" FROM trace_windows',
         { showHeader: true }, {}, [
