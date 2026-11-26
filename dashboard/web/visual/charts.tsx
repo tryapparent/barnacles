@@ -298,10 +298,12 @@ function DailyColumns({ days, window }: { days: DeliveryDay[]; window: Review["w
   const first = Date.parse(window.from.slice(0, 10));
   const last = Date.parse(window.to.slice(0, 10));
   const count = (last - first) / dayMillis + 1;
-  const byDate = new Map(days.map((day) => [day.startsAt, day]));
-  const detail = selected === null ? undefined : byDate.get(selected);
-  const longest = Math.max(...days.map(({ stages }) =>
-    stages.reduce((total, stage) => total + (stage.meanSeconds ?? 0), 0)));
+  const stacks = days.map((day) => ({
+    day, height: day.stages.reduce((total, stage) => total + (stage.meanSeconds ?? 0), 0),
+  }));
+  const byDate = new Map(stacks.map((stack) => [stack.day.startsAt, stack]));
+  const detail = selected === null ? undefined : byDate.get(selected)?.day;
+  const longest = Math.max(...stacks.map(({ height }) => height));
   const step = longest >= 3600 ? 1800 : longest >= 60 ? 30 : 1;
   const scale = Math.max(2, Math.ceil(longest / (2 * step))) * 2 * step;
   return <>
@@ -317,25 +319,24 @@ function DailyColumns({ days, window }: { days: DeliveryDay[]; window: Review["w
           {Array.from({ length: count }, (_, index) => {
             const timestamp = first + index * dayMillis;
             const date = new Date(timestamp).toISOString();
-            const day = byDate.get(date);
+            const stack = byDate.get(date);
             const pressed = selected === date;
             const label = fullDayLabel.format(timestamp);
             const tick = count <= 5 || index === count - 1 || (index % 5 === 0 && index < count - 3);
             return <div key={date} className="daily-slot">
-              {day ? <button type="button" className="daily-column" aria-pressed={pressed}
-                aria-label={`${label}, ${countLabel(day.verified)} verified`} aria-controls="daily-stage-values"
-                title={`${label} · ${countLabel(day.verified)} verified`}
+              {stack ? <button type="button" className="daily-column" aria-pressed={pressed}
+                aria-label={`${label}, ${countLabel(stack.day.verified)} verified`} aria-controls="daily-stage-values"
+                title={`${label} · ${countLabel(stack.day.verified)} verified`}
                 onClick={() => setSelected(pressed ? null : date)}>
-                <span className="daily-stack" aria-hidden="true">
+                {stack.height > 0 ? <span className="daily-stack" aria-hidden="true"
+                  style={{ height: `${100 * stack.height / scale}%` }}>
                   {stages.map(([phase, name, color]) => {
-                    const mean = day.stages.find((stage) => stage.phase === phase)?.meanSeconds;
+                    const mean = stack.day.stages.find((stage) => stage.phase === phase)?.meanSeconds;
                     return mean ? <span key={phase} className={`daily-segment stage-${color}`}
-                      style={{ height: `${100 * mean / scale}%` }} title={`${name} · ${duration(mean)}`} /> : null;
+                      style={{ height: `${100 * mean / stack.height}%` }} title={`${name} · ${duration(mean)}`} /> : null;
                   })}
-                  {day.stages.every(({ meanSeconds }) => !meanSeconds) &&
-                    <span className="daily-zero" title={day.stages.some(({ meanSeconds }) => meanSeconds === 0) ?
-                      "0 s measured" : "Stage times unknown"} />}
-                </span>
+                </span> : <span className="daily-zero" aria-hidden="true"
+                  title={stack.day.stages.some(({ meanSeconds }) => meanSeconds === 0) ? "0 s measured" : "Stage times unknown"} />}
               </button> : <span className="daily-gap" title={`${label} · No verified shipments`} />}
               {tick && <time className="daily-tick" dateTime={date} aria-hidden="true">{dayLabel(date)}</time>}
             </div>;

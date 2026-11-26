@@ -16,6 +16,7 @@
   --amber: #f2b826;
   --green: #65c392;
   --pixel: "Geist Pixel", ui-monospace, monospace;
+  --pixel-dither: repeating-conic-gradient(#000 0% 25%, transparent 0% 50%);
 }
 
 * { box-sizing: border-box; }
@@ -322,6 +323,7 @@ h2, figcaption { font-size: 17px; line-height: 1.24; }
 }
 .daily-column {
   position: relative;
+  align-items: end;
   padding: 0;
   border: 0;
   background: transparent;
@@ -336,11 +338,16 @@ h2, figcaption { font-size: 17px; line-height: 1.24; }
   inset: auto 3px 0;
   border-block-end: 2px solid var(--accent);
 }
+.daily-stack, .daily-zero { inline-size: clamp(16px, 74%, 46px); }
 .daily-stack {
   display: flex;
   flex-direction: column-reverse;
-  inline-size: clamp(16px, 74%, 46px);
-  block-size: 100%;
+  mask: linear-gradient(#000 0%, #000b 20%, #0004 60%, transparent 96%),
+    var(--pixel-dither) 0 100% / 4px 4px;
+}
+.daily-column:is(:focus-visible, [aria-pressed="true"]) .daily-stack { mask: none; }
+@media (hover: hover) {
+  .daily-column:hover .daily-stack { mask: none; }
 }
 .daily-segment { flex: none; background: var(--stage); }
 .daily-zero { block-size: 2px; background: var(--quiet); }
@@ -367,6 +374,7 @@ h2, figcaption { font-size: 17px; line-height: 1.24; }
   background: var(--stage);
 }
 @media (forced-colors: active) {
+  .daily-stack { mask: none; }
   .daily-segment, .daily-chart .stage-key li::before, .daily-values th[scope="row"]::before {
     forced-color-adjust: none;
     outline: 1px solid CanvasText;
@@ -421,7 +429,7 @@ h2, figcaption { font-size: 17px; line-height: 1.24; }
   position: absolute;
   inset: auto 0 0;
   height: calc(7px + var(--swell, 0) * 4px);
-  background: repeating-conic-gradient(var(--surface) 0% 25%, transparent 0% 50%) 0 0 / 4px 4px;
+  background: var(--pixel-dither) 0 0 / 4px 4px;
   background-position-x: calc(var(--swell, 0) * 2px);
   mask-image: linear-gradient(105deg, transparent, #000 calc(72% + var(--swell, 0) * 24%));
 }
