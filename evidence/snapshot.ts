@@ -78,7 +78,18 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
       CREATE TABLE trace_reasoning(session INTEGER, source_line INTEGER, observed INTEGER,
         PRIMARY KEY (session, source_line));
       CREATE INDEX trace_reasoning_window ON trace_reasoning(session, observed);
+      CREATE TABLE changed_files(rank INTEGER PRIMARY KEY, path TEXT, path_base64 TEXT, commits INTEGER NOT NULL);
     `);
+    const gitScan = table("git_change_scans")
+      ? source.prepare("SELECT revision, commits_scanned, truncated, shallow FROM git_change_scans WHERE repository = ?").get(repo)
+      : undefined;
+    const gitFiles = gitScan ? all("SELECT rank, path, path_base64, commits FROM git_changed_files WHERE repository = ?", repo) : [];
+    const changedFile = view.prepare("INSERT INTO changed_files VALUES (?, ?, ?, ?)");
+    for (const row of gitFiles) changedFile.run(row.rank, row.path, row.path_base64, row.commits);
+    const changedCode = gitScan && {
+      revision: String(gitScan.revision), commitsScanned: Number(gitScan.commits_scanned),
+      truncated: Boolean(gitScan.truncated), shallow: Boolean(gitScan.shallow), hasPaths: gitFiles.length > 0,
+    };
     const url = (number: number) => `https://github.com/${repo}/pull/${number}`;
     const prs = table("github_prs") ? readDelivery(source, policy, repo) : [];
     const weeks = new Map<number, Shipping>();
@@ -240,7 +251,8 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
         seconds(metrics.measured_total(row.stats)), row.stats.missing, rank));
 
     view.exec("COMMIT");
-    return { from: Math.min(priorWeek, ...weeks.keys()), to: cutoff, defaultTrace, traceSessions, rolloutCount, operationCount: operations.length };
+    return { from: Math.min(priorWeek, ...weeks.keys()), to: cutoff, defaultTrace, traceSessions,
+      rolloutCount, operationCount: operations.length, changedCode };
   } finally {
     source.close();
     view.close();
