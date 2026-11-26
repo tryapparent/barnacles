@@ -5,7 +5,7 @@ type Elapsed = { $: "Duration"; seconds: number; subtract_ms: number } | { $: "U
 
 export type Point = { $: "Time"; s: number; ms: number };
 type CallRecord = { $: "Ignored"; orphans: number } | {
-  $: "Observed"; orphans: number; line: number; tool: string; start: Point; finish: Point;
+  $: "Observed"; orphans: number; line: number; tool: string; command: string; start: Point; finish: Point;
   launched: boolean; ambiguous: boolean;
 };
 type CellFact = { $: "NoCell" } | { $: "Launch" | "Terminal"; key: string };
@@ -16,7 +16,7 @@ export type ReleaseOrder = { $: "Release"; published: number; checked: number; i
 
 export type SourcePolicy = {
   reasoning(event: string, point: Point): boolean;
-  tool(name: string, wrapped: string, parallel: boolean): unknown;
+  tool(name: string, wrapped: string, parallel: boolean, program: string, word: string): unknown;
   start_call(state: unknown, line: number, tool: unknown, start: Point, target: string): unknown;
   finish_call(state: unknown, end: Point, yielded: string, completed: boolean): unknown;
   cell_fact(id: string, state: unknown): CellFact;
@@ -63,7 +63,7 @@ export type ThreadEvidence = {
 export type RolloutEvidence = {
   instance: string; session: string; lines: number; malformed: number; orphans: number;
   markers: { line: number; at: number }[];
-  calls: { id: string; line: number; tool: string; start: number | null; end: number | null;
+  calls: { id: string; line: number; tool: string; command: string | null; start: number | null; end: number | null;
     async: boolean; asyncEnd: number | null; terminalCall: string | null; ambiguous: boolean }[];
 };
 
@@ -121,11 +121,14 @@ export function saveRollout(path: string, data: RolloutEvidence) {
       ON CONFLICT(instance, session_id) DO UPDATE SET line_count=excluded.line_count,
       malformed_count=excluded.malformed_count, orphan_count=excluded.orphan_count`).run(
       ...key, data.lines, data.malformed, data.orphans);
+    db.prepare("DELETE FROM codex_commands WHERE instance=? AND session_id=?").run(...key);
     db.prepare("DELETE FROM codex_calls WHERE instance=? AND session_id=?").run(...key);
     const calls = db.prepare("INSERT INTO codex_calls VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    const commands = db.prepare("INSERT INTO codex_commands VALUES (?, ?, ?, ?)");
     for (const call of data.calls) {
       calls.run(...key, call.id, call.line, call.tool, call.start, call.end, Number(call.async),
         call.asyncEnd, call.terminalCall, Number(call.ambiguous));
+      if (call.command) commands.run(...key, call.id, call.command);
     }
     db.prepare("DELETE FROM codex_reasoning WHERE instance=? AND session_id=?").run(...key);
     const markers = db.prepare("INSERT INTO codex_reasoning VALUES (?, ?, ?, ?)");

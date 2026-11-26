@@ -4,9 +4,7 @@ Grafana is the first renderer. Provision it against read-only SQLite views. The 
 
 Use built-in gauge, time-series, and table panels. Evaluate the [SQLite data source](https://grafana.com/grafana/plugins/frser-sqlite-datasource/) and [Treemap panel](https://grafana.com/grafana/plugins/marcusolsson-treemap-panel/) in the local build. Link categories to workflows and operations. Give the ranked table the same drilldown links so navigation works by keyboard. Keep SQLite attachment disabled and mount only the derived evidence database for Grafana.
 
-For an initial waterfall, try [Grafana's trace-file import](https://grafana.com/docs/grafana/latest/datasources/jaeger/query-editor/) with sanitized timestamps, display labels, and parent IDs. Add a trace backend if file import cannot support the intended workflow. Keep the waterfall on one time axis and retain nested and overlapping spans.
-
-Document the exact Grafana and plugin versions, local launch and import commands, and UI verification when the first provisioned build lands.
+The [local provisioning guide](provisioning/README.md) describes the pinned Grafana and Tempo setup, evidence coverage, and launch commands.
 
 ## Codex waterfall
 
@@ -14,6 +12,6 @@ Import a permitted rollout with `node collector/import-sources.ts "$job" rollout
 Prepare the local view with `node dashboard/prepare.ts "$job/evidence.sqlite" "$job/grafana" OWNER/REPO`.
 Start Grafana with `dashboard/run.sh "$job/grafana"` and open `/d/barnacles-trace/trace`.
 
-Select a session under **Imported sessions** and use the time picker to inspect later activity. Purple lines mark
-when Codex recorded reasoning. **Reasoning timestamps** lists the same events by timestamp and source line.
-Their durations are unknown. Reimport older rollouts to pick up the marker and label changes.
+Choose a **Session** and select a span to see its clock, source line, and any recognized command.
+Open the recorded session window's **Events** to inspect reasoning observations. Their durations are unknown.
+The tables below the waterfall show completed operations, timestamped reasoning, and spans with missing clocks. Reimport older rollouts to add command details.

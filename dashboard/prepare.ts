@@ -1,4 +1,4 @@
-import { closeSync, mkdirSync, mkdtempSync, openSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, mkdtempSync, openSync, renameSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { DatabaseSync, type SQLInputValue, type SQLOutputValue } from "node:sqlite";
 import { pathToFileURL } from "node:url";
@@ -6,20 +6,16 @@ import { buildPolicy } from "../collector/build.ts";
 import { repository } from "../collector/wire.ts";
 import { deliveryReport, type SourcePolicy } from "../evidence/sources.ts";
 import { dashboards } from "./panels.ts";
+import { encodeTrace, type TracePolicy } from "./trace.ts";
 
 type Ratio = { numerator: number; denominator: number };
 const seconds = ({ numerator, denominator }: Ratio) => denominator ? numerator / denominator / 1000 : null;
 type Stats = { $: "Stats"; count: number; total: number; missing: number };
 type Shipping = { $: "Delivery"; shipped: number; cycles: Stats };
-type TraceWindow = { $: "Window"; from: number; to: number };
-type Metrics = {
+type Metrics = TracePolicy & {
   record_release(sample: Shipping, linked: boolean, elapsedMs: number): Shipping;
   visible_release(channel: string, published: number): boolean;
   codex_clock(clock: string): string;
-  trace_operation(clock: string, tool: string): string;
-  extend_window(window: TraceWindow, start: number, end: number): TraceWindow;
-  trace_window(focus: TraceWindow, bounds: TraceWindow, fallback: number): TraceWindow;
-  focus(window: TraceWindow, clock: string, start: number, end: number): TraceWindow;
   record_interval(sample: Stats, start: number, end: number): Stats;
   mean(sample: Stats): Ratio;
   week(epoch: number): number;
@@ -35,10 +31,11 @@ const emptyShipping: Shipping = { $: "Delivery", shipped: 0, cycles: empty };
 type Timing = { clock: string; workflow: number; operation: string; stats: Stats };
 const millis = (seconds: SQLOutputValue) => seconds === null ? 0 : Number(seconds) * 1000;
 
-function writeSnapshot(input: string, output: string, repo: string, policy: SourcePolicy, metrics: Metrics, cutoff: number) {
+function writeSnapshot(input: string, output: string, otlp: string, repo: string, policy: SourcePolicy, metrics: Metrics, cutoff: number) {
   const source = new DatabaseSync(input, { readOnly: true });
   closeSync(openSync(output, "wx", 0o600));
   const view = new DatabaseSync(output);
+  const payloads = openSync(otlp, "wx", 0o600);
   const all = (sql: string, ...params: SQLInputValue[]) => source.prepare(sql).all(...params);
   const table = (name: string) => Boolean(source.prepare("SELECT 1 FROM sqlite_schema WHERE name=?").get(name));
   try {
@@ -56,8 +53,8 @@ function writeSnapshot(input: string, output: string, repo: string, policy: Sour
       CREATE TABLE time_map(clock TEXT, total_seconds REAL, rank INTEGER);
       CREATE TABLE workflows(clock TEXT, workflow INTEGER, total_seconds REAL, count INTEGER,
         mean_seconds REAL, unmeasured INTEGER, rank INTEGER);
-      CREATE TABLE trace(session INTEGER, lane TEXT, clock TEXT, started INTEGER, ended INTEGER);
-      CREATE TABLE trace_windows(session INTEGER, started INTEGER, ended INTEGER);
+      CREATE TABLE trace(session INTEGER, source_line INTEGER, operation TEXT, clock TEXT, started INTEGER, ended INTEGER);
+      CREATE TABLE trace_windows(session INTEGER, trace_id TEXT, started INTEGER, ended INTEGER, measured INTEGER);
       CREATE TABLE trace_reasoning(session INTEGER, source_line INTEGER, observed INTEGER,
         PRIMARY KEY (session, source_line));
       CREATE INDEX trace_reasoning_window ON trace_reasoning(session, observed);
@@ -134,40 +131,38 @@ function writeSnapshot(input: string, output: string, repo: string, policy: Sour
 
     const traceWindows = [];
     if (table("codex_spans")) {
-      const spans = all("SELECT * FROM codex_spans ORDER BY started_ms, source_line, clock");
+      const spans = table("codex_commands")
+        ? all(`SELECT codex_spans.*, command FROM codex_spans LEFT JOIN codex_commands USING (instance, session_id, call_id)
+            ORDER BY started_ms, source_line, clock`)
+        : all("SELECT * FROM codex_spans ORDER BY started_ms, source_line, clock");
       const markers = table("codex_reasoning") ? all("SELECT * FROM codex_reasoning ORDER BY observed_ms, source_line") : [];
       const sessionKey = (row: Record<string, SQLOutputValue>) => JSON.stringify([row.instance, row.session_id]);
       const sessions = Map.groupBy(spans, sessionKey);
       const bySession = Map.groupBy(markers, sessionKey);
       for (const key of bySession.keys()) if (!sessions.has(key)) sessions.set(key, []);
-      const insert = view.prepare("INSERT INTO trace VALUES (?, ?, ?, ?, ?)");
+      const insert = view.prepare("INSERT INTO trace VALUES (?, ?, ?, ?, ?, ?)");
       const mark = view.prepare("INSERT INTO trace_reasoning VALUES (?, ?, ?)");
-      const windows = view.prepare("INSERT INTO trace_windows VALUES (?, ?, ?)");
+      const windows = view.prepare("INSERT INTO trace_windows VALUES (?, ?, ?, ?, ?)");
       for (const [key, rows] of sessions) {
         const session = traceWindows.length + 1;
-        let focus: TraceWindow = { $: "Window", from: 0, to: 0 };
-        let bounds = focus;
-        for (const row of rows) {
-          const clock = metrics.codex_clock(String(row.clock));
-          add(clock, 0, String(row.tool), Number(row.started_ms ?? 0), Number(row.ended_ms ?? 0));
-          if (row.started_ms !== null) {
-            insert.run(session, `${row.source_line} · ${metrics.trace_operation(String(row.clock), String(row.tool))}`,
-              clock, row.started_ms, row.ended_ms);
-            const started = Number(row.started_ms);
-            const ended = Number(row.ended_ms ?? started);
-            bounds = metrics.extend_window(bounds, started, ended);
-            focus = metrics.focus(focus, String(row.clock), started, Number(row.ended_ms ?? 0));
-          }
+        const observations = rows.map((row) => ({ call: String(row.call_id), terminal: row.terminal_call_id as string | null,
+          line: Number(row.source_line), tool: String(row.tool), command: String(row.command ?? ""), clock: String(row.clock),
+          start: row.started_ms as number | null, end: row.ended_ms as number | null }));
+        const events = (bySession.get(key) ?? []).map((row) => ({ line: Number(row.source_line), at: Number(row.observed_ms) }));
+        for (const row of observations) {
+          const clock = metrics.codex_clock(row.clock);
+          add(clock, 0, row.tool, row.start ?? 0, row.end ?? 0);
+          insert.run(session, row.line, metrics.trace_operation(row.clock, row.tool, row.command),
+            clock, row.start, row.end);
         }
-        for (const row of bySession.get(key) ?? []) {
-          mark.run(session, row.source_line, row.observed_ms);
-          const observed = Number(row.observed_ms);
-          bounds = metrics.extend_window(bounds, observed, observed);
+        for (const event of events) mark.run(session, event.line, event.at);
+        const trace = encodeTrace(key, observations, events, metrics);
+        if (trace) {
+          writeSync(payloads, JSON.stringify(trace.payload) + "\n");
         }
-        const limits = metrics.trace_window(focus, bounds, cutoff * 1000);
-        const window = { session, from: limits.from - 1000, to: limits.to + 1000 };
-        windows.run(session, window.from, window.to);
-        traceWindows.push(window);
+        windows.run(session, trace?.traceId ?? null, trace?.bounds.from ?? null, trace?.bounds.to ?? null, trace?.spans ?? 0);
+        traceWindows.push({ session, from: trace?.bounds.from ?? cutoff * 1000, to: trace?.bounds.to ?? cutoff * 1000,
+          traceId: trace?.traceId ?? "" });
       }
     }
     const compare = <T>(left: [string, T], right: [string, T], total: (data: T) => number) =>
@@ -189,6 +184,7 @@ function writeSnapshot(input: string, output: string, repo: string, policy: Sour
     view.exec("COMMIT");
     return { from: Math.min(priorWeek, ...weeks.keys()), to: cutoff, traceWindows };
   } finally {
+    closeSync(payloads);
     source.close();
     view.close();
   }
@@ -210,7 +206,8 @@ async function main() {
     ]);
     const load = async (path: string) => (await import(pathToFileURL(path).href)).default;
     const snapshot = join(scratch, "dashboard.sqlite");
-    const range = writeSnapshot(resolve(input), snapshot, repo, await load(sources), await load(metrics), Math.floor(Date.now() / 1000));
+    const otlp = join(scratch, "tempo.ndjson");
+    const range = writeSnapshot(resolve(input), snapshot, otlp, repo, await load(sources), await load(metrics), Math.floor(Date.now() / 1000));
     const configs = dashboards(range);
     const provision = join(directory, "dashboards");
     mkdirSync(provision);
@@ -218,6 +215,7 @@ async function main() {
       writeFileSync(join(provision, name + ".json"), JSON.stringify(config), { flag: "wx" });
     }
     renameSync(snapshot, join(directory, "dashboard.sqlite"));
+    renameSync(otlp, join(directory, "tempo.ndjson"));
     console.log("Prepared local Grafana snapshot");
   } finally {
     rmSync(scratch, { recursive: true, force: true });

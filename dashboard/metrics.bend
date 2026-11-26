@@ -66,8 +66,11 @@ def visible_release(surface: String, published: Nat) -> Bool:
 def codex_clock(clock: String) -> String:
   Bool.pick(String, String.eq(clock, "async_cell"), "Async cells", "Tool envelopes")
 
-def trace_operation(clock: String, +tool: String) -> String:
-  Bool.pick(String, String.eq(clock, "async_cell"), String.append("Async cell · ", tool), tool)
+def trace_label(+tool: String, +command: String) -> String:
+  Bool.pick(String, String.eq(command, ""), tool, String.append(tool, String.append(" · ", command)))
+
+def trace_operation(clock: String, +tool: String, command: String) -> String:
+  trace_label(Bool.pick(String, String.eq(clock, "async_cell"), String.append("Async cell · ", tool), tool), command)
 
 type Focus is Data:
   Window{from: Nat, to: Nat}
@@ -77,19 +80,9 @@ def extend_window(window: Focus, +start: Nat, end: Nat) -> Focus:
     case Window{+from, to}:
       Window{Bool.pick(Nat, Nat.is_eq(from, 0n), start, Nat.min(from, start)), Nat.max(to, end)}
 
-def focus(+window: Focus, clock: String, +start: Nat, +end: Nat) -> Focus:
-  match window:
-    case Window{+from, to}:
-      Bool.pick(Focus, Bool.and(Nat.is_eq(from, 0n),
-        Bool.and(String.eq(clock, "async_cell"), interval_valid(start, end))),
-        Window{start, end}, Window{from, to})
-
-def trace_window(focus: Focus, bounds: Focus, +fallback: Nat) -> Focus:
-  match focus bounds:
-    case Window{+from, to} Window{+first, last}:
-      Bool.pick(Focus, Nat.is_eq(from, 0n),
-        Bool.pick(Focus, Nat.is_eq(first, 0n), Window{fallback, fallback}, Window{first, last}),
-        Window{from, to})
+def trace_parent(clock: String, count: Nat, start: Nat, end: Nat, parent_start: Nat, parent_end: Nat) -> Bool:
+  Bool.and(String.eq(clock, "tool_envelope"), Bool.and(Nat.is_eq(count, 1n),
+    Bool.and(Nat.is_le(parent_start, start), Nat.is_le(end, parent_end))))
 
 
 def ranks_before(+total: Nat, key: String, +other_total: Nat, other_key: String) -> Bool:

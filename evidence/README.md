@@ -24,6 +24,8 @@ The `action_occupancy` view groups measured durations by repository, workflow, c
 
 `codex_reasoning` stores an observation timestamp keyed by collector instance, session, and source line. These points have no duration and are excluded from span counts and occupancy. Databases imported before this table was added have no reasoning coverage until the corresponding rollouts are reimported.
 
+`codex_commands` stores an optional allowlisted command label keyed by instance, session, and call ID. It describes a submitted operation. The Tempo projection hashes source keys into stable trace and span IDs, and exports observed timestamps, source line numbers, clock names, and safe labels. Exact source identities stay in this SQLite schema.
+
 The delivery report joins independent source rows by explicit owner, repository and PR number. GitHub release proofs retain the PR merge SHA, ancestry result, channel, and asset check time. The report uses the earliest verified publication available in the local sample, and computes an elapsed value through the compiled [Bend2 source policy](sources.bend) only with sufficient evidence. A later range probe establishes accessibility at observation time.
 
 ## Read views

@@ -80,6 +80,8 @@ Set `rollout` to one permitted retained JSONL file by exact session or workspace
 
 Timestamped Codex `reasoning` response items contribute a source line and one observed time. The source provides no measured start and end for these items. The importer discards content and summaries. Tool labels use an allowlist of direct tools and recognizable script openings. Later calls within a script remain unclassified. `Tool script` covers scripts with an unrecognized opening. Reimport an existing rollout under the same instance to add markers and update its labels.
 
+Direct shell calls and recognizable wrappers with a literal `cmd` can contribute an allowlisted leading executable and action, such as `git status` or `node --test`. This describes the submitted operation. Other commands in a compound script and later arguments stay in the original rollout. Reimport under the same instance to add command details to older sessions.
+
 ### GitHub PR and release
 
 Pass a PR number alone to capture PR, commit, and review metadata. For release evidence, pass an explicit Linux Main tag. The adapter checks the tag's direct Git ref, equality or ancestry with the PR merge SHA, one uploaded x86_64 AppImage, and an anonymous one-byte Range receipt. It preserves PR metadata when release collection fails. The first 100 commit and review records are sufficient for the verified examples. Counts and caps qualify the first observed review and whether the commit sample is complete. Other channels and annotated tags need their own eligibility support.
