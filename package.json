@@ -1,0 +1,23 @@
+{
+  "name": "barnacles",
+  "private": true,
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "hooks:install": "git config --local extensions.worktreeConfig true && git config --worktree core.hooksPath .githooks",
+    "test:hooks": "node --test .githooks/comments.test.ts"
+  },
+  "devDependencies": {
+    "@repomix/tree-sitter-wasms": "0.1.17",
+    "@willbooster/tree-sitter-sql": "3.0.2",
+    "@willbooster/web-tree-sitter": "23.0.1",
+    "markdown-it": "15.0.3",
+    "parse5": "8.1.1",
+    "tree-sitter-bash": "0.25.1",
+    "tree-sitter-wasms": "0.1.13",
+    "web-tree-sitter": "0.25.10",
+    "yaml": "2.9.0"
+  },
+  "type": "module"
+}
