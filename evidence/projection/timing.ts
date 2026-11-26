@@ -1,5 +1,5 @@
 import type { DatabaseSync, SQLOutputValue } from "node:sqlite";
-import type { List } from "./sources.ts";
+import type { List } from "../storage/sources.ts";
 import type { IntervalClock, ObservedInterval } from "./intervals.ts";
 
 type Ratio = { numerator: number; denominator: number };

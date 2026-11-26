@@ -2,7 +2,7 @@
 
 SQLite holds exact source identities, observations, and read views. The table describes each source and its intended coverage. Apply each bounded import in a transaction. Replaying the same source observations must preserve row counts and derived results. Keep collection time, observation time, and source event time distinct.
 
-[`loadEvidence`](load.ts) accepts one typed batch from a source. Its variants preserve the differences between a T3 thread snapshot, a Codex rollout, a GitHub Actions attempt, and a GitHub delivery observation. The loader dispatches to the matching SQLite transaction. The [shared interval type](intervals.ts) gives Actions and Codex a common timing input with source identity, a distinct clock kind, and nullable UTC millisecond endpoints. T3 execution clocks remain in the source records until a timing consumer needs them. Point observations, ownership links, and delivery proofs retain their own shapes.
+[`loadEvidence`](storage/load.ts) accepts one typed batch from a source. Its variants preserve the differences between a T3 thread snapshot, a Codex rollout, a GitHub Actions attempt, and a GitHub delivery observation. The loader dispatches to the matching SQLite transaction. The [shared interval type](projection/intervals.ts) gives Actions and Codex a common timing input with source identity, a distinct clock kind, and nullable UTC millisecond endpoints. T3 execution clocks remain in the source records until a timing consumer needs them. Point observations, ownership links, and delivery proofs retain their own shapes.
 
 | Record | Identity and payload |
 | --- | --- |
@@ -16,13 +16,13 @@ SQLite holds exact source identities, observations, and read views. The table de
 
 ## Actions tables
 
-[action_attempts, action_jobs, and action_steps](actions.sql) retain the exact GitHub keys and normalized clocks in UTC Unix seconds. Attempt rows carry expected head SHA, workflow ID, source status, conclusion, update time, observation time, and captured job count. Job rows retain provider creation time, measured endpoints, and a flag for execution timestamps predating job creation. Step intervals are retained when the measured job execution bounds contain them. Missing measured endpoints are SQL NULL. The importer re-reads the selected attempt, so it cannot reconstruct earlier queue or active-job snapshots.
+[action_attempts, action_jobs, and action_steps](storage/actions.sql) retain the exact GitHub keys and normalized clocks in UTC Unix seconds. Attempt rows carry expected head SHA, workflow ID, source status, conclusion, update time, observation time, and captured job count. Job rows retain provider creation time, measured endpoints, and a flag for execution timestamps predating job creation. Step intervals are retained when the measured job execution bounds contain them. Missing measured endpoints are SQL NULL. The importer re-reads the selected attempt, so it cannot reconstruct earlier queue or active-job snapshots.
 
 Run `node evidence/report-actions.ts "$job/evidence.sqlite" OWNER/REPO` for occupancy by workflow, clock, and operation. The report and dashboard snapshot use the same Bend2 timing policy for grouping, counting, missing-clock coverage, and ranking. The TypeScript host feeds raw clock endpoints and writes the ranked rows. `unmeasured_count` counts rows without a completed measured span, including skipped or inapplicable clocks. Query one clock at a time for totals. The underlying tables retain IDs for drilldown. Older databases may still carry the historical `action_occupancy` view.
 
 ## T3, rollout, and delivery tables
 
-[Source tables](sources.sql) store T3 runtime snapshots and explicit PR links, Codex session and call identities, GitHub PR milestones, release IDs and source SHAs, and separate asset probes. T3 and Codex clocks use UTC Unix milliseconds. GitHub uses UTC Unix seconds. A Codex span has a stable call ID and the source line where the call began. An observed async cell also points to its terminal wait call. `codex_spans` exposes both clocks and preserves unknown endpoints. `open_delivery_threads` uses explicit owning links with an observed open PR and unsettled T3 status.
+[Source tables](storage/sources.sql) store T3 runtime snapshots and explicit PR links, Codex session and call identities, GitHub PR milestones, release IDs and source SHAs, and separate asset probes. T3 and Codex clocks use UTC Unix milliseconds. GitHub uses UTC Unix seconds. A Codex span has a stable call ID and the source line where the call began. An observed async cell also points to its terminal wait call. `codex_spans` exposes both clocks and preserves unknown endpoints. `open_delivery_threads` uses explicit owning links with an observed open PR and unsettled T3 status.
 
 `codex_reasoning` stores an observation timestamp keyed by collector instance, session, and source line. These points have no duration and are excluded from span counts and occupancy. Databases imported before this table was added have no reasoning coverage until the corresponding rollouts are reimported.
 
@@ -34,7 +34,7 @@ Run `node evidence/report-actions.ts "$job/evidence.sqlite" OWNER/REPO` for occu
 
 ## Delivery attribution
 
-[`delivery.ts`](delivery.ts) joins independent source rows by explicit owner, repository, and PR number. [Bend2](sources.bend) selects the earliest verified publication available in the local sample. The [delivery stage policy](metrics.bend) defines which observed endpoints form each interval. Run `npm run verify -- evidence` for the report CLI regression through SQLite.
+[`delivery.ts`](delivery/delivery.ts) joins independent source rows by explicit owner, repository, and PR number. [Bend2](sources.bend) selects the earliest verified publication available in the local sample. The [delivery stage policy](projection/metrics.bend) defines which observed endpoints form each interval. Run `npm run verify -- evidence` for the report CLI regression through SQLite.
 
 Each row of `github_release_observations` binds the PR merge SHA, release source SHA, publication time, asset, verification result, and matched publishing workflow clocks observed together. A later failed probe preserves the earlier successful observation. Replaying identical evidence preserves the row count. `github_pr_ci` retains the observed first PR workflow start and its run ID.
 

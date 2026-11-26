@@ -5,26 +5,26 @@
     "collector/github/delivery.ts",
     "collector/import-actions.ts",
     "collector/import-sources.ts",
-    "collector/rollout-syntax.ts",
-    "collector/rollout.ts",
+    "collector/codex/rollout-syntax.ts",
+    "collector/codex/rollout.ts",
     "collector/t3.ts",
     "collector/wire.ts"
   ],
   "SQLite I/O, runtime entrypoints, and Bend2 interface types": [
-    "evidence/actions.sql",
-    "evidence/actions.ts",
-    "evidence/delivery.ts",
+    "evidence/storage/actions.sql",
+    "evidence/storage/actions.ts",
+    "evidence/delivery/delivery.ts",
     "evidence/index.ts",
-    "evidence/intervals.ts",
-    "evidence/load.ts",
+    "evidence/projection/intervals.ts",
+    "evidence/storage/load.ts",
     "evidence/read.ts",
     "evidence/report-actions.ts",
     "evidence/repository.ts",
-    "evidence/snapshot.ts",
-    "evidence/sources.sql",
-    "evidence/sources.ts",
-    "evidence/timing.ts",
-    "evidence/trace.ts"
+    "evidence/projection/snapshot.ts",
+    "evidence/storage/sources.sql",
+    "evidence/storage/sources.ts",
+    "evidence/projection/timing.ts",
+    "evidence/projection/trace.ts"
   ],
   "Grafana and Tempo provisioning, serialization, and runtime": [
     "dashboard/load-tempo.ts",
@@ -51,6 +51,7 @@
     "package.json",
     "tooling/bend.ts",
     "tooling/check-boundaries.ts",
+    "tooling/check-directory-width.ts",
     "tooling/verify.ts"
   ],
   "Synthetic integration fixtures and demo": [
@@ -58,7 +59,8 @@
     "collector/github/attempt.test.ts",
     "collector/sources.test.ts",
     "dashboard/prepare.test.ts",
-    "evidence/delivery.test.ts",
-    "examples/demo.ts"
+    "evidence/delivery/delivery.test.ts",
+    "examples/demo.ts",
+    "tooling/tests/directory-width.test.ts"
   ]
 }

@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
-import { loadEvidence, type PullRequest, type ReleaseEvidence } from "./index.ts";
+import { loadEvidence, type PullRequest, type ReleaseEvidence } from "../index.ts";
 
 test("the report keeps each release proof bound to its own observation across replay and replacement", () => {
   const parent = process.env.BARNACLES_TEST_DIRECTORY;
