@@ -12,7 +12,7 @@ type Bounds = { $: "Window"; from: number; to: number };
 type WindowRow = Pick<Timing, "clock" | "workflow" | "operation"> & { occupancy: { stats: Stats; union: number; unplaced: number } };
 
 type WindowSummary = { clocks: List<WindowRow>; operations: List<WindowRow>; workflows: List<WindowRow>;
-  totals: List<WindowRow>; mixed: List<WindowRow>; hours: List<WindowRow> };
+  totals: List<WindowRow>; mixed: List<WindowRow>; step_jobs: List<WindowRow> };
 type TimingSelector = { workflow: string; operation: string };
 
 export type ProcessAttribution = {
@@ -31,7 +31,7 @@ export type TimingPolicy = {
   empty_window_spans(): unknown;
   window_action_job(spans: unknown, workflow: number, name: string, created: number, queued: number,
     started: number, ended: number): unknown;
-  window_action_step(spans: unknown, workflow: number, name: string, start: number, end: number): unknown;
+  window_action_step(spans: unknown, workflow: number, name: string, job: string, start: number, end: number): unknown;
   window_codex_span(spans: unknown, clock: string, categories: string, attribution: ProcessAttribution, start: number, end: number): unknown;
   window_reports(spans: unknown, cutoff: number): List<{ key: string; bounds: Bounds; summary: WindowSummary }>;
   measured_union(occupancy: WindowRow["occupancy"]): Ratio;
@@ -90,8 +90,9 @@ export function collectTiming(source: DatabaseSync, repo: string, metrics: Timin
       }
     }
     for (const row of all(`
-      SELECT workflow_id, label, action_steps.started_at, action_steps.completed_at
-      FROM action_steps JOIN action_attempts USING (repository, run_id, attempt) WHERE repository = ?
+      SELECT workflow_id, action_steps.label, action_jobs.label AS job_label, action_steps.started_at, action_steps.completed_at
+      FROM action_steps JOIN action_attempts USING (repository, run_id, attempt)
+      LEFT JOIN action_jobs USING (repository, run_id, attempt, job_id) WHERE repository = ?
     `)) {
       const workflow = Number(row.workflow_id);
       const label = String(row.label);
@@ -99,7 +100,7 @@ export function collectTiming(source: DatabaseSync, repo: string, metrics: Timin
       const ended = millis(row.completed_at);
       if (windowed) {
         observe("Actions", started, ended);
-        spans = metrics.window_action_step(spans, workflow, label, started, ended);
+        spans = metrics.window_action_step(spans, workflow, label, String(row.job_label ?? ""), started, ended);
       } else state = metrics.timing_action_step(state, workflow, label, started, ended);
     }
   }
@@ -123,8 +124,7 @@ export function collectTiming(source: DatabaseSync, repo: string, metrics: Timin
         mean_seconds REAL, total_seconds REAL, union_seconds REAL, unmeasured INTEGER, has_area INTEGER, rank INTEGER);
       CREATE TABLE mixed_groups(window TEXT, clock TEXT, operation TEXT, count INTEGER, mean_seconds REAL,
         total_seconds REAL, union_seconds REAL, unmeasured INTEGER, rank INTEGER);
-      CREATE TABLE operation_hours(window TEXT, clock TEXT, operation TEXT, hour INTEGER, total_millis INTEGER, rank INTEGER);
-      CREATE INDEX operation_hour_lookup ON operation_hours(window, clock, operation, rank);
+      CREATE TABLE step_job_totals(window TEXT, operation TEXT, workflow INTEGER, job TEXT, total_millis INTEGER);
       CREATE TABLE workflows(window TEXT, clock TEXT, workflow INTEGER, total_seconds REAL, union_seconds REAL,
         count INTEGER, mean_seconds REAL, unmeasured INTEGER, rank INTEGER);
       CREATE TABLE timing_selection(window TEXT, clock TEXT, workflow_choice TEXT, operation_choice TEXT, kind INTEGER,
@@ -142,7 +142,7 @@ export function collectTiming(source: DatabaseSync, repo: string, metrics: Timin
       const timing = view.prepare("INSERT INTO timing VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
       const workflows = view.prepare("INSERT INTO workflows VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
       const totals = view.prepare("INSERT INTO operation_totals VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-      const hours = view.prepare("INSERT INTO operation_hours VALUES (?, ?, ?, ?, ?, ?)");
+      const stepJobs = view.prepare("INSERT INTO step_job_totals VALUES (?, ?, ?, ?, ?)");
       const mixed = view.prepare("INSERT INTO mixed_groups VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
       const selection = view.prepare("INSERT INTO timing_selection VALUES (?, ?, ?, ?, ?, ?)");
       const stats = ({ occupancy }: WindowRow) => [
@@ -181,8 +181,9 @@ export function collectTiming(source: DatabaseSync, repo: string, metrics: Timin
           mixed.run(key, row.clock, row.operation, ...stats(row), rank);
           select(row, rank, 1, metrics.window_mixed_selectors(row));
         });
-        rows(report.hours).forEach((row, rank) =>
-          hours.run(key, row.clock, row.operation, row.workflow, row.occupancy.stats.total, rank));
+        for (const row of rows(report.step_jobs)) {
+          stepJobs.run(key, row.clock, row.workflow, row.operation, row.occupancy.stats.total);
+        }
       }
     },
   };

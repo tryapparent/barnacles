@@ -61,8 +61,15 @@ bound to loopback and requires the trusted Serve identity on every request,
 including the assets and JSON routes. Use these settings only when the
 proxy strips client-supplied identity headers and sets its own.
 
-The scene uses the approved generated artwork for the two working shores.
-Its references are the [Clyde shipyard archive](https://i.rcahms.gov.uk/canmore/x/SC01268607.jpg)
+The Barnacles title shares the scene with the selected Tide-worn Oak hull.
+The artwork uses two equally sized WebP frames stacked vertically, one for the
+hull with outward-facing shells and one for its reflected ripples. The pale
+shells and shaded wood use the same blue-gray palette as the harbor. The hull
+fades into that scene at its leading and lower edges. The reflection draws
+through the live water path before the shores and fleet, using the same pause
+and reduced-motion behavior as the rest of the scene.
+
+The reference images for the two working shores are the [Clyde shipyard archive](https://i.rcahms.gov.uk/canmore/x/SC01268607.jpg)
 and the [Historic England Whitby archive](https://historicengland.org.uk/images-books/photos/item/AA63/04965).
 The canvas draws at most four ships per stage for readability. Hover over a ship
 or tab to it to see its PR number and current stage. Press Escape to dismiss the
@@ -119,17 +126,19 @@ up to 366 days. The response includes both `snapshotAt` and its effective
 **Where time went** shows up to four named tiles per level. The largest
 always appears. The remaining named tiles each represent at least one
 twelfth of the current level's time. A gray **Other** tile combines the
-remaining measured time and opens its constituent groups. A named operation
-opens a breakdown by UTC start hour. Each measured span contributes its
-full clipped duration to the hour containing its clipped start, so durations
-can overlap or extend beyond the displayed hour. Untimed spans remain in
-**Recorded operations** and have no chart area. Use the back control above
-the chart to move up a level.
+remaining measured time and opens its constituent groups. In a CI clock,
+open **CI**, then a workflow, to see the jobs in it. The import retains
+workflow IDs and job labels. For the step clock, each job area is the sum
+of its measured steps. Tool clocks expand **Waiting**, **Process I/O**, and
+**Mixed** where the evidence records smaller categories. Unidentified spans
+retain their labels. Untimed spans remain in **Recorded operations**.
+All areas use cumulative measured time and spans can overlap.
 
-The additive `operations.map` field contains the visible tiles for the
-selected clock and operation. Each tile includes its cumulative seconds,
-palette index, grouped item count and children. Older prepared policies
-omit this field. Reprepare the snapshot to enable drill-down.
+The `operations.map` field contains the visible tiles for the selected
+clock and operation. Each tile includes its cumulative seconds, palette
+index, grouped item count and children. The `operations.mapKind` value
+`categories` identifies the category hierarchy. Reprepare older snapshots
+to load the category policy and the job breakdown for CI steps.
 
 The operation clock defaults to `Tool envelopes`. Other clocks are
 `Async cells`, `CI queue`, `CI execution`, and `CI steps`. Omit `operation`

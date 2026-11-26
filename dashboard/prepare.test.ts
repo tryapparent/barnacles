@@ -626,10 +626,10 @@ test("shipping API preserves historical and partial evidence and reads a replace
     } }, admission);
     const hour = Math.floor(cutoff / 3600) * 3600000;
     const operations = [
-      ["File inspection", hour - 7200000, 30000], ["File inspection", hour - 3600000, 20000],
+      ["Cell wait", hour - 7200000, 30000], ["Cell wait", hour - 3600000, 20000],
       ["Rust build", hour - 3600000, 15000], ["Git inspection", hour - 3600000, 9000],
       ["Git push", hour - 3600000, 4000], ["Browser", hour - 3600000, 2000],
-      ["Shell", hour - 3600000, 1000], ["Unknown", hour - 3600000, null],
+      ["File inspection + Rust build", hour - 3600000, 1000], ["Unknown", hour - 3600000, null],
     ] as const;
     const batch = { source: "codex" as const, rollout: {
       instance: "synthetic", session: "review-map", lines: operations.length, malformed: 0, orphans: 0, markers: [],
@@ -641,6 +641,18 @@ test("shipping API preserves historical and partial evidence and reads a replace
     } };
     loadEvidence(source, batch, admission);
     loadEvidence(source, batch, admission);
+    for (const [workflowId, label, seconds] of [[41, "Build", 30], [41, "Test", 20], [42, "Build", 10]] as const) {
+      const runId = workflowId * 100 + seconds;
+      const start = hour / 1000 - 3600;
+      loadEvidence(source, { source: "github-actions", attempt: {
+        repository: repo, sha: "a".repeat(40), runId, attempt: 1, workflowId, status: "completed", conclusion: "success",
+        createdAt: start - 2, startedAt: start, sourceUpdated: start + seconds, observedAt: start + seconds,
+        jobs: [{ id: 1, label, status: "completed", conclusion: "success", created: start - 2,
+          priorExecution: false, queueEnd: start, executionStart: start, executionEnd: start + seconds,
+          steps: [{ number: 1, label: "Run checks", status: "completed", conclusion: "success",
+            start, end: start + seconds }] }],
+      } }, admission);
+    }
     await prepare(snapshot);
     const db = new DatabaseSync(join(snapshot, "dashboard.sqlite"), { readOnly: true });
     try {
@@ -729,16 +741,31 @@ test("shipping API preserves historical and partial evidence and reads a replace
     assert.equal(report.deliveries.items[0].title, open.title);
     assert.equal(report.deliveries.nextOffset, 1);
     assert.equal(report.deliveries.maxMeasuredMillis, 700_000);
+    assert.equal(report.operations.mapKind, "categories");
     const tiles = report.operations.map;
     assert.deepEqual(tiles.map(({ label, totalSeconds, grouped }: { label: string; totalSeconds: number; grouped: number }) =>
-      [label, totalSeconds, grouped]), [["File inspection", 50, 0], ["Rust build", 15, 0],
+      [label, totalSeconds, grouped]), [["Waiting", 50, 0], ["Rust build", 15, 0],
       ["Git inspection", 9, 0], ["Other", 7, 3]]);
-    assert.deepEqual(tiles[0].children.map(({ totalSeconds }: { totalSeconds: number }) => totalSeconds), [30, 20]);
-    assert.deepEqual(tiles[3].children.map(({ label }: { label: string }) => label), ["Git push", "Browser", "Shell"]);
+    assert.deepEqual(tiles[0].children.map(({ label, totalSeconds }: { label: string; totalSeconds: number }) =>
+      [label, totalSeconds]), [["Waiting for an unidentified task", 50]]);
+    assert.equal(tiles[0].children[0].children.length, 0);
+    assert.deepEqual(tiles[3].children.map(({ label }: { label: string }) => label), ["Git push", "Browser", "Mixed"]);
+    assert.equal(tiles[3].children[2].children[0].label, "File inspection + Rust build");
     assert.equal(report.operations.items.find(({ operation }: { operation: string }) => operation === "Unknown").unmeasuredSpans, 1);
-    const selectedMap = (await get("/api/v1/shipping?operation=File%20inspection")).operations.map;
+    const selectedMap = (await get("/api/v1/shipping?operation=Waiting%20for%20an%20unidentified%20task")).operations.map;
     assert.deepEqual(selectedMap, [tiles[0]]);
     assert.deepEqual((await get("/api/v1/shipping?clock=Async%20cells")).operations.map, []);
+    for (const query of ["clock=CI%20execution", "clock=CI%20steps&operation=Run%20checks"]) {
+      const [ci] = (await get("/api/v1/shipping?" + query)).operations.map;
+      assert.equal(ci.label, "CI");
+      assert.equal(ci.totalSeconds, 60);
+      assert.deepEqual(ci.children.map((workflow: { label: string; totalSeconds: number; children: { label: string }[] }) =>
+        [workflow.label, workflow.totalSeconds, workflow.children.map(({ label }) => label)]),
+        [["Workflow 41", 50, ["Build", "Test"]], ["Workflow 42", 10, ["Build"]]]);
+    }
+    const [filteredCi] = (await get("/api/v1/shipping?clock=CI%20execution&operation=Test")).operations.map;
+    assert.equal(filteredCi.totalSeconds, 20);
+    assert.deepEqual(filteredCi.children[0].children.map(({ label }: { label: string }) => label), ["Test"]);
     assert.equal(report.operations.window, "24h");
     const page = await get("/api/v1/shipping?limit=1&offset=1");
     assert.deepEqual(page.shipments.dailyStages, report.shipments.dailyStages);

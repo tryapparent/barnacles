@@ -195,7 +195,7 @@ function DelayedBursts() {
   return <canvas className="operation-dither" ref={canvas} />;
 }
 
-function OperationMap({ items }: { items: OperationTile[] }) {
+function OperationMap({ items, clock }: { items: OperationTile[]; clock: string }) {
   const [path, setPath] = useState<OperationTile[]>([]);
   const [width, setWidth] = useState(0);
   const scope = useRef<HTMLDivElement>(null);
@@ -227,7 +227,7 @@ function OperationMap({ items }: { items: OperationTile[] }) {
 
   return <>
     <div className="operation-scope" ref={scope}>
-      <h3 ref={heading} tabIndex={-1}>{current ? name(current) : "All recorded time"}</h3>
+      <h3 ref={heading} tabIndex={-1}>{current ? path.map(name).join(" / ") : clock}</h3>
       {current && <button type="button" onClick={() => navigate(path.slice(0, -1))}>
         ← {path.length > 1 ? name(path[path.length - 2]) : "All operations"}
       </button>}
@@ -254,10 +254,11 @@ function OperationMap({ items }: { items: OperationTile[] }) {
 }
 
 function Operations({ operations }: { operations: Review["operations"] }) {
-  const { items, map } = operations;
+  const { items } = operations;
+  const map = operations.mapKind === "categories" ? operations.map : undefined;
   return <section className="panel time" aria-labelledby="operations-title">
     <h2 id="operations-title">Where time went</h2>
-    {map?.length ? <OperationMap key={JSON.stringify([operations.clock, operations.operation, map])} items={map} />
+    {map?.length ? <OperationMap key={JSON.stringify([operations.clock, operations.operation, map])} items={map} clock={operations.clock} />
       : <p className="empty-chart">{map ? "No measured time for this selection." : "The time map needs a refreshed evidence snapshot."}</p>}
     {!!items.length && <details className="chart-details" open={map === undefined ? true : undefined}>
       <summary>Recorded operations</summary>
