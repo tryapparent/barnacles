@@ -64,9 +64,11 @@ proxy strips client-supplied identity headers and sets its own.
 The scene uses the approved generated artwork for the two working shores.
 Its references are the [Clyde shipyard archive](https://i.rcahms.gov.uk/canmore/x/SC01268607.jpg)
 and the [Historic England Whitby archive](https://historicengland.org.uk/images-books/photos/item/AA63/04965).
-The canvas draws at most four ships per stage for readability. The Fleet
-manifest lists every observed PR with a link to its evidence. Vessel size uses
-depth perspective because the evidence source does not retain PR diff sizes.
+The canvas draws at most four ships per stage for readability. Hover over a ship
+or tab to it to see its PR number and current stage. Press Escape to dismiss the
+label. Select the ship to open its PR evidence. The Fleet manifest lists every
+observed PR with a link to its evidence. Vessel size uses depth perspective
+because the evidence source does not retain PR diff sizes.
 The shore artwork uses the same silver highlights and blue-black shadows as
 the ships, with softer tones in the distance and lower exposure at night.
 
@@ -173,3 +175,20 @@ Run `BARNACLES_TEST_DIRECTORY="$job" npm run verify -- dashboard evidence`.
 The HTTP integration test prepares synthetic evidence, queries the running
 API, compares publication with verified access, checks missing milestones and
 pagination, and replaces the database while the server is running.
+
+## Local process timings
+
+`GET /api/v1/process-timings` returns `{ captures: [...] }` with up to eight
+explicitly bound Linux captures from the prepared snapshot, newest first.
+An older snapshot without this evidence returns an empty list. Each capture has
+`startedAt` from the linked rollout call, `durationMicros` for the root
+(null when its exit is unknown), `observedMicros` for the visible axis,
+`unfinished` for executable intervals with no end, and `spans`. Each span has
+a capture-local `id`, `parent` (1 denotes the measured command root),
+`depth`, safe executable `name`, and `start`, `end`, and `elapsed` in
+microseconds. The time origin is the kernel-observed launch.
+
+Harbor links to this waterfall from the masthead. It shows captured local
+commands independently of the selected PR or shipping date filter. See
+[local process timing](../evidence/README.md#local-process-timing) for
+provenance and coverage.

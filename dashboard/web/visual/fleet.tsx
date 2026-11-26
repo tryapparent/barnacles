@@ -1,9 +1,13 @@
-import { useEffect, useRef, useState, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type MouseEvent, type SyntheticEvent } from "react";
 import { countLabel, detailPage, stages, utcLabel, type Review } from "../api";
 import { Button } from "../controls";
 import { mountHarbor } from "./scene";
 
 const shipsPerStage = 4;
+
+function resetShipTooltip(event: SyntheticEvent<HTMLAnchorElement>) {
+  event.currentTarget.removeAttribute("data-tooltip-dismissed");
+}
 
 export function Fleet({ fleet, onSelect }: { fleet: Review["fleet"];
   onSelect: (event: MouseEvent<HTMLAnchorElement>, number: number) => void }) {
@@ -15,16 +19,23 @@ export function Fleet({ fleet, onSelect }: { fleet: Review["fleet"];
   const [isPaused, setPaused] = useState(false);
   const [reduced, setReduced] = useState(() => matchMedia("(prefers-reduced-motion: reduce)").matches);
   const groups = stages.map(([stage, label]) => ({ stage, label, items: fleet.items.filter((item) => item.stage === stage) }));
-  const contacts = groups.flatMap(({ items }, position) => items.slice(0, shipsPerStage)
-    .map((item, index) => ({ item, column: .15 + position * .116 + Math.sin(index * 2.6 + position) * .025,
+  const contacts = groups.flatMap(({ items, label }, position) => items.slice(0, shipsPerStage)
+    .map((item, index) => ({ item, label, column: .15 + position * .116 + Math.sin(index * 2.6 + position) * .025,
       row: .44 + index * .137 + Math.sin(position * 2 + index) * .040, drift: .7 + index * .19 })));
 
   useEffect(() => {
     const media = matchMedia("(prefers-reduced-motion: reduce)");
     const review = canvas.current!.closest("main")!;
     review.toggleAttribute("data-motion-paused", paused.current);
-    const painter = mountHarbor(canvas.current!, contacts.map(({ item, ...contact }) =>
-      ({ ...contact, link: shipLinks.current.get(item.number) })));
+    const painter = mountHarbor(canvas.current!, contacts.map(({ item, column, row, drift }) =>
+      ({ column, row, drift, link: shipLinks.current.get(item.number) })));
+    const dismissTooltip = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      for (const link of shipLinks.current.values()) {
+        if (link.matches(":hover, :focus-visible")) link.setAttribute("data-tooltip-dismissed", "");
+      }
+    };
+    document.addEventListener("keydown", dismissTooltip);
     const clockFormat = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
     const tick = () => {
       const now = new Date();
@@ -61,6 +72,7 @@ export function Fleet({ fleet, onSelect }: { fleet: Review["fleet"];
     return () => {
       cancelAnimationFrame(frame);
       clearInterval(timer);
+      document.removeEventListener("keydown", dismissTooltip);
       media.removeEventListener("change", onPreference);
       painter.dispose();
       review.style.removeProperty("--swell");
@@ -85,11 +97,19 @@ export function Fleet({ fleet, onSelect }: { fleet: Review["fleet"];
     <div className="fleet-window">
       <canvas className="fleet-water" aria-hidden="true" ref={canvas} />
       <div className="fleet-celestial" aria-hidden="true" ref={sky} />
-      {contacts.map(({ item }) => <a key={item.number} className="fleet-ship" aria-label={`Open PR #${item.number} evidence`}
-        title={`PR #${item.number}`} href={detailPage(item.number, fleet.to)} onClick={(event) => onSelect(event, item.number)} ref={(link) => {
+      {contacts.map(({ item, label }) => <a key={item.number} className="fleet-ship" aria-label={`Open PR #${item.number} evidence`}
+        aria-describedby={`fleet-ship-stage-${item.number}`} href={detailPage(item.number, fleet.to)}
+        onPointerEnter={resetShipTooltip} onFocus={resetShipTooltip} onClick={(event) => onSelect(event, item.number)} ref={(link) => {
           if (link) shipLinks.current.set(item.number, link);
           else shipLinks.current.delete(item.number);
-        }} />)}
+        }}>
+          <span className="fleet-ship-tooltip">
+            <span className="fleet-ship-callout" id={`fleet-ship-stage-${item.number}`} role="tooltip">
+              <span aria-hidden="true">PR #{item.number}</span>
+              <span>{label}</span>
+            </span>
+          </span>
+        </a>)}
     </div>
     {fleet.items.length ? <details className="fleet-manifest">
       <summary>Fleet manifest <span className="fleet-limit">· Up to {shipsPerStage} ships shown per stage</span></summary>

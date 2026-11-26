@@ -6,7 +6,7 @@ import { repository } from "../repository.ts";
 import { buildPolicies, buildPolicy, loadPolicy } from "../../tooling/bend.ts";
 import { deliveryPolicy, readDelivery, type DeliveryPolicy } from "../delivery/delivery.ts";
 import type { AttemptIdentity } from "../storage/actions.ts";
-import type { List } from "../storage/sources.ts";
+import { processTimingPolicy, type KernelPolicy, type List } from "../storage/sources.ts";
 import { collectTiming, millis, rows, seconds, type Stats, type TimingPolicy } from "./timing.ts";
 import { writeTraces, type OtlpPolicy, type TracePolicy, type TraceWriter } from "./trace.ts";
 
@@ -221,14 +221,41 @@ function writeActionsWait(source: DatabaseSync, view: DatabaseSync, repo: string
   }
 }
 
+function writeProcessTimings(source: DatabaseSync, view: DatabaseSync, cutoff: number, policy: KernelPolicy) {
+  view.exec("CREATE TABLE process_timings (position INTEGER PRIMARY KEY, started_ms INTEGER NOT NULL, trace_json TEXT NOT NULL)");
+  const candidates = source.prepare(`
+    SELECT capture.capture, capture.started_ms, capture.source_line,
+      call.source_line AS call_line, call.started_ms AS call_start, call.ambiguous
+    FROM codex_kernel_captures capture JOIN codex_calls call USING (instance, session_id, call_id)
+    ORDER BY capture.capture
+  `);
+  const trace = source.prepare("SELECT trace_json FROM codex_kernel_captures WHERE capture=?");
+  const insert = view.prepare("INSERT INTO process_timings VALUES (?, ?, ?)");
+  let refs: Parameters<KernelPolicy["visible_captures"]>[0] = { $: "Nil" };
+  for (const row of candidates.iterate()) {
+    const at = Number(row.started_ms);
+    if (policy.binding(Number(row.source_line), at, Number(row.call_line), Number(row.call_start), row.ambiguous !== 0) &&
+        policy.capture_visible(at, cutoff)) {
+      refs = { $: "Con", head: { $: "CaptureRef", key: String(row.capture), at }, tail: refs };
+    }
+  }
+  let position = 0;
+  for (const ref of rows(policy.visible_captures(refs))) {
+    const row = trace.get(ref.key);
+    if (!row) throw Error("Missing process capture in the source transaction");
+    insert.run(position++, ref.at, row.trace_json);
+  }
+}
+
 async function compileSnapshotPolicies(scratch: string) {
-  const [deliveryModule, metricModule, modelModule, traceModule, otlpModule, waitModule] = await buildPolicies(scratch, [
+  const [deliveryModule, metricModule, modelModule, traceModule, otlpModule, waitModule, kernelModule] = await buildPolicies(scratch, [
     [deliveryPolicy, "delivery.mjs"],
     [new URL("./metrics.bend", import.meta.url), "metrics.mjs"],
     [new URL("./estimate.bend", import.meta.url), "estimate.mjs"],
     [new URL("./trace.bend", import.meta.url), "trace.mjs"],
     [new URL("./otlp.bend", import.meta.url), "otlp.mjs"],
     [actionsWaitPolicy, "actions-wait.mjs"],
+    [processTimingPolicy, "process-timing.mjs"],
   ]);
   const policy = await loadPolicy<DeliveryPolicy>(deliveryModule);
   const metrics: Metrics = await loadPolicy(metricModule);
@@ -236,7 +263,8 @@ async function compileSnapshotPolicies(scratch: string) {
   const otlp: OtlpPolicy = await loadPolicy(otlpModule);
   const estimator: Estimator = await loadPolicy(modelModule);
   const waits: WaitPolicy = await loadPolicy(waitModule);
-  return { policy, metrics, estimator, waits, metricModule, tracePolicy, otlp };
+  const kernel = await loadPolicy<KernelPolicy>(kernelModule);
+  return { policy, metrics, estimator, waits, metricModule, tracePolicy, otlp, kernel };
 }
 
 type SnapshotPolicies = Awaited<ReturnType<typeof compileSnapshotPolicies>>;
@@ -244,7 +272,7 @@ type SnapshotPolicies = Awaited<ReturnType<typeof compileSnapshotPolicies>>;
 export async function writeSnapshot(input: string, output: string, scratch: string, requestedRepository: string, cutoff: number,
   writeTrace?: TraceWriter, actionsWaitWindow?: ActionWaitWindow,
   timingCutoff = cutoff * 1000, reviewPolicyOutput?: string, compiled?: SnapshotPolicies) {
-  const { policy, metrics, estimator, waits, metricModule, tracePolicy, otlp } = compiled ?? await compileSnapshotPolicies(scratch);
+  const { policy, metrics, estimator, waits, metricModule, tracePolicy, otlp, kernel } = compiled ?? await compileSnapshotPolicies(scratch);
   const repo = repository(requestedRepository, metrics);
   const source = new DatabaseSync(input, { readOnly: true });
   closeSync(openSync(output, "wx", 0o600));
@@ -386,6 +414,7 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
 
     writeActionsWait(source, view, repo,
       actionsWaitWindow ? { $: "Window", ...actionsWaitWindow } : waits.report_window(timingCutoff), waits);
+    if (table("codex_kernel_captures")) writeProcessTimings(source, view, timingCutoff, kernel);
     view.exec("COMMIT");
     if (reviewPolicyOutput) copyFileSync(metricModule, reviewPolicyOutput);
     const from = summary.from;
@@ -556,6 +585,15 @@ export async function openShippingReview(directory: string) {
   read(() => undefined);
 
   return {
+    processTimings() {
+      return read((db) => {
+        const available = db.prepare("SELECT 1 FROM sqlite_schema WHERE name='process_timings' AND type='table'").get();
+        const captures = available ? db.prepare("SELECT started_ms, trace_json FROM process_timings ORDER BY position").all() : [];
+        return { captures: captures.map((row) => ({
+          startedAt: utc(Number(row.started_ms)), ...JSON.parse(String(row.trace_json)),
+        })) };
+      });
+    },
     shipping(input: ReviewInput) {
       if (!policy.review_clock_valid(input.clock)) return { error: "invalid_clock" } as const;
       if (!policy.review_page_valid(input.limit, input.offset)) return { error: "invalid_page" } as const;
