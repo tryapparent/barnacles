@@ -19,6 +19,11 @@ export type Milestone = { key: string; phase: Stage; observedAt: string | null; 
   provenance?: { source: string; url: string | null } | null };
 export type Vessel = { number: number; stage: Stage; lastObservedAt: string; detailPath: string; pullRequestUrl: string };
 export type Delivery = Vessel & { milestones: Milestone[] };
+export type ProcessCapture = {
+  startedAt: string; durationMicros: number | null; observedMicros: number; unfinished: number;
+  spans: { id: number; parent: number; depth: number; name: string; start: number; end: number; elapsed: number }[];
+};
+
 export type Detail = Delivery & { asOf: string; snapshotAt: string };
 export type Operation = { operation: string; measuredSpans: number; meanSeconds: number | null; totalSeconds: number | null;
   unmeasuredSpans: number; hasArea: boolean };
@@ -89,7 +94,10 @@ export const stageLabel = (key: string) => stages.find(([stage]) => key === stag
 export const milestoneLabel = (key: string) => milestoneLabels[key] ?? key;
 export const countLabel = (value: number) => value.toLocaleString();
 
-type DurationPolicy = { elapsed_label(milliseconds: number, negative: boolean, signed: boolean): string };
+type DurationPolicy = {
+  elapsed_label(milliseconds: number, negative: boolean, signed: boolean): string;
+  process_label(microseconds: number): string;
+};
 const policy = import.meta.glob<DurationPolicy>("./duration.bend", { eager: true, import: "default" })["./duration.bend"];
 
 export function durationMillis(milliseconds: number, signed = false) {
@@ -99,3 +107,5 @@ export function durationMillis(milliseconds: number, signed = false) {
 export function duration(seconds: number | null, signed = false) {
   return seconds === null ? "Unknown" : durationMillis(seconds * 1000, signed);
 }
+
+export const processMillis = (microseconds: number) => policy.process_label(microseconds);

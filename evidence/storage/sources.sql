@@ -174,3 +174,9 @@ CREATE TABLE IF NOT EXISTS codex_rollout_quality (
   PRIMARY KEY (instance, session_id),
   FOREIGN KEY (instance, session_id) REFERENCES codex_rollouts
 ) STRICT;
+
+CREATE TABLE IF NOT EXISTS codex_kernel_captures (
+  capture TEXT PRIMARY KEY, instance TEXT NOT NULL, session_id TEXT NOT NULL,
+  call_id TEXT NOT NULL, source_line INTEGER NOT NULL, started_ms INTEGER NOT NULL, trace_json TEXT NOT NULL,
+  UNIQUE (instance, session_id, call_id)
+) STRICT;

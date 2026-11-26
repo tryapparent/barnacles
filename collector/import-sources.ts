@@ -3,13 +3,13 @@ import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
   admissionPolicy, deliveryPolicy, deliveryReport, harborSnapshotPublisher, loadEvidence, readPollMinutes, repository,
-  rolloutCoverage, sourcePolicy, waitReport, watchOverlaps, type AdmissionPolicy, type DeliveryPolicy, type SourcePolicy,
+  processTimingPolicy, rolloutCoverage, saveKernelCapture, sourcePolicy, waitReport, watchOverlaps, type AdmissionPolicy, type DeliveryPolicy, type KernelPolicy, type SourcePolicy,
 } from "../evidence/index.ts";
 import { buildPolicy, buildPolicies, loadPolicy } from "../tooling/bend.ts";
 import { positiveInt, type ClockPolicy } from "./github/attempt.ts";
 import { pollGitHub, pullRequest, releaseEvidence } from "./github/delivery.ts";
 import { inspectRollout } from "./codex/rollout.ts";
-import { str, token } from "./wire.ts";
+import { kernelCapture, kernelInteger, str, token } from "./wire.ts";
 import { t3Snapshot } from "./t3.ts";
 
 async function poll(db: string, scratch: string, repo: string, snapshot: string, policy: SourcePolicy, admission: AdmissionPolicy, once: boolean) {
@@ -54,11 +54,13 @@ async function main() {
     ((command === "report" || command === "rollout-coverage") && !first) ||
     (command === "waits" && !third) ||
     (command === "watch-overlaps" && first && second && third && fourth) ||
+    (command === "process" && first && second && third && !fourth) ||
+    (command === "process-probe" && first && second && !third) ||
     (command === "t3" && first && !second) ||
     (command === "rollout" && first && second && !fourth) ||
     (command === "github" && first && second && !fourth) ||
     (command === "poll-github" && first && second && (!third || third === "--once") && !fourth)
-  )) throw Error("Usage: import-sources.ts JOB_DIRECTORY { t3 SNAPSHOT | rollout INSTANCE FILE [SOURCE_ID] | github OWNER/REPO PR [TAG] | poll-github OWNER/REPO HARBOR_SNAPSHOT [--once] | report | rollout-coverage | waits [SESSION [CALL]] | watch-overlaps OWNER/REPO RUN SHA ATTEMPT }");
+  )) throw Error("Usage: import-sources.ts JOB_DIRECTORY { t3 SNAPSHOT | rollout INSTANCE FILE [SOURCE_ID] | github OWNER/REPO PR [TAG] | poll-github OWNER/REPO HARBOR_SNAPSHOT [--once] | process BINDING EVENTS DIAGNOSTICS | process-probe PARENT_PID WORK_DIRECTORY | report | rollout-coverage | waits [SESSION [CALL]] | watch-overlaps OWNER/REPO RUN SHA ATTEMPT }");
 
   const db = join(resolve(directory), "evidence.sqlite");
   if (command === "waits") {
@@ -67,6 +69,24 @@ async function main() {
   }
   const scratch = mkdtempSync(join(resolve(directory), "build-"));
   try {
+    if (command === "process" || command === "process-probe") {
+      const policy = await loadPolicy<KernelPolicy>(await buildPolicy(scratch, processTimingPolicy, "process-timing.mjs"));
+      if (command === "process") {
+        console.log(JSON.stringify(saveKernelCapture(db, kernelCapture(first, second, third), policy)));
+      } else {
+        const parent = kernelInteger(first);
+        const uid = process.getuid?.();
+        const directory = statSync(second, { bigint: true });
+        if (uid === undefined || statSync(`/proc/${parent}`).uid !== uid || !directory.isDirectory()) {
+          throw Error("Expected a Linux worker owned by the caller and an existing work directory");
+        }
+        const dev = directory.dev;
+        const major = ((dev >> 8n) & 4095n) | ((dev >> 32n) & ~4095n);
+        const minor = (dev & 255n) | ((dev >> 12n) & ~255n);
+        process.stdout.write(policy.probe(parent, uid, Number(major), Number(minor), kernelInteger(Number(directory.ino))));
+      }
+      return;
+    }
     if (command === "rollout-coverage") {
       console.log(JSON.stringify(rolloutCoverage(db), null, 2));
       return;

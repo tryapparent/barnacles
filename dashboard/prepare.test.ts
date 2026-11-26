@@ -681,8 +681,12 @@ test("shipping API preserves historical and partial evidence and reads a replace
       await bundle.arrayBuffer();
       assert.equal((await call("/dashboard.sqlite")).status, 404);
     }
-    assert.equal((await get("/api/v1")).endpoints.shipping.path, "/api/v1/shipping");
-    const settingsPath = (await get("/api/v1")).pollingSettings;
+    const discovery = await get("/api/v1");
+    const { endpoints } = discovery;
+    assert.equal(endpoints.shipping.path, "/api/v1/shipping");
+    assert.equal(endpoints.processTimings.path, "/api/v1/process-timings");
+    assert.deepEqual(await get(endpoints.processTimings.path), { captures: [] });
+    const settingsPath = discovery.pollingSettings;
     assert.equal(settingsPath, "/settings/polling");
     assert.deepEqual(await get(settingsPath), { minutes: 15 });
     const update = (value: string, origin: string, user = proxyUser) => new Promise<number | undefined>((resolve, reject) => {
@@ -769,8 +773,46 @@ test("shipping API preserves historical and partial evidence and reads a replace
     save({ ...partialShipment, number: 404, opened: shipped.opened - 86400, merged: shipped.merged! - 86400 },
       { ...proof, id: 23, tag: "previous-day-release", published: proof.published - 86400, checked: proof.checked - 86400,
         dispatch: null });
+    const calls = [0, 1, 2].map((number) => ({
+      id: `capture-${number}`, line: number + 2, tool: "Shell command", command: null, start: (at + number) * 1000,
+      end: null, async: false, asyncEnd: null, terminalCall: null, ambiguous: number === 2,
+    }));
+    loadEvidence(source, { source: "codex", rollout: {
+      instance: "fixture", session: "session", lines: 4, malformed: 0, orphans: 0, calls, markers: [],
+    } }, admission);
+    const events = [
+      "ready", "root 1000000 100", "exec 1001000 100 bash", "fork 1002000 100 101",
+      "exec 1003000 101 cargo", "fork 1004000 101 102", "exec 1005000 102 private-name",
+      "exit 1105000 102", "exit 1203000 101", "exec 1305000 100 git", "exit 1400000 100",
+    ];
+    const capture = async (number: number, log = "") => {
+      const binding = join(job, "binding.json");
+      const input = join(job, "events");
+      const diagnostics = join(job, "observer.log");
+      const content = [...(number === 1 ? events.slice(0, -1) : events), "done", ""].join("\n");
+      writeFileSync(input, content);
+      writeFileSync(diagnostics, log);
+      writeFileSync(binding, JSON.stringify({
+        instance: "fixture", session: "session", call: `capture-${number}`, line: number + 2,
+        startedAt: iso(at + number), eventsSha256: createHash("sha256").update(content).digest("hex"),
+      }));
+      return promisify(execFile)(process.execPath, ["collector/import-sources.ts", job, "process", binding, input, diagnostics]);
+    };
+    await assert.rejects(capture(2), /binding does not match/);
+    await assert.rejects(capture(0, "lost events"), /Invalid or oversized kernel event capture/);
+    await capture(0);
+    await capture(0);
+    await capture(1);
     await prepare(replacement);
     renameSync(join(replacement, "dashboard.sqlite"), join(snapshot, "dashboard.sqlite"));
+    const { captures } = await get(endpoints.processTimings.path);
+    assert.equal(captures.length, 2);
+    assert.deepEqual(captures.map((entry: { durationMicros: number | null; unfinished: number }) =>
+      [entry.durationMicros, entry.unfinished]), [[null, 1], [400, 0]]);
+    assert.deepEqual(captures[1].spans.map((span: { start: number; elapsed: number; parent: number; name: string }) =>
+      [span.start, span.elapsed, span.parent, span.name]),
+      [[1, 304, 1, "Bash"], [3, 200, 2, "Cargo"], [5, 100, 3, "Unidentified executable"], [305, 95, 1, "Git"]]);
+    assert.doesNotMatch(JSON.stringify(captures), /private-name|capture-0|session|eventsSha256/);
     const refreshed = await get("/api/v1/pull-requests/202");
     assert.equal(refreshed.stage, "merged");
     assert.equal(refreshed.milestones[4].observedAt, iso(at - 50));

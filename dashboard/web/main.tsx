@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, type CSSProperties, type FormEvent, type M
 import { createRoot } from "react-dom/client";
 import {
   dayLabel, deliveryPage, fetchEvidence, milestoneLabel, pagePath,
-  shippingPath, stageLabel, stages, utcLabel, durationMillis, type Detail, type Milestone, type Review,
+  shippingPath, stageLabel, stages, utcLabel, durationMillis, processMillis,
+  type Detail, type Milestone, type ProcessCapture, type Review,
 } from "./api";
 import { DailyStages, Overview, StageKey } from "./visual/charts";
 import { Button, NativeSelect } from "./controls";
@@ -123,6 +124,61 @@ function useEvidence<T extends object>(path: string, refresh = false) {
     };
   }, [path, refresh]);
   return { result, retry: () => setAttempt((count) => count + 1) };
+}
+
+function ProcessWaterfall({ capture }: { capture: ProcessCapture }) {
+  const scale = Math.max(1, capture.observedMicros);
+  const tracks = [{ id: 1, parent: 0, depth: 0, name: "Tool command", start: 0,
+    end: capture.durationMicros, elapsed: capture.durationMicros }, ...capture.spans];
+  const labels = new Map(tracks.map((track) => [track.id, track.name]));
+  return <>
+    <div className="process-grid process-scale" aria-hidden="true">
+      <span>Process</span><span><span>0</span><span>{processMillis(capture.observedMicros)}</span></span><span>Elapsed</span>
+    </div>
+    <ol className="waterfall-rows process-rows" aria-label="Observed process spans">
+      {tracks.map((track) => <li className="process-grid" key={track.id}>
+        <span className="process-label" style={{ "--depth": Math.min(5, track.depth) } as CSSProperties}>
+          <span>{track.name}</span>
+          {track.parent > 0 && labels.has(track.parent) &&
+            <span className="sr-only">Child of {labels.get(track.parent)}</span>}
+        </span>
+        <span className="process-track" aria-hidden="true" title={track.end === null ? undefined :
+          `${processMillis(track.start)} to ${processMillis(track.end)}`}>
+          {track.elapsed !== null && <span className="process-bar" data-root={track.id === 1} style={{
+            "--position": `${track.start * 100 / scale}%`, "--duration": `${track.elapsed * 100 / scale}%`,
+          } as CSSProperties} />}
+        </span>
+        <span className="process-duration">{track.elapsed === null ? "Unknown" : processMillis(track.elapsed)}</span>
+      </li>)}
+    </ol>
+    {capture.unfinished > 0 && <p className="fine process-note">
+      {capture.unfinished} process {capture.unfinished === 1 ? "interval has" : "intervals have"} no captured end.
+    </p>}
+    <p className="fine process-note">Linux process events. Child spans can overlap. Shell built-ins share the shell span.</p>
+  </>;
+}
+
+function ProcessTimings() {
+  const { result, retry } = useEvidence<{ captures: ProcessCapture[] }>("/api/v1/process-timings");
+  const [choice, setChoice] = useState(0);
+  const captures = result.state === "ready" ? result.data.captures : [];
+  const capture = captures[choice] ?? captures[0];
+  return <section className="process-timings" id="process-timing" aria-labelledby="process-title">
+    <h2 id="process-title">Local process timings</h2>
+    {result.state === "loading" && <p className="fine" role="status">Loading process captures…</p>}
+    {result.state === "error" && <div className="detail-links" role="alert"><p>{result.message}</p>
+      <Button onClick={retry}>Retry process timings</Button></div>}
+    {result.state === "ready" && !capture && <p className="fine">No linked process captures in this snapshot.</p>}
+    {capture && <>
+      {captures.length > 1 ? <div className="process-picker">
+        <label htmlFor="process-capture">Tool call</label>
+        <NativeSelect id="process-capture" value={choice} onChange={(event) => setChoice(Number(event.currentTarget.value))}>
+          {captures.map((item, index) => <option value={index} key={index}>{utcLabel(item.startedAt)}</option>)}
+        </NativeSelect>
+      </div> : <p className="fine">Tool call · <time dateTime={capture.startedAt}>{utcLabel(capture.startedAt)}</time></p>}
+      <ProcessWaterfall capture={capture} />
+    </>}
+  </section>;
 }
 
 function PollIntervalForm({ path, initial }: { path: string; initial: number }) {
@@ -328,7 +384,10 @@ function App() {
     return () => window.removeEventListener("popstate", restore);
   }, []);
   useEffect(() => {
-    if (review && location.hash === "#delivery-title") document.getElementById("delivery-title")?.scrollIntoView();
+    const hash = location.hash;
+    if (review && (hash === "#delivery-title" || hash === "#process-timing")) {
+      document.getElementById(hash.slice(1))?.scrollIntoView();
+    }
   }, [review]);
   const settingsToggle = settingsPath && <button type="button" className="settings-toggle" aria-expanded={showSettings}
     aria-controls={showSettings ? "poll-settings" : undefined}
@@ -350,6 +409,7 @@ function App() {
           <span>{review.repository} · Linux Main x86_64</span>
           <a href={path}>Review API JSON</a>
           {settingsToggle}
+          <a href="#process-timing">Process timings</a>
         </div>
       </div>
     </Fleet>}
@@ -362,6 +422,7 @@ function App() {
       <Overview review={review} />
       <DailyStages days={review.shipments.dailyStages} window={review.window} />
       <DeliveryTimeline key={review.snapshotAt} review={review} selection={selection} />
+      <ProcessTimings />
     </>}
   </main>;
 }
