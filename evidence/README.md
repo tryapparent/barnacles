@@ -26,6 +26,8 @@ The `action_occupancy` view groups measured durations by repository, workflow, c
 
 `codex_commands` and `codex_categories` store allowlisted command labels and distinct submitted operation categories by instance, session, and call ID. The Tempo projection hashes source keys into stable trace and span IDs, and exports observed timestamps, source line numbers, clock names, and safe labels. Categories attach to the existing span, so several categories can share one observed interval. Imports that predate categories retain their original labels until reimported. Exact source identities stay in this SQLite schema.
 
+`codex_command_mixes` stores repeated operation counts and the matched inner shell receipt duration using the same call identity. It supplies evidence for estimation and does not alter the trace clock. Reimport a rollout to populate this table.
+
 `github_pr_ci` stores an observed first PR workflow start and its run ID. `github_release_dispatch` stores a matched publishing workflow creation time and run ID for a verified release. The reporting path reads older databases with these clocks unknown. Stage elapsed times require two observed milestones in chronological order.
 
 The delivery report joins independent source rows by explicit owner, repository and PR number. GitHub release proofs retain the PR merge SHA, ancestry result, channel, and asset check time. The report uses the earliest verified publication available in the local sample, and computes an elapsed value through the compiled [Bend2 source policy](sources.bend) only with sufficient evidence. A later range probe establishes accessibility at observation time.

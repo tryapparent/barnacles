@@ -4,7 +4,7 @@ import { DatabaseSync, type SQLInputValue, type SQLOutputValue } from "node:sqli
 import { pathToFileURL } from "node:url";
 import { buildPolicy } from "../collector/build.ts";
 import { repository } from "../collector/wire.ts";
-import { deliveryReport, type SourcePolicy } from "../evidence/sources.ts";
+import { deliveryReport, type List, type SourcePolicy } from "../evidence/sources.ts";
 import { dashboards } from "./panels.ts";
 import { encodeTrace, type TracePolicy } from "./trace.ts";
 
@@ -13,10 +13,17 @@ const seconds = ({ numerator, denominator }: Ratio) => denominator ? numerator /
 type Stats = { $: "Stats"; count: number; total: number; missing: number };
 type Shipping = { $: "Delivery"; shipped: number; cycles: Stats };
 type CycleStage = { $: "Measured"; ms: number } | { $: "Missing" };
+type Estimator = {
+  empty_model(): unknown;
+  model_observe(model: unknown, scope: string, files: number, git: number, builds: number, pushes: number, seconds: number): unknown;
+  model_estimates(model: unknown): List<{ name: string; supported: boolean; seconds: number; error: number;
+    total: number; samples: number }>;
+};
 type Metrics = TracePolicy & {
   record_release(sample: Shipping, linked: boolean, elapsedMs: number): Shipping;
   visible_release(channel: string, published: number): boolean;
   codex_clock(clock: string): string;
+  observed_category(categories: string): string;
   record_interval(sample: Stats, start: number, end: number): Stats;
   trace_preference(asyncSpans: number, reasoningEvents: number): boolean;
   trace_preferred(ended: number, mixed: boolean, otherEnded: number, otherMixed: boolean): boolean;
@@ -36,7 +43,8 @@ const emptyShipping: Shipping = { $: "Delivery", shipped: 0, cycles: empty };
 type Timing = { clock: string; workflow: number; operation: string; stats: Stats };
 const millis = (seconds: SQLOutputValue) => seconds === null ? 0 : Number(seconds) * 1000;
 
-function writeSnapshot(input: string, output: string, otlp: string, repo: string, policy: SourcePolicy, metrics: Metrics, cutoff: number) {
+function writeSnapshot(input: string, output: string, otlp: string, repo: string, policy: SourcePolicy, metrics: Metrics,
+  estimator: Estimator, cutoff: number) {
   const source = new DatabaseSync(input, { readOnly: true });
   closeSync(openSync(output, "wx", 0o600));
   const view = new DatabaseSync(output);
@@ -59,6 +67,7 @@ function writeSnapshot(input: string, output: string, otlp: string, repo: string
       CREATE TABLE timing(clock TEXT, workflow INTEGER, operation TEXT, count INTEGER,
         mean_seconds REAL, total_seconds REAL, unmeasured INTEGER, rank INTEGER);
       CREATE TABLE time_map(clock TEXT, total_seconds REAL, rank INTEGER);
+      CREATE TABLE category_estimates(name TEXT, seconds REAL, total REAL, error REAL, samples INTEGER);
       CREATE TABLE workflows(clock TEXT, workflow INTEGER, total_seconds REAL, count INTEGER,
         mean_seconds REAL, unmeasured INTEGER, rank INTEGER);
       CREATE TABLE trace(session INTEGER, source_line INTEGER, operation TEXT, clock TEXT, started INTEGER, ended INTEGER);
@@ -158,6 +167,19 @@ function writeSnapshot(input: string, output: string, otlp: string, repo: string
       }
     }
 
+    let model = estimator.empty_model();
+    if (table("codex_command_mixes")) {
+      for (const row of all("SELECT * FROM codex_command_mixes ORDER BY instance, session_id, call_id")) {
+        model = estimator.model_observe(model, JSON.stringify([row.instance, row.session_id]), Number(row.file_count),
+          Number(row.git_count), Number(row.build_count), Number(row.push_count), Number(row.seconds));
+      }
+    }
+    const measure = view.prepare("INSERT INTO category_estimates VALUES (?, ?, ?, ?, ?)");
+    for (let result = estimator.model_estimates(model); result.$ === "Con"; result = result.tail) {
+      const { name, supported, seconds, total, error, samples } = result.head;
+      measure.run(name, supported ? seconds : null, supported ? total : null, supported ? error : null, samples);
+    }
+
     let defaultTrace: { session: number; from: number; to: number; traceId: string; mixed: boolean } | undefined;
     let traceSessions = 0;
     if (table("codex_spans")) {
@@ -185,7 +207,7 @@ function writeSnapshot(input: string, output: string, otlp: string, repo: string
           const clock = metrics.codex_clock(row.clock);
           const start = row.start ?? 0;
           const end = row.end ?? 0;
-          add(clock, 0, row.tool, start, end);
+          add(clock, 0, metrics.observed_category(row.categories), start, end);
           clocks.set(clock, metrics.record_interval(clocks.get(clock) ?? empty, start, end));
           insert.run(session, row.line, metrics.trace_operation(row.clock, row.tool, row.command, row.categories),
             clock, row.start, row.end);
@@ -240,14 +262,16 @@ async function main() {
   mkdirSync(directory, { mode: 0o700 });
   const scratch = mkdtempSync(join(directory, "build-"));
   try {
-    const [metrics, sources] = await Promise.all([
+    const [metrics, sources, estimator] = await Promise.all([
       buildPolicy(scratch, new URL("./metrics.bend", import.meta.url), "metrics.mjs"),
       buildPolicy(scratch, new URL("../evidence/sources.bend", import.meta.url), "sources.mjs"),
+      buildPolicy(scratch, new URL("./estimate.bend", import.meta.url), "estimate.mjs"),
     ]);
     const load = async (path: string) => (await import(pathToFileURL(path).href)).default;
     const snapshot = join(scratch, "dashboard.sqlite");
     const otlp = join(scratch, "tempo.ndjson");
-    const range = writeSnapshot(resolve(input), snapshot, otlp, repo, await load(sources), await load(metrics), Math.floor(Date.now() / 1000));
+    const range = writeSnapshot(resolve(input), snapshot, otlp, repo, await load(sources), await load(metrics),
+      await load(estimator), Math.floor(Date.now() / 1000));
     const configs = dashboards(range);
     const provision = join(directory, "dashboards");
     mkdirSync(provision);
