@@ -35,6 +35,7 @@ npm run verify
 Build and serve the Harbor website using a private output directory.
 
 ```sh
+job=$(dirname "$snapshot")
 npm run build:harbor -- --outDir "$job/harbor"
 node dashboard/prepare.ts --serve "$snapshot" 3031 "$job/harbor"
 ```
