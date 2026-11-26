@@ -1,4 +1,3 @@
-// Timestamp and call pairing adapted from Apparent's rollout census. See APPARENT-LICENSE.
 import { open } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import type { CommandMix, Point, RolloutEvidence, SourcePolicy } from "../../evidence/index.ts";

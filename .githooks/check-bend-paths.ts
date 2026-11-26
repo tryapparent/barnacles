@@ -22,7 +22,7 @@ const registry = JSON.parse(git("show", `${staged}:.githooks/bend-exceptions.jso
 const approved = new Set(Object.values(registry).flat());
 const added = git("diff", "--name-only", "--no-renames", "--diff-filter=AT", "-z", base, staged, "--").split("\0");
 const rejected = added.filter((path) => path && !approved.has(path) &&
-  !/\.(?:bend|md)$/.test(path) && !/(?:^|\/)(?:LICENSE|APPARENT-LICENSE)$/.test(path));
+  !/\.(?:bend|md)$/.test(path) && !/(?:^|\/)LICENSE$/.test(path));
 for (const path of rejected) {
   console.error(`Bend2 path check: ${JSON.stringify(path)} needs a .bend implementation or an explicitly approved host exception.`);
 }

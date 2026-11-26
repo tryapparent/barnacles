@@ -1,4 +1,3 @@
-// Exact-attempt collection and clock semantics adapted from Apparent. See ../APPARENT-LICENSE.
 import { execFileSync } from "node:child_process";
 
 import type { ActionAttempt, AttemptIdentity } from "../../evidence/index.ts";
