@@ -451,3 +451,76 @@ test("timing windows clip spans, count overlap once and preserve unknown clocks"
     } finally { db.close(); }
   } finally { rmSync(job, { recursive: true, force: true }); }
 });
+
+test("timing names waits from confirmed process receipts and keeps unresolved time", () => {
+  const parent = process.env.BARNACLES_TEST_DIRECTORY;
+  assert.ok(parent, "Set BARNACLES_TEST_DIRECTORY to a private job directory");
+  const job = mkdtempSync(join(parent, "dashboard-waits-test-"));
+  const cutoff = "2025-02-03T12:00:00Z";
+  const began = Date.parse(cutoff) - 120000;
+  const waits = [
+    ["ci-wait", "Cell wait", 1],
+    ["ci-poll", "Process I/O", 2],
+    ["git-wait", "Cell wait", 3],
+    ["git-launch", "Git push", 2],
+    ["build-poll", "Process I/O", 4],
+    ["ambiguous-poll", "Process I/O", 5],
+    ["ambiguous-wait", "Cell wait", 6],
+    ["legacy-wait", "Cell wait", 7],
+    ["mixed-wait", "Cell wait", 8],
+    ["mixed-poll", "Process I/O", 9],
+  ] as const;
+  const receipt = (call: string, status: string, category: string): NonNullable<RolloutEvidence["waitAttribution"]>["observations"][number] => ({
+    call, resultCall: call, resultLine: 30, handle: "1", start: null, end: null, observer: { $: "NoWatch" },
+    fact: { $: "ProcessFact", status, owner: call, category, watch: { $: "NoWatch" },
+      receipt: { $: "ExitReceipt", seconds: 1, code: 0 } },
+  });
+  try {
+    const source = join(job, "source.sqlite");
+    const out = join(job, "out");
+    const batch: { source: "codex"; rollout: RolloutEvidence } = { source: "codex", rollout: {
+      instance: "test-instance", session: "test-session", lines: 30, malformed: 0, orphans: 0, markers: [],
+      calls: waits.map(([id, categories, duration], index) => ({
+        id, tool: categories, categories, command: null, line: index + 1,
+        start: began + index * 10000, end: began + index * 10000 + duration * 1000,
+        async: false, asyncEnd: null, terminalCall: null, ambiguous: false,
+      })),
+      waitAttribution: {
+        waits: [
+          { call: "ci-wait", cell: "ci", status: "linked_cell", owner: "ci-poll" },
+          { call: "git-wait", cell: "git", status: "linked_cell", owner: "git-launch" },
+          { call: "ambiguous-wait", cell: "git", status: "ambiguous_cell", owner: "git-launch" },
+          { call: "mixed-wait", cell: "mixed", status: "linked_cell", owner: "mixed-poll" },
+        ],
+        observations: [
+          receipt("ci-poll", "process_running", "Exact GitHub watcher request"),
+          receipt("git-launch", "process_opened", "Git push"),
+          receipt("build-poll", "process_exited", "Rust build"),
+          receipt("ambiguous-poll", "ambiguous_process_handle", "Rust build"),
+          receipt("mixed-poll", "process_running", "File inspection + Rust build"),
+        ],
+      },
+    } };
+    loadEvidence(source, batch);
+    loadEvidence(source, batch);
+    execFileSync(process.execPath, ["dashboard/prepare.ts", source, out, "synthetic/example", cutoff],
+      { stdio: "pipe", timeout: 60_000 });
+    const db = new DatabaseSync(join(out, "dashboard.sqlite"), { readOnly: true });
+    try {
+      const groups = db.prepare(`SELECT operation, count, total_seconds FROM operation_totals
+        WHERE window='24h' AND clock='Tool envelopes' ORDER BY rank`).all().map(Object.values);
+      assert.deepEqual(groups, [
+        ["Waiting for an unidentified task", 3, 21],
+        ["Unidentified process", 2, 14],
+        ["Rust build · process I/O", 1, 4],
+        ["Waiting for Git push", 1, 3],
+        ["Git push", 1, 2],
+        ["GitHub Actions · process I/O", 1, 2],
+        ["Waiting for GitHub Actions", 1, 1],
+      ]);
+      assert.deepEqual(db.prepare(`SELECT count, total_seconds FROM clock_totals
+        WHERE window='24h' AND clock='Tool envelopes'`).all().map(Object.values), [[10, 47]]);
+      assert.equal(db.prepare("SELECT count(*) AS n FROM trace WHERE operation='Cell wait'").get()?.n, 5);
+    } finally { db.close(); }
+  } finally { rmSync(job, { recursive: true, force: true }); }
+});
