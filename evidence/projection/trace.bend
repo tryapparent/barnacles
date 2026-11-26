@@ -4,7 +4,7 @@ import ./trace-wire.bend as Wire
 
 type Span is Data:
   Span{call: String, terminal: Maybe<&2, String>, line: Nat, tool: String, clock: String,
-    start: Maybe<&2, Nat>, end: Maybe<&2, Nat>}
+    start: Maybe<&2, Nat>, end: Maybe<&2, Nat>, attribution: Metrics.ProcessAttribution}
 
 type Marker is Data:
   Marker{line: Nat, at: Nat}
@@ -158,7 +158,7 @@ def add_parent_pair(terminal: Maybe<&2, String>, parents: Map<&2, Candidate>, +c
 
 def trace_observation(state: Recorded, +span: Span, +command: String, +categories: String) -> Recorded:
   match state span:
-    case Recorded{observations, +parents, +bounds, coverage} Span{call, terminal, line, tool, +clock, start, end}:
+    case Recorded{observations, +parents, +bounds, coverage} Span{call, terminal, line, tool, +clock, start, end, attribution}:
       +a = clock_time(start)
       +b = clock_time(end)
       +valid = Metrics.interval_valid(a, b)
@@ -170,7 +170,7 @@ def trace_observation(state: Recorded, +span: Span, +command: String, +categorie
 
 def resolve_span(state: Recorded, +span: Span, +identity: SessionKey, +labels: Map<&2, String>) -> Recorded:
   match span:
-    case Span{+call, terminal, line, tool, clock, start, end}:
+    case Span{+call, terminal, line, tool, clock, start, end, attribution}:
       trace_observation(state, span,
         indexed(String, Map.get(String, "", labels, detail_key(identity, "command", call))),
         indexed(String, Map.get(String, "", labels, detail_key(identity, "categories", call))))
@@ -198,7 +198,7 @@ def complete_spans(reversed: List<&2, Observation>, spans: List<&2, Measured>, +
     List<&2, Measured>:
   match reversed:
     case []: spans
-    case Observation{Span{+call, terminal, line, tool, clock, start, end}, command, categories, operation, label} <> tail:
+    case Observation{Span{+call, terminal, line, tool, clock, start, end, attribution}, command, categories, operation, label} <> tail:
       +a = clock_time(start)
       +b = clock_time(end)
       complete_spans(tail, measured_add(Metrics.interval_valid(a, b), spans,
@@ -210,7 +210,7 @@ type ReasoningScan is Data:
 
 def span_activity(span: Span, scan: Metrics.ActivityScan, until: Nat) -> Metrics.ActivityStep:
   match span:
-    case Span{call, terminal, line, tool, clock, start, end}:
+    case Span{call, terminal, line, tool, clock, start, end, attribution}:
       Metrics.scan_activity(scan, clock_time(start), clock_time(end), until)
 
 def next_activity(spans: List<&2, Span>, scan: Metrics.ActivityScan, until: Nat) -> Metrics.ActivityStep:

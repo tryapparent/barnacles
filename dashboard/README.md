@@ -38,6 +38,14 @@ The latest Actions capture and release access check appear as receipts.
 The retained Codex and T3 schemas have no capture clock. Bounds describe the
 observed sample and may contain gaps. They can extend outside the selected window.
 
+Shipping review and Timing breakdown name a wait or process I/O call when the
+recorded receipt identifies a single operation. A wait needs a confirmed link
+to its background task. A process I/O call uses its own receipt. The GitHub
+Actions label identifies a workflow observation. Open **Actions waits** for
+exact attempts and overlapping jobs. A missing, ambiguous, or mixed process
+purpose gets an explicit unidentified label. These labels describe the existing
+tool clocks. The waterfall keeps the source tool labels.
+
 Select an operation to open **Timing breakdown** with its window and clock.
 A mixed command contributes its clipped duration once to **Mixed**. Select
 **Mixed** to see its submitted category groups. The waterfall retains the

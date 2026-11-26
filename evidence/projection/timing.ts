@@ -15,6 +15,15 @@ type WindowSummary = { clocks: List<WindowRow>; operations: List<WindowRow>; wor
   totals: List<WindowRow>; mixed: List<WindowRow> };
 type TimingSelector = { workflow: string; operation: string };
 
+export type ProcessAttribution = {
+  $: "ProcessAttribution";
+  cell_status: string;
+  wait_status: string;
+  wait_category: string;
+  io_status: string;
+  io_category: string;
+};
+
 export type TimingPolicy = {
   repository_name(value: string): string;
   observe_timestamp(bounds: Bounds, at: number): Bounds;
@@ -23,7 +32,7 @@ export type TimingPolicy = {
   window_action_job(spans: unknown, workflow: number, name: string, created: number, queued: number,
     started: number, ended: number): unknown;
   window_action_step(spans: unknown, workflow: number, name: string, start: number, end: number): unknown;
-  window_codex_span(spans: unknown, clock: string, categories: string, start: number, end: number): unknown;
+  window_codex_span(spans: unknown, clock: string, categories: string, attribution: ProcessAttribution, start: number, end: number): unknown;
   window_reports(spans: unknown, cutoff: number): List<{ key: string; bounds: Bounds; summary: WindowSummary }>;
   measured_union(occupancy: WindowRow["occupancy"]): Ratio;
   window_operation_selectors(row: WindowRow, groups: List<WindowRow>, total: boolean): List<TimingSelector>;
@@ -95,9 +104,9 @@ export function collectTiming(source: DatabaseSync, repo: string, metrics: Timin
     }
   }
   return {
-    observeCodex(clock: IntervalClock, categories: string, start: number, end: number) {
+    observeCodex(clock: IntervalClock, categories: string, attribution: ProcessAttribution, start: number, end: number) {
       observe("Codex", start, end);
-      spans = metrics.window_codex_span(spans, clock, categories, start, end);
+      spans = metrics.window_codex_span(spans, clock, categories, attribution, start, end);
     },
     result: () => metrics.timing_result(state),
     observe, receive,

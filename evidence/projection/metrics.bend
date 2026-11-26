@@ -521,6 +521,48 @@ def window_add(groups: WindowGroups, +clock: String, +workflow: Nat, +operation:
         window_record(totals, timing_group_key(clock, operation), clock, 0n, operation, interval),
         window_mix(String.eq(group, ""), mixed, clock, group, interval)}
 
+type ProcessAttribution is Data:
+  ProcessAttribution{cell_status: String, wait_status: String, wait_category: String, io_status: String, io_category: String}
+
+def confirmed_process(+status: String) -> Bool:
+  Bool.or(String.eq(status, "process_running"), Bool.or(String.eq(status, "process_exited"),
+    Bool.or(String.eq(status, "process_opened"), String.eq(status, "synchronous_process_exit"))))
+
+def one_process_purpose(parts: List<&2, String>) -> String:
+  match parts:
+    case name <> []: name
+    case _: ""
+
+def process_purpose(+category: String) -> String:
+  match category:
+    case "Exact GitHub watcher request": "GitHub Actions"
+    case "GitHub watcher with incomplete identity": "GitHub Actions"
+    case "Unknown": ""
+    case "Unknown tool": ""
+    case "Unknown script": ""
+    case "Unknown command": ""
+    case "Cell wait": ""
+    case "Process I/O": ""
+    case _: one_process_purpose(String.split(category, '+'))
+
+def process_label(+purpose: String, waiting: Bool) -> String:
+  match waiting:
+    case True{}:
+      Bool.pick(String, String.eq(purpose, ""), "Waiting for an unidentified task", String.append("Waiting for ", purpose))
+    case False{}:
+      Bool.pick(String, String.eq(purpose, ""), "Unidentified process", String.append(purpose, " · process I/O"))
+
+def timing_process_label(confirmed: Bool, category: String, waiting: Bool) -> String:
+  process_label(Bool.pick(String, confirmed, process_purpose(category), ""), waiting)
+
+def timing_codex_operation(+category: String, attribution: ProcessAttribution) -> String:
+  match category attribution:
+    case "Cell wait" ProcessAttribution{cell, wait_state, purpose, io_state, io_purpose}:
+      timing_process_label(Bool.and(String.eq(cell, "linked_cell"), confirmed_process(wait_state)), purpose, True{})
+    case "Process I/O" ProcessAttribution{cell, wait_state, purpose, io_state, io_purpose}:
+      timing_process_label(confirmed_process(io_state), io_purpose, False{})
+    case _ _: category
+
 def window_add_category(groups: WindowGroups, clock: String, category: Operation, interval: WindowedInterval) -> WindowGroups:
   match category:
     case Category{name}: window_add(groups, clock, 0n, name, "", interval)
@@ -590,9 +632,9 @@ def window_action_step(spans: List<&2, TimingSpan>, workflow: Nat, name: String,
     List<&2, TimingSpan>:
   TimingSpan{"ci_step", workflow, name, started, ended, False{}} <> spans
 
-def window_codex_span(spans: List<&2, TimingSpan>, clock: String, categories: String, start: Nat, end: Nat) ->
+def window_codex_span(spans: List<&2, TimingSpan>, clock: String, categories: String, attribution: ProcessAttribution, start: Nat, end: Nat) ->
     List<&2, TimingSpan>:
-  TimingSpan{clock, 0n, categories, start, end, True{}} <> spans
+  TimingSpan{clock, 0n, timing_codex_operation(categories, attribution), start, end, True{}} <> spans
 
 def window_span_before(left: TimingSpan, right: TimingSpan) -> Bool:
   match left right:

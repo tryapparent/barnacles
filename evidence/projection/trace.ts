@@ -1,13 +1,13 @@
 import type { DatabaseSync, SQLOutputValue } from "node:sqlite";
 import type { List } from "../storage/sources.ts";
 import type { IntervalIdentity, ObservedInterval } from "./intervals.ts";
-import { rows, type collectTiming, type Stats } from "./timing.ts";
+import { rows, type collectTiming, type ProcessAttribution, type Stats } from "./timing.ts";
 
 export type TraceWindow = { $: "Window"; from: number; to: number };
 type SessionKey = { $: "SessionKey"; instance: string; session: string };
 type Optional<T> = { $: "None" } | { $: "Some"; value: T };
 type Span = { $: "Span"; call: string; terminal: Optional<string>; line: number; tool: string;
-  clock: "tool_envelope" | "async_cell"; start: Optional<number>; end: Optional<number> };
+  clock: "tool_envelope" | "async_cell"; start: Optional<number>; end: Optional<number>; attribution: ProcessAttribution };
 type Measured = { $: "Measured"; call: string; terminal: Optional<string>; parent: Optional<string>; line: number; tool: string; command: string;
   categories: string; clock: Span["clock"]; start: number; end: number; name: string };
 type Reasoning = { line: number; at: number; result_at: number; result_call_line: number };
@@ -79,11 +79,29 @@ export function writeTraces(source: DatabaseSync, view: DatabaseSync, policy: Tr
     }
   }
 
+  const columns = ["span.*"];
+  const joins = [];
+  if (table("codex_process_receipts")) {
+    columns.push("direct.process_status AS io_status", "direct.process_category AS io_category");
+    joins.push(`LEFT JOIN codex_process_receipts direct
+      ON (direct.instance, direct.session_id, direct.call_id) = (span.instance, span.session_id, span.call_id)`);
+    if (table("codex_wait_attribution")) {
+      columns.push("wait.cell_status", "launch.process_status AS wait_status", "launch.process_category AS wait_category");
+      joins.push(`LEFT JOIN codex_wait_attribution wait
+        ON (wait.instance, wait.session_id, wait.call_id) = (span.instance, span.session_id, span.call_id)
+        LEFT JOIN codex_process_receipts launch
+        ON (launch.instance, launch.session_id, launch.call_id) = (wait.instance, wait.session_id, wait.cell_launch_call_id)`);
+    }
+  }
   let groups = policy.empty_sessions();
-  for (const row of scan("SELECT * FROM codex_spans ORDER BY started_ms, source_line, clock")) {
+  for (const row of scan(`SELECT ${columns.join(", ")} FROM codex_spans span ${joins.join(" ")}
+    ORDER BY span.started_ms, span.source_line, span.clock`)) {
     groups = policy.note_trace_span(groups, identity(row), {
       $: "Span", call: String(row.call_id), terminal: encode(row.terminal_call_id, String), line: Number(row.source_line),
       tool: String(row.tool), clock: row.clock as Span["clock"], start: encode(row.started_ms, Number), end: encode(row.ended_ms, Number),
+      attribution: { $: "ProcessAttribution", cell_status: String(row.cell_status ?? ""),
+        wait_status: String(row.wait_status ?? ""), wait_category: String(row.wait_category ?? ""),
+        io_status: String(row.io_status ?? ""), io_category: String(row.io_category ?? "") },
     });
   }
   if (table("codex_reasoning")) for (const row of scan("SELECT * FROM codex_reasoning ORDER BY observed_ms, source_line")) {
@@ -105,7 +123,7 @@ export function writeTraces(source: DatabaseSync, view: DatabaseSync, policy: Tr
     for (const { span, categories, operation, clock } of observations) {
       const start = decode(span.start);
       const end = decode(span.end);
-      timing.observeCodex(span.clock, categories, start ?? 0, end ?? 0);
+      timing.observeCodex(span.clock, categories, span.attribution, start ?? 0, end ?? 0);
       insert.run(session, span.line, operation, clock, start, end);
     }
     const { envelopes, cells } = result.coverage;
