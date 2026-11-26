@@ -454,6 +454,79 @@ test("timing windows clip spans, count overlap once and preserve unknown clocks"
   } finally { rmSync(job, { recursive: true, force: true }); }
 });
 
+test("timing names waits from confirmed process receipts and keeps unresolved time", () => {
+  const parent = process.env.BARNACLES_TEST_DIRECTORY;
+  assert.ok(parent, "Set BARNACLES_TEST_DIRECTORY to a private job directory");
+  const job = mkdtempSync(join(parent, "dashboard-waits-test-"));
+  const cutoff = "2025-02-03T12:00:00Z";
+  const began = Date.parse(cutoff) - 120000;
+  const waits = [
+    ["ci-wait", "Cell wait", 1],
+    ["ci-poll", "Process I/O", 2],
+    ["git-wait", "Cell wait", 3],
+    ["git-launch", "Git push", 2],
+    ["build-poll", "Process I/O", 4],
+    ["ambiguous-poll", "Process I/O", 5],
+    ["ambiguous-wait", "Cell wait", 6],
+    ["legacy-wait", "Cell wait", 7],
+    ["mixed-wait", "Cell wait", 8],
+    ["mixed-poll", "Process I/O", 9],
+  ] as const;
+  const receipt = (call: string, status: string, category: string): NonNullable<RolloutEvidence["waitAttribution"]>["observations"][number] => ({
+    call, resultCall: call, resultLine: 30, handle: "1", start: null, end: null, observer: { $: "NoWatch" },
+    fact: { $: "ProcessFact", status, owner: call, category, watch: { $: "NoWatch" },
+      receipt: { $: "ExitReceipt", seconds: 1, code: 0 } },
+  });
+  try {
+    const source = join(job, "source.sqlite");
+    const out = join(job, "out");
+    const batch: { source: "codex"; rollout: RolloutEvidence } = { source: "codex", rollout: {
+      instance: "test-instance", session: "test-session", lines: 30, malformed: 0, orphans: 0, markers: [],
+      calls: waits.map(([id, categories, duration], index) => ({
+        id, tool: categories, categories, command: null, line: index + 1,
+        start: began + index * 10000, end: began + index * 10000 + duration * 1000,
+        async: false, asyncEnd: null, terminalCall: null, ambiguous: false,
+      })),
+      waitAttribution: {
+        waits: [
+          { call: "ci-wait", cell: "ci", status: "linked_cell", owner: "ci-poll" },
+          { call: "git-wait", cell: "git", status: "linked_cell", owner: "git-launch" },
+          { call: "ambiguous-wait", cell: "git", status: "ambiguous_cell", owner: "git-launch" },
+          { call: "mixed-wait", cell: "mixed", status: "linked_cell", owner: "mixed-poll" },
+        ],
+        observations: [
+          receipt("ci-poll", "process_running", "Exact GitHub watcher request"),
+          receipt("git-launch", "process_opened", "Git push"),
+          receipt("build-poll", "process_exited", "Rust build"),
+          receipt("ambiguous-poll", "ambiguous_process_handle", "Rust build"),
+          receipt("mixed-poll", "process_running", "File inspection + Rust build"),
+        ],
+      },
+    } };
+    loadEvidence(source, batch);
+    loadEvidence(source, batch);
+    execFileSync(process.execPath, ["dashboard/prepare.ts", source, out, "synthetic/example", cutoff],
+      { stdio: "pipe", timeout: 60_000 });
+    const db = new DatabaseSync(join(out, "dashboard.sqlite"), { readOnly: true });
+    try {
+      const groups = db.prepare(`SELECT operation, count, total_seconds FROM operation_totals
+        WHERE window='24h' AND clock='Tool envelopes' ORDER BY rank`).all().map(Object.values);
+      assert.deepEqual(groups, [
+        ["Waiting for an unidentified task", 3, 21],
+        ["Unidentified process", 2, 14],
+        ["Rust build · process I/O", 1, 4],
+        ["Waiting for Git push", 1, 3],
+        ["Git push", 1, 2],
+        ["GitHub Actions · process I/O", 1, 2],
+        ["Waiting for GitHub Actions", 1, 1],
+      ]);
+      assert.deepEqual(db.prepare(`SELECT count, total_seconds FROM clock_totals
+        WHERE window='24h' AND clock='Tool envelopes'`).all().map(Object.values), [[10, 47]]);
+      assert.equal(db.prepare("SELECT count(*) AS n FROM trace WHERE operation='Cell wait'").get()?.n, 5);
+    } finally { db.close(); }
+  } finally { rmSync(job, { recursive: true, force: true }); }
+});
+
 test("shipping API preserves historical and partial evidence and reads a replacement snapshot", async () => {
   const parent = process.env.BARNACLES_TEST_DIRECTORY;
   assert.ok(parent, "Set BARNACLES_TEST_DIRECTORY to a private job directory");
@@ -538,6 +611,19 @@ test("shipping API preserves historical and partial evidence and reads a replace
     assert.equal(report.snapshotAt, iso(cutoff));
     assert.deepEqual(report.snapshotCoverage, { observedPullRequests: 2, verifiedShipments: 1, attributedShipments: 1 });
     assert.equal(report.shipments.weekly[0].meanCycleSeconds, 600);
+    const publicationDay = iso(proof.published).slice(0, 10) + "T00:00:00.000Z";
+    assert.deepEqual(report.shipments.dailyStages, [{
+      startsAt: publicationDay, verified: 1,
+      stages: [
+        { phase: "pre-commit", measured: 1, meanSeconds: 100 },
+        { phase: "pr-opened", measured: 1, meanSeconds: 100 },
+        { phase: "first-ci", measured: 1, meanSeconds: 50 },
+        { phase: "merged", measured: 1, meanSeconds: 150 },
+        { phase: "dispatched", measured: 1, meanSeconds: 100 },
+        { phase: "published", measured: 1, meanSeconds: 100 },
+        { phase: "access-verified", measured: 1, meanSeconds: 100 },
+      ],
+    }]);
     assert.deepEqual(report.fleet.items.map((item: { number: number; stage: string }) => [item.number, item.stage]),
       [[202, "pr-opened"], [101, "access-verified"]]);
     assert.equal(report.deliveries.nextOffset, 1);
@@ -545,6 +631,7 @@ test("shipping API preserves historical and partial evidence and reads a replace
     assert.deepEqual(report.operations.items, []);
     assert.equal(report.operations.window, "24h");
     const page = await get("/api/v1/shipping?limit=1&offset=1");
+    assert.deepEqual(page.shipments.dailyStages, report.shipments.dailyStages);
     assert.equal(page.deliveries.nextOffset, null);
     assert.equal(page.deliveries.maxMeasuredMillis, report.deliveries.maxMeasuredMillis);
     const detail = await get(page.deliveries.items[0].detailPath);
@@ -555,6 +642,7 @@ test("shipping API preserves historical and partial evidence and reads a replace
     const historical = await get("/api/v1/shipping?to=" + time(at - 399));
     assert.equal(historical.shipments.verified, 0);
     assert.deepEqual(historical.shipments.weekly, []);
+    assert.deepEqual(historical.shipments.dailyStages, []);
     assert.equal(historical.fleet.items[0].stage, "published");
     assert.equal(historical.deliveries.items[0].milestones[7].observedAt, null);
     assert.equal((await get("/api/v1/pull-requests/202?asOf=" + time(at - 399), 404)).error.code,
@@ -572,12 +660,24 @@ test("shipping API preserves historical and partial evidence and reads a replace
     assert.equal((await call("/api/v1/shipping", { method: "POST" })).status, 405);
 
     save({ ...open, state: "merged", merged: at - 50, mergeSha: "c".repeat(40), updated: at - 50 });
+    const partialShipment = { ...shipped, number: 303, firstCommit: null, firstCI: null };
+    save(partialShipment, { ...proof, checked: proof.published, dispatch: null });
+    save({ ...partialShipment, number: 404, opened: shipped.opened - 86400, merged: shipped.merged! - 86400 },
+      { ...proof, id: 23, tag: "previous-day-release", published: proof.published - 86400, checked: proof.checked - 86400,
+        dispatch: null });
     await prepare(replacement);
     renameSync(join(replacement, "dashboard.sqlite"), join(snapshot, "dashboard.sqlite"));
     const refreshed = await get("/api/v1/pull-requests/202");
     assert.equal(refreshed.stage, "merged");
     assert.equal(refreshed.milestones[4].observedAt, iso(at - 50));
     assert.equal(refreshed.milestones[4].elapsedMillis, null);
+    const { shipments } = await get("/api/v1/shipping");
+    assert.equal(shipments.verified, 3);
+    assert.deepEqual(shipments.dailyStages.map(({ startsAt, verified }: { startsAt: string; verified: number }) =>
+      [startsAt, verified]), [[publicationDay, 2], [iso(Date.parse(publicationDay) / 1000 - 86400), 1]]);
+    assert.deepEqual(shipments.dailyStages[0].stages[0], { phase: "pre-commit", measured: 1, meanSeconds: 100 });
+    assert.deepEqual(shipments.dailyStages[0].stages.at(-1), { phase: "access-verified", measured: 2, meanSeconds: 50 });
+    assert.deepEqual(shipments.dailyStages[1].stages[0], { phase: "pre-commit", measured: 0, meanSeconds: null });
   } finally {
     server?.kill();
     if (stopped) await stopped;

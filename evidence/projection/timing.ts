@@ -13,7 +13,17 @@ type Bounds = { $: "Window"; from: number; to: number };
 type WindowRow = Pick<Timing, "clock" | "workflow" | "operation"> & { occupancy: { stats: Stats; union: number; unplaced: number } };
 type Span = { clock: IntervalClock; workflow: number; operation: string; start: number; end: number; codex: boolean };
 
+export type ProcessAttribution = {
+  $: "ProcessAttribution";
+  cell_status: string;
+  wait_status: string;
+  wait_category: string;
+  io_status: string;
+  io_category: string;
+};
+
 export type TimingPolicy = {
+  timing_codex_operation(categories: string, attribution: ProcessAttribution): string;
   interval_clock(clock: IntervalClock): string;
   timing_windows(cutoff: number): List<{ key: string; bounds: Bounds }>;
   starts_before(left: number, right: number): boolean;
@@ -90,10 +100,11 @@ export function collectTiming(source: DatabaseSync, repo: string, metrics: Timin
     }
   }
   return {
-    observeCodex({ clock, start, end }: ObservedInterval, categories: string) {
+    observeCodex({ clock, start, end }: ObservedInterval, categories: string, attribution: ProcessAttribution) {
       if (windowed) {
         observe("Codex", start ?? 0, end ?? 0);
-        spans.push({ clock, workflow: 0, operation: categories, start: start ?? 0, end: end ?? 0, codex: true });
+        spans.push({ clock, workflow: 0, operation: metrics.timing_codex_operation(categories, attribution),
+          start: start ?? 0, end: end ?? 0, codex: true });
       } else {
         state = metrics.timing_codex(state, clock, categories, start ?? 0, end ?? 0);
       }

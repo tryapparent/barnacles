@@ -3,6 +3,8 @@ import { countLabel, detailPage, stages, utcLabel, type Review } from "../api";
 import { Button } from "../controls";
 import { mountHarbor } from "./scene";
 
+const shipsPerStage = 4;
+
 export function Fleet({ fleet, onSelect }: { fleet: Review["fleet"];
   onSelect: (event: MouseEvent<HTMLAnchorElement>, number: number) => void }) {
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -13,13 +15,14 @@ export function Fleet({ fleet, onSelect }: { fleet: Review["fleet"];
   const [isPaused, setPaused] = useState(false);
   const [reduced, setReduced] = useState(() => matchMedia("(prefers-reduced-motion: reduce)").matches);
   const groups = stages.map(([stage, label]) => ({ stage, label, items: fleet.items.filter((item) => item.stage === stage) }));
-  const contacts = groups.flatMap(({ items }, position) => items.slice(0, 4)
+  const contacts = groups.flatMap(({ items }, position) => items.slice(0, shipsPerStage)
     .map((item, index) => ({ item, column: .15 + position * .116 + Math.sin(index * 2.6 + position) * .025,
       row: .44 + index * .137 + Math.sin(position * 2 + index) * .040, drift: .7 + index * .19 })));
 
   useEffect(() => {
     const media = matchMedia("(prefers-reduced-motion: reduce)");
     const review = canvas.current!.closest("main")!;
+    review.toggleAttribute("data-motion-paused", paused.current);
     const painter = mountHarbor(canvas.current!, contacts.map(({ item, ...contact }) =>
       ({ ...contact, link: shipLinks.current.get(item.number) })));
     const clockFormat = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
@@ -61,11 +64,13 @@ export function Fleet({ fleet, onSelect }: { fleet: Review["fleet"];
       media.removeEventListener("change", onPreference);
       painter.dispose();
       review.style.removeProperty("--swell");
+      review.removeAttribute("data-motion-paused");
     };
   }, [fleet]);
 
   const toggle = () => {
     paused.current = !paused.current;
+    canvas.current?.closest("main")?.toggleAttribute("data-motion-paused", paused.current);
     setPaused(paused.current);
   };
 
@@ -87,7 +92,7 @@ export function Fleet({ fleet, onSelect }: { fleet: Review["fleet"];
         }} />)}
     </div>
     {fleet.items.length ? <details className="fleet-manifest">
-      <summary>Fleet manifest</summary>
+      <summary>Fleet manifest <span className="fleet-limit">· Up to {shipsPerStage} ships shown per stage</span></summary>
       <p className="fine">Latest observations from {utcLabel(fleet.from)} to {utcLabel(fleet.to)}.</p>
       <ul className="fleet-groups">{groups.filter(({ items }) => items.length).map(({ stage, label, items }) =>
         <li key={stage}><span>{label} <small>· {countLabel(items.length)}</small></span>

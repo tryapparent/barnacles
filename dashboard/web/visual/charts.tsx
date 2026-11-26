@@ -1,5 +1,5 @@
-import type { CSSProperties } from "react";
-import { countLabel, dayLabel, duration, pagePath, type Review, type Operation, type Week } from "../api";
+import { useEffect, useRef, type CSSProperties } from "react";
+import { countLabel, dayLabel, duration, pagePath, stages, type DeliveryDay, type Review, type Operation, type Week } from "../api";
 
 function sector(inner: number, outer: number, from: number, to: number) {
   function point(radius: number, degrees: number) {
@@ -78,6 +78,124 @@ function layout(items: Array<{ item: Operation; weight: number; index: number }>
 
 const inks = ["var(--red)", "var(--amber)", "var(--green)", "var(--ink)", "#9bc7ff", "#bb9de8"];
 
+type Pulse = { x: number; y: number; at: number };
+type Pixel = { x: number; y: number; delay: number };
+
+function DelayedBursts() {
+  const canvas = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const surface = canvas.current!;
+    const tile = surface.parentElement!;
+    const review = tile.closest("main");
+    const ctx = surface.getContext("2d");
+    const base = document.createElement("canvas");
+    const background = base.getContext("2d");
+    if (!ctx || !background) return;
+
+    const reduced = matchMedia("(prefers-reduced-motion: reduce)");
+    const pitch = 3;
+    const radius = 68;
+    const lifetime = 620;
+    const intensity = .2;
+    let pixels: Array<Pixel | undefined> = [];
+    let trace: Pulse[] = [];
+    let last: Pulse | undefined;
+    let columns = 0;
+    let rows = 0;
+    let frame = 0;
+
+    const restore = () => {
+      if (!surface.width || !surface.height) return;
+      ctx.clearRect(0, 0, surface.width, surface.height);
+      ctx.drawImage(base, 0, 0);
+    };
+    const resize = () => {
+      const width = surface.width = base.width = surface.clientWidth;
+      const height = surface.height = base.height = surface.clientHeight;
+      columns = Math.ceil(width / pitch);
+      rows = Math.ceil(height / pitch);
+      pixels = new Array(columns * rows);
+      ctx.fillStyle = background.fillStyle = getComputedStyle(tile).getPropertyValue("--surface").trim();
+      for (let row = 0; row < rows; row++) {
+        for (let col = 0; col < columns; col++) {
+          const x = col * pitch;
+          const y = row * pitch;
+          const seed = (col * 29 + row * 71 + col * row * 13) % 61;
+          const density = Math.max(.045, (x / width * .84 + y / height * .29 - .22) * 1.12);
+          if (seed / 61 > density) continue;
+          pixels[row * columns + col] = { x, y, delay: (seed % 4) * 38 };
+          background.fillRect(x, y, 2, 2);
+        }
+      }
+      trace = [];
+      last = undefined;
+      restore();
+    };
+    const paused = () => reduced.matches || review?.hasAttribute("data-motion-paused");
+    const paint = (now: number) => {
+      frame = 0;
+      if (paused()) {
+        trace = [];
+        last = undefined;
+        restore();
+        return;
+      }
+      trace = trace.filter((pulse) => now - pulse.at < lifetime);
+      const displaced = new Map<Pixel, { x: number; y: number; strength: number }>();
+
+      for (const pulse of trace) {
+        const lastRow = Math.min(rows - 1, Math.floor((pulse.y + radius) / pitch));
+        const lastCol = Math.min(columns - 1, Math.floor((pulse.x + radius) / pitch));
+        for (let row = Math.max(0, Math.floor((pulse.y - radius) / pitch)); row <= lastRow; row++) {
+          for (let col = Math.max(0, Math.floor((pulse.x - radius) / pitch)); col <= lastCol; col++) {
+            const pixel = pixels[row * columns + col];
+            if (!pixel) continue;
+            const age = now - pulse.at - pixel.delay;
+            const x = pixel.x - pulse.x;
+            const y = pixel.y - pulse.y;
+            const distance = Math.hypot(x, y);
+            if (age <= 0 || distance < 1 || distance >= radius) continue;
+            const envelope = (1 - Math.exp(-age / 18)) * Math.exp(-age / 143);
+            const amplitude = intensity * (1 - distance / radius) * Math.floor(envelope * 13);
+            const dx = Math.round(x / distance * amplitude);
+            const dy = Math.round(y / distance * amplitude);
+            const strength = Math.max(Math.abs(dx), Math.abs(dy));
+            if (strength > (displaced.get(pixel)?.strength ?? 0)) {
+              displaced.set(pixel, { x: pixel.x + dx * pitch, y: pixel.y + dy * pitch, strength });
+            }
+          }
+        }
+      }
+      restore();
+      for (const pixel of displaced.keys()) ctx.clearRect(pixel.x, pixel.y, 2, 2);
+      for (const pixel of displaced.values()) ctx.fillRect(pixel.x, pixel.y, 2, 2);
+      if (trace.length) frame = requestAnimationFrame(paint);
+    };
+    const move = (event: PointerEvent) => {
+      if (event.pointerType === "touch" || paused()) return;
+      const bounds = surface.getBoundingClientRect();
+      const pulse = { x: event.clientX - bounds.left, y: event.clientY - bounds.top, at: performance.now() };
+      if (last && Math.hypot(pulse.x - last.x, pulse.y - last.y) < 9 && pulse.at - last.at < 55) return;
+      trace.push(pulse);
+      if (trace.length > 18) trace.shift();
+      last = pulse;
+      if (!frame) frame = requestAnimationFrame(paint);
+    };
+    const leave = () => { last = undefined; };
+    const observer = new ResizeObserver(resize);
+    observer.observe(surface);
+    tile.addEventListener("pointermove", move);
+    tile.addEventListener("pointerleave", leave);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+      tile.removeEventListener("pointermove", move);
+      tile.removeEventListener("pointerleave", leave);
+    };
+  }, []);
+  return <canvas className="operation-dither" ref={canvas} />;
+}
+
 function Operations({ operations }: { operations: Review["operations"] }) {
   const items = operations.items;
   const measured = items.flatMap((item) => item.hasArea && item.totalSeconds ?
@@ -87,17 +205,8 @@ function Operations({ operations }: { operations: Review["operations"] }) {
     <h2 id="operations-title">Where time went</h2>
     {tiles.length ? <div className="operation-map" aria-hidden="true">{tiles.map(({ item, index, x, y, w, h }) =>
       <div key={item.operation} className="operation-tile" title={`${item.operation} · ${duration(item.totalSeconds)}`}
-        onPointerMove={(event) => {
-          if (event.pointerType === "touch") return;
-          const tile = event.currentTarget;
-          const bounds = tile.getBoundingClientRect();
-          tile.style.setProperty("--cursor-x", `${event.clientX - bounds.left}px`);
-          tile.style.setProperty("--cursor-y", `${event.clientY - bounds.top}px`);
-        }} onPointerLeave={({ currentTarget }) => {
-          currentTarget.style.removeProperty("--cursor-x");
-          currentTarget.style.removeProperty("--cursor-y");
-        }}
         style={{ left: x + "%", top: y + "%", width: w + "%", height: h + "%", "--tile": inks[index % inks.length] } as CSSProperties}>
+        <DelayedBursts />
         {w > 15 && h > 14 && <div className="operation-label"><span>{item.operation}</span>
           <span>{duration(item.totalSeconds)}</span></div>}
       </div>)}</div> : <p className="empty-chart">No measured time for this selection.</p>}
@@ -163,6 +272,54 @@ function Weekly({ weeks }: { weeks: Week[] }) {
   </figure>;
 }
 
+export function StageKey() {
+  return <ul className="stage-key" aria-label="Delivery stages">{stages.map(([key, label, color]) =>
+    <li key={key} className={`stage-${color}`}>{label}</li>)}</ul>;
+}
+
+export function DailyStages({ days }: { days: DeliveryDay[] | undefined }) {
+  const longest = Math.max(0, ...(days ?? []).map(({ stages }) =>
+    stages.reduce((total, stage) => total + (stage.meanSeconds ?? 0), 0)));
+  const step = longest >= 3600 ? 1800 : longest >= 60 ? 30 : 1;
+  const scale = Math.max(2, Math.ceil(longest / (2 * step))) * 2 * step;
+  return <section className="delivery daily-chart" aria-labelledby="daily-title">
+    <h2 id="daily-title">Mean delivery stages by day</h2>
+    {days === undefined ? <p className="fine">Daily stage data needs a refreshed evidence snapshot.</p> :
+      !days.length ? <p className="fine">No verified shipments in this review window.</p> : <>
+        <p className="fine daily-intro">By publication day (UTC). Each stage averages the PRs with both clocks. Open a day for counts and times.</p>
+        <StageKey />
+        {longest > 0 && <div className="daily-axis" aria-hidden="true">
+          <span>0 s</span><span>{duration(scale / 2)}</span><span>{duration(scale)}</span>
+        </div>}
+        {days.map((day) => <details key={day.startsAt} className="daily-row">
+          <summary>
+            <span className="daily-label"><time dateTime={day.startsAt}>{dayLabel(day.startsAt)}</time>
+              <span>{countLabel(day.verified)} verified</span></span>
+            <span className="daily-bar" aria-hidden="true">
+              {day.stages.every(({ meanSeconds }) => meanSeconds === null) ? <span>Unknown</span> :
+                day.stages.every(({ meanSeconds }) => !meanSeconds) ? <span>0 s</span> :
+                  stages.map(([phase, label, color]) => {
+                    const mean = day.stages.find((stage) => stage.phase === phase)?.meanSeconds;
+                    return mean ? <span key={phase} className={`daily-segment stage-${color}`}
+                      style={{ width: `${100 * mean / scale}%` }} title={`${label} · ${duration(mean)}`} /> : null;
+                  })}
+            </span>
+          </summary>
+          <table className="daily-values">
+            <caption className="sr-only">Stage means for {dayLabel(day.startsAt)}</caption>
+            <thead><tr><th scope="col">Stage</th><th scope="col">Mean</th><th scope="col">Measured</th></tr></thead>
+            <tbody>{stages.map(([phase, label, color]) => {
+              const sample = day.stages.find((stage) => stage.phase === phase);
+              return <tr key={phase}><th scope="row" className={`stage-${color}`}>{label}</th>
+                <td>{duration(sample?.meanSeconds ?? null)}</td>
+                <td>{countLabel(sample?.measured ?? 0)} / {countLabel(day.verified)}</td></tr>;
+            })}</tbody>
+          </table>
+        </details>)}
+      </>}
+  </section>;
+}
+
 export function Overview({ review }: { review: Review }) {
   return <div className="board">
     <Gauge comparison={review.cycleComparison} />
@@ -170,6 +327,7 @@ export function Overview({ review }: { review: Review }) {
     <section className="panel shipped" aria-labelledby="ship-title">
       <h2 id="ship-title">Shipped to users</h2>
       <p className="shipped-count">{countLabel(review.shipments.verified)}</p>
+      <p className="fine">Verified PRs in the review window</p>
     </section>
     <Weekly weeks={review.shipments.weekly} />
   </div>;
