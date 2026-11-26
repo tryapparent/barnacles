@@ -277,59 +277,86 @@ h2, figcaption { font-size: 17px; line-height: 1.24; }
 .stage-publish { --stage: #c6d961; }
 .stage-access { --stage: var(--green); }
 
-.daily-chart { --daily-label-width: clamp(110px, 23vw, 176px); }
-.daily-intro { max-inline-size: 68ch; }
+.daily-chart { --daily-plot-height: clamp(172px, 30vw, 224px); }
+.daily-intro { max-inline-size: 76ch; }
+.daily-figure {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 8px;
+  margin-block-start: 16px;
+}
 .daily-axis {
   display: flex;
+  flex-direction: column;
   justify-content: space-between;
-  margin-inline-start: var(--daily-label-width);
-  padding-block-end: 4px;
+  block-size: var(--daily-plot-height);
   color: var(--quiet);
   font-size: 12px;
+  text-align: end;
+  white-space: nowrap;
 }
-.daily-row { border-block-start: 1px solid var(--rule); }
-.daily-row:last-child { border-block-end: 1px solid var(--rule); }
-.daily-row > summary {
+.daily-scroll {
+  min-inline-size: 0;
+  overflow-x: auto;
+  scrollbar-color: var(--quiet) var(--surface);
+}
+.daily-scroll:focus-visible { outline-offset: 0; }
+.daily-columns {
   display: grid;
-  grid-template-columns: var(--daily-label-width) minmax(0, 1fr);
-  align-items: center;
-  min-block-size: 44px;
+  grid-template-columns: repeat(var(--daily-count), minmax(0, 1fr));
+  min-inline-size: max(100%, calc(var(--daily-count) * 26px));
+  background: linear-gradient(var(--rule), var(--rule)) top,
+    linear-gradient(var(--rule), var(--rule)) center,
+    linear-gradient(var(--rule), var(--rule)) bottom;
+  background-repeat: no-repeat;
+  background-size: 100% 1px;
+  background-origin: content-box;
+  padding-block-end: 24px;
+}
+.daily-slot { position: relative; block-size: var(--daily-plot-height); }
+.daily-column, .daily-gap {
+  display: grid;
+  justify-items: center;
+  inline-size: 100%;
+  block-size: 100%;
+}
+.daily-column {
+  position: relative;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
   cursor: pointer;
-  list-style: none;
 }
-.daily-row > summary::-webkit-details-marker { display: none; }
-.daily-row > summary:focus-visible { outline-offset: -2px; }
-.daily-label {
-  display: grid;
-  grid-template-columns: 9px 1fr;
-  column-gap: 8px;
-  align-items: center;
-  padding-inline: 3px 8px;
-  font-size: 13px;
-}
-.daily-label::before {
+.daily-column:hover, .daily-column[aria-pressed="true"] { background: color-mix(in srgb, var(--accent) 15%, transparent); }
+.daily-column:focus-visible { outline-offset: -2px; }
+.daily-column[aria-pressed="true"]::after {
   content: "";
-  inline-size: 6px;
-  block-size: 6px;
-  border: solid currentColor;
-  border-width: 0 1px 1px 0;
-  transform: rotate(-45deg);
+  position: absolute;
+  inset: auto 3px 0;
+  border-block-end: 2px solid var(--accent);
 }
-.daily-row[open] .daily-label::before { transform: rotate(45deg); }
-.daily-row > summary:hover time, .daily-row[open] time { color: var(--accent); }
-.daily-label > span { grid-column: 2; color: var(--quiet); font-size: 12px; }
-.daily-bar {
+.daily-stack {
   display: flex;
-  align-items: center;
-  block-size: 22px;
-  background: linear-gradient(to right, var(--rule) 1px, transparent 1px) 0 0 / 50% 100%;
-  border-inline-end: 1px solid var(--rule);
+  flex-direction: column-reverse;
+  inline-size: clamp(16px, 74%, 46px);
+  block-size: 100%;
+}
+.daily-segment { flex: none; background: var(--stage); }
+.daily-zero { block-size: 2px; background: var(--quiet); }
+.daily-tick {
+  position: absolute;
+  inset-block-start: calc(100% + 4px);
+  inset-inline-start: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
   color: var(--quiet);
   font-size: 12px;
 }
-.daily-bar > span:not(.daily-segment) { padding-inline: 6px; }
-.daily-segment { block-size: 100%; background: var(--stage); }
-.daily-values { margin-block: 4px 12px; max-inline-size: 530px; }
+.daily-columns[data-dense="true"] .daily-slot:first-child .daily-tick { inset-inline-start: 0; transform: none; }
+.daily-columns[data-dense="true"] .daily-slot:last-child .daily-tick { inset-inline: auto 0; transform: none; }
+.daily-values { margin-block-start: 16px; max-inline-size: 530px; }
+.daily-values caption { text-align: start; padding-block-end: 6px; font-size: 13px; }
 .daily-values td { white-space: nowrap; }
 .daily-values th[scope="row"]::before {
   content: "";
