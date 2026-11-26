@@ -11,7 +11,7 @@ const actionsPath = "/d/barnacles-actions/actions";
 
 type Window = { from: number; to: number };
 type ChangeScan = { revision: string; commitsScanned: number; truncated: boolean; shallow: boolean; hasPaths: boolean };
-type Range = Window & { rolloutCount: number; operationCount: number; traceSessions: number; changedCode?: ChangeScan;
+type Range = Window & { timingCutoff: number; rolloutCount: number; traceSessions: number; changedCode?: ChangeScan;
   defaultTrace?: Window & { session: number; traceId: string } };
 type FieldProperty = { id: string; value: unknown };
 type Override = { matcher: { id: string; options: string }; properties: FieldProperty[] };
@@ -26,8 +26,6 @@ const prLinks = [
   byName("PR", width(72), links(link("Open the GitHub pull request", '${__data.fields["URL"]}'))),
   byName("URL", { id: "custom.hidden", value: true }),
 ];
-const workflowLink = link("Show operations for this workflow",
-  timingPath + "?var-clock=${__data.fields.Clock}&var-workflow=${__value.raw}");
 const reduceOptions = { values: false, calcs: ["lastNotNull"] };
 
 function data(id: number, type: string, title: string, grid: number[], query: string,
@@ -44,8 +42,7 @@ function data(id: number, type: string, title: string, grid: number[], query: st
 function chart(id: number, title: string, grid: number[], fields: string, color: string, timeUnit: string,
   description: string) {
   return data(id, "timeseries", title, grid,
-    `SELECT week AS time, ${fields} FROM weeks
-     WHERE week >= ($__from / 1000) AND week <= ($__to / 1000) ORDER BY time`,
+    `SELECT week AS time, ${fields} FROM weeks ORDER BY time`,
     { legend: { showLegend: false }, tooltip: { mode: "single" } },
     { unit: timeUnit, color: { mode: "fixed", fixedColor: color },
       custom: { drawStyle: "points", showPoints: "always", pointSize: 7, spanNulls: false, axisSoftMin: 0 } },
@@ -165,11 +162,45 @@ function actionsDashboard(from: string, to: string, repository: string) {
   return Object.assign(actions, { timepicker: { hidden: true } });
 }
 
+const timingWindow = "${window:sqlstring}";
+const windowLink = "?var-window=${window:percentencode}";
+const workflowLink = link("Show operations for this workflow",
+  timingPath + windowLink + "&var-clock=${clock:percentencode}&var-workflow=${__value.raw}");
+const clockQuery = "SELECT DISTINCT clock FROM clock_totals ORDER BY clock";
+const wrap = { id: "custom.wrapText", value: true };
+
+function timingRange(cutoff: number, grid = [0, 0, 9, 3]) {
+  return block(16, "Timing cutoff (UTC)", grid,
+    new Date(cutoff).toISOString().replace("T", " ").replace(/(?:\.000)?Z$/, ""));
+}
+
+function freshness(y: number) {
+  const utc = (column: string) => `strftime('%Y-%m-%d %H:%M:%S', ${column} / 1000.0, 'unixepoch')`;
+  return data(17, "table", "Source freshness", [0, y, 24, 13],
+    `SELECT source AS "Source", position ||
+        COALESCE(char(10) || 'From ' || ${utc("first_ms")} || char(10) || 'To ' || ${utc("latest_ms")}, '') ||
+        COALESCE(char(10) || 'Receipt ' || ${utc("receipt_ms")},
+          CASE WHEN latest_ms IS NOT NULL THEN char(10) || 'Receipt unknown' ELSE '' END) AS "Evidence (UTC)"
+      FROM source_bounds WHERE window = ${timingWindow} ORDER BY ordinal`,
+    { showHeader: true, cellHeight: "sm" }, { custom: { minWidth: 64 } },
+    [byName("Source", width(68)), byName("Evidence (UTC)", wrap)], [],
+    "First and latest are timestamps in imported evidence. Actions receipts are attempt captures and release receipts are access checks. Codex and T3 lack capture clocks here. Bounds do not establish continuous coverage.");
+}
+
+function clockOccupancy(clock: string, grid = [9, 0, 15, 3]) {
+  return data(18, "table", "Clock occupancy", grid,
+    `SELECT total_seconds AS "Sum", union_seconds AS "Union", unmeasured AS "Untimed", unplaced AS "Unplaced"
+      FROM clock_totals WHERE window = ${timingWindow} AND clock = ${clock}`,
+    { showHeader: true }, { noValue: "—", custom: { minWidth: 54 } },
+    [byName("Sum", unit("s"), width(52)), byName("Union", unit("s"), width(58)),
+      byName("Untimed", width(72)), byName("Unplaced", width(78))], [],
+    "Sum adds clipped span durations. Union counts overlapping time once across this clock. Untimed has a timestamp in the window and no usable duration. Unplaced has no usable timestamp in the entire import. CI queue, job execution and nested steps use separate clocks. Occupancy can overlap delivery elapsed time.");
+}
+
 export function dashboards(range: Range, repository: string) {
   const rolloutScope = range.rolloutCount
     ? `Codex timing covers all ${range.rolloutCount} imported ${range.rolloutCount === 1 ? "rollout" : "rollouts"} across projects.`
     : "No Codex rollouts imported.";
-  const timingScope = `GitHub CI covers **${repository}**. ${rolloutScope}`;
   const from = new Date(range.from * 1000).toISOString();
   const to = new Date((range.to + 1) * 1000).toISOString();
   const timestamps = ["PR opened", "Merged", "Published", "Access checked"];
@@ -177,11 +208,12 @@ export function dashboards(range: Range, repository: string) {
   const operationClock = "${operation_clock:sqlstring}";
   const overviewOperation = "${overview_operation:sqlstring}";
   const operationLink = link("Open operation breakdown",
-    timingPath + "?var-clock=${operation_clock:percentencode}&var-operation=${__data.fields[\"Name\"]:percentencode}");
+    timingPath + windowLink + "&var-clock=${operation_clock:percentencode}&var-operation=${__data.fields[\"Name\"]:percentencode}");
+  const windowVariable = variable("window", "Timing window", "SELECT window FROM timing_windows ORDER BY started_ms", "24h");
   const operations = [
-    variable("operation_clock", "Clock", "SELECT DISTINCT clock FROM operation_totals ORDER BY clock", "Tool envelopes"),
+    variable("operation_clock", "Clock", clockQuery, "Tool envelopes"),
     variable("overview_operation", "Operation", `SELECT 'All operations' AS operation
-      UNION SELECT operation FROM operation_totals WHERE clock = ${operationClock} ORDER BY operation`, "All operations"),
+      UNION SELECT operation FROM operation_totals WHERE window = ${timingWindow} AND clock = ${operationClock} ORDER BY operation`, "All operations"),
   ];
   const shipping = board("barnacles-shipping", "Barnacles · Shipping review", from, to, [
     block(1, "Evidence scope", [0, 0, 9, 4],
@@ -193,14 +225,13 @@ export function dashboards(range: Range, repository: string) {
           { type: "special", options: { match: "null", result: { text: "Insufficient coverage" } } }],
         thresholds: { mode: "absolute", steps: [{ value: null, color: yellow }, { value: 0, color: green }] } },
       [], [], "Direction comes only from the mean thread-to-release time in the latest two completed UTC weeks."),
-    range.operationCount ? data(3, "marcusolsson-treemap-panel", "Recorded time by operation", [9, 4, 15, 6],
+    data(3, "marcusolsson-treemap-panel", "Recorded time by operation", [9, 4, 15, 6],
       `SELECT operation AS "Name", total_seconds AS "Total" FROM operation_totals
-        WHERE clock = ${operationClock} AND has_area = 1
+        WHERE window = ${timingWindow} AND clock = ${operationClock} AND has_area = 1
           AND (${overviewOperation} = 'All operations' OR operation = ${overviewOperation}) ORDER BY rank`,
       { tiling: "treemapSquarify", textField: "Name", sizeField: "Total" },
       { unit: "s", color: { mode: "fixed", fixedColor: "#BB8E4F" }, links: [operationLink] }, [], [],
-      "Tile area shows total duration for the selected clock. Spans can overlap. The table lists all operations, including those without measured time.")
-      : block(3, "Recorded time by operation", [9, 4, 15, 6], "Import a Codex rollout or GitHub Actions attempt and rebuild the snapshot to see operation timings."),
+      "Tile area uses the sum of measured spans clipped to the selected window. Spans can overlap."),
     data(4, "table", "Cycle-time comparison", [0, 10, 9, 5],
       `SELECT delta_seconds AS "Change", prior_count AS "Prior PRs", recent_count AS "Recent PRs" FROM coverage`,
       { showHeader: true }, { noValue: "—", custom: { minWidth: 80 } }, [byName("Change", unit("s"))], [],
@@ -213,15 +244,18 @@ export function dashboards(range: Range, repository: string) {
       'SELECT pr_count AS "PRs observed", shipped AS "Access verified", linked AS "Thread linked" FROM coverage',
       { reduceOptions, colorMode: "none", graphMode: "none", justifyMode: "center" },
       { color: { mode: "fixed", fixedColor: ink } }),
-    ...(range.operationCount ? [data(10, "table", "Operations ranked by time", [9, 10, 15, 11],
-      `SELECT operation AS "Name", count AS "Spans", mean_seconds AS "Mean", total_seconds AS "Total"
-        FROM operation_totals WHERE clock = ${operationClock}
+    data(10, "table", "Operations ranked by time", [9, 10, 15, 11],
+      `SELECT operation AS "Name", total_seconds AS "Sum", union_seconds AS "Union", count AS "Spans", mean_seconds AS "Mean"
+        FROM operation_totals WHERE window = ${timingWindow} AND clock = ${operationClock}
           AND (${overviewOperation} = 'All operations' OR operation = ${overviewOperation}) ORDER BY rank`,
       { showHeader: true, enablePagination: true, cellHeight: "sm" }, { noValue: "—", custom: { minWidth: 56 } },
       [byName("Name", { id: "custom.wrapText", value: true }, links(operationLink)),
-        byName("Spans", width(58)), byName("Mean", unit("s"), width(70)), byName("Total", unit("s"), width(79))], [],
-      "Spans counts intervals with both clocks. Spans × mean gives total recorded time. Mixed commands share one measured duration. Open Timing breakdown for missing clocks and individual CI workflows.")] : []),
-    data(15, "table", "Estimated Codex category times", [0, 27, 24, 8],
+        byName("Sum", unit("s"), width(64)), byName("Union", unit("s"), width(64)), byName("Spans", width(56)), byName("Mean", unit("s"), width(64))], [],
+      "Spans counts measured intervals in the window. Mixed commands share one measured duration. Open Timing breakdown for untimed spans and individual CI workflows."),
+    timingRange(range.timingCutoff, [0, 27, 9, 3]),
+    clockOccupancy(operationClock, [9, 27, 15, 3]),
+    freshness(30),
+    data(15, "table", "Estimated category times · snapshot", [0, 43, 24, 8],
       `SELECT name AS "Group", CASE WHEN seconds IS NOT NULL THEN printf('%.3g ± %.2g', seconds, error) END AS "s/cmd",
         CASE WHEN total < 60 THEN printf('%.2g s', total)
           WHEN total < 3600 THEN printf('%.2g m', total / 60)
@@ -231,16 +265,16 @@ export function dashboards(range: Range, repository: string) {
       [byName("Group", { id: "custom.wrapText", value: true }), byName("s/cmd", width(84)),
         byName("Total", width(56)), byName("Rows", width(52))], [],
       "Estimated seconds per command ± standard error. Total applies to the matched sample, and Rows counts its receipts. A dash means insufficient independent variation. Estimates use completed sequential shell receipts."),
-    block(11, "Delivery cycle time", [0, 35, 24, 3],
+    block(11, "Delivery elapsed time", [0, 51, 24, 3],
       "Choose a PR for details. Coverage shows measured shipments."),
-    data(12, "table", "Time by stage", [0, 38, 12, 12],
+    data(12, "table", "Elapsed time by stage", [0, 54, 12, 12],
       `SELECT name AS "Stage", mean_seconds AS "Mean", observed || ' / ' || (SELECT shipped FROM coverage) AS "Coverage"
         FROM delivery_stages ORDER BY ordinal`,
       { showHeader: true, enablePagination: true }, { noValue: "—", custom: { minWidth: 55 } }, [
         byName("Stage", { id: "custom.wrapText", value: true }),
         byName("Mean", unit("dthms"), width(86)), byName("Coverage", width(78)),
       ], [], "Coverage is shipments with both clocks in order out of all imported shipments. Overall intervals overlap the individual stages."),
-    data(13, "table", "Milestones for selected PR", [12, 38, 12, 12],
+    data(13, "table", "Milestones for selected PR", [12, 54, 12, 12],
       `SELECT name AS "Event", strftime('%Y-%m-%dT%H:%M:%fZ', observed_ms / 1000.0, 'unixepoch') AS "UTC",
         elapsed_seconds AS "Elapsed" FROM delivery_milestones
         WHERE CAST(pr AS TEXT) = ${cyclePR} ORDER BY ordinal`,
@@ -249,61 +283,73 @@ export function dashboards(range: Range, repository: string) {
         byName("UTC", unit("time:MM-DD HH:mm:ss"), width(113)),
         byName("Elapsed", unit("dthms"), width(84), { id: "noValue", value: "—" }),
       ], ["UTC"], "Elapsed is from the preceding milestone. First PR CI is the earliest linked workflow start observed. Shipped uses publication backed by an access check. The check time is listed separately."),
-    data(8, "table", "Recently shipped", [0, 50, 24, 7],
+    data(8, "table", "Recently shipped", [0, 66, 24, 7],
       `SELECT pr AS "PR", cycle_seconds AS "Thread → release", pr_seconds AS "PR → release",
         published AS "Published", verified AS "Access checked", opened AS "PR opened", merged AS "Merged", url AS "URL"
         FROM releases ORDER BY published DESC`,
       { showHeader: true }, { noValue: "Unknown" },
       [...prLinks, byName("Thread → release", unit("s"), width(128)),
         byName("PR → release", unit("s"), width(112)), ...timestamps.map((field) => byName(field, width(161)))], timestamps),
-    data(9, "table", "Open delivery threads", [0, 57, 24, 6],
+    data(9, "table", "Open delivery threads", [0, 73, 24, 6],
       'SELECT pr AS "PR", status AS "T3 status", created AS "Thread started", url AS "URL" FROM work ORDER BY created DESC',
       { showHeader: true }, {}, prLinks, ["Thread started"],
       "Only imported T3 threads with an explicit owning link to an observed open pull request."),
   ], [link("Actions waits", actionsPath),
-    link("Timing breakdown", range.operationCount ? timingPath + "?var-clock=${operation_clock:percentencode}" : timingPath),
+    link("Timing breakdown", timingPath + windowLink +
+    "&var-clock=${operation_clock:percentencode}&var-operation=${overview_operation:percentencode}"),
     link("Rollout waterfall", tracePath), link("Changed Code Analysis", changedCodePath)], [
-    ...(range.operationCount ? operations : []),
+    windowVariable, ...operations,
     variable("cycle_pr", "Cycle-time PR", "SELECT CAST(pr AS TEXT) FROM releases ORDER BY published DESC, pr DESC", ""),
   ]);
 
   const clock = "${clock:sqlstring}";
   const workflow = "${workflow:sqlstring}";
   const operation = "${operation:sqlstring}";
-  const timeFields = [byName("Mean", unit("s")), byName("Total", unit("s"))];
+  const mixedDrilldown = `(${operation} <> 'Mixed' OR NOT EXISTS (
+    SELECT 1 FROM mixed_groups WHERE window = ${timingWindow} AND clock = ${clock}
+  ))`;
+  const timeFields = [byName("Mean", unit("s")), byName("Sum", unit("s")), byName("Union", unit("s"))];
   const timing = board("barnacles-timing", "Barnacles · Timing breakdown", from, to, [
-    block(1, "Recorded occupancy", [0, 0, 24, 4],
-      timingScope),
-    data(2, "table", "By workflow", [0, 4, 24, 6],
-      `SELECT clock AS "Clock", CAST(workflow AS TEXT) AS "Workflow", count AS "Count",
-        mean_seconds AS "Mean", total_seconds AS "Total", unmeasured AS "Unmeasured"
-        FROM workflows WHERE clock = ${clock} ORDER BY rank`,
-      { showHeader: true }, {},
-      [...timeFields, byName("Workflow", links(workflowLink)),
-        byName("Clock", { id: "custom.hidden", value: true })]),
-    data(3, "table", "Operations ranked by total time", [0, 10, 24, 14],
-      `SELECT operation AS "Operation", count AS "Count", mean_seconds AS "Mean",
-        total_seconds AS "Total", unmeasured AS "Unmeasured" FROM (
-          SELECT operation, count, mean_seconds, total_seconds, unmeasured, rank
-          FROM timing WHERE clock = ${clock} AND (${workflow} = '*' OR CAST(workflow AS TEXT) = ${workflow})
-            AND (${operation} = '*' OR operation = ${operation})
-            AND (${operation} <> 'Mixed' OR NOT EXISTS (SELECT 1 FROM mixed_groups WHERE clock = ${clock}))
+    timingRange(range.timingCutoff),
+    clockOccupancy(clock),
+    freshness(3),
+    data(2, "table", "Selected clock by workflow", [0, 16, 24, 5],
+      `SELECT CAST(workflow AS TEXT) AS "Workflow", total_seconds AS "Sum", union_seconds AS "Union",
+        count AS "Spans", mean_seconds AS "Mean", unmeasured AS "Untimed"
+        FROM workflows WHERE window = ${timingWindow} AND clock = ${clock} ORDER BY rank`,
+      { showHeader: true }, { noValue: "—", custom: { minWidth: 58 } },
+      [...timeFields, byName("Workflow", links(workflowLink))],
+      [], "Workflow 0 is local Codex evidence."),
+    data(3, "table", "Operations ranked by summed time", [0, 21, 24, 11],
+      `SELECT operation AS "Operation", total_seconds AS "Sum", union_seconds AS "Union",
+        count AS "Spans", mean_seconds AS "Mean", unmeasured AS "Untimed" FROM (
+          SELECT operation, count, mean_seconds, total_seconds, union_seconds, unmeasured, rank
+          FROM operation_totals WHERE window = ${timingWindow} AND clock = ${clock} AND ${workflow} = '*'
+            AND (${operation} IN ('*', 'All operations') OR (operation = ${operation} AND ${mixedDrilldown}))
           UNION ALL
-          SELECT operation, count, mean_seconds, total_seconds, unmeasured, rank
-          FROM mixed_groups WHERE clock = ${clock} AND (${operation} = 'Mixed' OR ${operation} = operation)
-            AND ${workflow} IN ('*', '0')
+          SELECT operation, count, mean_seconds, total_seconds, union_seconds, unmeasured, rank
+          FROM timing WHERE window = ${timingWindow} AND clock = ${clock} AND CAST(workflow AS TEXT) = ${workflow}
+            AND (${operation} IN ('*', 'All operations') OR (operation = ${operation} AND ${mixedDrilldown}))
+          UNION ALL
+          SELECT operation, count, mean_seconds, total_seconds, union_seconds, unmeasured, rank
+          FROM mixed_groups WHERE window = ${timingWindow} AND clock = ${clock}
+            AND (${operation} = 'Mixed' OR ${operation} = operation) AND ${workflow} IN ('*', '0')
         ) ORDER BY rank`,
       { showHeader: true, enablePagination: true },
-      { noValue: "—", custom: { minWidth: 85 } }, [...timeFields,
-        byName("Operation", { id: "custom.wrapText", value: true })],
-      [], "Choose Mixed to see the recorded command groups. Each group uses the duration of its entire span."),
-  ], [link("Shipping review", "/d/barnacles-shipping/shipping"), link("Rollout waterfall", tracePath)], [
-    variable("clock", "Clock", "SELECT DISTINCT clock FROM timing ORDER BY clock", "CI execution"),
-    variable("workflow", "Workflow", "SELECT '*' AS workflow UNION SELECT DISTINCT CAST(workflow AS TEXT) FROM timing ORDER BY workflow", "*"),
-    variable("operation", "Operation", `SELECT '*' AS operation
-      UNION SELECT operation FROM timing WHERE clock = ${clock}
-      UNION SELECT operation FROM mixed_groups WHERE clock = ${clock} ORDER BY operation`, "*"),
+      { noValue: "—", custom: { minWidth: 60 } }, [...timeFields, byName("Operation", wrap)],
+      [], "Choose Mixed to see submitted command groups. Each group uses the clipped duration of its entire span. Union values for different rows can overlap."),
+  ], [link("Shipping review", "/d/barnacles-shipping/shipping" + windowLink + "&var-operation_clock=${clock:percentencode}"),
+    link("Rollout waterfall", tracePath)], [
+    windowVariable,
+    variable("clock", "Clock", clockQuery, "Tool envelopes"),
+    variable("workflow", "Workflow", `SELECT '*' AS workflow
+      UNION SELECT DISTINCT CAST(workflow AS TEXT) FROM workflows WHERE window = ${timingWindow} AND clock = ${clock} ORDER BY workflow`, "*"),
+    variable("operation", "Operation", `SELECT 'All operations' AS operation
+      UNION SELECT operation FROM timing WHERE window = ${timingWindow} AND clock = ${clock}
+      UNION SELECT operation FROM mixed_groups WHERE window = ${timingWindow} AND clock = ${clock} ORDER BY operation`, "All operations"),
   ]);
+  Object.assign(shipping, { timepicker: { hidden: true } });
+  Object.assign(timing, { timepicker: { hidden: true } });
 
   const first = range.defaultTrace;
   const session = "${session:sqlstring}";
