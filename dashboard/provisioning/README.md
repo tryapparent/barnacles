@@ -13,6 +13,18 @@ The launcher uses Grafana OSS 12.3.0, Tempo 3.1.1 in monolithic mode, SQLite dat
 
 Grafana exposes a loopback Viewer and mounts the derived database read-only with attachment disabled. The original evidence SQLite file, provider IDs, and rollout content stay in local source storage. The generated archive and snapshots contain sanitized operational timing for private local use. [Tempo monolithic deployment](https://grafana.com/docs/tempo/latest/reference-tempo-architecture/deployment-modes/) · [Grafana provisioning](https://grafana.com/docs/grafana/latest/administration/provisioning/)
 
+## Changed Code Analysis
+
+Import a scan from a local Git checkout using the repository name selected in the dashboard snapshot. The same command works with a job directory that contains only Git evidence.
+
+```sh
+node collector/changed-code.ts "$job" /path/to/repository HEAD 1000 --save-as OWNER/REPO
+node dashboard/prepare.ts "$job/evidence.sqlite" "$job/grafana-changes" OWNER/REPO
+dashboard/run.sh "$job/grafana-changes"
+```
+
+Choose **Changed Code Analysis** from Shipping review or open [the local dashboard](http://localhost:3030/d/barnacles-changed-code/changed-code-analysis). The table shows the top 25 paths and their commit counts. The coverage panel shows the revision, number of commits scanned, and any shallow history or scan limit. This view follows the imported Git revision. Refresh the evidence by saving another scan and preparing a fresh snapshot. The read-only dashboard snapshot includes the reported paths, so keep it local for private repositories.
+
 ## Read the evidence
 
 - **Shipping review** shows verified Linux Main x86_64 releases, explicit T3 ownership coverage, and attributable cycle time. The dial compares two completed UTC weeks at snapshot time and reports insufficient coverage when either week lacks an attributable release. Weekly points describe the imported sample. Missing weeks have no plotted value.

@@ -89,6 +89,14 @@ test("dashboard derives a covered comparison and preserves missing source covera
       })],
       markers: [],
     });
+    loadEvidence(source, { source: "git-change-scan", repository: repo, report: {
+      revision: "a".repeat(40), commitsScanned: 5, hasMoreCommits: true, shallow: true,
+      files: [{ path: "src/frequent.ts", commits: 4 }, { pathBytesBase64: "/w==", commits: 2 }],
+    } });
+    loadEvidence(source, { source: "git-change-scan", repository: "synthetic/other", report: {
+      revision: "b".repeat(40), commitsScanned: 5, hasMoreCommits: false, shallow: false,
+      files: [{ path: "other.ts", commits: 5 }],
+    } });
     const out = join(job, "out");
     assert.throws(() => execFileSync(process.execPath,
       ["dashboard/prepare.ts", join(job, "missing.sqlite"), out, repo], { stdio: "pipe" }), /existing evidence SQLite/);
@@ -162,6 +170,13 @@ test("dashboard derives a covered comparison and preserves missing source covera
       assert.equal(eventOnly[0].startTimeUnixNano, eventOnly[0].endTimeUnixNano);
       const config = JSON.parse(readFileSync(join(out, "dashboards/shipping.json"), "utf8"));
       assert.equal(config.uid, "barnacles-shipping");
+      assert.ok(config.links.some(({ url }: { url: string }) => url.startsWith("/d/barnacles-changed-code/")));
+      const changes = JSON.parse(readFileSync(join(out, "dashboards/changed-code.json"), "utf8"));
+      assert.equal(changes.timepicker.hidden, true);
+      assert.match(changes.panels[0].options.content, /5 non-merge commits.*synthetic\/example.*aaaaaaaaaaaa/);
+      assert.match(changes.panels[0].options.content, /outside the scan limit.*Shallow history/);
+      assert.deepEqual(db.prepare(changes.panels[1].targets[0].rawQueryText).all().map(Object.values),
+        [["src/frequent.ts", 4], ["Base64: /w==", 2]]);
       const scope = config.panels.find(({ title }: { title: string }) => title === "Evidence scope").options.content;
       assert.match(scope, /synthetic\/example/);
       assert.match(scope, /all 3 imported rollouts across projects/);

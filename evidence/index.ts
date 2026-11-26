@@ -1,4 +1,4 @@
-export { loadEvidence, type EvidenceBatch } from "./storage/load.ts";
+export { loadEvidence, type ChangedCodeFile, type EvidenceBatch } from "./storage/load.ts";
 export { deliveryReport, type PullRequest, type ReleaseEvidence } from "./delivery/delivery.ts";
 export { type ActionAttempt, type AttemptIdentity } from "./storage/actions.ts";
 export {

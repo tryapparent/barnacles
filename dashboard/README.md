@@ -6,6 +6,8 @@ Use built-in gauge, time-series, and table panels. Evaluate the [SQLite data sou
 
 The [local provisioning guide](provisioning/README.md) describes the pinned Grafana and Tempo setup, evidence coverage, and launch commands.
 
+**Changed Code Analysis** opens from Shipping review and ranks repository paths by the number of non-merge commits that touched them. The view reports the scanned revision and any limits on its Git history. [Add a Git scan to the local snapshot](provisioning/README.md#changed-code-analysis).
+
 ## Operation timings
 
 The Shipping review opens on **Tool envelopes**. Use **Clock** to switch the
