@@ -5,7 +5,7 @@
     "node": ">=22.18"
   },
   "scripts": {
-    "hooks:install": "git config --local extensions.worktreeConfig true && git config --worktree core.hooksPath .githooks",
+    "hooks:install": "node tooling/bend.ts --install-hooks",
     "test:hooks": "node tooling/verify.ts hooks",
     "verify": "node tooling/verify.ts",
     "demo": "node examples/demo.ts"

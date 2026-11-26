@@ -2,12 +2,15 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { prepareCompiler } from "./bend.ts";
 import { checkBoundaries, loadVerification, suiteDirectories } from "./check-boundaries.ts";
 
 const cwd = fileURLToPath(new URL("../", import.meta.url));
 const parent = process.env.BARNACLES_TEST_DIRECTORY;
 const job = mkdtempSync(parent ? join(parent, "verify-") : "/tmp/apparent-dev-barnacles-verify-");
 try {
+  const bundle = await prepareCompiler(job);
+  process.env.BARNACLES_BEND_BUNDLE = bundle;
   const env = { ...process.env, BARNACLES_TEST_DIRECTORY: job };
   delete env.NODE_TEST_CONTEXT;
   const policy = await loadVerification(job);

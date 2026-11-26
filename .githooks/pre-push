@@ -1,75 +1,8 @@
 #!/bin/sh
 set -eu
 cd "$(git rev-parse --show-toplevel)"
-remote=$1
-main=$(git rev-parse --verify -q "refs/remotes/$remote/main^{commit}" || :)
-zero='^0+$'
-scratch=''
-trap 'if [ -n "$scratch" ]; then rm -rf "$scratch"; fi' EXIT
-trap 'exit 1' HUP INT TERM
-
-while read -r local_ref local_oid remote_ref remote_oid; do
-  if printf '%s\n' "$local_oid" | grep -Eq "$zero"; then
-    continue
-  fi
-  head=$(git rev-parse --verify "$local_oid^{commit}")
-  base=''
-  case "$remote_ref" in
-    refs/heads/main)
-      if ! printf '%s\n' "$remote_oid" | grep -Eq "$zero"; then
-        base=$(git merge-base "$head" "$remote_oid" || :)
-      fi
-      ;;
-    *)
-      if [ -n "$main" ]; then
-        base=$(git merge-base "$head" "$main" || :)
-      fi
-      ;;
-  esac
-  if [ -z "$base" ]; then
-    printf '%s\n' 'pre-push: cannot identify the integration base. Fetch the remote main branch and retry.' >&2
-    exit 1
-  fi
-
-  if ! command -v node >/dev/null || [ ! -d node_modules/web-tree-sitter ]; then
-    printf '%s\n' 'pre-push: install Node 22.18+ and run npm ci --ignore-scripts.' >&2
-    exit 1
-  fi
-  node tooling/check-directory-width.ts "$base" "$head"
-  node .githooks/check-comments.ts "$base" "$head"
-  node .githooks/check-bend-paths.ts "$base" "$head"
-
-  changed=$(git diff --name-only --no-renames "$base" "$head" --)
-  [ -n "$changed" ] || continue
-  scopes=''
-  while IFS= read -r path; do
-    case "$path" in
-      *.md|LICENSE) ;;
-      .githooks/*) scopes="$scopes hooks" ;;
-      collector/*) scopes="$scopes collector dashboard" ;;
-      evidence/*) scopes="$scopes collector dashboard evidence" ;;
-      dashboard/*) scopes="$scopes dashboard" ;;
-      *) scopes="$scopes hooks collector dashboard evidence" ;;
-    esac
-  done <<PATHS
-$changed
-PATHS
-  [ -n "$scopes" ] || continue
-  set -- $(printf '%s\n' $scopes | sort -u)
-  scratch=$(mktemp -d "/tmp/apparent-dev-barnacles-push-XXXXXX")
-  mkdir "$scratch/source"
-  node .githooks/snapshot.ts "$head" "$scratch/source"
-  (
-    for name in $(git rev-parse --local-env-vars); do
-      unset "$name"
-    done
-    unset NODE_TEST_CONTEXT
-    cd "$scratch/source"
-    export BARNACLES_TEST_DIRECTORY="$scratch"
-    npm ci --offline --ignore-scripts --no-audit --no-fund
-    printf 'pre-push: checking %s tests at %s\n' "$*" "$head" >&2
-    npm run verify -- "$@"
-  )
-  rm -rf "$scratch"
-  scratch=''
-done
+if ! command -v node >/dev/null; then
+  printf '%s\n' 'pre-push: install Node 22.18+ and run npm ci --ignore-scripts.' >&2
+  exit 1
+fi
+exec node .githooks/snapshot.ts --push "$1"

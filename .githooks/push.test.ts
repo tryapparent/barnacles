@@ -11,7 +11,9 @@ test("pre-push routes the outgoing commit and blocks failed verification", () =>
   const cwd = join(root, "repo");
   const remote = join(root, "remote.git");
   mkdirSync(cwd);
-  const git = (...args: string[]) => spawnSync("git", args, { cwd, encoding: "utf8" });
+  const env = { ...process.env };
+  delete env.BARNACLES_BEND_BUNDLE;
+  const git = (...args: string[]) => spawnSync("git", args, { cwd, env, encoding: "utf8" });
   const pass = (...args: string[]) => {
     const result = git(...args);
     assert.equal(result.status, 0, result.stderr);
@@ -41,12 +43,16 @@ test("pre-push routes the outgoing commit and blocks failed verification", () =>
       copyFileSync(new URL("../tooling/" + file, import.meta.url), join(cwd, "tooling", file));
     }
     write("dashboard/prepare.test.ts", "process.exit(0)\n");
-    for (const file of ["pre-push", "snapshot.ts"]) {
+    for (const file of ["pre-push", "snapshot.ts", "check-bend-paths.ts"]) {
       copyFileSync(new URL("./" + file, import.meta.url), join(cwd, ".githooks", file));
     }
     write(".gitattributes", "collector/github/attempt.test.ts export-ignore\n");
     write(".githooks/check-comments.ts", "process.exit(0)\n");
-    write(".githooks/check-bend-paths.ts", "process.exit(0)\n");
+    write(".githooks/bend-exceptions.json", "{}\n");
+    mkdirSync(join(cwd, ".githooks/policy"));
+    for (const file of ["paths.bend", "rules.bend"]) {
+      copyFileSync(new URL("./policy/" + file, import.meta.url), join(cwd, ".githooks/policy", file));
+    }
     write("README.md", "Baseline\n");
     for (const file of ["package.json", "package-lock.json"]) {
       copyFileSync(new URL("../" + file, import.meta.url), join(cwd, file));
@@ -56,7 +62,8 @@ test("pre-push routes the outgoing commit and blocks failed verification", () =>
     pass("add", "README.md", "package.json", "package-lock.json", "collector", "dashboard", "evidence", "tooling", ".githooks", ".gitattributes");
     pass("commit", "--quiet", "-m", "baseline");
     pass("push", "--quiet", "origin", "main");
-    pass("config", "core.hooksPath", ".githooks");
+    const install = spawnSync(process.execPath, ["tooling/bend.ts", "--install-hooks"], { cwd, encoding: "utf8" });
+    assert.equal(install.status, 0, install.stderr);
     pass("switch", "--quiet", "-c", "feature");
 
     write("README.md", "Documentation change\n");
