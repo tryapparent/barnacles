@@ -54,7 +54,9 @@ test("dashboard derives a covered comparison and preserves missing source covera
         status: "completed", conclusion: "success", createdAt: created, startedAt: started,
         sourceUpdated: started + 10, observedAt: started + 12, jobs: [{
           id: workflowId, label: "Build", status: "completed", conclusion: "success", created,
-          priorExecution: false, queueEnd: started, executionStart: started, executionEnd: started + 10, steps: [],
+          priorExecution: false, queueEnd: started, executionStart: started, executionEnd: started + 10, steps: [{
+            number: 1, label: "Compile", status: "completed", conclusion: "success", start: started + 2, end: started + 5,
+          }],
         }],
       });
     }
@@ -102,7 +104,7 @@ test("dashboard derives a covered comparison and preserves missing source covera
     assert.throws(() => execFileSync(process.execPath,
       ["dashboard/prepare.ts", join(job, "missing.sqlite"), out, repo], { stdio: "pipe" }), /existing evidence SQLite/);
     assert.equal(existsSync(out), false);
-    execFileSync(process.execPath, ["dashboard/prepare.ts", source, out, repo], { stdio: "pipe", timeout: 60_000 });
+    execFileSync(process.execPath, ["dashboard/prepare.ts", source, out, repo, new Date(cutoff * 1000).toISOString()], { stdio: "pipe", timeout: 60_000 });
     const db = new DatabaseSync(join(out, "dashboard.sqlite"), { readOnly: true });
     try {
       const summary = db.prepare("SELECT shipped, linked, direction, delta_seconds FROM coverage").get();
@@ -114,27 +116,39 @@ test("dashboard derives a covered comparison and preserves missing source covera
         [["Thread started", null], ["First commit", 4700], ["PR opened", null], ["First PR CI", null],
           ["PR merged", null], ["Release dispatch", null], ["Shipped", null], ["Access verified", null]]);
       const overview = db.prepare(`SELECT operation, count, mean_seconds, total_seconds, unmeasured, has_area
-        FROM operation_totals WHERE clock=? ORDER BY rank`);
+        FROM operation_totals WHERE window='24h' AND clock=? ORDER BY rank`);
       assert.deepEqual(overview.all("CI execution").map(Object.values), [["Build", 2, 10, 20, 0, 1]]);
-      assert.deepEqual(db.prepare(`SELECT workflow FROM workflows WHERE clock='CI execution' ORDER BY rank`).all().map(Object.values),
+      assert.deepEqual(db.prepare(`SELECT workflow FROM workflows WHERE window='24h' AND clock='CI execution' ORDER BY rank`).all().map(Object.values),
         [[1], [2]]);
       assert.deepEqual(overview.all("CI queue").map(Object.values), [["Build", 2, 1.5, 3, 0, 1]]);
+      assert.deepEqual(overview.all("CI steps").map(Object.values), [["Compile", 2, 3, 6, 0, 1]]);
+      assert.deepEqual(db.prepare(`SELECT clock, total_seconds, union_seconds FROM clock_totals
+        WHERE window='1h' AND clock LIKE 'CI %' ORDER BY clock`).all().map(Object.values),
+        [["CI execution", 20, 11], ["CI queue", 3, 2], ["CI steps", 6, 4]]);
       assert.deepEqual(overview.all("Async cells").map(Object.values),
         [["Mixed", 1, 0.6, 0.6, 0, 1], ["Unknown", 0, null, null, 1, 0]]);
       const toolOverview = overview.all("Tool envelopes");
       assert.equal(toolOverview[0].operation, "Mixed");
       assert.equal(toolOverview[0].count, 7);
-      const mixed = db.prepare("SELECT operation, count, total_seconds FROM mixed_groups WHERE clock=? ORDER BY rank");
+      const mixed = db.prepare("SELECT operation, count, total_seconds FROM mixed_groups WHERE window='24h' AND clock=? ORDER BY rank");
       assert.deepEqual(mixed.all("Tool envelopes").map(Object.values),
         [["Mixed · File inspection + Rust build", 6, 54], ["Mixed · Git inspection + File inspection", 1, 0.1]]);
       assert.deepEqual(mixed.all("Async cells").map(Object.values), [["Mixed · Git inspection + File inspection", 1, 0.6]]);
       assert.deepEqual(Object.values(toolOverview.find(({ operation }) => operation === "Git inspection")!),
         ["Git inspection", 1, 0.05, 0.05, 0, 1]);
       assert.equal(db.prepare("SELECT count(*) AS n FROM operation_totals WHERE operation='Estimated model wait'").get()?.n, 0);
+      assert.deepEqual(db.prepare(`SELECT source, first_ms, latest_ms, receipt_ms, position FROM source_bounds
+        WHERE window='1h' ORDER BY ordinal`).all().map(Object.values), [
+        ["Codex", at, at + 112000, null, "Ends in window"],
+        ["Actions", at, at + 12000, at + 14000, "Ends in window"],
+        ["T3", (monday - 2 * week + 5400) * 1000, (monday - week + 7200) * 1000, null, "Before window"],
+        ["Releases", (monday - 2 * week + 7200) * 1000, (monday - week + 7200) * 1000,
+          (monday - week + 7201) * 1000, "Before window"],
+      ]);
       const estimated = db.prepare("SELECT seconds, total, samples FROM category_estimates WHERE name=?");
       assert.deepEqual(Object.values(estimated.get("File inspection")!), [2, 24, 6]);
       assert.deepEqual(Object.values(estimated.get("Rust build")!), [null, null, 0]);
-      assert.equal(db.prepare("SELECT count FROM timing WHERE clock='Tool envelopes' AND operation='Mixed'").get()?.count, 7);
+      assert.equal(db.prepare("SELECT count FROM timing WHERE window='24h' AND clock='Tool envelopes' AND operation='Mixed'").get()?.count, 7);
       assert.equal(db.prepare("SELECT count(*) AS n FROM trace WHERE ended IS NULL").get()?.n, 2);
       assert.deepEqual(db.prepare("SELECT started, ended, measured FROM trace_windows ORDER BY session").all().map(Object.values),
         [[at, at + 850, 4], [at + 800, at + 112000, 7], [at, at, 0]]);
@@ -182,18 +196,21 @@ test("dashboard derives a covered comparison and preserves missing source covera
       const scope = config.panels.find(({ title }: { title: string }) => title === "Evidence scope").options.content;
       assert.match(scope, /synthetic\/example/);
       assert.match(scope, /all 3 imported rollouts across projects/);
+      assert.equal(config.timepicker.hidden, true);
       const treemap = config.panels.find(({ type }: { type: string }) => type === "marcusolsson-treemap-panel");
       const ranked = config.panels.find(({ id }: { id: number }) => id === 10);
       assert.equal(treemap.options.textField, "Name");
       for (const panel of [treemap, ranked]) {
         const query = panel.targets[0].rawQueryText.replace("${operation_clock:sqlstring}", "'CI execution'")
-          .replaceAll("${overview_operation:sqlstring}", "'All operations'");
+          .replaceAll("${overview_operation:sqlstring}", "'All operations'").replaceAll("${window:sqlstring}", "'24h'");
         assert.equal(db.prepare(query).get()?.Name, "Build");
       }
       const timingBoard = JSON.parse(readFileSync(join(out, "dashboards/timing.json"), "utf8"));
+      assert.equal(timingBoard.timepicker.hidden, true);
       const details = timingBoard.panels.find(({ id }: { id: number }) => id === 3);
       const mixQuery = details.targets[0].rawQueryText.replaceAll("${clock:sqlstring}", "'Tool envelopes'")
-        .replaceAll("${workflow:sqlstring}", "'*'").replaceAll("${operation:sqlstring}", "'Mixed'");
+        .replaceAll("${workflow:sqlstring}", "'*'").replaceAll("${operation:sqlstring}", "'Mixed'")
+        .replaceAll("${window:sqlstring}", "'24h'");
       assert.deepEqual(db.prepare(mixQuery).all().map(({ Operation }) => Operation),
         ["Mixed · File inspection + Rust build", "Mixed · Git inspection + File inspection"]);
       const trace = JSON.parse(readFileSync(join(out, "dashboards/trace.json"), "utf8"));
@@ -246,7 +263,7 @@ test("Actions dashboard reads ranked overlap, coverage and exact job steps from 
         (4201, 2, 2001, 1, 'Set up toolchain', 5000),
         (4202, 1, 2003, 1, 'Package output', 180000);
     `);
-    const { actions, shipping } = dashboards({ from: 0, to: 0, rolloutCount: 0, operationCount: 0, traceSessions: 0 },
+    const { actions, shipping } = dashboards({ from: 0, to: 0, rolloutCount: 0, timingCutoff: 0, traceSessions: 0 },
       "synthetic/example");
     assert.equal(shipping.links[0].url, "/d/barnacles-actions/actions");
     assert.equal(actions.timepicker.hidden, true);
@@ -277,4 +294,66 @@ test("Actions dashboard reads ranked overlap, coverage and exact job steps from 
     db.close();
     rmSync(job, { recursive: true, force: true });
   }
+});
+
+test("timing windows clip spans, count overlap once and preserve unknown clocks", () => {
+  const parent = process.env.BARNACLES_TEST_DIRECTORY;
+  assert.ok(parent, "Set BARNACLES_TEST_DIRECTORY to a private job directory");
+  const job = mkdtempSync(join(parent, "dashboard-window-test-"));
+  try {
+    const source = join(job, "source.sqlite");
+    const out = join(job, "out");
+    const upper = Date.parse("2025-02-03T12:00:00Z");
+    const lower = upper - 3_600_000;
+    const day = upper - 86_400_000;
+    const spans: [string, number | null, number | null][] = [
+      ["Build", upper - 2_000, upper + 1_000],
+      ["Git", lower - 5_000, lower + 8_000],
+      ["Build", lower, lower + 20_000],
+      ["Build", lower + 3_000, lower + 6_000],
+      ["Build", lower - 1_000, lower],
+      ["Build", lower, lower],
+      ["Build", upper, upper],
+      ["Build", day - 10_000, day + 10_000],
+      ["Build", lower - 5_000, null],
+      ["Build", lower + 1_000, null],
+      ["Build", null, lower + 4_000],
+      ["Build", lower + 15_000, lower + 14_000],
+      ["Build", null, null],
+    ];
+    for (const [index, [categories, start, end]] of spans.entries()) {
+      loadEvidence(source, { source: "codex", rollout: {
+        instance: "local", session: `synthetic-${index}`, lines: 2, malformed: 0, orphans: 0, markers: [],
+        calls: [{ id: "operation", line: 2, tool: "Shell command", start, end, categories,
+          async: false, asyncEnd: null, terminalCall: null, ambiguous: false }],
+      } });
+    }
+    execFileSync(process.execPath, ["dashboard/prepare.ts", source, out, "synthetic/example",
+      new Date(upper).toISOString()], { stdio: "pipe", timeout: 60_000 });
+    const db = new DatabaseSync(join(out, "dashboard.sqlite"), { readOnly: true });
+    try {
+      assert.deepEqual(db.prepare("SELECT * FROM timing_windows ORDER BY started_ms DESC").all().map(Object.values),
+        [["1h", lower, upper], ["24h", day, upper]]);
+      const clock = db.prepare(`SELECT window, count, total_seconds, union_seconds, unmeasured, unplaced
+        FROM clock_totals WHERE clock=? ORDER BY window`);
+      assert.deepEqual(clock.all("Tool envelopes").map(Object.values), [
+        ["1h", 5, 33, 22, 3, 1],
+        ["24h", 7, 49, 37, 4, 1],
+      ]);
+      assert.deepEqual(clock.all("CI steps").map(Object.values), [
+        ["1h", 0, null, null, 0, 0],
+        ["24h", 0, null, null, 0, 0],
+      ]);
+      const config = JSON.parse(readFileSync(join(out, "dashboards/shipping.json"), "utf8"));
+      const ranked = config.panels.find(({ id }: { id: number }) => id === 10);
+      const rows = (window: string) => db.prepare(ranked.targets[0].rawQueryText
+        .replaceAll("${window:sqlstring}", window)
+        .replaceAll("${operation_clock:sqlstring}", "'Tool envelopes'")
+        .replaceAll("${overview_operation:sqlstring}", "'All operations'")).all().map(Object.values);
+      assert.deepEqual(rows("'1h'"), [["Build", 25, 22, 4, 6.25], ["Git", 8, 8, 1, 8]]);
+      assert.deepEqual(rows("'24h'"), [["Build", 36, 33, 6, 6], ["Git", 13, 13, 1, 13]]);
+      assert.equal(db.prepare("SELECT position FROM source_bounds WHERE source='Actions' AND window='1h'").get()?.position,
+        "No observed timestamps");
+    } finally { db.close(); }
+  } finally { rmSync(job, { recursive: true, force: true }); }
 });

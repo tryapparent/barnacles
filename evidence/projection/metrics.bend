@@ -264,3 +264,139 @@ def session_timing_observe(state: SessionTiming, clock: String, +start: Nat, +en
       Bool.pick(SessionTiming, String.eq(clock, "async_cell"),
         SessionTiming{envelopes, record_interval(cells, start, end)},
         SessionTiming{record_interval(envelopes, start, end), cells})
+
+type WindowedInterval is Data:
+  Outside{}
+  Untimed{}
+  Unplaced{}
+  Clipped{start: Nat, end: Nat}
+
+type TimingWindow is Data:
+  TimingWindow{key: String, bounds: Focus}
+
+def timing_windows(+cutoff: Nat) -> List<&2, TimingWindow>:
+  [TimingWindow{"1h", Window{Nat.sub(cutoff, 3600000n), cutoff}},
+   TimingWindow{"24h", Window{Nat.sub(cutoff, 86400000n), cutoff}}]
+
+def in_window(+at: Nat, from: Nat, to: Nat) -> Bool:
+  Bool.and(Nat.is_le(from, at), Nat.is_lt(at, to))
+
+def window_interval(+window: Focus, +start: Nat, +end: Nat) -> WindowedInterval:
+  match window:
+    case Window{+from, +to}:
+      +anchor = Bool.pick(Nat, Nat.is_eq(start, 0n), end, start)
+      +begin = Nat.max(start, from)
+      +finish = Nat.min(end, to)
+      Bool.pick(WindowedInterval, interval_valid(start, end),
+        Bool.pick(WindowedInterval, Bool.or(Nat.is_lt(begin, finish),
+          Bool.and(Nat.is_eq(start, end), in_window(start, from, to))), Clipped{begin, finish}, Outside{}),
+        Bool.pick(WindowedInterval, Nat.is_eq(anchor, 0n), Unplaced{},
+          Bool.pick(WindowedInterval, in_window(anchor, from, to), Untimed{}, Outside{})))
+
+type Occupancy is Data:
+  Occupied{stats: Sample, union: Nat, latest_end: Nat, unplaced: Nat}
+
+def record_occupancy(occupancy: Occupancy, interval: WindowedInterval) -> Occupancy:
+  match occupancy interval:
+    case Occupied{stats, union, +latest_end, unplaced} Clipped{+start, +end}:
+      Occupied{record(stats, Nat.sub(end, start)),
+        Nat.add(union, Nat.sub(end, Nat.max(latest_end, start))), Nat.max(latest_end, end), unplaced}
+    case Occupied{stats, union, latest_end, unplaced} Untimed{}:
+      Occupied{unavailable(stats), union, latest_end, unplaced}
+    case Occupied{stats, union, latest_end, unplaced} Unplaced{}:
+      Occupied{stats, union, latest_end, Nat.add(unplaced, 1n)}
+    case Occupied{stats, union, latest_end, unplaced} Outside{}:
+      Occupied{stats, union, latest_end, unplaced}
+
+def observe_timestamp(+window: Focus, +at: Nat) -> Focus:
+  Bool.pick(Focus, Nat.is_eq(at, 0n), window, extend_window(window, at, at))
+
+def source_position(window: Focus, +latest: Nat) -> String:
+  match window:
+    case Window{from, to}:
+      Bool.pick(String, Nat.is_eq(latest, 0n), "No observed timestamps",
+        Bool.pick(String, Nat.is_lt(latest, from), "Before window",
+          Bool.pick(String, Nat.is_lt(latest, to), "Ends in window", "At or after cutoff")))
+
+def timing_clocks() -> List<&2, String>:
+  ["Tool envelopes", "Async cells", "CI queue", "CI execution", "CI steps"]
+
+def starts_before(left: Nat, right: Nat) -> Bool:
+  Nat.is_lt(left, right)
+
+type WindowRow is Data:
+  WindowRow{key: String, clock: String, workflow: Nat, operation: String, occupancy: Occupancy}
+
+type WindowGroups is Data:
+  WindowGroups{clocks: Map<&2, WindowRow>, operations: Map<&2, WindowRow>, workflows: Map<&2, WindowRow>,
+               totals: Map<&2, WindowRow>, mixed: Map<&2, WindowRow>}
+
+type WindowSummary is Data:
+  WindowSummary{clocks: List<&2, WindowRow>, operations: List<&2, WindowRow>, workflows: List<&2, WindowRow>,
+                totals: List<&2, WindowRow>, mixed: List<&2, WindowRow>}
+
+def window_record_found(found: Map<&2, WindowRow> & WindowRow, interval: WindowedInterval) -> Map<&2, WindowRow>:
+  match found:
+    case (table, WindowRow{+key, clock, workflow, operation, occupancy}):
+      Map.set(&2, WindowRow, table, key, WindowRow{key, clock, workflow, operation, record_occupancy(occupancy, interval)})
+
+def window_record(groups: Map<&2, WindowRow>, +key: String, clock: String, workflow: Nat, operation: String,
+                  interval: WindowedInterval) -> Map<&2, WindowRow>:
+  window_record_found(Map.get(WindowRow, WindowRow{key, clock, workflow, operation, Occupied{Stats{0n, 0n, 0n}, 0n, 0n, 0n}},
+    groups, key), interval)
+
+def start_clock_groups(clocks: List<&2, String>, groups: Map<&2, WindowRow>) -> Map<&2, WindowRow>:
+  match clocks:
+    case []: groups
+    case +clock <> tail: start_clock_groups(tail, window_record(groups, clock, clock, 0n, "", Outside{}))
+
+def start_window_groups() -> WindowGroups:
+  WindowGroups{start_clock_groups(timing_clocks(), Map.new(&2, WindowRow)), Map.new(&2, WindowRow),
+    Map.new(&2, WindowRow), Map.new(&2, WindowRow), Map.new(&2, WindowRow)}
+
+def window_mix(empty: Bool, table: Map<&2, WindowRow>, +clock: String, +group: String, interval: WindowedInterval) ->
+    Map<&2, WindowRow>:
+  match empty:
+    case True{}: table
+    case False{}: window_record(table, timing_group_key(clock, group), clock, 0n, group, interval)
+
+def window_add(groups: WindowGroups, +clock: String, +workflow: Nat, +operation: String, +group: String,
+               +interval: WindowedInterval) -> WindowGroups:
+  match groups interval:
+    case WindowGroups{clocks, ops, flows, totals, mixed} Outside{}:
+      WindowGroups{clocks, ops, flows, totals, mixed}
+    case WindowGroups{clocks, ops, flows, totals, mixed} Unplaced{}:
+      WindowGroups{window_record(clocks, clock, clock, 0n, "", interval), ops, flows, totals, mixed}
+    case WindowGroups{clocks, ops, flows, totals, mixed} _:
+      +prefix = timing_key(clock, workflow)
+      WindowGroups{window_record(clocks, clock, clock, 0n, "", interval),
+        window_record(ops, timing_group_key(prefix, operation), clock, workflow, operation, interval),
+        window_record(flows, prefix, clock, workflow, "", interval),
+        window_record(totals, timing_group_key(clock, operation), clock, 0n, operation, interval),
+        window_mix(String.eq(group, ""), mixed, clock, group, interval)}
+
+def window_add_category(groups: WindowGroups, clock: String, category: Operation, interval: WindowedInterval) -> WindowGroups:
+  match category:
+    case Category{name}: window_add(groups, clock, 0n, name, "", interval)
+    case MixedCommand{name, group}: window_add(groups, clock, 0n, name, group, interval)
+
+def window_observe(groups: WindowGroups, bounds: Focus, clock: String, workflow: Nat, operation: String,
+                   start: Nat, end: Nat, codex: Bool) -> WindowGroups:
+  match codex:
+    case True{}: window_add_category(groups, interval_clock(clock), observed_category(operation), window_interval(bounds, start, end))
+    case False{}: window_add(groups, interval_clock(clock), workflow, operation, "", window_interval(bounds, start, end))
+
+def window_before(left: WindowRow, right: WindowRow) -> Bool:
+  match left right:
+    case WindowRow{a, ac, aw, ao, Occupied{Stats{an, x, am}, au, ae, ap}}
+         WindowRow{b, bc, bw, bo, Occupied{Stats{bn, y, bm}, bu, be, bp}}:
+      ranks_before(x, a, y, b)
+
+def rank_window_rows(table: Map<&2, WindowRow>) -> List<&2, WindowRow>:
+  List.sort(~WindowRow, ~window_before, Map.values(&2, WindowRow, table))
+
+def summarize_window(groups: WindowGroups) -> WindowSummary:
+  match groups:
+    case WindowGroups{clocks, ops, flows, totals, mixed}:
+      WindowSummary{rank_window_rows(clocks), rank_window_rows(ops), rank_window_rows(flows),
+        rank_window_rows(totals), rank_window_rows(mixed)}
