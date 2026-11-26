@@ -120,7 +120,7 @@ export type RolloutEvidence = {
     mix?: Extract<CommandMix, { $: "Mix" }> & { seconds: number } }[];
 };
 
-export const sourcePolicy = new URL("./sources.bend", import.meta.url);
+export const sourcePolicy = new URL("../sources.bend", import.meta.url);
 
 const schema = readFileSync(new URL("./sources.sql", import.meta.url), "utf8");
 

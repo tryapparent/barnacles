@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { buildPolicy, loadPolicy } from "../tooling/bend.ts";
 import { repository } from "./index.ts";
-import { collectTiming, rows, seconds, type TimingPolicy } from "./timing.ts";
+import { collectTiming, rows, seconds, type TimingPolicy } from "./projection/timing.ts";
 
 async function main() {
   const [file, name, ...extra] = process.argv.slice(2);
@@ -12,7 +12,7 @@ async function main() {
   const db = new DatabaseSync(file, { readOnly: true });
   const scratch = mkdtempSync("/tmp/apparent-dev-barnacles-actions-report-");
   try {
-    const file = await buildPolicy(scratch, new URL("./metrics.bend", import.meta.url), "metrics.mjs");
+    const file = await buildPolicy(scratch, new URL("./projection/metrics.bend", import.meta.url), "metrics.mjs");
     const metrics: TimingPolicy = await loadPolicy(file);
     db.exec("BEGIN");
     const report = rows(collectTiming(db, repo, metrics).result().operations).map(({ clock, operation, workflow, stats }) => ({

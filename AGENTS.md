@@ -25,6 +25,10 @@ Keep the dependency direction from collector to evidence and from dashboard to e
 - Use bounded, read-only source requests. Commit synthetic fixtures only. Keep real imports, raw prompts, outputs, private identifiers and links, local paths, and credentials out of Git and public artifacts.
 - Keep imports repeatable and document provenance, coverage, and failure behavior. Check the replay and the relevant partial-data case when changing an import or join.
 
+## Directory width
+
+Keep at most ten immediate files and ten immediate subdirectories in each affected first-party directory. The [hook documentation](CONTRIBUTING.md#commit-hook) defines the limited exclusions and root allowances.
+
 ## Comments
 
 Put explanations in visible Markdown documentation. Staged code and configuration may retain or remove existing lexical comments. Adding, editing, or duplicating a comment is rejected by the [commit hook](CONTRIBUTING.md#commit-hook).

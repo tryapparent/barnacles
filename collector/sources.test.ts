@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { sourcePolicy, deliveryReport, loadEvidence, type PullRequest, type ReleaseEvidence, type RolloutEvidence, type SourcePolicy, type ThreadEvidence } from "../evidence/index.ts";
 import { buildPolicy, loadPolicy } from "../tooling/bend.ts";
 import { pullRequest, releaseEvidence } from "./github/delivery.ts";
-import { inspectRollout, readRollout } from "./rollout.ts";
+import { inspectRollout, readRollout } from "./codex/rollout.ts";
 import { t3Snapshot } from "./t3.ts";
 
 test("compiled Bend2 source decisions through the SQLite import path", async () => {

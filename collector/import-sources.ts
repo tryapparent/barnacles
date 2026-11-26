@@ -4,7 +4,7 @@ import { sourcePolicy, deliveryReport, rolloutCoverage, loadEvidence, type Sourc
 import { buildPolicy, loadPolicy } from "../tooling/bend.ts";
 import { positiveInt } from "./github/attempt.ts";
 import { pullRequest, releaseEvidence } from "./github/delivery.ts";
-import { inspectRollout } from "./rollout.ts";
+import { inspectRollout } from "./codex/rollout.ts";
 import { t3Snapshot } from "./t3.ts";
 
 async function main() {

@@ -4,10 +4,10 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const suites = {
-  hooks: ".githooks",
-  collector: "collector",
-  evidence: "evidence",
-  dashboard: "dashboard",
+  hooks: [".githooks", "tooling/tests"],
+  collector: ["collector"],
+  evidence: ["evidence"],
+  dashboard: ["dashboard"],
 };
 const requested = process.argv.slice(2);
 const scopes = requested.length ? requested : Object.keys(suites);
@@ -21,8 +21,8 @@ try {
   const env = { ...process.env, BARNACLES_TEST_DIRECTORY: job };
   delete env.NODE_TEST_CONTEXT;
   execFileSync(process.execPath, ["tooling/check-boundaries.ts"], { cwd, env, stdio: "inherit" });
-  const tests = scopes.flatMap((scope) => {
-    const directory = resolve(cwd, suites[scope as keyof typeof suites]);
+  const tests = scopes.flatMap((scope) => suites[scope as keyof typeof suites]).flatMap((owner) => {
+    const directory = resolve(cwd, owner);
     return readdirSync(directory, { recursive: true }).filter((file) => file.endsWith(".test.ts"))
       .map((file) => join(directory, file)).sort();
   });

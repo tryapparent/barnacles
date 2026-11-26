@@ -36,6 +36,7 @@ test("pre-push routes the outgoing commit and blocks failed verification", () =>
     mkdirSync(join(cwd, "dashboard"));
     mkdirSync(join(cwd, "tooling"));
     copyFileSync(new URL("../tooling/verify.ts", import.meta.url), join(cwd, "tooling", "verify.ts"));
+    copyFileSync(new URL("../tooling/check-directory-width.ts", import.meta.url), join(cwd, "tooling", "check-directory-width.ts"));
     write("tooling/check-boundaries.ts", "process.exit(0)\n");
     write("dashboard/prepare.test.ts", "process.exit(0)\n");
     for (const file of ["pre-push", "snapshot.ts"]) {
@@ -45,7 +46,7 @@ test("pre-push routes the outgoing commit and blocks failed verification", () =>
     write(".githooks/check-comments.ts", "process.exit(0)\n");
     write(".githooks/check-bend-paths.ts", "process.exit(0)\n");
     write("README.md", "Baseline\n");
-    write("package.json", '{"name":"push-fixture","version":"1.0.0","scripts":{"verify":"node tooling/verify.ts"}}\n');
+    write("package.json", '{"name":"push-fixture","version":"1.0.0","type":"module","scripts":{"verify":"node tooling/verify.ts"}}\n');
     write("package-lock.json", '{"name":"push-fixture","version":"1.0.0","lockfileVersion":3,"packages":{}}\n');
     write("collector/github/attempt.test.ts", 'console.log("committed collector test")\n');
     write("collector/sources.test.ts", "process.exit(0)\n");
@@ -72,6 +73,13 @@ test("pre-push routes the outgoing commit and blocks failed verification", () =>
     assert.equal(failure.status, 1);
     assert.match(failure.stderr, /checking collector dashboard tests/);
     assert.match(failure.stdout, /not ok/);
+    mkdirSync(join(cwd, "overwide"));
+    for (let index = 0; index < 11; index++) write(`overwide/file-${index}.md`, "Synthetic\n");
+    commit("overwide");
+    const width = git("push", "origin", "feature");
+    assert.equal(width.status, 1);
+    assert.match(width.stderr, /directory-width check: "overwide" has 11 files/);
+    assert.doesNotMatch(width.stderr, /checking .* tests/);
     pass("push", "origin", "--delete", "feature");
   } finally {
     rmSync(root, { recursive: true, force: true });

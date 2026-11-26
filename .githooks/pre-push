@@ -35,6 +35,7 @@ while read -r local_ref local_oid remote_ref remote_oid; do
     printf '%s\n' 'pre-push: install Node 22.18+ and run npm ci --ignore-scripts.' >&2
     exit 1
   fi
+  node tooling/check-directory-width.ts "$base" "$head"
   node .githooks/check-comments.ts "$base" "$head"
   node .githooks/check-bend-paths.ts "$base" "$head"
 

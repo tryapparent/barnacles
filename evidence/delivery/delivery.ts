@@ -1,5 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
-import { writeSources, type DeliveryClocks, type Elapsed, type Point, type ReleaseOrder, type SourcePolicy } from "./sources.ts";
+import { writeSources, type DeliveryClocks, type Elapsed, type Point, type ReleaseOrder, type SourcePolicy } from "../storage/sources.ts";
 
 export type PullRequest = {
   repository: string; number: number; opened: number; merged: number | null;

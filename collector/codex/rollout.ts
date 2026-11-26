@@ -3,9 +3,9 @@ import { createHash } from "node:crypto";
 import { open, type FileHandle } from "node:fs/promises";
 import { resolve } from "node:path";
 import { constants } from "node:fs";
-import type { CommandMix, Point, RolloutAdmission, RolloutEvidence, RolloutImport, SourcePolicy } from "../evidence/index.ts";
+import type { CommandMix, Point, RolloutAdmission, RolloutEvidence, RolloutImport, SourcePolicy } from "../../evidence/index.ts";
 import { rolloutSyntax } from "./rollout-syntax.ts";
-import { millis, row, str, timeParts, token, validMillis } from "./wire.ts";
+import { millis, row, str, timeParts, token, validMillis } from "../wire.ts";
 
 const fileLimit = 128 * 1024 * 1024;
 const lineLimit = 8 * 1024 * 1024;
