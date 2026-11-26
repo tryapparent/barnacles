@@ -533,17 +533,16 @@ def one_process_purpose(parts: List<&2, String>) -> String:
     case name <> []: name
     case _: ""
 
+def string_in(+value: String, allowed: List<&2, String>) -> Bool:
+  match allowed:
+    case []: False{}
+    case head <> rest: Bool.or(String.eq(value, head), string_in(value, rest))
+
 def process_purpose(+category: String) -> String:
-  match category:
-    case "Exact GitHub watcher request": "GitHub Actions"
-    case "GitHub watcher with incomplete identity": "GitHub Actions"
-    case "Unknown": ""
-    case "Unknown tool": ""
-    case "Unknown script": ""
-    case "Unknown command": ""
-    case "Cell wait": ""
-    case "Process I/O": ""
-    case _: one_process_purpose(String.split(category, '+'))
+  watcher = string_in(category, ["Exact GitHub watcher request", "GitHub watcher with incomplete identity"])
+  unresolved = string_in(category, ["Unknown", "Unknown tool", "Unknown script", "Unknown command", "Cell wait", "Process I/O"])
+  Bool.pick(String, watcher, "GitHub Actions",
+    Bool.pick(String, unresolved, "", one_process_purpose(String.split(category, '+'))))
 
 def process_label(+purpose: String, waiting: Bool) -> String:
   match waiting:
@@ -696,13 +695,8 @@ def review_clock_options() -> List<&2, String>:
 def review_timing_window() -> String:
   "24h"
 
-def review_clock_in(+clock: String, allowed: List<&2, String>) -> Bool:
-  match allowed:
-    case []: False{}
-    case head <> rest: Bool.or(String.eq(clock, head), review_clock_in(clock, rest))
-
 def review_clock_valid(clock: String) -> Bool:
-  review_clock_in(clock, review_clock_options())
+  string_in(clock, review_clock_options())
 
 def review_operation_matches(selection: String, all: Bool, name: String) -> Bool:
   Bool.or(all, String.eq(selection, name))
