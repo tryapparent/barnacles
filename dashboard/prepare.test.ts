@@ -191,14 +191,42 @@ test("dashboard derives a covered comparison and preserves missing source covera
       }
       const timingBoard = JSON.parse(readFileSync(join(out, "dashboards/timing.json"), "utf8"));
       const details = timingBoard.panels.find(({ id }: { id: number }) => id === 3);
-      const mixQuery = details.targets[0].rawQueryText.replaceAll("${clock:sqlstring}", "'Tool envelopes'")
-        .replaceAll("${workflow:sqlstring}", "'*'").replaceAll("${operation:sqlstring}", "'Mixed'");
-      assert.deepEqual(db.prepare(mixQuery).all().map(({ Operation }) => Operation),
-        ["Mixed · File inspection + Rust build", "Mixed · Git inspection + File inspection"]);
+      const drilldown = (clock: string, workflow: string, operation: string) => {
+        const query = details.targets[0].rawQueryText.replaceAll("${clock:sqlstring}", `'${clock}'`)
+          .replaceAll("${workflow:sqlstring}", `'${workflow}'`).replaceAll("${operation:sqlstring}", `'${operation}'`);
+        return db.prepare(query).all().map(({ Operation }) => Operation);
+      };
+      const groups = ["Mixed · File inspection + Rust build", "Mixed · Git inspection + File inspection"];
+      assert.deepEqual(drilldown("Tool envelopes", "*", "Mixed"), groups);
+      assert.deepEqual(drilldown("Tool envelopes", "0", "Mixed"), groups);
+      assert.deepEqual(drilldown("Tool envelopes", "2", "Mixed"), []);
+      assert.deepEqual(drilldown("Tool envelopes", "0", groups[1]), [groups[1]]);
+      assert.deepEqual(drilldown("Tool envelopes", "*", "*"), ["Unknown", "Git inspection"]);
+      assert.deepEqual(drilldown("CI execution", "2", "*"), ["Build"]);
       const trace = JSON.parse(readFileSync(join(out, "dashboards/trace.json"), "utf8"));
       assert.ok(trace.panels.some(({ type }: { type: string }) => type === "traces"));
       assert.equal(trace.templating.list[0].current.value, "1");
       assert.equal(trace.templating.list[1].current.value, window.traceId);
     } finally { db.close(); }
+
+    const report = JSON.parse(execFileSync(process.execPath, ["evidence/report-actions.ts", source, repo],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 60_000 }));
+    assert.deepEqual(report.filter(({ clock }: { clock: string }) => clock === "CI queue"), [
+      { workflow_id: 2, clock: "CI queue", operation: "Build", count: 1, mean_seconds: 2, total_seconds: 2, unmeasured_count: 0 },
+      { workflow_id: 1, clock: "CI queue", operation: "Build", count: 1, mean_seconds: 1, total_seconds: 1, unmeasured_count: 0 },
+    ]);
+
+    const legacy = new DatabaseSync(source);
+    try {
+      legacy.exec("DROP TABLE codex_reasoning_inputs; DROP TABLE codex_commands");
+    } finally { legacy.close(); }
+    const legacyOut = join(job, "legacy");
+    execFileSync(process.execPath, ["dashboard/prepare.ts", source, legacyOut, repo], { stdio: "pipe", timeout: 60_000 });
+    const legacyPayload = readFileSync(join(legacyOut, "tempo.ndjson"), "utf8");
+    const legacyTrace = JSON.parse(legacyPayload.split("\n")[0]).resourceSpans[0].scopeSpans[0].spans;
+    assert.equal(legacyTrace[0].events.length, 2);
+    assert.equal(legacyTrace.length, 5);
+    assert.ok(!legacyPayload.includes("Estimated model wait"));
+    assert.ok(!legacyPayload.includes("barnacles.submitted_command"));
   } finally { rmSync(job, { recursive: true, force: true }); }
 });

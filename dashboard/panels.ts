@@ -196,16 +196,10 @@ export function dashboards(range: Range, repository: string) {
         byName("Clock", { id: "custom.hidden", value: true })]),
     data(3, "table", "Operations ranked by total time", [0, 10, 24, 14],
       `SELECT operation AS "Operation", count AS "Count", mean_seconds AS "Mean",
-        total_seconds AS "Total", unmeasured AS "Unmeasured" FROM (
-          SELECT operation, count, mean_seconds, total_seconds, unmeasured, rank
-          FROM timing WHERE clock = ${clock} AND (${workflow} = '*' OR CAST(workflow AS TEXT) = ${workflow})
-            AND (${operation} = '*' OR operation = ${operation})
-            AND (${operation} <> 'Mixed' OR NOT EXISTS (SELECT 1 FROM mixed_groups WHERE clock = ${clock}))
-          UNION ALL
-          SELECT operation, count, mean_seconds, total_seconds, unmeasured, rank
-          FROM mixed_groups WHERE clock = ${clock} AND (${operation} = 'Mixed' OR ${operation} = operation)
-            AND ${workflow} IN ('*', '0')
-        ) ORDER BY rank`,
+        total_seconds AS "Total", unmeasured AS "Unmeasured"
+        FROM timing_selection JOIN timing_details USING (clock, kind, rank)
+        WHERE clock = ${clock} AND workflow_choice = ${workflow} AND operation_choice = ${operation}
+        ORDER BY rank, kind`,
       { showHeader: true, enablePagination: true },
       { noValue: "—", custom: { minWidth: 85 } }, [...timeFields,
         byName("Operation", { id: "custom.wrapText", value: true })],
