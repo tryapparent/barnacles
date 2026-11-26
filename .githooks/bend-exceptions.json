@@ -1,5 +1,6 @@
 {
   "Source I/O and provider codecs": [
+    "collector/changed-code.ts",
     "collector/github/attempt.ts",
     "collector/github/delivery.ts",
     "collector/import-actions.ts",
@@ -53,6 +54,7 @@
     "tooling/verify.ts"
   ],
   "Synthetic integration fixtures and demo": [
+    "collector/changed-code.test.ts",
     "collector/github/attempt.test.ts",
     "collector/sources.test.ts",
     "dashboard/prepare.test.ts",
