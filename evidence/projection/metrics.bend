@@ -475,11 +475,11 @@ type WindowRow is Data:
 
 type WindowGroups is Data:
   WindowGroups{clocks: Map<&2, WindowRow>, operations: Map<&2, WindowRow>, workflows: Map<&2, WindowRow>,
-               totals: Map<&2, WindowRow>, mixed: Map<&2, WindowRow>, hours: Map<&2, WindowRow>}
+               totals: Map<&2, WindowRow>, mixed: Map<&2, WindowRow>, step_jobs: Map<&2, WindowRow>}
 
 type WindowSummary is Data:
   WindowSummary{clocks: List<&2, WindowRow>, operations: List<&2, WindowRow>, workflows: List<&2, WindowRow>,
-                totals: List<&2, WindowRow>, mixed: List<&2, WindowRow>, hours: List<&2, WindowRow>}
+                totals: List<&2, WindowRow>, mixed: List<&2, WindowRow>, step_jobs: List<&2, WindowRow>}
 
 def window_record_found(found: Map<&2, WindowRow> & WindowRow, interval: WindowedInterval) -> Map<&2, WindowRow>:
   match found:
@@ -506,27 +506,28 @@ def window_mix(empty: Bool, table: Map<&2, WindowRow>, +clock: String, +group: S
     case True{}: table
     case False{}: window_record(table, timing_group_key(clock, group), clock, 0n, group, interval)
 
-def window_hour(table: Map<&2, WindowRow>, +clock: String, +operation: String, +interval: WindowedInterval) -> Map<&2, WindowRow>:
-  match interval:
-    case Clipped{start, end}:
-      +hour = Nat.div(start, 3600000n)
-      window_record(table, timing_group_key(timing_key(clock, hour), operation), clock, hour, operation, interval)
-    case _: table
+def window_step_job(skip: Bool, table: Map<&2, WindowRow>, +clock: String, +workflow: Nat, +operation: String,
+                    +job: String, interval: WindowedInterval) -> Map<&2, WindowRow>:
+  match skip:
+    case True{}: table
+    case False{}:
+      +prefix = timing_group_key(timing_key(clock, workflow), Nat.show(String.length(operation)))
+      window_record(table, timing_group_key(prefix, String.append(operation, job)), operation, workflow, job, interval)
 
-def window_add(groups: WindowGroups, +clock: String, +workflow: Nat, +operation: String, +group: String,
+def window_add(groups: WindowGroups, +clock: String, +workflow: Nat, +operation: String, +group: String, +job: String,
                +interval: WindowedInterval) -> WindowGroups:
   match groups interval:
-    case WindowGroups{clocks, ops, flows, totals, mixed, hours} Outside{}:
-      WindowGroups{clocks, ops, flows, totals, mixed, hours}
-    case WindowGroups{clocks, ops, flows, totals, mixed, hours} Unplaced{}:
-      WindowGroups{window_record(clocks, clock, clock, 0n, "", interval), ops, flows, totals, mixed, hours}
-    case WindowGroups{clocks, ops, flows, totals, mixed, hours} _:
+    case WindowGroups{clocks, ops, flows, totals, mixed, step_jobs} Outside{}:
+      WindowGroups{clocks, ops, flows, totals, mixed, step_jobs}
+    case WindowGroups{clocks, ops, flows, totals, mixed, step_jobs} Unplaced{}:
+      WindowGroups{window_record(clocks, clock, clock, 0n, "", interval), ops, flows, totals, mixed, step_jobs}
+    case WindowGroups{clocks, ops, flows, totals, mixed, step_jobs} _:
       +prefix = timing_key(clock, workflow)
       WindowGroups{window_record(clocks, clock, clock, 0n, "", interval),
         window_record(ops, timing_group_key(prefix, operation), clock, workflow, operation, interval),
         window_record(flows, prefix, clock, workflow, "", interval),
         window_record(totals, timing_group_key(clock, operation), clock, 0n, operation, interval),
-        window_mix(String.eq(group, ""), mixed, clock, group, interval), window_hour(hours, clock, operation, interval)}
+        window_mix(String.eq(group, ""), mixed, clock, group, interval), window_step_job(String.eq(job, ""), step_jobs, clock, workflow, operation, job, interval)}
 
 type ProcessAttribution is Data:
   ProcessAttribution{cell_status: String, wait_status: String, wait_category: String, io_status: String, io_category: String}
@@ -571,14 +572,14 @@ def timing_codex_operation(+category: String, attribution: ProcessAttribution) -
 
 def window_add_category(groups: WindowGroups, clock: String, category: Operation, interval: WindowedInterval) -> WindowGroups:
   match category:
-    case Category{name}: window_add(groups, clock, 0n, name, "", interval)
-    case MixedCommand{name, group}: window_add(groups, clock, 0n, name, group, interval)
+    case Category{name}: window_add(groups, clock, 0n, name, "", "", interval)
+    case MixedCommand{name, group}: window_add(groups, clock, 0n, name, group, "", interval)
 
 def window_observe(groups: WindowGroups, bounds: Focus, clock: String, workflow: Nat, operation: String,
-                   start: Nat, end: Nat, codex: Bool) -> WindowGroups:
+                   start: Nat, end: Nat, codex: Bool, job: String) -> WindowGroups:
   match codex:
     case True{}: window_add_category(groups, interval_clock(clock), observed_category(operation), window_interval(bounds, start, end))
-    case False{}: window_add(groups, interval_clock(clock), workflow, operation, "", window_interval(bounds, start, end))
+    case False{}: window_add(groups, interval_clock(clock), workflow, operation, "", job, window_interval(bounds, start, end))
 
 def window_before(left: WindowRow, right: WindowRow) -> Bool:
   match left right:
@@ -591,9 +592,9 @@ def rank_window_rows(table: Map<&2, WindowRow>) -> List<&2, WindowRow>:
 
 def summarize_window(groups: WindowGroups) -> WindowSummary:
   match groups:
-    case WindowGroups{clocks, ops, flows, totals, mixed, hours}:
+    case WindowGroups{clocks, ops, flows, totals, mixed, step_jobs}:
       WindowSummary{rank_window_rows(clocks), rank_window_rows(ops), rank_window_rows(flows),
-        rank_window_rows(totals), rank_window_rows(mixed), rank_window_rows(hours)}
+        rank_window_rows(totals), rank_window_rows(mixed), rank_window_rows(step_jobs)}
 
 type TimingSelector is Data:
   Selector{workflow: String, operation: String}
@@ -621,7 +622,7 @@ def window_mixed_selectors(row: WindowRow) -> List<&2, TimingSelector>:
       [Selector{"*", "Mixed"}, Selector{"0", "Mixed"}, Selector{"*", operation}, Selector{"0", operation}]
 
 type TimingSpan is Data:
-  TimingSpan{clock: String, workflow: Nat, operation: String, start: Nat, end: Nat, codex: Bool}
+  TimingSpan{clock: String, workflow: Nat, operation: String, start: Nat, end: Nat, codex: Bool, job: String}
 
 type WindowReport is Data:
   WindowReport{key: String, bounds: Focus, summary: WindowSummary}
@@ -631,27 +632,27 @@ def empty_window_spans() -> List<&2, TimingSpan>:
 
 def window_action_job(spans: List<&2, TimingSpan>, +workflow: Nat, +name: String, created: Nat, queued: Nat,
                       started: Nat, ended: Nat) -> List<&2, TimingSpan>:
-  TimingSpan{"ci_execution", workflow, name, started, ended, False{}} <>
-    TimingSpan{"ci_queue", workflow, name, created, queued, False{}} <> spans
+  TimingSpan{"ci_execution", workflow, name, started, ended, False{}, ""} <>
+    TimingSpan{"ci_queue", workflow, name, created, queued, False{}, ""} <> spans
 
-def window_action_step(spans: List<&2, TimingSpan>, workflow: Nat, name: String, started: Nat, ended: Nat) ->
+def window_action_step(spans: List<&2, TimingSpan>, workflow: Nat, name: String, +job: String, started: Nat, ended: Nat) ->
     List<&2, TimingSpan>:
-  TimingSpan{"ci_step", workflow, name, started, ended, False{}} <> spans
+  TimingSpan{"ci_step", workflow, name, started, ended, False{}, Bool.pick(String, String.eq(job, ""), "Unidentified job", job)} <> spans
 
 def window_codex_span(spans: List<&2, TimingSpan>, clock: String, categories: String, attribution: ProcessAttribution, start: Nat, end: Nat) ->
     List<&2, TimingSpan>:
-  TimingSpan{clock, 0n, timing_codex_operation(categories, attribution), start, end, True{}} <> spans
+  TimingSpan{clock, 0n, timing_codex_operation(categories, attribution), start, end, True{}, ""} <> spans
 
 def window_span_before(left: TimingSpan, right: TimingSpan) -> Bool:
   match left right:
-    case TimingSpan{a, b, c, start, d, e} TimingSpan{f, g, h, other_start, i, j}:
+    case TimingSpan{a, b, c, start, d, e, k} TimingSpan{f, g, h, other_start, i, j, l}:
       Nat.is_lt(start, other_start)
 
 def window_group_spans(spans: List<&2, TimingSpan>, +bounds: Focus, state: WindowGroups) -> WindowSummary:
   match spans:
     case []: summarize_window(state)
-    case TimingSpan{clock, workflow, operation, start, end, codex} <> tail:
-      window_group_spans(tail, bounds, window_observe(state, bounds, clock, workflow, operation, start, end, codex))
+    case TimingSpan{clock, workflow, operation, start, end, codex, job} <> tail:
+      window_group_spans(tail, bounds, window_observe(state, bounds, clock, workflow, operation, start, end, codex, job))
 
 def window_reports_for(windows: List<&2, TimingWindow>, +spans: List<&2, TimingSpan>) -> List<&2, WindowReport>:
   match windows:
@@ -928,3 +929,78 @@ def review_operation_map(weights: List<&2, Nat>) -> List<&2, MapTile>:
   +positive = map_positive_weights(weights, 0n)
   +total = map_weight_total(positive)
   map_level(positive, True{}, total, List.length(&2, MapWeight, positive), 0n, total)
+
+type CategoryInput is Data:
+  CategoryInput{workflow: Nat, operation: String, detail: String, millis: Nat}
+
+type CategoryTile is Data:
+  CategoryTile{label: String, millis: Nat, children: Map<&2, CategoryTile>}
+
+def category_empty() -> Map<&2, CategoryTile>:
+  Map.new(&2, CategoryTile)
+
+def category_found(pair: Map<&2, CategoryTile> & CategoryTile) -> CategoryTile:
+  match pair:
+    case (tree, tile): tile
+
+def category_find(tree: Map<&2, CategoryTile>, +label: String) -> CategoryTile:
+  category_found(Map.get(CategoryTile, CategoryTile{label, 0n, category_empty()}, tree, label))
+
+def category_total(tile: CategoryTile) -> Nat:
+  match tile:
+    case CategoryTile{label, millis, children}: millis
+
+def category_children(tile: CategoryTile) -> Map<&2, CategoryTile>:
+  match tile:
+    case CategoryTile{label, millis, children}: children
+
+def category_add(path: List<&2, String>, +millis: Nat, +tree: Map<&2, CategoryTile>) -> Map<&2, CategoryTile>:
+  match path:
+    case []: tree
+    case +label <> tail:
+      +tile = category_find(tree, label)
+      Map.set(&2, CategoryTile, tree, label, CategoryTile{label, Nat.add(category_total(tile), millis),
+        category_add(tail, millis, category_children(tile))})
+
+def review_ci_clock(+clock: String) -> Bool:
+  string_in(clock, ["CI queue", "CI execution", "CI steps"])
+
+def review_tool_path(+operation: String, +detail: String) -> List<&2, String>:
+  Bool.pick(List<&2, String>, String.eq(operation, "Mixed"),
+    Bool.pick(List<&2, String>, String.eq(detail, ""), [operation], [operation, String.drop(detail, 8n)]),
+    Bool.pick(List<&2, String>, String.starts_with(operation, "Waiting for "), ["Waiting", operation],
+      Bool.pick(List<&2, String>, Bool.or(String.eq(operation, "Unidentified process"),
+        String.ends_with(operation, " · process I/O")), ["Process I/O", operation], [operation])))
+
+def review_category_path(ci: Bool, workflow: Nat, operation: String, detail: String) -> List<&2, String>:
+  match ci:
+    case True{}: ["CI", String.append("Workflow ", Nat.show(workflow)), detail]
+    case False{}: review_tool_path(operation, detail)
+
+def review_category_groups(inputs: List<&2, CategoryInput>, +ci: Bool, +selection: String, +all: Bool, +skip_mixed: Bool,
+                           +tree: Map<&2, CategoryTile>) -> Map<&2, CategoryTile>:
+  match inputs:
+    case []: tree
+    case CategoryInput{workflow, +operation, detail, +millis} <> tail:
+      +include = Bool.and(Bool.not(Bool.and(skip_mixed, String.eq(operation, "Mixed"))),
+        Bool.and(Nat.is_lt(0n, millis), review_operation_matches(selection, all, operation)))
+      review_category_groups(tail, ci, selection, all, skip_mixed,
+        Bool.pick(Map<&2, CategoryTile>, include, category_add(review_category_path(ci, workflow, operation, detail), millis, tree), tree))
+
+def review_category_tree(inputs: List<&2, CategoryInput>, +mixed: List<&2, CategoryInput>, clock: String, +selection: String,
+                         +all: Bool) -> Map<&2, CategoryTile>:
+  review_category_groups(inputs, review_ci_clock(clock), selection, all, Nat.is_lt(0n, List.length(&2, CategoryInput, mixed)),
+    review_category_groups(mixed, False{}, selection, all, False{}, category_empty()))
+
+def review_mixed_input(detail: String, millis: Nat) -> CategoryInput:
+  CategoryInput{0n, "Mixed", detail, millis}
+
+def review_ci_steps(clock: String) -> Bool:
+  String.eq(clock, "CI steps")
+
+def category_before(left: CategoryTile, right: CategoryTile) -> Bool:
+  match left right:
+    case CategoryTile{a, x, ac} CategoryTile{b, y, bc}: ranks_before(x, a, y, b)
+
+def review_category_tiles(tree: Map<&2, CategoryTile>) -> List<&2, CategoryTile>:
+  sort_timing(~CategoryTile, ~category_before, Map.values(&2, CategoryTile, tree))

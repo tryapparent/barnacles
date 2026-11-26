@@ -33,7 +33,7 @@ export type Review = {
   cycleComparison: { deltaSeconds: number | null; direction: string; prior: ComparisonWeek; recent: ComparisonWeek };
   shipments: { verified: number; attributed: number; weekly: Week[]; dailyStages?: DeliveryDay[] };
   operations: { window: string; clock: string; operation: string | null; clockOptions: string[];
-    operationOptions: string[]; items: Operation[]; map?: OperationTile[] };
+    operationOptions: string[]; items: Operation[]; map?: OperationTile[]; mapKind?: "categories" };
   fleet: { from: string; to: string; items: Vessel[] };
   deliveries: { total: number; limit: number; offset: number; nextOffset: number | null; maxMeasuredMillis: number; items: Delivery[] };
 };
