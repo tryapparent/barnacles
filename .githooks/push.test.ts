@@ -34,10 +34,12 @@ test("pre-push routes the outgoing commit and blocks failed verification", () =>
     mkdirSync(join(cwd, "node_modules/web-tree-sitter"), { recursive: true });
     mkdirSync(join(cwd, "collector/github"), { recursive: true });
     mkdirSync(join(cwd, "dashboard"));
+    mkdirSync(join(cwd, "evidence"));
+    write("evidence/README.md", "Synthetic evidence owner\n");
     mkdirSync(join(cwd, "tooling"));
-    copyFileSync(new URL("../tooling/verify.ts", import.meta.url), join(cwd, "tooling", "verify.ts"));
-    copyFileSync(new URL("../tooling/check-directory-width.ts", import.meta.url), join(cwd, "tooling", "check-directory-width.ts"));
-    write("tooling/check-boundaries.ts", "process.exit(0)\n");
+    for (const file of ["verify.ts", "check-directory-width.ts", "check-boundaries.ts", "bend.ts", "verification.bend"]) {
+      copyFileSync(new URL("../tooling/" + file, import.meta.url), join(cwd, "tooling", file));
+    }
     write("dashboard/prepare.test.ts", "process.exit(0)\n");
     for (const file of ["pre-push", "snapshot.ts"]) {
       copyFileSync(new URL("./" + file, import.meta.url), join(cwd, ".githooks", file));
@@ -46,11 +48,12 @@ test("pre-push routes the outgoing commit and blocks failed verification", () =>
     write(".githooks/check-comments.ts", "process.exit(0)\n");
     write(".githooks/check-bend-paths.ts", "process.exit(0)\n");
     write("README.md", "Baseline\n");
-    write("package.json", '{"name":"push-fixture","version":"1.0.0","type":"module","scripts":{"verify":"node tooling/verify.ts"}}\n');
-    write("package-lock.json", '{"name":"push-fixture","version":"1.0.0","lockfileVersion":3,"packages":{}}\n');
+    for (const file of ["package.json", "package-lock.json"]) {
+      copyFileSync(new URL("../" + file, import.meta.url), join(cwd, file));
+    }
     write("collector/github/attempt.test.ts", 'console.log("committed collector test")\n');
     write("collector/sources.test.ts", "process.exit(0)\n");
-    pass("add", "README.md", "package.json", "package-lock.json", "collector", "dashboard", "tooling", ".githooks", ".gitattributes");
+    pass("add", "README.md", "package.json", "package-lock.json", "collector", "dashboard", "evidence", "tooling", ".githooks", ".gitattributes");
     pass("commit", "--quiet", "-m", "baseline");
     pass("push", "--quiet", "origin", "main");
     pass("config", "core.hooksPath", ".githooks");
@@ -62,12 +65,18 @@ test("pre-push routes the outgoing commit and blocks failed verification", () =>
 
     write("collector/github/attempt.test.ts", 'console.log("pushed snapshot test")\n');
     commit("collector/github/attempt.test.ts");
-    write("collector/github/attempt.test.ts", "process.exit(1)\n");
+    write("collector/github/attempt.test.ts", 'import "../../dashboard/prepare.test.ts";\nprocess.exit(1)\n');
     const success = pass("push", "origin", "feature");
     assert.match(success.stderr, /checking collector dashboard tests/);
     assert.match(success.stdout, /pushed snapshot test/);
     assert.doesNotMatch(success.stderr, /checking hook tests/);
 
+    commit("collector/github/attempt.test.ts");
+    const boundary = git("push", "origin", "feature");
+    assert.equal(boundary.status, 1);
+    assert.match(boundary.stderr, /collector\/github\/attempt\.test\.ts:1 cannot import/);
+
+    write("collector/github/attempt.test.ts", "process.exit(1)\n");
     commit("collector/github/attempt.test.ts");
     const failure = git("push", "origin", "feature");
     assert.equal(failure.status, 1);

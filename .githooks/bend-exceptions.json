@@ -36,7 +36,7 @@
     "dashboard/run.sh",
     "dashboard/trace.ts"
   ],
-  "Node, Git, compiler, and verification tooling": [
+  "Node, Git, compiler, and verification tooling (see tooling/README.md)": [
     ".githooks/bend-exceptions.json",
     ".githooks/check-bend-paths.ts",
     ".githooks/check-comments.ts",
