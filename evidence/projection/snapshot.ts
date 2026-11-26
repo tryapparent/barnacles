@@ -56,6 +56,7 @@ type MapEntry = {
   label: string; totalSeconds: number; index: number; grouped: number; children: MapEntry[];
 };
 type ReviewPolicy = {
+  review_title?(thread: number, cutoff: number, threadTitle: string, prTitle: string): string;
   review_fact(pr: number, release: boolean, thread: number, commit: number, opened: number, ci: number,
     merged: number, dispatch: number, publication: number, access: number, linked: boolean, cycle: number): ReviewFact;
   review_prefer(prior: boolean, candidate: boolean): boolean;
@@ -288,7 +289,7 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
       CREATE TABLE review_prs(pr INTEGER PRIMARY KEY, release INTEGER NOT NULL, thread INTEGER,
         first_commit INTEGER, opened INTEGER, ci INTEGER, merged INTEGER, dispatch INTEGER, publication INTEGER,
         access INTEGER, linked INTEGER NOT NULL, cycle_ms INTEGER NOT NULL, ci_run INTEGER,
-        dispatch_run INTEGER, release_id INTEGER);
+        dispatch_run INTEGER, release_id INTEGER, pr_title TEXT, thread_title TEXT);
       CREATE TABLE delivery_stages(ordinal INTEGER PRIMARY KEY, name TEXT, mean_seconds REAL, observed INTEGER, missing INTEGER);
       CREATE TABLE work(pr INTEGER, status TEXT, created INTEGER, url TEXT);
       CREATE TABLE category_estimates(name TEXT, seconds REAL, total REAL, error REAL, samples INTEGER);
@@ -317,7 +318,7 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
     const release = view.prepare("INSERT INTO releases VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
     const milestone = view.prepare("INSERT INTO delivery_milestones VALUES (?, ?, ?, ?, ?)");
     view.prepare("INSERT INTO review_metadata VALUES (?)").run(repo);
-    const review = view.prepare("INSERT OR REPLACE INTO review_prs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    const review = view.prepare("INSERT OR REPLACE INTO review_prs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
     const preparedReviews = new Map<number, boolean>();
     let shipments = metrics.empty_shipping_report();
     for (const row of prs) {
@@ -341,7 +342,7 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
         review.run(fact.pr, Number(fact.release), fact.thread || null, fact.commit || null, fact.opened || null,
           fact.ci || null, fact.merged || null, fact.dispatch || null, fact.publication || null, fact.access || null,
           Number(fact.linked), fact.cycle_ms, row.first_ci_run, fact.dispatch ? row.release_run : null,
-          fact.publication ? row.release_id : null);
+          fact.publication ? row.release_id : null, row.pr_title, row.thread_title);
         preparedReviews.set(number, fact.release);
       }
       if (result.$ === "Unpublished") continue;
@@ -481,9 +482,12 @@ function encodeReviewReference(item: ReviewItem, repo: string, asOf: number) {
   };
 }
 
-function encodeReviewItem(item: ReviewItem, repo: string, asOf: number) {
+function encodeReviewItem(item: ReviewItem, repo: string, asOf: number, record: ReviewRow, policy: ReviewPolicy) {
+  const title = policy.review_title?.(Number(record.thread ?? 0), asOf,
+    String(record.thread_title ?? ""), String(record.pr_title ?? ""));
   return {
     ...encodeReviewReference(item, repo, asOf),
+    title: title || null,
     milestones: rows(item.milestones).map(({ key, phase, observed, elapsed }) => ({
       key, phase, observedAt: observedUtc(observed), elapsedMillis: elapsed.$ === "Measured" ? elapsed.ms : null,
     })),
@@ -559,6 +563,7 @@ export async function openShippingReview(directory: string) {
           input.from !== undefined, input.to !== undefined);
         if (window.$ === "InvalidRange") return { error: "invalid_window" } as const;
         const records = db.prepare("SELECT * FROM review_prs").all();
+        const byNumber = new Map(records.map((row) => [Number(row.pr), row]));
         const facts = records.reduceRight<List<ReviewFact>>(
           (tail, row) => ({ $: "Con", head: decodeReview(row), tail }), { $: "Nil" });
         const report = policy.review_report(facts, window.from, window.to, window.fleet_from, input.limit, input.offset);
@@ -614,7 +619,7 @@ export async function openShippingReview(directory: string) {
             items: rows(report.fleet).map((row) => encodeReviewReference(row, repo, window.to)) },
           deliveries: { total: report.total, limit: input.limit, offset: input.offset, nextOffset: report.next_offset || null,
             maxMeasuredMillis: report.max_measured_ms,
-            items: rows(report.deliveries).map((row) => encodeReviewItem(row, repo, window.to)) },
+            items: rows(report.deliveries).map((row) => encodeReviewItem(row, repo, window.to, byNumber.get(row.pr)!, policy)) },
         };
       });
     },
@@ -627,7 +632,7 @@ export async function openShippingReview(directory: string) {
         if (!record) return { error: "pull_request_not_observed" } as const;
         const detail = policy.review_item(decodeReview(record), window.to);
         if (detail.stage === "unknown") return { error: "pull_request_not_observed" } as const;
-        const item = encodeReviewItem(detail, repo, window.to);
+        const item = encodeReviewItem(detail, repo, window.to, record, policy);
         return {
           repository: repo, surface: reviewContext, snapshotAt: utc(snapshotAt), asOf: utc(window.to), ...item,
           milestones: item.milestones.map((milestone) => ({ ...milestone,

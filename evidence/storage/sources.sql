@@ -5,6 +5,12 @@ CREATE TABLE IF NOT EXISTS t3_threads (
   PRIMARY KEY (instance, thread_id)
 ) STRICT;
 
+CREATE TABLE IF NOT EXISTS t3_thread_titles (
+  instance TEXT NOT NULL, thread_id TEXT NOT NULL, title TEXT NOT NULL,
+  PRIMARY KEY (instance, thread_id),
+  FOREIGN KEY (instance, thread_id) REFERENCES t3_threads
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS t3_runs (
   instance TEXT NOT NULL, thread_id TEXT NOT NULL, run_id TEXT NOT NULL,
   requested_ms INTEGER, started_ms INTEGER, completed_ms INTEGER, status TEXT NOT NULL,
@@ -108,6 +114,12 @@ CREATE TABLE IF NOT EXISTS github_prs (
   first_review_at INTEGER, first_review_id INTEGER, reviews_complete INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
   PRIMARY KEY (repository, pr_number)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS github_pr_titles (
+  repository TEXT NOT NULL, pr_number INTEGER NOT NULL, title TEXT NOT NULL,
+  PRIMARY KEY (repository, pr_number),
+  FOREIGN KEY (repository, pr_number) REFERENCES github_prs
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS github_pr_ci (

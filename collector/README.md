@@ -6,7 +6,7 @@ Each adapter extracts bounded provider input and decodes its wire format. Bend2 
 
 | Source | Initial boundary |
 | --- | --- |
-| T3 | Import metadata from supported thread and PR-link tools. Retain source identity, thread start, status, run clocks, explicit PR links, and origin when established. Omit messages and titles. |
+| T3 | Import metadata from supported thread and PR-link tools. Retain source identity, thread start, status, run clocks, explicit PR links, and origin when established. Accept an optional thread title for private Harbor review. Omit messages. |
 | Codex | Read selected local rollouts. Pair stable call and result IDs and preserve a separate endpoint for a correlated async process. Discard raw arguments and outputs after deriving timing. |
 | GitHub | Read PR and commit metadata, exact Actions attempts and jobs, and release assets. Check tag ancestry where applicable. Verify the intended asset with a bounded anonymous range request when the surface is public. Store publication and access observation timestamps. |
 | Local Git | Read commit IDs and changed paths reachable from one revision. Emit a local Changed Code Analysis report. |
@@ -134,14 +134,16 @@ const { thread, recentRuns } = threadRead.structuredContent;
 const { pullRequests, nextCursor } = pullRequestList.structuredContent;
 const snapshot = {
   instance: "local-t3",
-  thread: (({ threadId, createdAt, updatedAt, status, createdBy, creationSource, settled }) =>
-    ({ threadId, createdAt, updatedAt, status, createdBy, creationSource, settled }))(thread),
+  thread: (({ threadId, createdAt, updatedAt, status, createdBy, creationSource, settled, title }) =>
+    ({ threadId, createdAt, updatedAt, status, createdBy, creationSource, settled, title }))(thread),
   recentRuns: recentRuns.map(({ runId, requestedAt, startedAt, completedAt, status }) =>
     ({ runId, requestedAt, startedAt, completedAt, status })),
   links: { nextCursor, pullRequests: pullRequests.map(({ host, number, repository, source, state }) =>
     ({ host, number, repository, source, state })) },
 };
 ```
+
+Include the optional `title` only for threads whose titles can be shared with the private Harbor audience. Keep titles and the input projection out of Git and public output. Titles are trimmed and values longer than 512 characters are omitted. Replay the projection with a title to name a previously imported T3 thread.
 
 Use a stable instance name per T3 environment. Follow and combine link pages before setting the cursor to null. A non-null cursor is rejected. Thread run data covers the runs in the read response. The importer keeps the provider's link source and treats `created` and `agent` as ownership evidence. Manual links, multiple candidate owners, and chronological conflicts remain visible as coverage gaps. Direct web or mobile user creation supports the manual T3 origin. Other origins stay unknown until the provider supplies explicit evidence.
 

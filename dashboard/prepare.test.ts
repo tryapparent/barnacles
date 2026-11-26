@@ -604,7 +604,8 @@ test("shipping API preserves historical and partial evidence and reads a replace
     const save = (pullRequest: PullRequest, release?: ReleaseEvidence) =>
       loadEvidence(source, { source: "github-delivery", pullRequest, release }, admission);
     const shipped: PullRequest = {
-      repository: repo, number: 101, state: "merged", opened: at - 800, merged: at - 600, mergeSha: "a".repeat(40),
+      repository: repo, number: 101, title: "Publish the updated dashboard", state: "merged",
+      opened: at - 800, merged: at - 600, mergeSha: "a".repeat(40),
       firstCommit: { sha: "b".repeat(40), at: at - 900 }, firstCI: { id: 11, at: at - 750 },
       firstReview: null, commitsComplete: true, reviewsComplete: false, updated: at - 600,
     };
@@ -613,13 +614,13 @@ test("shipping API preserves historical and partial evidence and reads a replace
       published: at - 400, assetId: 13, checked: at - 300, http: 206, bytes: 32,
       accessible: true, ancestry: "equal", shipped: true, dispatch: { id: 12, at: at - 500 },
     };
-    const open: PullRequest = { ...shipped, number: 202, state: "open", opened: at - 100,
+    const open: PullRequest = { ...shipped, number: 202, title: "Improve the snapshot filters", state: "open", opened: at - 100,
       merged: null, mergeSha: null, firstCommit: null, firstCI: null, updated: at - 100 };
     save(shipped, proof);
     save(shipped, { ...proof, channel: "other-surface", id: 22, tag: "other-surface-release" });
     save(open);
     loadEvidence(source, { source: "t3", thread: {
-      instance: "synthetic", id: "owner-101", created: (at - 1000) * 1000, updated: at * 1000,
+      instance: "synthetic", id: "owner-101", title: "Review delivery timing", created: (at - 1000) * 1000, updated: at * 1000,
       status: "completed", origin: "manual_t3", settled: true, runs: [],
       pullRequests: [{ repository: repo, number: 101, source: "created", state: "merged", owning: true }],
     } }, admission);
@@ -725,6 +726,7 @@ test("shipping API preserves historical and partial evidence and reads a replace
     }]);
     assert.deepEqual(report.fleet.items.map((item: { number: number; stage: string }) => [item.number, item.stage]),
       [[202, "pr-opened"], [101, "access-verified"]]);
+    assert.equal(report.deliveries.items[0].title, open.title);
     assert.equal(report.deliveries.nextOffset, 1);
     assert.equal(report.deliveries.maxMeasuredMillis, 700_000);
     const tiles = report.operations.map;
@@ -742,7 +744,9 @@ test("shipping API preserves historical and partial evidence and reads a replace
     assert.deepEqual(page.shipments.dailyStages, report.shipments.dailyStages);
     assert.equal(page.deliveries.nextOffset, null);
     assert.equal(page.deliveries.maxMeasuredMillis, report.deliveries.maxMeasuredMillis);
+    assert.equal(page.deliveries.items[0].title, "Review delivery timing");
     const detail = await get(page.deliveries.items[0].detailPath);
+    assert.equal(detail.title, "Review delivery timing");
     assert.equal(detail.milestones[0].observedAt, iso(at - 1000));
     assert.equal(detail.milestones[3].provenance.url, "https://github.com/synthetic/harbor/actions/runs/11");
     assert.equal(detail.milestones[7].elapsedMillis, 100_000);

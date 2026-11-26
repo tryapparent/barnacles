@@ -315,7 +315,6 @@ function DeliveryTimeline({ review, selection }: { review: Review; selection: { 
     {items.length ? <>
       <StageKey />
       <div className="delivery-list">{items.map((item) => {
-        const hasThread = item.milestones.some((entry) => entry.key === "thread-started" && entry.observedAt);
         const measured = item.milestones.flatMap((entry) => entry.elapsedMillis !== null && entry.elapsedMillis > 0 ?
           [{ ...entry, elapsedMillis: entry.elapsedMillis }] : []);
         const total = measured.reduce((sum, entry) => sum + entry.elapsedMillis, 0);
@@ -323,9 +322,7 @@ function DeliveryTimeline({ review, selection }: { review: Review; selection: { 
         return <details key={item.number} id={`delivery-pr-${item.number}`} className="thread">
           <summary>
             <span className="thread-meta">
-              <span className="thread-name" aria-label={hasThread ? `Thread linked to PR #${item.number}` : undefined}>
-                {hasThread ? `Thread · #${item.number}` : `PR #${item.number}`}
-              </span>
+              <span className="thread-name">{item.title ?? "Pull request title unavailable"}</span>
               <span className="sr-only">{stageLabel(item.stage)}</span>
               <time dateTime={item.lastObservedAt}>{dayLabel(item.lastObservedAt)}</time>
             </span>

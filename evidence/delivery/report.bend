@@ -18,7 +18,7 @@ type Groups is Data:
   Channel{name: String, choice: Choice, rest: Groups}
 
 type Owners is Data:
-  Owners{count: U32, s: U32, ms: U32}
+  Owners{count: U32, s: U32, ms: U32, title: String}
 
 type Elapsed is Data:
   Duration{seconds: U32, subtract_ms: U32}
@@ -31,13 +31,16 @@ def empty_groups() -> Groups:
   NoGroups{}
 
 def empty_owners() -> Owners:
-  Owners{0, 0, 0}
+  Owners{0, 0, 0, ""}
 
-def observe_owner(state: Owners, owning: Bool, s: U32, ms: U32) -> Owners:
+def observe_owner(state: Owners, owning: Bool, s: U32, ms: U32, title: String) -> Owners:
   match state owning:
-    case Owners{0, previous_s, previous_ms} True{}: Owners{1, s, ms}
-    case Owners{count, previous_s, previous_ms} True{}: Owners{U32.inc(count), 0, 0}
+    case Owners{0, previous_s, previous_ms, previous_title} True{}: Owners{1, s, ms, title}
+    case Owners{count, previous_s, previous_ms, previous_title} True{}: Owners{U32.inc(count), 0, 0, ""}
     case _ False{}: state
+
+def verified_thread_title(link: String, title: String) -> String:
+  Bool.pick(String, String.eq(link, "verified"), title, "")
 
 def ordered(+start: U32, end: U32) -> Bool:
   Bool.and(U32.is_ne(start, 0), U32.is_le(start, end))
@@ -97,7 +100,7 @@ def elapsed(known: Bool, start: U32, offset: U32, end: U32) -> Elapsed:
 
 def report_row(index: U32, +opened: U32, +published: U32, owners: Owners) -> ReportRow:
   match owners:
-    case Owners{count, +s, +ms}:
+    case Owners{count, +s, +ms, title}:
       +ordered_pr = ordered(opened, published)
       thread_started = Bool.and(U32.is_ne(s, 0),
         Bool.or(U32.is_lt(s, opened), Bool.and(U32.is_eq(s, opened), U32.is_eq(ms, 0))))

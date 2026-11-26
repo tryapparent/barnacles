@@ -3,7 +3,7 @@ import { requireAdmission, revision, snapshot, type AdmissionPolicy } from "../s
 import { writeSources, type List, type Point } from "../storage/sources.ts";
 
 type Elapsed = { $: "Duration"; seconds: number; subtract_ms: number } | { $: "Unknown" };
-type Owners = { $: "Owners"; count: number; s: number; ms: number };
+type Owners = { $: "Owners"; count: number; s: number; ms: number; title: string };
 type Provenance = { $: "Observation" } | { $: "Legacy"; checks: List<number> };
 type Proof = { $: "Proof"; channel: string; index: number; shipped: boolean; merge: string;
   published: number; checked: number; asset: string; release_asset: string; release_id: string;
@@ -26,7 +26,8 @@ export type DeliveryPolicy = {
   delivery_thread_window(created: Point, windowStart: Point): string;
   empty_groups(): unknown;
   empty_owners(): Owners;
-  observe_owner(owners: Owners, owning: boolean, seconds: number, millis: number): Owners;
+  observe_owner(owners: Owners, owning: boolean, seconds: number, millis: number, title: string): Owners;
+  verified_thread_title(link: string, title: string): string;
   observe_release(groups: unknown, currentMerge: string, proof: Proof): unknown;
   report_rows(groups: unknown, opened: number, owners: Owners): List<ReportRow>;
 };
@@ -34,7 +35,7 @@ export type DeliveryPolicy = {
 export const deliveryPolicy = new URL("./report.bend", import.meta.url);
 
 export type PullRequest = {
-  repository: string; number: number; opened: number; merged: number | null;
+  repository: string; number: number; title?: string; opened: number; merged: number | null;
   mergeSha: string | null; state: string; firstCommit: { sha: string; at: number } | null;
   firstCI?: { id: number; at: number } | null;
   firstReview: { id: number; at: number } | null; commitsComplete: boolean; reviewsComplete: boolean;
@@ -61,6 +62,9 @@ export function saveDelivery(path: string, pr: PullRequest, release: ReleaseEvid
       pr.repository, pr.number, pr.state, pr.opened, pr.merged, pr.mergeSha,
       pr.firstCommit?.at ?? null, pr.firstCommit?.sha ?? null, Number(pr.commitsComplete),
       pr.firstReview?.at ?? null, pr.firstReview?.id ?? null, Number(pr.reviewsComplete), pr.updated);
+    if (pr.title) {
+      db.prepare("INSERT OR REPLACE INTO github_pr_titles VALUES (?, ?, ?)").run(pr.repository, pr.number, pr.title);
+    }
     if (pr.firstCI) {
       db.prepare("INSERT OR REPLACE INTO github_pr_ci VALUES (?, ?, ?, ?)")
         .run(pr.repository, pr.number, pr.firstCI.id, pr.firstCI.at);
@@ -108,10 +112,15 @@ export function deliveryReport(path: string, policy: DeliveryPolicy) {
 
 export function readDelivery(db: DatabaseSync, policy: DeliveryPolicy, repository?: string) {
   const table = (name: string) => Boolean(db.prepare("SELECT 1 FROM sqlite_schema WHERE name=?").get(name));
+  const hasPrTitles = table("github_pr_titles");
+  const hasThreadTitles = table("t3_thread_titles");
   const pullRequests = db.prepare(`
     SELECT repository, pr_number, state, opened_at, merged_at, merge_sha,
-           first_commit_at, first_review_at, commits_complete, reviews_complete
-    FROM github_prs WHERE (? IS NULL OR repository = ?) ORDER BY repository, pr_number
+           first_commit_at, first_review_at, commits_complete, reviews_complete,
+           ${hasPrTitles ? "title" : "NULL"} AS pr_title
+    FROM github_prs
+    ${hasPrTitles ? "LEFT JOIN github_pr_titles USING (repository, pr_number)" : ""}
+    WHERE (? IS NULL OR repository = ?) ORDER BY repository, pr_number
   `).all(repository ?? null, repository ?? null);
   const current = table("github_release_observations") ? db.prepare(`
     SELECT channel, published_at, checked_at, ancestry, release_id, asset_id, shipped, merge_sha,
@@ -134,7 +143,9 @@ export function readDelivery(db: DatabaseSync, policy: DeliveryPolicy, repositor
     `),
   } : null;
   const owners = db.prepare(`
-    SELECT owning, created_ms FROM t3_pr_links JOIN t3_threads USING (instance, thread_id)
+    SELECT owning, created_ms, ${hasThreadTitles ? "title" : "NULL AS title"}
+    FROM t3_pr_links JOIN t3_threads USING (instance, thread_id)
+    ${hasThreadTitles ? "LEFT JOIN t3_thread_titles USING (instance, thread_id)" : ""}
     WHERE repository = ? AND pr_number = ?
   `);
   const ci = db.prepare("SELECT 1 FROM sqlite_schema WHERE name='github_pr_ci'").get()
@@ -165,7 +176,7 @@ export function readDelivery(db: DatabaseSync, policy: DeliveryPolicy, repositor
     const links = owners.all(...key);
     for (const row of links) {
       const ms = Number(row.created_ms);
-      owner = policy.observe_owner(owner, row.owning === 1, Math.floor(ms / 1000), ms % 1000);
+      owner = policy.observe_owner(owner, row.owning === 1, Math.floor(ms / 1000), ms % 1000, String(row.title ?? ""));
     }
     const rows = [];
     for (let row = policy.report_rows(groups, Number(pr.opened_at), owner); row.$ === "Con"; row = row.tail) {
@@ -189,7 +200,8 @@ export function readDelivery(db: DatabaseSync, policy: DeliveryPolicy, repositor
         access_checked: point(Number(release?.checked_at ?? 0) * 1000),
       }, threadLink, releaseLink);
       rows.push({
-        ...pr, channel: release?.channel ?? null, published_at: release?.published_at ?? null,
+        ...pr, thread_title: policy.verified_thread_title(threadLink, owner.title) || null,
+        channel: release?.channel ?? null, published_at: release?.published_at ?? null,
         first_ci_at: firstCI?.started_at ?? null, first_ci_run: firstCI?.run_id ?? null,
         release_dispatched_at: release?.dispatched_at || null, release_run: release?.dispatch_run || null,
         checked_at: release?.checked_at ?? null, ancestry: release?.ancestry ?? null,

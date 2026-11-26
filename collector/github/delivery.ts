@@ -117,7 +117,7 @@ export function pullRequest(repo: string, number: number, source: SourcePolicy, 
   });
   const { first: earliestReview, complete: reviewsComplete } = policy.pr_reviews(bendList(reviews), opened);
   return {
-    repository: name, number, opened, merged, mergeSha: merged ? sha(pr.merge_commit_sha) : null,
+    repository: name, number, title: policy.source_title(str(pr.title)), opened, merged, mergeSha: merged ? sha(pr.merge_commit_sha) : null,
     state: policy.link_state(merged ? "merged" : str(pr.state)),
     firstCommit: earliestCommit.id ? { sha: earliestCommit.id, at: earliestCommit.at } : null,
     commitsComplete, firstReview: observation(earliestReview), reviewsComplete,
@@ -174,7 +174,7 @@ export function pollGitHub(database: string, repo: string, policy: SourcePolicy,
   const runs = array(inventory.workflow_runs, 30).map(row);
   const releases = array(read(`${root}/releases?per_page=20`), 20).map(row);
   const stored = githubPollRows(database, repo);
-  const prClocks = new Map(stored.prs.map((pr) => [Number(pr.pr_number), Number(pr.updated_at)]));
+  const previousPRs = new Map(stored.prs.map((pr) => [Number(pr.pr_number), pr]));
   const attempts = new Map(stored.attempts.map((run) => [`${run.run_id}/${run.attempt}`, run]));
   const changes = new Map<number, PullRequest>();
   let failed = 0;
@@ -190,7 +190,8 @@ export function pollGitHub(database: string, repo: string, policy: SourcePolicy,
     const number = positiveInt(item.number);
     const updated = seconds(item.updated_at);
     if (!updated) throw Error("Missing pull request update time");
-    if (!policy.poll_pr_needed(updated, prClocks.get(number) ?? 0)) return;
+    const previous = previousPRs.get(number);
+    if (!policy.poll_pr_needed(updated, Number(previous?.updated_at ?? 0), str(item.title), str(previous?.title))) return;
     const pr = pullRequest(repo, number, policy, read, true);
     loadEvidence(database, { source: "github-delivery", pullRequest: pr }, admission);
     changes.set(number, pr);

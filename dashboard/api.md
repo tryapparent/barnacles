@@ -114,7 +114,7 @@ up to 366 days. The response includes both `snapshotAt` and its effective
 | `shipments.dailyStages` | The same verified PRs grouped by UTC publication day, newest first. Each consecutive stage reports its measured PR count and mean seconds. A null mean indicates missing coverage. Older prepared review policies omit this field. |
 | `operations` | Ranked elapsed times ending at the snapshot cutoff, using the default 24-hour reporting window. Available clocks and operation names are included. Cumulative spans can overlap. |
 | `fleet` | PRs with a milestone in the last 24 hours of the effective window, or the whole window if shorter. Each PR has one current stage, a last observed time, and a detail link. |
-| `deliveries` | PRs with a milestone inside the effective window, ordered newest start first with observed PR clocks as a fallback. Each item has the ordered milestone list and a detail link. |
+| `deliveries` | PRs with a milestone inside the effective window, ordered newest start first with observed PR clocks as a fallback. Each item has a nullable `title`, the ordered milestone list and a detail link. |
 
 **Where time went** shows up to four named tiles per level. The largest
 always appears. The remaining named tiles each represent at least one
@@ -151,6 +151,8 @@ use a compressed scale so short intervals stay visible alongside long ones.
 Selecting a ship scrolls to its delivery row and opens the milestone waterfall
 there. The link keeps the PR number and cutoff so it can be opened directly.
 Waterfalls use a linear UTC scale.
+
+Delivery rows use the imported title of the verified owning T3 thread when its start is visible at the cutoff. Otherwise they use the imported GitHub PR title. These are the latest imported labels. Records without either title show “Pull request title unavailable”. The PR evidence endpoint returns the same nullable title. Keep title-bearing snapshots and API responses private. Reprepare after reimporting titled evidence. The next GitHub poll can backfill previously imported PRs in its 30-PR window. Older PRs can be replayed with the GitHub delivery importer.
 
 Follow a record's `detailPath` to read `/api/v1/pull-requests/{number}`. It
 carries an `asOf` cutoff so the summary and detail use the same time. You can
