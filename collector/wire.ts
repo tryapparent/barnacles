@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
-import type { KernelCapture } from "../evidence/index.ts";
+import type { KernelCapture, List, Point } from "../evidence/index.ts";
 
 export type ObjectRow = Record<string, unknown>;
 
@@ -24,8 +24,6 @@ export function token(value: unknown): string {
   return input;
 }
 
-export { repository } from "../evidence/index.ts";
-
 export function sha(value: unknown): string {
   const input = str(value);
   if (!/^[0-9a-f]{40}$/.test(input)) throw Error("Expected a full commit SHA");
@@ -47,6 +45,23 @@ export function seconds(value: unknown): number {
 }
 
 export const timeParts = (ms: number): [number, number] => [Math.floor(ms / 1000), ms % 1000];
+
+export function bendList<T>(values: T[]): List<T> {
+  return values.reduceRight<List<T>>((tail, head) => ({ $: "Con", head, tail }), { $: "Nil" });
+}
+
+export function* bendValues<T>(values: List<T>): Generator<T> {
+  for (let next = values; next.$ === "Con"; next = next.tail) yield next.head;
+}
+
+export function point(timestamp: number): Point {
+  const [s, ms] = timeParts(timestamp);
+  return { $: "Time", s, ms };
+}
+
+export function toMillis({ s, ms }: Point): number | null {
+  return s ? s * 1000 + ms : null;
+}
 
 export function kernelInteger(value: unknown): number {
   const number = typeof value === "string" && /^\d+$/.test(value) ? Number(value) : value;

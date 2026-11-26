@@ -1,8 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { sourcePolicy, deliveryReport, rolloutCoverage, waitReport, watchOverlaps, loadEvidence,
-  processTimingPolicy, saveKernelCapture, type SourcePolicy, type KernelPolicy } from "../evidence/index.ts";
-import { buildPolicy, loadPolicy } from "../tooling/bend.ts";
+import { sourcePolicy, admissionPolicy, deliveryPolicy, type AdmissionPolicy, type DeliveryPolicy, deliveryReport, rolloutCoverage, waitReport, watchOverlaps, loadEvidence, type SourcePolicy, processTimingPolicy, saveKernelCapture, type KernelPolicy } from "../evidence/index.ts";
+import { buildPolicy, buildPolicies, loadPolicy } from "../tooling/bend.ts";
 import { positiveInt } from "./github/attempt.ts";
 import { pullRequest, releaseEvidence } from "./github/delivery.ts";
 import { inspectRollout } from "./codex/rollout.ts";
@@ -47,36 +46,44 @@ async function main() {
       }
       return;
     }
-    const output = await buildPolicy(scratch, sourcePolicy, "sources.mjs");
+    if (command === "rollout-coverage") {
+      console.log(JSON.stringify(rolloutCoverage(db), null, 2));
+      return;
+    }
+    if (command === "report") {
+      const file = await buildPolicy(scratch, deliveryPolicy, "delivery.mjs");
+      console.log(JSON.stringify(deliveryReport(db, await loadPolicy<DeliveryPolicy>(file)), null, 2));
+      return;
+    }
+    const [output, admissionFile] = await buildPolicies(scratch, [[sourcePolicy, "sources.mjs"], [admissionPolicy, "admission.mjs"]]);
+    const admission = await loadPolicy<AdmissionPolicy>(admissionFile);
     const policy: SourcePolicy = await loadPolicy(output);
     if (command === "t3") {
       const info = statSync(first);
       if (!info.isFile() || info.size > 1024 * 1024) throw Error("Expected a bounded T3 metadata snapshot");
       const data = t3Snapshot(JSON.parse(readFileSync(first, "utf8")), policy);
-      loadEvidence(db, { source: "t3", thread: data });
+      loadEvidence(db, { source: "t3", thread: data }, admission);
       console.log(`Imported T3 metadata with ${data.runs.length} runs and ${data.pullRequests.length} PR links`);
     } else if (command === "rollout") {
       const { receipt, data } = await inspectRollout(second, first, policy, third);
       if (!data) {
-        loadEvidence(db, { source: "codex-rejected", receipt });
+        loadEvidence(db, { source: "codex-rejected", receipt }, admission);
         throw Error(`Rollout admission failed (${receipt.status})`);
       }
-      loadEvidence(db, { source: "codex", rollout: data });
+      loadEvidence(db, { source: "codex", rollout: data }, admission);
       console.log(JSON.stringify({ ...receipt, calls: data.calls.length, markers: data.markers.length,
         orphans: data.orphans, quality: data.quality }));
     } else if (command === "github") {
       const pr = pullRequest(first, positiveInt(second), policy, undefined, true);
-      loadEvidence(db, { source: "github-delivery", pullRequest: pr });
+      loadEvidence(db, { source: "github-delivery", pullRequest: pr }, admission);
       const release = third ? releaseEvidence(pr, third, policy, undefined, undefined, true) : undefined;
-      if (release) loadEvidence(db, { source: "github-delivery", pullRequest: pr, release });
+      if (release) loadEvidence(db, { source: "github-delivery", pullRequest: pr, release }, admission);
       console.log(release ? `Imported pull request and release evidence (access: ${release.accessible ? "verified" : "unverified"})`
         : "Imported pull request metadata");
     } else if (command === "watch-overlaps") {
       const workflow = policy.watch_identity(str(first), str(second), str(third), str(fourth));
       if (workflow.$ !== "ExactWatch") throw Error("Expected an exact GitHub workflow identity");
       console.log(JSON.stringify(watchOverlaps(db, policy, workflow), null, 2));
-    } else {
-      console.log(JSON.stringify(command === "report" ? deliveryReport(db, policy) : rolloutCoverage(db), null, 2));
     }
   } finally {
     rmSync(scratch, { recursive: true, force: true });

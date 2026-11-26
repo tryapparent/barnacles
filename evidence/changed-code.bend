@@ -1,4 +1,5 @@
 import Base
+import ./repository.bend as Repository
 
 type PathCount is Data:
   ChangedPath{path: String, commits: U32}
@@ -44,3 +45,37 @@ def rank_tree(counts: Map<&2, U32>, ranked: List<&2, PathCount>, +limit: Nat) ->
 
 def top_paths(counts: Map<&2, U32>) -> List<&2, PathCount>:
   rank_tree(counts, [], 25n)
+
+type HistoryScan is Data:
+  Scan{count: U32, more: Bool, paths: Map<&2, U32>}
+
+def start_scan() -> HistoryScan:
+  Scan{0, False{}, empty_counts()}
+
+def add_boundary(boundaries: Map<&2, Bool>, id: String) -> Map<&2, Bool>:
+  Map.set(&2, Bool, boundaries, id, True{})
+
+def shallow_boundaries(ids: List<&2, String>) -> Map<&2, Bool>:
+  List.foldl(~&2, ~String, ~Map<&2, Bool>, ~add_boundary, ids, Map.new(&2, Bool))
+
+def scan_path_counts(ids: Map<&2, Bool> & Bool, paths: List<&2, String>, counts: Map<&2, U32>) -> Map<&2, U32>:
+  match ids:
+    case Tuple{boundaries, boundary}: count_commit(counts, paths, boundary)
+
+def scan_next(scan: HistoryScan, at_limit: Bool, commit: String, paths: List<&2, String>,
+  boundaries: Map<&2, Bool>) -> HistoryScan:
+  match scan at_limit:
+    case Scan{count, more, counts} True{}: Scan{count, True{}, counts}
+    case Scan{count, more, counts} False{}:
+      Scan{U32.inc(count), False{}, scan_path_counts(Map.has(&2, Bool, boundaries, commit), paths, counts)}
+
+def scan_commit(+scan: HistoryScan, limit: U32, commit: String, paths: List<&2, String>, boundaries: Map<&2, Bool>) -> HistoryScan:
+  match scan:
+    case Scan{count, more, counts}: scan_next(scan, U32.is_ge(count, limit), commit, paths, boundaries)
+
+def scan_paths(scan: HistoryScan) -> List<&2, PathCount>:
+  match scan:
+    case Scan{count, more, counts}: top_paths(counts)
+
+def repository_name(value: String) -> String:
+  Repository.normalized(value)

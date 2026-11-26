@@ -311,7 +311,10 @@ function App() {
     return () => window.removeEventListener("popstate", restore);
   }, []);
   useEffect(() => {
-    if (review && location.hash === "#delivery-title") document.getElementById("delivery-title")?.scrollIntoView();
+    const hash = location.hash;
+    if (review && (hash === "#delivery-title" || hash === "#process-timing")) {
+      document.getElementById(hash.slice(1))?.scrollIntoView();
+    }
   }, [review]);
   return <main className="review">
     <header className="masthead">

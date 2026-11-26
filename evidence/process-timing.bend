@@ -146,6 +146,11 @@ def binding(+expected_line: Nat, +expected_start: Nat, line: Nat, start: Nat, am
   Bool.and(Bool.not(ambiguous), Bool.and(Nat.is_lt(0n, expected_line), Bool.and(Nat.is_lt(0n, expected_start),
     Bool.and(Nat.is_eq(expected_line, line), Nat.is_eq(expected_start, start)))))
 
+def same_target(instance: String, session: String, call: String, saved_instance: String, saved_session: String,
+                saved_call: String) -> Bool:
+  Bool.and(String.eq(instance, saved_instance),
+    Bool.and(String.eq(session, saved_session), String.eq(call, saved_call)))
+
 def admission(faults: Nat, +events: Nat, elapsed: Nat, quiet: Bool) -> Bool:
   Bool.and(quiet, Bool.and(Nat.is_eq(faults, 0n), Bool.and(Nat.is_lt(1n, events),
     Bool.and(Nat.is_le(events, 4096n), Nat.is_le(elapsed, 120000000n)))))
