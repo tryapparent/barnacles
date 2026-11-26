@@ -5,6 +5,7 @@ export type TracePolicy = {
   interval_valid(start: number, end: number): boolean;
   extend_window(window: TraceWindow, start: number, end: number): TraceWindow;
   trace_operation(clock: string, tool: string, command: string, categories: string): string;
+  trace_span_name(clock: string, tool: string, command: string, categories: string): string;
   trace_parent(clock: string, count: number, start: number, end: number, parentStart: number, parentEnd: number): boolean;
 };
 
@@ -41,7 +42,7 @@ export function encodeTrace(key: string, rows: SpanRow[], markers: ReasoningRow[
     const nested = policy.trace_parent(row.clock, candidates.length, row.start, row.end, parent?.start ?? 0, parent?.end ?? 0);
     return {
       traceId, spanId: spanId(row), parentSpanId: nested && parent ? spanId(parent) : root,
-      name: policy.trace_operation(row.clock, row.tool, row.command, row.categories), kind: 1,
+      name: policy.trace_span_name(row.clock, row.tool, row.command, row.categories), kind: 1,
       startTimeUnixNano: nanos(row.start), endTimeUnixNano: nanos(row.end),
       attributes: [text("barnacles.clock", row.clock), integer("barnacles.source_line", row.line),
         ...(row.command ? [text("barnacles.submitted_command", row.command)] : []),

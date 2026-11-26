@@ -46,7 +46,7 @@ test("dashboard derives a covered comparison and preserves missing source covera
       instance: "local", session: "test-session", lines: 12, malformed: 0, orphans: 0,
       calls: [
         { id: "launch", line: 2, tool: "Shell command", command: "git status", start: at, end: at + 100,
-          async: true, asyncEnd: at + 600, terminalCall: "wait", ambiguous: false, categories: "Git inspection" },
+          async: true, asyncEnd: at + 600, terminalCall: "wait", ambiguous: false, categories: "Git inspection + File inspection" },
         { id: "wait", line: 4, tool: "Cell wait", command: null, start: at + 500, end: at + 600,
           async: false, asyncEnd: null, terminalCall: null, ambiguous: false },
         { id: "pending", line: 6, tool: "Tool script", command: null, start: at + 550, end: null,
@@ -88,13 +88,13 @@ test("dashboard derives a covered comparison and preserves missing source covera
       assert.ok(!JSON.stringify(full).includes("Tool script"));
       assert.equal(envelopeOnly.length, 2);
       const [window, ...spans] = full;
-      const cell = spans.find((span: { name: string }) => span.name === "Async cell · Git inspection");
-      const launch = spans.find((span: { name: string }) => span.name === "Git inspection");
+      const cell = spans.find((span: { name: string }) => span.name === "Async cell · Git inspection +1");
+      const launch = spans.find((span: { name: string }) => span.name === "Git inspection +1");
       assert.equal(window.traceId, db.prepare("SELECT trace_id FROM trace_windows WHERE session=1").get()?.trace_id);
       assert.equal(cell.parentSpanId, window.spanId);
       assert.equal(launch.parentSpanId, cell.spanId);
       assert.ok(launch.attributes.some(({ key, value }: { key: string; value: { stringValue?: string } }) =>
-        key === "barnacles.categories" && value.stringValue === "Git inspection"));
+        key === "barnacles.categories" && value.stringValue === "Git inspection + File inspection"));
       assert.ok(launch.attributes.some(({ key, value }: { key: string; value: { stringValue?: string } }) =>
         key === "barnacles.submitted_command" && value.stringValue === "git status"));
       assert.equal(spans.find((span: { name: string }) => span.name === "Cell wait").parentSpanId, cell.spanId);

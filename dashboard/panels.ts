@@ -174,7 +174,7 @@ export function dashboards(range: Range) {
       {
         id: 2, type: "traces", title: "Session trace", datasource: tempo,
         gridPos: { x: 0, y: 5, w: 24, h: 14 },
-        description: "Span names show submitted operation categories. A span with several categories has one observed interval. Async cells end at the observed terminal wait.",
+        description: "Span names show the first submitted category and how many more to find in Span attributes. All categories on a span share its observed interval.",
         targets: [{ datasource: tempo, refId: "A", queryType: "traceql", query: "${traceId}" }],
       },
       data(4, "table", "Completed spans", [0, 19, 24, 6],

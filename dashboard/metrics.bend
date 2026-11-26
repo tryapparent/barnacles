@@ -94,6 +94,15 @@ def trace_operation(clock: String, tool: String, command: String, +categories: S
   +name = Bool.pick(String, String.eq(categories, ""), trace_label(tool, command), categories)
   Bool.pick(String, String.eq(clock, "async_cell"), String.append("Async cell · ", name), name)
 
+def trace_category_title(parts: List<&2, String>) -> String:
+  match parts:
+    case []: ""
+    case head <> []: head
+    case head <> tail: String.append(String.trim(head), String.append(" +", Nat.show(List.length(&2, String, tail))))
+
+def trace_span_name(clock: String, tool: String, command: String, categories: String) -> String:
+  trace_operation(clock, tool, command, trace_category_title(String.split(categories, '+')))
+
 type Focus is Data:
   Window{from: Nat, to: Nat}
 
