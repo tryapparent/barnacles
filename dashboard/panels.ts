@@ -84,36 +84,36 @@ export function dashboards(range: Range, repository: string) {
       UNION SELECT operation FROM operation_totals WHERE clock = ${operationClock} ORDER BY operation`, "All operations"),
   ];
   const shipping = board("barnacles-shipping", "Barnacles · Shipping review", from, to, [
-    block(1, "Evidence scope", [0, 0, 9, 3],
+    block(1, "Evidence scope", [0, 0, 9, 4],
       `Linux Main x86_64 and CI for **${repository}**. ${rolloutScope}`),
-    data(2, "gauge", "Gardening ↔ Shipping", [0, 3, 9, 6], 'SELECT dial AS "Direction" FROM coverage',
+    data(2, "gauge", "Gardening ↔ Shipping", [0, 4, 9, 6], 'SELECT dial AS "Direction" FROM coverage',
       { reduceOptions, showThresholdLabels: false, showThresholdMarkers: false },
       { min: -1.3, max: 1.3, noValue: "Insufficient coverage", color: { mode: "thresholds" },
         mappings: [{ type: "value", options: { "-1": { text: "Gardening", color: yellow }, "1": { text: "Shipping", color: green } } },
           { type: "special", options: { match: "null", result: { text: "Insufficient coverage" } } }],
         thresholds: { mode: "absolute", steps: [{ value: null, color: yellow }, { value: 0, color: green }] } },
       [], [], "Direction comes only from the mean thread-to-release time in the latest two completed UTC weeks."),
-    range.operationCount ? data(3, "marcusolsson-treemap-panel", "Recorded time by operation", [9, 3, 15, 6],
+    range.operationCount ? data(3, "marcusolsson-treemap-panel", "Recorded time by operation", [9, 4, 15, 6],
       `SELECT operation AS "Name", total_seconds AS "Total" FROM operation_totals
         WHERE clock = ${operationClock} AND has_area = 1
           AND (${overviewOperation} = 'All operations' OR operation = ${overviewOperation}) ORDER BY rank`,
       { tiling: "treemapSquarify", textField: "Name", sizeField: "Total" },
       { unit: "s", color: { mode: "fixed", fixedColor: "#BB8E4F" }, links: [operationLink] }, [], [],
       "Tile area shows total duration for the selected clock. Spans can overlap. The table lists all operations, including those without measured time.")
-      : block(3, "Recorded time by operation", [9, 3, 15, 6], "Import a Codex rollout or GitHub Actions attempt and rebuild the snapshot to see operation timings."),
-    data(4, "table", "Cycle-time comparison", [0, 9, 9, 5],
+      : block(3, "Recorded time by operation", [9, 4, 15, 6], "Import a Codex rollout or GitHub Actions attempt and rebuild the snapshot to see operation timings."),
+    data(4, "table", "Cycle-time comparison", [0, 10, 9, 5],
       `SELECT delta_seconds AS "Change", prior_count AS "Prior PRs", recent_count AS "Recent PRs" FROM coverage`,
       { showHeader: true }, { noValue: "—", custom: { minWidth: 80 } }, [byName("Change", unit("s"))], [],
       "Counts are attributable shipped PRs in the two latest completed UTC weeks. A positive change points toward Gardening."),
-    chart(5, "Shipped to users · weekly", [0, 20, 12, 6], 'shipped AS "Verified shipments"', green, "short",
+    chart(5, "Shipped to users · weekly", [0, 21, 12, 6], 'shipped AS "Verified shipments"', green, "short",
       "Counts verified PRs in the imported sample by UTC week. Missing weeks are outside observed coverage."),
-    chart(6, "Weekly cycle time", [12, 20, 12, 6], 'mean_seconds AS "Mean elapsed time"', yellow, "s",
+    chart(6, "Weekly cycle time", [12, 21, 12, 6], 'mean_seconds AS "Mean elapsed time"', yellow, "s",
       "Only PRs with explicit thread attribution contribute. The coverage panel shows linked PRs in the sample."),
-    data(7, "stat", "Delivery coverage", [9, 0, 15, 3],
+    data(7, "stat", "Delivery coverage", [9, 0, 15, 4],
       'SELECT pr_count AS "PRs observed", shipped AS "Access verified", linked AS "Thread linked" FROM coverage',
       { reduceOptions, colorMode: "none", graphMode: "none", justifyMode: "center" },
       { color: { mode: "fixed", fixedColor: ink } }),
-    ...(range.operationCount ? [data(10, "table", "Operations ranked by time", [9, 9, 15, 11],
+    ...(range.operationCount ? [data(10, "table", "Operations ranked by time", [9, 10, 15, 11],
       `SELECT operation AS "Name", count AS "Spans", mean_seconds AS "Mean", total_seconds AS "Total"
         FROM operation_totals WHERE clock = ${operationClock}
           AND (${overviewOperation} = 'All operations' OR operation = ${overviewOperation}) ORDER BY rank`,
@@ -121,7 +121,7 @@ export function dashboards(range: Range, repository: string) {
       [byName("Name", { id: "custom.wrapText", value: true }, links(operationLink)),
         byName("Spans", width(58)), byName("Mean", unit("s"), width(70)), byName("Total", unit("s"), width(79))], [],
       "Spans counts intervals with both clocks. Spans × mean gives total recorded time. Mixed commands share one measured duration. Open Timing breakdown for missing clocks and individual CI workflows.")] : []),
-    data(15, "table", "Estimated Codex category times", [0, 26, 24, 8],
+    data(15, "table", "Estimated Codex category times", [0, 27, 24, 8],
       `SELECT name AS "Group", CASE WHEN seconds IS NOT NULL THEN printf('%.3g ± %.2g', seconds, error) END AS "s/cmd",
         CASE WHEN total < 60 THEN printf('%.2g s', total)
           WHEN total < 3600 THEN printf('%.2g m', total / 60)
@@ -131,16 +131,16 @@ export function dashboards(range: Range, repository: string) {
       [byName("Group", { id: "custom.wrapText", value: true }), byName("s/cmd", width(84)),
         byName("Total", width(56)), byName("Rows", width(52))], [],
       "Estimated seconds per command ± standard error. Total applies to the matched sample, and Rows counts its receipts. A dash means insufficient independent variation. Estimates use completed sequential shell receipts."),
-    block(11, "Delivery cycle time", [0, 34, 24, 3],
+    block(11, "Delivery cycle time", [0, 35, 24, 3],
       "Choose a PR for details. Coverage shows measured shipments."),
-    data(12, "table", "Time by stage", [0, 37, 12, 12],
+    data(12, "table", "Time by stage", [0, 38, 12, 12],
       `SELECT name AS "Stage", mean_seconds AS "Mean", observed || ' / ' || (SELECT shipped FROM coverage) AS "Coverage"
         FROM delivery_stages ORDER BY ordinal`,
       { showHeader: true, enablePagination: true }, { noValue: "—", custom: { minWidth: 55 } }, [
         byName("Stage", { id: "custom.wrapText", value: true }),
         byName("Mean", unit("dthms"), width(86)), byName("Coverage", width(78)),
       ], [], "Coverage is shipments with both clocks in order out of all imported shipments. Overall intervals overlap the individual stages."),
-    data(13, "table", "Milestones for selected PR", [12, 37, 12, 12],
+    data(13, "table", "Milestones for selected PR", [12, 38, 12, 12],
       `SELECT name AS "Event", strftime('%Y-%m-%dT%H:%M:%fZ', observed_ms / 1000.0, 'unixepoch') AS "UTC",
         elapsed_seconds AS "Elapsed" FROM delivery_milestones
         WHERE CAST(pr AS TEXT) = ${cyclePR} ORDER BY ordinal`,
@@ -149,14 +149,14 @@ export function dashboards(range: Range, repository: string) {
         byName("UTC", unit("time:MM-DD HH:mm:ss"), width(113)),
         byName("Elapsed", unit("dthms"), width(84), { id: "noValue", value: "—" }),
       ], ["UTC"], "Elapsed is from the preceding milestone. First PR CI is the earliest linked workflow start observed. Shipped uses publication backed by an access check. The check time is listed separately."),
-    data(8, "table", "Recently shipped", [0, 49, 24, 7],
+    data(8, "table", "Recently shipped", [0, 50, 24, 7],
       `SELECT pr AS "PR", cycle_seconds AS "Thread → release", pr_seconds AS "PR → release",
         published AS "Published", verified AS "Access checked", opened AS "PR opened", merged AS "Merged", url AS "URL"
         FROM releases ORDER BY published DESC`,
       { showHeader: true }, { noValue: "Unknown" },
       [...prLinks, byName("Thread → release", unit("s"), width(128)),
         byName("PR → release", unit("s"), width(112)), ...timestamps.map((field) => byName(field, width(161)))], timestamps),
-    data(9, "table", "Open delivery threads", [0, 56, 24, 6],
+    data(9, "table", "Open delivery threads", [0, 57, 24, 6],
       'SELECT pr AS "PR", status AS "T3 status", created AS "Thread started", url AS "URL" FROM work ORDER BY created DESC',
       { showHeader: true }, {}, prLinks, ["Thread started"],
       "Only imported T3 threads with an explicit owning link to an observed open pull request."),
@@ -171,16 +171,16 @@ export function dashboards(range: Range, repository: string) {
   const operation = "${operation:sqlstring}";
   const timeFields = [byName("Mean", unit("s")), byName("Total", unit("s"))];
   const timing = board("barnacles-timing", "Barnacles · Timing breakdown", from, to, [
-    block(1, "Recorded occupancy", [0, 0, 24, 3],
-      `${timingScope} Choose a clock, workflow, or operation.`),
-    data(2, "table", "By workflow", [0, 3, 24, 6],
+    block(1, "Recorded occupancy", [0, 0, 24, 4],
+      timingScope),
+    data(2, "table", "By workflow", [0, 4, 24, 6],
       `SELECT clock AS "Clock", CAST(workflow AS TEXT) AS "Workflow", count AS "Count",
         mean_seconds AS "Mean", total_seconds AS "Total", unmeasured AS "Unmeasured"
         FROM workflows WHERE clock = ${clock} ORDER BY rank`,
       { showHeader: true }, {},
       [...timeFields, byName("Workflow", links(workflowLink)),
         byName("Clock", { id: "custom.hidden", value: true })]),
-    data(3, "table", "Operations ranked by total time", [0, 9, 24, 14],
+    data(3, "table", "Operations ranked by total time", [0, 10, 24, 14],
       `SELECT operation AS "Operation", count AS "Count", mean_seconds AS "Mean",
         total_seconds AS "Total", unmeasured AS "Unmeasured" FROM (
           SELECT operation, count, mean_seconds, total_seconds, unmeasured, rank
