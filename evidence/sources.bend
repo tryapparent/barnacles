@@ -225,6 +225,33 @@ def normalized_category(command: ShellCommand) -> String:
   match command:
     case Command{+program, words}: shell_category(program, shell_action(program, words))
 
+type CommandMix is Data:
+  NoMix{}
+  Mix{file_count: Nat, git_count: Nat, build_count: Nat, push_count: Nat}
+
+def mix_category(category: String, mix: CommandMix) -> CommandMix:
+  match category mix:
+    case "File inspection" Mix{files, git, builds, pushes}: Mix{Nat.add(files, 1n), git, builds, pushes}
+    case "Git inspection" Mix{files, git, builds, pushes}: Mix{files, Nat.add(git, 1n), builds, pushes}
+    case "Rust build" Mix{files, git, builds, pushes}: Mix{files, git, Nat.add(builds, 1n), pushes}
+    case "Git push" Mix{files, git, builds, pushes}: Mix{files, git, builds, Nat.add(pushes, 1n)}
+    case _ _: NoMix{}
+
+def count_mix(commands: List<&2, ShellCommand>, mix: CommandMix) -> CommandMix:
+  match commands:
+    case []: mix
+    case Command{name, args} <> tail:
+      count_mix(tail, mix_category(normalized_category(normalize_shell(name, args)), mix))
+
+def command_mix(commands: List<&2, ShellCommand>) -> CommandMix:
+  match commands:
+    case []: NoMix{}
+    case _: count_mix(commands, Mix{0n, 0n, 0n, 0n})
+
+def keep_mix_receipt(+seconds: F32, exit_code: U32, running: Bool, +end_seen: Bool, ambiguous: Bool) -> Bool:
+  Bool.and(U32.is_eq(exit_code, 0), Bool.and(F32.is_gt(seconds, 0.0),
+    Bool.and(end_seen, Bool.not(Bool.or(running, ambiguous)))))
+
 def shell_categories(commands: List<&2, ShellCommand>, categories: List<&2, String>) -> List<&2, String>:
   match commands:
     case []: categories

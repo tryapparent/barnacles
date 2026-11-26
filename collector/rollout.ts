@@ -1,7 +1,7 @@
 // Timestamp and call pairing adapted from Apparent's rollout census. See APPARENT-LICENSE.
 import { open } from "node:fs/promises";
 import { createInterface } from "node:readline";
-import type { Point, RolloutEvidence, SourcePolicy } from "../evidence/sources.ts";
+import type { CommandMix, Point, RolloutEvidence, SourcePolicy } from "../evidence/sources.ts";
 import { rolloutSyntax } from "./rollout-syntax.ts";
 import { millis, row, str, timeParts, token, validMillis } from "./wire.ts";
 
@@ -30,10 +30,29 @@ function waitTarget(input: unknown): string {
   } catch { return ""; }
 }
 
+function execReceipt(output: unknown) {
+  if (!Array.isArray(output) || output.length !== 2) return undefined;
+  const [header, body] = output;
+  if (header?.type !== "input_text" || body?.type !== "input_text" || typeof body.text !== "string" ||
+      body.text.length > 256 * 1024 ||
+      !/^Script completed\nWall time \d+(?:\.\d+)? seconds\nOutput:\n$/.test(str(header.text))) return undefined;
+  try {
+    const result = row(JSON.parse(body.text));
+    const seconds = result.wall_time_seconds;
+    const code = result.exit_code;
+    if (typeof seconds !== "number" || !Number.isFinite(seconds) || typeof code !== "number" ||
+        !Number.isInteger(code) || code < 0 || code > 255 || typeof result.chunk_id !== "string" ||
+        typeof result.output !== "string" || !Number.isSafeInteger(result.original_token_count)) return undefined;
+    return { seconds, code, running: Object.hasOwn(result, "session_id") };
+  } catch { return undefined; }
+}
+
 export async function readRollout(path: string, instance: string, policy: SourcePolicy): Promise<RolloutEvidence> {
   const syntax = await rolloutSyntax();
   const file = await open(path);
   const calls = new Map<string, unknown>();
+  const mixes = new Map<string, CommandMix>();
+  const receipts = new Map<string, NonNullable<ReturnType<typeof execReceipt>>>();
   const markers: RolloutEvidence["markers"] = [];
   let session = "";
   let lineNumber = 0;
@@ -78,10 +97,18 @@ export async function readRollout(path: string, instance: string, policy: Source
       const state = calls.get(id) ?? unseen;
       if (type === "function_call" || type === "custom_tool_call") {
         const observed = policy.tool(str(event.name), syntax.direct(event.arguments), syntax.wrapped(event.input));
+        if (event.name === "exec") {
+          const mix = policy.command_mix(syntax.sequential(event.input));
+          if (mix.$ === "Mix") mixes.set(id, mix);
+        }
         calls.set(id, policy.start_call(state, lineNumber, observed, at, waitTarget(event.arguments)));
       } else {
         const header = outputHeader(event.output);
         const yielded = /^Script running with cell ID ([\w:.-]+)/.exec(header)?.[1] ?? "";
+        if (mixes.has(id)) {
+          const receipt = execReceipt(event.output);
+          if (receipt) receipts.set(id, receipt);
+        }
         calls.set(id, policy.finish_call(state, at, yielded, /^Script completed(?:\s|$)/.test(header)));
       }
     }
@@ -105,8 +132,14 @@ export async function readRollout(path: string, instance: string, policy: Source
     const record = policy.call_record(state);
     orphans += record.orphans;
     if (record.$ === "Ignored") continue;
+    const mix = mixes.get(id);
+    const receipt = receipts.get(id);
+    const measured = mix?.$ === "Mix" && receipt &&
+      policy.keep_mix_receipt(receipt.seconds, receipt.code, receipt.running,
+        toMillis(record.finish) !== null, record.ambiguous) ? { ...mix, seconds: receipt.seconds } : undefined;
     records.push({ id, line: record.line, tool: record.tool, command: record.command || null, categories: record.categories, start: toMillis(record.start),
       end: toMillis(record.finish), async: record.launched, ambiguous: record.ambiguous,
+      mix: measured,
       ...(links.get(id) ?? { asyncEnd: null, terminalCall: null }) });
   }
   return { instance: token(instance), session, lines: lineNumber, malformed, orphans, calls: records, markers };

@@ -103,6 +103,15 @@ def trace_category_title(parts: List<&2, String>) -> String:
 def trace_span_name(clock: String, tool: String, command: String, categories: String) -> String:
   trace_operation(clock, tool, command, trace_category_title(String.split(categories, '+')))
 
+def observed_parts(parts: List<&2, String>) -> String:
+  match parts:
+    case []: "Unknown"
+    case head <> []: head
+    case head <> tail: "Mixed"
+
+def observed_category(+categories: String) -> String:
+  Bool.pick(String, String.eq(categories, ""), "Unknown", observed_parts(String.split(categories, '+')))
+
 type Focus is Data:
   Window{from: Nat, to: Nat}
 

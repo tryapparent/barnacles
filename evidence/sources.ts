@@ -7,6 +7,9 @@ export type Point = { $: "Time"; s: number; ms: number };
 export type List<T> = { $: "Nil" } | { $: "Con"; head: T; tail: List<T> };
 export type ShellCommand = { $: "Command"; name: string; args: List<string> };
 export type ToolInvocation = { $: "Invocation"; receiver: string; method: string; commands: List<ShellCommand> };
+export type CommandMix = { $: "NoMix" } | {
+  $: "Mix"; file_count: number; git_count: number; build_count: number; push_count: number;
+};
 type CallRecord = { $: "Ignored"; orphans: number } | {
   $: "Observed"; orphans: number; line: number; tool: string; command: string; categories: string; start: Point; finish: Point;
   launched: boolean; ambiguous: boolean;
@@ -21,6 +24,8 @@ export type SourcePolicy = {
   reasoning(event: string, point: Point): boolean;
   model_wait_input(previous: string, envelope: string, kind: string, callId: string): string;
   tool(name: string, direct: List<ShellCommand>, wrapped: List<ToolInvocation>): unknown;
+  command_mix(commands: List<ShellCommand>): CommandMix;
+  keep_mix_receipt(seconds: number, exitCode: number, running: boolean, endSeen: boolean, ambiguous: boolean): boolean;
   start_call(state: unknown, line: number, tool: unknown, start: Point, target: string): unknown;
   finish_call(state: unknown, end: Point, yielded: string, completed: boolean): unknown;
   cell_fact(id: string, state: unknown): CellFact;
@@ -72,7 +77,8 @@ export type RolloutEvidence = {
   instance: string; session: string; lines: number; malformed: number; orphans: number;
   markers: { line: number; at: number; resultCall?: string }[];
   calls: { id: string; line: number; tool: string; command: string | null; start: number | null; end: number | null;
-    async: boolean; asyncEnd: number | null; terminalCall: string | null; ambiguous: boolean; categories?: string }[];
+    async: boolean; asyncEnd: number | null; terminalCall: string | null; ambiguous: boolean; categories?: string;
+    mix?: Extract<CommandMix, { $: "Mix" }> & { seconds: number } }[];
 };
 
 export type PullRequest = {
@@ -133,15 +139,19 @@ export function saveRollout(path: string, data: RolloutEvidence) {
       ...key, data.lines, data.malformed, data.orphans);
     db.prepare("DELETE FROM codex_commands WHERE instance=? AND session_id=?").run(...key);
     db.prepare("DELETE FROM codex_categories WHERE instance=? AND session_id=?").run(...key);
+    db.prepare("DELETE FROM codex_command_mixes WHERE instance=? AND session_id=?").run(...key);
     db.prepare("DELETE FROM codex_calls WHERE instance=? AND session_id=?").run(...key);
     const calls = db.prepare("INSERT INTO codex_calls VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
     const commands = db.prepare("INSERT INTO codex_commands VALUES (?, ?, ?, ?)");
     const categories = db.prepare("INSERT INTO codex_categories VALUES (?, ?, ?, ?)");
+    const mixes = db.prepare("INSERT INTO codex_command_mixes VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
     for (const call of data.calls) {
       calls.run(...key, call.id, call.line, call.tool, call.start, call.end, Number(call.async),
         call.asyncEnd, call.terminalCall, Number(call.ambiguous));
       if (call.command) commands.run(...key, call.id, call.command);
       if (call.categories) categories.run(...key, call.id, call.categories);
+      if (call.mix) mixes.run(...key, call.id, call.mix.file_count, call.mix.git_count,
+        call.mix.build_count, call.mix.push_count, call.mix.seconds);
     }
     db.prepare("DELETE FROM codex_reasoning_inputs WHERE instance=? AND session_id=?").run(...key);
     db.prepare("DELETE FROM codex_reasoning WHERE instance=? AND session_id=?").run(...key);

@@ -58,6 +58,14 @@ CREATE TABLE IF NOT EXISTS codex_categories (
   FOREIGN KEY (instance, session_id, call_id) REFERENCES codex_calls
 ) STRICT;
 
+CREATE TABLE IF NOT EXISTS codex_command_mixes (
+  instance TEXT NOT NULL, session_id TEXT NOT NULL, call_id TEXT NOT NULL,
+  file_count INTEGER NOT NULL, git_count INTEGER NOT NULL, build_count INTEGER NOT NULL,
+  push_count INTEGER NOT NULL, seconds REAL NOT NULL,
+  PRIMARY KEY (instance, session_id, call_id),
+  FOREIGN KEY (instance, session_id, call_id) REFERENCES codex_calls
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS github_prs (
   repository TEXT NOT NULL, pr_number INTEGER NOT NULL, state TEXT NOT NULL,
   opened_at INTEGER NOT NULL, merged_at INTEGER, merge_sha TEXT,

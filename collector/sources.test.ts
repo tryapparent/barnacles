@@ -97,6 +97,11 @@ test("compiled Bend2 source decisions through the SQLite import path", async () 
 
     const rollout = join(job, "test.jsonl");
     const event = (s: string, payload: object) => ({ timestamp: time(s), type: "response_item", payload });
+    const receipt = (call_id: string, exit_code: number) => ({ type: "custom_tool_call_output", call_id, output: [
+      { type: "input_text", text: "Script completed\nWall time 4 seconds\nOutput:\n" },
+      { type: "input_text", text: JSON.stringify({ chunk_id: "fixture", wall_time_seconds: 3.5, exit_code,
+        original_token_count: 42, output: "fixture output ".repeat(20) }) },
+    ] });
     writeFileSync(rollout, [
       { type: "session_meta", payload: { id: "session-test" } },
       event("02.123", { type: "custom_tool_call", name: "exec", call_id: "launch",
@@ -122,6 +127,15 @@ test("compiled Bend2 source decisions through the SQLite import path", async () 
         input: 'await Promise.all([tools.write_stdin({session_id:12}), tools.exec_command({cmd:"cargo check"})]);' }),
       event("06.700", { type: "function_call", name: "exec_command", call_id: "literal",
         arguments: '{"cmd":"echo cargo build"}' }),
+      event("06.710", { type: "custom_tool_call", name: "exec", call_id: "eligible",
+        input: 'const r = await tools.exec_command({cmd:"cat a && cat b && git status"}); text(r);' }),
+      event("06.720", { type: "custom_tool_call", name: "exec", call_id: "pipeline",
+        input: 'text(await tools.exec_command({cmd:"cat a | cat b"}));' }),
+      event("06.730", { type: "custom_tool_call", name: "exec", call_id: "failed",
+        input: 'text(await tools.exec_command({cmd:"git status"}));' }),
+      event("11", receipt("eligible", 0)),
+      event("12", receipt("pipeline", 0)),
+      event("13", receipt("failed", 1)),
     ].map((line) => JSON.stringify(line)).join("\n") + "\n");
     const data = await readRollout(rollout, "codex-test", policy);
     assert.deepEqual(data.markers, [{ line: 3, at: Date.parse(time("02.500")) },
@@ -130,15 +144,17 @@ test("compiled Bend2 source decisions through the SQLite import path", async () 
     assert.deepEqual(data.calls.map(({ tool, command }) => [tool, command]),
       [["Shell command", "git status"], ["Cell wait", null], ["Tool script", null],
         ["Shell command", "node --test"], ["Shell command", null], ["Shell command", null],
-        ["Shell command", null], ["Parallel tool script", null], ["Shell command", null]]);
+        ["Shell command", null], ["Parallel tool script", null], ["Shell command", null],
+        ["Shell command", "cat"], ["Shell command", "cat"], ["Shell command", "git status"]]);
     assert.deepEqual(data.calls.map(({ categories }) => categories),
       ["Git inspection + Unknown command", "Cell wait", "Unknown script", "JavaScript test", "Unknown command", "Unknown command",
-        "Rust build + Git push + Shell output + File preparation", "Rust check + Process I/O", "Shell output"]);
+        "Rust build + Git push + Shell output + File preparation", "Rust check + Process I/O", "Shell output",
+        "Git inspection + File inspection", "File inspection", "Git inspection"]);
     saveRollout(path, data);
     saveRollout(path, data);
     const db = new DatabaseSync(path, { readOnly: true });
     try {
-      assert.equal(db.prepare("SELECT count(*) n FROM codex_spans").get()?.n, 10);
+      assert.equal(db.prepare("SELECT count(*) n FROM codex_spans").get()?.n, 13);
       assert.equal(db.prepare("SELECT ended_ms-started_ms duration FROM codex_spans WHERE clock='async_cell'").get()?.duration, 2877);
       assert.equal(db.prepare("SELECT ended_ms FROM codex_calls WHERE call_id='pending'").get()?.ended_ms, null);
       const marker = db.prepare("SELECT source_line, observed_ms FROM codex_reasoning").all();
@@ -147,7 +163,9 @@ test("compiled Bend2 source decisions through the SQLite import path", async () 
       assert.deepEqual(db.prepare("SELECT source_line, result_call_id FROM codex_reasoning_inputs").all().map(Object.values),
         [[9, "wait"]]);
       assert.deepEqual(db.prepare("SELECT command FROM codex_commands ORDER BY command").all().map(Object.values),
-        [["git status"], ["node --test"]]);
+        [["cat"], ["cat"], ["git status"], ["git status"], ["node --test"]]);
+      assert.deepEqual(db.prepare("SELECT file_count, git_count, build_count, push_count, seconds FROM codex_command_mixes")
+        .all().map(Object.values), [[2, 1, 0, 0, 3.5]]);
       assert.equal(db.prepare("SELECT count(*) n FROM codex_categories").get()?.n, data.calls.length);
       assert.equal(db.prepare("SELECT count(*) n FROM t3_runs").get()?.n, 2);
       assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
