@@ -57,6 +57,7 @@ type ReviewPolicy = {
   review_window(snapshot: number, from: number, to: number, hasFrom: boolean, hasTo: boolean): ReviewWindow;
   review_page_valid(limit: number, offset: number): boolean;
   review_clock_options(): List<string>;
+  review_timing_window(): string;
   review_count_facts(facts: List<ReviewFact>): number;
   review_clock_valid(clock: string): boolean;
   review_operation_matches(selection: string, all: boolean, name: string): boolean;
@@ -532,7 +533,9 @@ export async function openShippingReview(directory: string) {
         const facts = records.reduceRight<List<ReviewFact>>(
           (tail, row) => ({ $: "Con", head: decodeReview(row), tail }), { $: "Nil" });
         const report = policy.review_report(facts, window.from, window.to, window.fleet_from, input.limit, input.offset);
-        const operationRows = db.prepare("SELECT * FROM operation_totals WHERE window = '24h' AND clock = ? ORDER BY rank").all(input.clock);
+        const timingWindow = policy.review_timing_window();
+        const operationRows = db.prepare("SELECT * FROM operation_totals WHERE window = ? AND clock = ? ORDER BY rank")
+          .all(timingWindow, input.clock);
         const week = db.prepare("SELECT cycle_count, mean_seconds FROM weeks WHERE week = ?");
         const weekCoverage = (start: number) => {
           const row = week.get(start);
@@ -552,7 +555,7 @@ export async function openShippingReview(directory: string) {
               attributed: sample.cycles.count, meanCycleSeconds: seconds(policy.mean(sample.cycles)) })),
           },
           operations: {
-            scope: "snapshot", window: "24h", clock: input.clock, operation: input.operation ?? null,
+            scope: "snapshot", window: timingWindow, clock: input.clock, operation: input.operation ?? null,
             clockOptions: rows(policy.review_clock_options()), operationOptions: operationRows.map(({ operation }) => operation),
             items: operationRows.filter(({ operation }) =>
               policy.review_operation_matches(input.operation ?? "", input.operation === undefined, String(operation)))

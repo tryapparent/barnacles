@@ -29,7 +29,8 @@ export type Review = {
   snapshotCoverage: { observedPullRequests: number; verifiedShipments: number; attributedShipments: number };
   cycleComparison: { deltaSeconds: number | null; direction: string; prior: ComparisonWeek; recent: ComparisonWeek };
   shipments: { verified: number; attributed: number; weekly: Week[] };
-  operations: { clock: string; operation: string | null; clockOptions: string[]; operationOptions: string[]; items: Operation[] };
+  operations: { window: string; clock: string; operation: string | null; clockOptions: string[];
+    operationOptions: string[]; items: Operation[] };
   fleet: { from: string; to: string; items: Vessel[] };
   deliveries: { total: number; limit: number; offset: number; nextOffset: number | null; maxMeasuredMillis: number; items: Delivery[] };
 };

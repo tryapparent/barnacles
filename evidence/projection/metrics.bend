@@ -430,6 +430,9 @@ def review_page_valid(+limit: Nat, offset: Nat) -> Bool:
 def review_clock_options() -> List<&2, String>:
   ["Tool envelopes", "Async cells", "CI queue", "CI execution", "CI steps"]
 
+def review_timing_window() -> String:
+  "24h"
+
 def review_clock_in(+clock: String, allowed: List<&2, String>) -> Bool:
   match allowed:
     case []: False{}

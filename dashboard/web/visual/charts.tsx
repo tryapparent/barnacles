@@ -103,7 +103,7 @@ function Operations({ operations }: { operations: Review["operations"] }) {
       </div>)}</div> : <p className="empty-chart">No measured time for this selection.</p>}
     {!!items.length && <details className="chart-details">
       <summary>Recorded operations</summary>
-      <p className="fine">{operations.clock} · Snapshot totals · Durations can overlap</p>
+      <p className="fine">{operations.clock} · {operations.window} · Durations can overlap</p>
       <div className="table-scroll"><table><caption className="sr-only">Recorded operations</caption>
         <thead><tr><th scope="col">Operation</th><th scope="col">Total</th><th scope="col">Measured</th><th scope="col">Untimed</th></tr></thead>
         <tbody>{items.map((item) => <tr key={item.operation}>

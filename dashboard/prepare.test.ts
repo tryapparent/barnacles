@@ -543,6 +543,7 @@ test("shipping API preserves historical and partial evidence and reads a replace
     assert.equal(report.deliveries.nextOffset, 1);
     assert.equal(report.deliveries.maxMeasuredMillis, 700_000);
     assert.deepEqual(report.operations.items, []);
+    assert.equal(report.operations.window, "24h");
     const page = await get("/api/v1/shipping?limit=1&offset=1");
     assert.equal(page.deliveries.nextOffset, null);
     assert.equal(page.deliveries.maxMeasuredMillis, report.deliveries.maxMeasuredMillis);
