@@ -2,6 +2,12 @@
 
 SQLite holds exact source identities, observations, and read views. The table describes each source and its intended coverage. Apply each bounded import in a transaction. Replaying the same source observations must preserve row counts and derived results. Keep collection time, observation time, and source event time distinct.
 
+## Published dashboard snapshot
+
+Evidence owns the versioned read contract. Version 1 carries an immutable `dashboard.sqlite`, a matching replayable `tempo.ndjson`, and a `snapshot.json` manifest containing `formatVersion`, `generation`, UTC `createdAt`, and `coverage` (window endpoints in Unix seconds, PRs observed, releases shipped, releases linked, rollouts, and trace sessions). The current preparation command also packages the Dashboard-owned Grafana definitions for that generation. It publishes the directory only after generating all files. Keep the previous generation for rollback. Prepare a new generation from the original evidence database to migrate directories created before manifests existed.
+
+Keep existing fields and semantics compatible within a format version. For a breaking change, add Dashboard support for both versions before switching the Evidence publisher. Grafana receives the derived SQLite file and generated definitions through read-only mounts. The writable database stays with the import commands.
+
 [`loadEvidence`](storage/load.ts) accepts one typed batch from a source. Its variants preserve the differences between a T3 thread snapshot, a Codex rollout, a GitHub Actions attempt, and a GitHub delivery observation. The loader dispatches to the matching SQLite transaction. The [shared interval type](projection/intervals.ts) gives Actions and Codex a common timing input with source identity, a distinct clock kind, and nullable UTC millisecond endpoints. T3 execution clocks remain in the source records until a timing consumer needs them. Point observations, ownership links, and delivery proofs retain their own shapes.
 
 | Record | Identity and payload |

@@ -29,6 +29,7 @@ async function main() {
       for (const [name, config] of Object.entries(dashboards(range, repo))) {
         writeFileSync(join(provision, name + ".json"), JSON.stringify(config), { flag: "wx" });
       }
+      writeFileSync(join(staging, "snapshot.json"), JSON.stringify(range.manifest) + "\n", { flag: "wx" });
     } finally {
       closeSync(payloads);
       rmSync(scratch, { recursive: true, force: true });

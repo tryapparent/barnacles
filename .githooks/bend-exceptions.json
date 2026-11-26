@@ -27,6 +27,7 @@
     "evidence/projection/trace.ts"
   ],
   "Grafana and Tempo provisioning, serialization, and runtime": [
+    "dashboard/enablement/deploy/compose.yaml",
     "dashboard/load-tempo.ts",
     "dashboard/panels.ts",
     "dashboard/prepare.ts",
@@ -37,6 +38,7 @@
     "dashboard/trace.ts"
   ],
   "Node, Git, compiler, and verification tooling": [
+    "compose.yaml",
     ".githooks/bend-exceptions.json",
     ".githooks/check-bend-paths.ts",
     ".githooks/check-comments.ts",

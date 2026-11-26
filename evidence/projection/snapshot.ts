@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { closeSync, openSync } from "node:fs";
 import { DatabaseSync, type SQLInputValue, type SQLOutputValue } from "node:sqlite";
 import { buildPolicies, loadPolicy } from "../../tooling/bend.ts";
@@ -33,6 +34,8 @@ type Metrics = TracePolicy & TimingPolicy & {
 };
 
 const emptyShipping: Shipping = { $: "Delivery", shipped: 0, cycles: empty };
+export const snapshotFormatVersion = 1;
+
 export async function writeSnapshot(input: string, output: string, scratch: string, repo: string, cutoff: number,
   writeTrace: (key: string, trace: TraceProjection) => string) {
   const [sources, metricModule, modelModule] = await buildPolicies(scratch, [
@@ -251,8 +254,11 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
         seconds(metrics.measured_total(row.stats)), row.stats.missing, rank));
 
     view.exec("COMMIT");
-    return { from: Math.min(priorWeek, ...weeks.keys()), to: cutoff, defaultTrace, traceSessions,
-      rolloutCount, operationCount: operations.length, changedCode };
+    const from = Math.min(priorWeek, ...weeks.keys());
+    const manifest = { formatVersion: snapshotFormatVersion, generation: randomUUID(), createdAt: new Date(cutoff * 1000).toISOString(),
+      coverage: { from, to: cutoff, pullRequests: prs.length, shipped: delivery.shipped, linked: delivery.cycles.count,
+        rollouts: rolloutCount, traceSessions } };
+    return { from, to: cutoff, defaultTrace, traceSessions, rolloutCount, operationCount: operations.length, changedCode, manifest };
   } finally {
     source.close();
     view.close();

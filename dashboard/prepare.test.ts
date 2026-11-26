@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
@@ -8,7 +8,79 @@ import {
   loadEvidence, type ActionAttempt, type PullRequest, type ReleaseEvidence, type RolloutEvidence, type ThreadEvidence,
 } from "../evidence/index.ts";
 
-test("dashboard derives a covered comparison and preserves missing source coverage", () => {
+async function verifyCompose(initial: string, next: string, traceId: string) {
+  const env = { ...process.env, COMPOSE_PROJECT_NAME: `barnacles-smoke-${process.pid}`, BARNACLES_PORT: "0" };
+  const compose = (...args: string[]) => execFileSync("docker", ["compose", ...args], { env, encoding: "utf8" }).trim();
+  const deploy = (snapshot: string, action?: string, image?: string) => execFileSync("dashboard/run.sh",
+    action ? [snapshot, action] : [snapshot], {
+      env: { ...env, BARNACLES_GRAFANA_IMAGE: image ?? "" }, stdio: "inherit", timeout: 150_000,
+    });
+  const readContainer = (service: string, format: string) =>
+    execFileSync("docker", ["inspect", "--format", format, compose("ps", "-q", service)], { encoding: "utf8" }).trim();
+  const grafanaSnapshot = () => readContainer("grafana",
+    '{{range .Mounts}}{{if eq .Destination "/barnacles/dashboard.sqlite"}}{{.Source}}{{end}}{{end}}');
+  const ready = async (version: string, repository: string, pullRequests: number) => {
+    const base = `http://${compose("port", "grafana", "3000")}`;
+    const read = async (path: string, options?: RequestInit) => {
+      const response = await fetch(base + path, { ...options, signal: AbortSignal.timeout(10_000) });
+      assert.equal(response.status, 200, path);
+      return response.json();
+    };
+    assert.equal((await read("/api/health")).version, version);
+    for (const uid of ["barnacles", "barnacles-tempo"]) {
+      assert.equal((await read(`/api/datasources/uid/${uid}/health`)).status, "OK");
+    }
+    const shipping = await read("/api/dashboards/uid/barnacles-shipping");
+    const scope = shipping.dashboard.panels.find(({ id }: { id: number }) => id === 1);
+    assert.ok(scope.options.content.includes(repository));
+    const coverage = await read("/api/ds/query", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ from: "now-1h", to: "now", queries: [{
+        datasource: { uid: "barnacles", type: "frser-sqlite-datasource" }, refId: "A",
+        queryType: "table", queryText: "SELECT pr_count FROM coverage",
+      }] }),
+    });
+    assert.deepEqual(coverage.results.A.frames[0].data.values, [[pullRequests]]);
+    const trace = await read(`/api/datasources/proxy/uid/barnacles-tempo/api/traces/${traceId}`);
+    const body = JSON.stringify(trace);
+    assert.ok(body.includes(traceId) || body.includes(Buffer.from(traceId, "hex").toString("base64")));
+    assert.ok(body.includes("Git inspection +1"));
+  };
+
+  Object.assign(env, { BARNACLES_SNAPSHOT_DIR: initial, BARNACLES_GRAFANA_UID: "0", BARNACLES_GRAFANA_GID: "0" });
+  try {
+    deploy(initial, "config");
+    deploy(initial);
+    await ready("12.3.0", "synthetic/example", 2);
+    const tempo = compose("ps", "-q", "tempo");
+    assert.equal(grafanaSnapshot(), join(initial, "dashboard.sqlite"));
+    const upgraded = "grafana/grafana:12.3.1@sha256:2175aaa91c96733d86d31cf270d5310b278654b03f5718c59de12a865380a31f";
+    deploy(initial, "grafana", upgraded);
+    assert.equal(compose("ps", "-q", "tempo"), tempo);
+    assert.equal(grafanaSnapshot(), join(initial, "dashboard.sqlite"));
+    await ready("12.3.1", "synthetic/example", 2);
+    deploy(initial, "grafana");
+    assert.equal(compose("ps", "-q", "tempo"), tempo);
+    await ready("12.3.0", "synthetic/example", 2);
+    const image = readContainer("grafana", "{{.Image}}");
+    assert.throws(() => deploy(next, "grafana"));
+    assert.equal(compose("ps", "-q", "tempo"), tempo);
+    assert.equal(grafanaSnapshot(), join(initial, "dashboard.sqlite"));
+    deploy(next);
+    await ready("12.3.0", "synthetic/other", 0);
+    assert.equal(grafanaSnapshot(), join(next, "dashboard.sqlite"));
+    assert.equal(readContainer("grafana", "{{.Image}}"), image);
+    deploy(initial);
+    await ready("12.3.0", "synthetic/example", 2);
+  } catch (error) {
+    console.error(compose("logs", "--no-color", "--tail", "30"));
+    throw error;
+  } finally {
+    deploy(initial, "down");
+  }
+}
+
+test("dashboard derives a covered comparison and preserves missing source coverage", async () => {
   const parent = process.env.BARNACLES_TEST_DIRECTORY;
   assert.ok(parent, "Set BARNACLES_TEST_DIRECTORY to a private job directory");
   const job = mkdtempSync(join(parent, "dashboard-test-"));
@@ -102,6 +174,16 @@ test("dashboard derives a covered comparison and preserves missing source covera
       ["dashboard/prepare.ts", join(job, "missing.sqlite"), out, repo], { stdio: "pipe" }), /existing evidence SQLite/);
     assert.equal(existsSync(out), false);
     execFileSync(process.execPath, ["dashboard/prepare.ts", source, out, repo], { stdio: "pipe", timeout: 60_000 });
+    const manifest = JSON.parse(readFileSync(join(out, "snapshot.json"), "utf8"));
+    assert.equal(manifest.formatVersion, 1);
+    assert.match(manifest.generation, /^[0-9a-f-]{36}$/);
+    assert.equal(new Date(manifest.createdAt).getTime(), manifest.coverage.to * 1000);
+    assert.deepEqual([manifest.coverage.pullRequests, manifest.coverage.shipped, manifest.coverage.linked], [2, 2, 2]);
+    const validate = ["dashboard/load-tempo.ts", "--validate", out];
+    execFileSync(process.execPath, validate, { stdio: "pipe" });
+    writeFileSync(join(out, "snapshot.json"), JSON.stringify({ ...manifest, formatVersion: 2 }));
+    assert.throws(() => execFileSync(process.execPath, validate, { stdio: "pipe" }), /Unsupported snapshot format/);
+    writeFileSync(join(out, "snapshot.json"), JSON.stringify(manifest));
     const db = new DatabaseSync(join(out, "dashboard.sqlite"), { readOnly: true });
     try {
       const summary = db.prepare("SELECT shipped, linked, direction, delta_seconds FROM coverage").get();
@@ -198,6 +280,13 @@ test("dashboard derives a covered comparison and preserves missing source covera
       assert.ok(trace.panels.some(({ type }: { type: string }) => type === "traces"));
       assert.equal(trace.templating.list[0].current.value, "1");
       assert.equal(trace.templating.list[1].current.value, window.traceId);
+      if (process.env.BARNACLES_COMPOSE_SMOKE === "1") {
+        const next = join(job, "next");
+        execFileSync(process.execPath, ["dashboard/prepare.ts", source, next, "synthetic/other"],
+          { stdio: "pipe", timeout: 60_000 });
+        assert.notEqual(JSON.parse(readFileSync(join(next, "snapshot.json"), "utf8")).generation, manifest.generation);
+        await verifyCompose(out, next, window.traceId);
+      }
     } finally { db.close(); }
   } finally { rmSync(job, { recursive: true, force: true }); }
 });

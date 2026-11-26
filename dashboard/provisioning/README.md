@@ -7,7 +7,7 @@ node dashboard/prepare.ts "$job/evidence.sqlite" "$job/grafana" tryapparent/appa
 dashboard/run.sh "$job/grafana"
 ```
 
-Open [Shipping review](http://localhost:3030/d/barnacles-shipping/shipping) or the [Rollout waterfall](http://localhost:3030/d/barnacles-trace/trace). The process runs in the foreground. Set `BARNACLES_PORT` to override the loopback port. Stop it with Ctrl+C. To refresh after importing more evidence, prepare a new directory and restart against it. A failed preparation leaves the requested directory available for retry.
+Open [Shipping review](http://localhost:3030/d/barnacles-shipping/shipping) or the [Rollout waterfall](http://localhost:3030/d/barnacles-trace/trace). Compose runs the project in the background. Set `BARNACLES_PORT` to override the loopback port. Use `dashboard/run.sh "$job/grafana" down` to stop it. To refresh after importing more evidence, prepare a new directory and activate it. See the [Dashboard deployment guide](../enablement/deploy/README.md) for separate update and rollback commands.
 
 The launcher uses Grafana OSS 12.3.0, Tempo 3.1.1 in monolithic mode, SQLite data source 4.0.9, and Treemap 2.1.1. It starts a fresh Tempo instance and sends the prepared `tempo.ndjson` over loopback OTLP HTTP before starting Grafana. Both services store runtime data in temporary filesystems. Regenerating a snapshot for the same source identities produces the same trace and span IDs. A new launch replays once into empty storage, and a rejected replay stops startup.
 
