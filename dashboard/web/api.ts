@@ -22,6 +22,7 @@ export type Delivery = Vessel & { milestones: Milestone[] };
 export type Detail = Delivery & { asOf: string; snapshotAt: string };
 export type Operation = { operation: string; measuredSpans: number; meanSeconds: number | null; totalSeconds: number | null;
   unmeasuredSpans: number; hasArea: boolean };
+export type OperationTile = { label: string; totalSeconds: number; index: number; grouped: number; children: OperationTile[] };
 export type Week = { startsAt: string; verified: number; attributed: number; meanCycleSeconds: number | null };
 export type DeliveryDay = { startsAt: string; verified: number;
   stages: { phase: Stage; measured: number; meanSeconds: number | null }[] };
@@ -32,7 +33,7 @@ export type Review = {
   cycleComparison: { deltaSeconds: number | null; direction: string; prior: ComparisonWeek; recent: ComparisonWeek };
   shipments: { verified: number; attributed: number; weekly: Week[]; dailyStages?: DeliveryDay[] };
   operations: { window: string; clock: string; operation: string | null; clockOptions: string[];
-    operationOptions: string[]; items: Operation[] };
+    operationOptions: string[]; items: Operation[]; map?: OperationTile[] };
   fleet: { from: string; to: string; items: Vessel[] };
   deliveries: { total: number; limit: number; offset: number; nextOffset: number | null; maxMeasuredMillis: number; items: Delivery[] };
 };
