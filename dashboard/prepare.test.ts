@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
