@@ -1,11 +1,11 @@
 // Exact-attempt collection and clock semantics adapted from Apparent. See ../APPARENT-LICENSE.
 import { execFileSync } from "node:child_process";
 
-import type { ActionAttempt, AttemptIdentity } from "../../evidence/actions.ts";
+import type { ActionAttempt, AttemptIdentity } from "../../evidence/index.ts";
 type Json = Record<string, unknown>;
 type MatchIdentity = (run: string, attempt: string, sha: string,
   expectedRun: string, expectedAttempt: string, expectedSha: string) => boolean;
-type Policy = {
+export type ClockPolicy = {
   attempt_matches: MatchIdentity;
   job_matches: (...args: [...Parameters<MatchIdentity>, missingAttempt: boolean]) => boolean;
   job_clocks: (created: number, started: number, completed: number, status: string,
@@ -62,7 +62,7 @@ export function readGitHub(path: string): unknown {
   }
 }
 
-function normalizeJob(job: Json, policy: Policy) {
+function normalizeJob(job: Json, policy: ClockPolicy) {
   const id = positiveInt(job.id);
   const created = clock(job.created_at);
   const started = clock(job.started_at);
@@ -95,7 +95,7 @@ function normalizeJob(job: Json, policy: Policy) {
   };
 }
 
-export function collectAttempt(identity: AttemptIdentity, policy: Policy, read = readGitHub): ActionAttempt {
+export function collectAttempt(identity: AttemptIdentity, policy: ClockPolicy, read = readGitHub): ActionAttempt {
   const { repository, runId, attempt, sha } = identity;
   if (!/^[\w.-]+\/[\w.-]+$/.test(repository) || repository.split("/").some((part) => part === "." || part === "..") ||
       !/^[a-f0-9]{40}$/.test(sha)) throw new Error("Expected owner/repository and full lowercase commit SHA");

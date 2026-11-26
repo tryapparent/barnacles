@@ -1,4 +1,4 @@
-import type { SourcePolicy, ThreadEvidence } from "../evidence/sources.ts";
+import type { SourcePolicy, ThreadEvidence } from "../evidence/index.ts";
 import { array, millis, repository, row, str, timeParts, token } from "./wire.ts";
 import { positiveInt } from "./github/attempt.ts";
 

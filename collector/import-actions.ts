@@ -1,9 +1,8 @@
-import { closeSync, mkdtempSync, openSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
-import { saveAttempt } from "../evidence/actions.ts";
-import { buildClocks } from "./build.ts";
-import { collectAttempt, positiveInt } from "./github/attempt.ts";
+import { loadEvidence } from "../evidence/index.ts";
+import { buildPolicy, loadPolicy } from "../tooling/bend.ts";
+import { collectAttempt, positiveInt, type ClockPolicy } from "./github/attempt.ts";
 
 async function main() {
   const [directory, repository, run, number, sha, ...extra] = process.argv.slice(2);
@@ -13,12 +12,11 @@ async function main() {
   const identity = { repository, runId: positiveInt(run), attempt: positiveInt(number), sha };
   const scratch = mkdtempSync(join(resolve(directory), "build-"));
   try {
-    const source = await buildClocks(scratch);
-    const policy = (await import(pathToFileURL(source).href)).default;
+    const source = await buildPolicy(scratch, new URL("./github/clocks.bend", import.meta.url), "clocks.mjs");
+    const policy = await loadPolicy<ClockPolicy>(source);
     const evidence = collectAttempt(identity, policy);
     const database = join(resolve(directory), "evidence.sqlite");
-    closeSync(openSync(database, "a", 0o600));
-    saveAttempt(database, evidence);
+    loadEvidence(database, { source: "github-actions", attempt: evidence });
     console.log(`Imported attempt ${evidence.attempt} with ${evidence.jobs.length} jobs into evidence.sqlite`);
   } finally {
     rmSync(scratch, { recursive: true, force: true });

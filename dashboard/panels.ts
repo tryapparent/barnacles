@@ -7,7 +7,7 @@ const timingPath = "/d/barnacles-timing/timing";
 const tracePath = "/d/barnacles-trace/trace";
 
 type Window = { from: number; to: number };
-type Range = Window & { traceSessions: number; defaultTrace?: Window & { session: number; traceId: string } };
+type Range = Window & { traceSessions: number; rolloutCount: number; defaultTrace?: Window & { session: number; traceId: string } };
 type FieldProperty = { id: string; value: unknown };
 type Override = { matcher: { id: string; options: string }; properties: FieldProperty[] };
 
@@ -66,14 +66,18 @@ function variable(name: string, label: string, query: string, value: string) {
     current: { selected: true, text: value, value }, options: [] };
 }
 
-export function dashboards(range: Range) {
+export function dashboards(range: Range, repository: string) {
+  const rolloutScope = range.rolloutCount
+    ? `Codex timing covers all ${range.rolloutCount} imported ${range.rolloutCount === 1 ? "rollout" : "rollouts"} across projects.`
+    : "No Codex rollouts imported.";
+  const timingScope = `GitHub CI covers **${repository}**. ${rolloutScope}`;
   const from = new Date(range.from * 1000).toISOString();
   const to = new Date((range.to + 1) * 1000).toISOString();
   const timestamps = ["PR opened", "Merged", "Published", "Access checked"];
   const cyclePR = "${cycle_pr:sqlstring}";
   const shipping = board("barnacles-shipping", "Barnacles · Shipping review", from, to, [
-    block(1, "Linux Main · x86_64", [0, 0, 9, 3],
-      "Verified AppImage releases in the imported sample."),
+    block(1, "Evidence scope", [0, 0, 9, 3],
+      `Linux Main x86_64 and CI for **${repository}**. ${rolloutScope}`),
     data(2, "gauge", "Gardening ↔ Shipping", [0, 3, 9, 6], 'SELECT dial AS "Direction" FROM coverage',
       { reduceOptions, showThresholdLabels: false, showThresholdMarkers: false },
       { min: -1.3, max: 1.3, noValue: "Insufficient coverage", color: { mode: "thresholds" },
@@ -81,7 +85,7 @@ export function dashboards(range: Range) {
           { type: "special", options: { match: "null", result: { text: "Insufficient coverage" } } }],
         thresholds: { mode: "absolute", steps: [{ value: null, color: yellow }, { value: 0, color: green }] } },
       [], [], "Direction comes only from the mean thread-to-release time in the latest two completed UTC weeks."),
-    data(3, "marcusolsson-treemap-panel", "Where recorded time went", [9, 3, 15, 5],
+    data(3, "marcusolsson-treemap-panel", "Recorded time by clock", [9, 3, 15, 5],
       'SELECT clock AS "Clock", total_seconds AS "Duration" FROM time_map ORDER BY rank',
       { tiling: "treemapSquarify", textField: "Clock", sizeField: "Duration" },
       { unit: "s", color: { mode: "fixed", fixedColor: "#BB8E4F" }, links: [timingLink] },
@@ -99,14 +103,14 @@ export function dashboards(range: Range) {
       'SELECT pr_count AS "PRs observed", shipped AS "Access verified", linked AS "Thread linked" FROM coverage',
       { reduceOptions, colorMode: "none", graphMode: "none", justifyMode: "center" },
       { color: { mode: "fixed", fixedColor: ink } }),
-    data(14, "table", "Measured envelope time by category", [0, 20, 12, 8],
+    data(14, "table", "Codex envelope time by category", [0, 20, 12, 8],
       `SELECT operation AS "Category", count AS "Spans", total_seconds AS "Total"
         FROM timing WHERE clock = 'Tool envelopes' ORDER BY rank`,
       { showHeader: true, enablePagination: true }, { noValue: "—", custom: { minWidth: 56 } },
       [byName("Category", { id: "custom.wrapText", value: true }), byName("Spans", width(60)),
         byName("Total", unit("s"), width(96))], [],
       "Each measured envelope is counted once. Mixed spans share one clock across several submitted categories. Async cells have a separate breakdown."),
-    data(15, "table", "Estimated category times", [12, 20, 12, 8],
+    data(15, "table", "Estimated Codex category times", [12, 20, 12, 8],
       `SELECT name AS "Group", CASE WHEN seconds IS NOT NULL THEN printf('%.3g ± %.2g', seconds, error) END AS "s/cmd",
         CASE WHEN total < 60 THEN printf('%.2g s', total)
           WHEN total < 3600 THEN printf('%.2g m', total / 60)
@@ -157,7 +161,7 @@ export function dashboards(range: Range) {
   const timeFields = [byName("Mean", unit("s")), byName("Total", unit("s"))];
   const timing = board("barnacles-timing", "Barnacles · Timing breakdown", from, to, [
     block(1, "Recorded occupancy", [0, 0, 24, 3],
-      "Choose a clock and workflow. Count × mean gives total recorded time. Clocks can overlap. CI steps are nested inside job execution."),
+      `${timingScope} Choose a clock and workflow. CI steps are nested inside job execution.`),
     data(2, "table", "By workflow", [0, 3, 24, 6],
       `SELECT clock AS "Clock", CAST(workflow AS TEXT) AS "Workflow", count AS "Count",
         mean_seconds AS "Mean", total_seconds AS "Total", unmeasured AS "Unmeasured"

@@ -461,20 +461,26 @@ def keep_commit(complete: Bool, milestone: Milestone) -> Bool:
     case Milestone{id, at}: Bool.and(complete, Bool.and(U32.is_ne(at, 0), Bool.not(String.eq(id, ""))))
 
 type ReleaseOrder is Data:
-  Release{published: U32, checked: U32, id: String, index: U32}
+  Release{published: U32, checked: U32, id: String, dispatch: U32, index: U32}
 
 def release_before(a: ReleaseOrder, b: ReleaseOrder) -> Bool:
   match a b:
-    case Release{+ap, +ac, aid, ai} Release{+bp, +bc, bid, bi}:
+    case Release{+ap, +ac, +aid, +ad, ai} Release{+bp, +bc, +bid, +bd, bi}:
+      preferred_dispatch = Bool.and(U32.is_ne(ad, 0), Bool.or(U32.is_eq(bd, 0), U32.is_lt(ad, bd)))
+      same_observation = Bool.and(String.eq(aid, bid), preferred_dispatch)
       Bool.and(U32.is_ne(ap, 0), Bool.or(U32.is_eq(bi, 0),
         Bool.or(U32.is_lt(ap, bp), Bool.and(U32.is_eq(ap, bp),
-          Bool.or(U32.is_lt(ac, bc), Bool.and(U32.is_eq(ac, bc), String.is_lt(aid, bid)))))))
+          Bool.or(U32.is_lt(ac, bc), Bool.and(U32.is_eq(ac, bc),
+            Bool.or(String.is_lt(aid, bid), same_observation)))))))
 
 def pick_release(+best: ReleaseOrder, +next: ReleaseOrder, eligible: Bool) -> ReleaseOrder:
   Bool.pick(ReleaseOrder, Bool.and(eligible, release_before(next, best)), next, best)
 
-def release_eligible(shipped: Bool, proof_merge: String, current_merge: String) -> Bool:
-  Bool.and(shipped, String.eq(proof_merge, current_merge))
+def release_eligible(shipped: Bool, proof_merge: String, current_merge: String, +published: U32,
+                     checked: U32, +asset: String, release_asset: String, observations: U32) -> Bool:
+  Bool.and(shipped, Bool.and(String.eq(proof_merge, current_merge),
+    Bool.and(ordered(published, checked), Bool.and(U32.is_eq(observations, 1),
+      Bool.and(Bool.not(String.eq(asset, "0")), String.eq(asset, release_asset))))))
 
 type Owners is Data:
   Owners{count: U32, s: U32, ms: U32}

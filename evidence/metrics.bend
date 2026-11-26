@@ -75,8 +75,11 @@ def record_release(sample: ShippingSample, linked: Bool, elapsed_ms: Nat) -> Shi
 def visible_release(surface: String, published: Nat) -> Bool:
   Bool.and(String.eq(surface, "linux-main-x86_64"), Bool.not(Nat.is_eq(published, 0n)))
 
-def codex_clock(clock: String) -> String:
-  Bool.pick(String, String.eq(clock, "async_cell"), "Async cells", "Tool envelopes")
+def interval_clock(+clock: String) -> String:
+  Bool.pick(String, String.eq(clock, "ci_queue"), "CI queue",
+    Bool.pick(String, String.eq(clock, "ci_execution"), "CI execution",
+      Bool.pick(String, String.eq(clock, "ci_step"), "CI steps",
+        Bool.pick(String, String.eq(clock, "async_cell"), "Async cells", "Tool envelopes"))))
 
 def trace_preference(async_spans: Nat, reasoning_events: Nat) -> Bool:
   Bool.and(Bool.not(Nat.is_eq(async_spans, 0n)), Bool.not(Nat.is_eq(reasoning_events, 0n)))
@@ -149,3 +152,18 @@ def estimate_model_wait(clean: Bool, +result: Nat, at: Nat, scan: ActivityScan) 
 def ranks_before(+total: Nat, key: String, +other_total: Nat, other_key: String) -> Bool:
   Bool.or(Nat.is_lt(other_total, total),
     Bool.and(Nat.is_eq(total, other_total), String.is_lt(key, other_key)))
+
+type DeliveryStage is Data:
+  Stage{ending: U32, name: String, value: CycleStage}
+
+def delivery_stages(+thread: Nat, +commit: Nat, +opened: Nat, +ci: Nat, +merged: Nat,
+                    +dispatch: Nat, +published: Nat, linked: Bool) -> List<&2, DeliveryStage>:
+  Stage{1, "Thread → commit", cycle_stage(thread, commit)} <>
+    Stage{2, "Commit → PR open", cycle_stage(commit, opened)} <>
+    Stage{3, "PR open → first CI", cycle_stage(opened, ci)} <>
+    Stage{4, "First CI → merge", cycle_stage(ci, merged)} <>
+    Stage{5, "Merge → dispatch", cycle_stage(merged, dispatch)} <>
+    Stage{6, "Dispatch → ship", cycle_stage(dispatch, published)} <>
+    Stage{0, "PR open → merge", cycle_stage(opened, merged)} <>
+    Stage{0, "Merge → ship", cycle_stage(merged, published)} <>
+    Stage{0, "Thread → ship", Bool.pick(CycleStage, linked, cycle_stage(thread, published), Missing{})} <> []

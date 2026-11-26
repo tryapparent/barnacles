@@ -6,7 +6,9 @@
   },
   "scripts": {
     "hooks:install": "git config --local extensions.worktreeConfig true && git config --worktree core.hooksPath .githooks",
-    "test:hooks": "node --test .githooks/*.test.ts"
+    "test:hooks": "node tooling/verify.ts hooks",
+    "verify": "node tooling/verify.ts",
+    "demo": "node examples/demo.ts"
   },
   "devDependencies": {
     "@repomix/tree-sitter-wasms": "0.1.17",

@@ -20,13 +20,7 @@ export function token(value: unknown): string {
   return input;
 }
 
-export function repository(value: unknown): string {
-  const input = str(value);
-  if (!/^[\w.-]+\/[\w.-]+$/.test(input) || input.split("/").some((part) => part === "." || part === "..")) {
-    throw Error("Expected owner/repository");
-  }
-  return input.toLowerCase();
-}
+export { repository } from "../evidence/index.ts";
 
 export function sha(value: unknown): string {
   const input = str(value);

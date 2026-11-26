@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const revision = "9c586f094f4fc88bef440dc8b4d77a2f92c257cc";
 const sources = {
@@ -14,12 +14,12 @@ const sources = {
   "base.bend": "9a457145eacff52a36340cf86400b64b94b6eccc124c8ef3cf48bba4eab29af0",
 };
 
-export function buildClocks(directory: string): Promise<string> {
-  return buildPolicy(directory, new URL("./github/clocks.bend", import.meta.url), "clocks.mjs");
+export async function buildPolicy(directory: string, source: URL, filename: string): Promise<string> {
+  const [output] = await buildPolicies(directory, [[source, filename]]);
+  return output;
 }
 
-export async function buildPolicy(directory: string, source: URL, filename: string): Promise<string> {
-  const output = resolve(directory, filename);
+export async function buildPolicies(directory: string, policies: ReadonlyArray<readonly [URL, string]>) {
   const scratch = mkdtempSync(join(directory, "bend-"));
   try {
     const verified = await Promise.all(Object.entries(sources).map(async ([file, digest]) => {
@@ -33,7 +33,6 @@ export async function buildPolicy(directory: string, source: URL, filename: stri
       return { file, bytes };
     }));
     for (const { file, bytes } of verified) writeFileSync(join(scratch, file), bytes, { flag: "wx" });
-    const input = fileURLToPath(source);
     const compile = `
       import { load } from "./main.ts";
       import { pathToFileURL } from "node:url";
@@ -44,23 +43,30 @@ export async function buildPolicy(directory: string, source: URL, filename: stri
       });
       writeFileSync(output, source);
     `;
-    execFileSync(process.execPath, [
-      "--experimental-transform-types", "--input-type=module", "-e", compile, input, output,
-    ], {
-      cwd: scratch,
-      timeout: 60_000,
-      stdio: "inherit",
-      env: {
-        ...process.env,
-        TMPDIR: scratch,
-        BEND_NO_TELEMETRY: "1",
-        BEND_LIB: join(scratch, "bend-lib"),
-        BEND_HUB: "http://127.0.0.1:1",
-        BENDTT: "",
-      },
+    return policies.map(([source, filename]) => {
+      const output = resolve(directory, filename);
+      execFileSync(process.execPath, [
+        "--experimental-transform-types", "--input-type=module", "-e", compile, fileURLToPath(source), output,
+      ], {
+        cwd: scratch,
+        timeout: 60_000,
+        stdio: "inherit",
+        env: {
+          ...process.env,
+          TMPDIR: scratch,
+          BEND_NO_TELEMETRY: "1",
+          BEND_LIB: join(scratch, "bend-lib"),
+          BEND_HUB: "http://127.0.0.1:1",
+          BENDTT: "",
+        },
+      });
+      return output;
     });
-    return output;
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
+}
+
+export async function loadPolicy<T>(path: string): Promise<T> {
+  return (await import(pathToFileURL(path).href)).default;
 }

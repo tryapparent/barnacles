@@ -1,8 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
-import { deliveryReport, saveDelivery, saveRollout, saveThread, type SourcePolicy } from "../evidence/sources.ts";
-import { buildPolicy } from "./build.ts";
+import { sourcePolicy, deliveryReport, loadEvidence, type SourcePolicy } from "../evidence/index.ts";
+import { buildPolicy, loadPolicy } from "../tooling/bend.ts";
 import { positiveInt } from "./github/attempt.ts";
 import { pullRequest, releaseEvidence } from "./github/delivery.ts";
 import { readRollout } from "./rollout.ts";
@@ -19,24 +18,24 @@ async function main() {
 
   const scratch = mkdtempSync(join(resolve(directory), "build-"));
   try {
-    const output = await buildPolicy(scratch, new URL("../evidence/sources.bend", import.meta.url), "sources.mjs");
-    const policy: SourcePolicy = (await import(pathToFileURL(output).href)).default;
+    const output = await buildPolicy(scratch, sourcePolicy, "sources.mjs");
+    const policy: SourcePolicy = await loadPolicy(output);
     const db = join(resolve(directory), "evidence.sqlite");
     if (command === "t3") {
       const info = statSync(first);
       if (!info.isFile() || info.size > 1024 * 1024) throw Error("Expected a bounded T3 metadata snapshot");
       const data = t3Snapshot(JSON.parse(readFileSync(first, "utf8")), policy);
-      saveThread(db, data);
+      loadEvidence(db, { source: "t3", thread: data });
       console.log(`Imported T3 metadata with ${data.runs.length} runs and ${data.pullRequests.length} PR links`);
     } else if (command === "rollout") {
       const data = await readRollout(second, first, policy);
-      saveRollout(db, data);
+      loadEvidence(db, { source: "codex", rollout: data });
       console.log(`Imported ${data.calls.length} tool calls, ${data.calls.filter((call) => call.asyncEnd !== null).length} linked async cells, and ${data.markers.length} reasoning markers`);
     } else if (command === "github") {
       const pr = pullRequest(first, positiveInt(second), policy, undefined, true);
-      saveDelivery(db, pr);
+      loadEvidence(db, { source: "github-delivery", pullRequest: pr });
       const release = third ? releaseEvidence(pr, third, policy, undefined, undefined, true) : undefined;
-      if (release) saveDelivery(db, pr, release);
+      if (release) loadEvidence(db, { source: "github-delivery", pullRequest: pr, release });
       console.log(release ? `Imported pull request and release evidence (access: ${release.accessible ? "verified" : "unverified"})`
         : "Imported pull request metadata");
     } else {

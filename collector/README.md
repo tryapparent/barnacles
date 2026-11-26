@@ -2,6 +2,8 @@
 
 The first entry point imports one GitHub Actions attempt by repository, run ID, attempt, and expected head SHA. It uses Node 22.18+ and an authenticated GitHub CLI. Run it in a private job directory. Source readers own authentication, pagination, caps, timeouts, and conversion to allowlisted records. They return coverage alongside the records so a failed read cannot appear as an empty source.
 
+Each adapter extracts bounded provider input and decodes its wire format. Bend2 transforms it into allowlisted evidence, retaining the source identifiers and coverage needed for replay. The import commands pass an `EvidenceBatch` to Evidence's `loadEvidence` entry point. A new source should use this path and prove replay, partial input, and the relevant consumer with synthetic fixtures.
+
 | Source | Initial boundary |
 | --- | --- |
 | T3 | Import metadata from supported thread and PR-link tools. Retain source identity, thread start, status, run clocks, explicit PR links, and origin when established. Omit messages and titles. |
@@ -17,18 +19,14 @@ job=$(mktemp -d /tmp/apparent-dev-barnacles-ci-XXXXXX)
 sha=9c1ffc52836711a006b4a983146655c04970f0bf
 node collector/import-actions.ts "$job" tryapparent/apparent 45813089179 1 "$sha"
 node collector/import-actions.ts "$job" tryapparent/apparent 45813387238 1 "$sha"
-sqlite3 -readonly -header -column "$job/evidence.sqlite" '
-  SELECT workflow_id, clock, operation, count, mean_seconds, total_seconds, unmeasured_count
-  FROM action_occupancy
-  WHERE count > 0
-  ORDER BY workflow_id, clock, total_seconds DESC;'
+node evidence/report-actions.ts "$job/evidence.sqlite" tryapparent/apparent
 ```
 
 These are the public landed CI and desktop release runs for Apparent #2071. The command reads metadata only. Bend2 matches source identities, filters status and display labels, and selects queue, execution, and step clocks. The CLI host uses Node for GitHub subprocess calls, JSON and timestamp decoding, loading the compiled Bend2 module, and SQLite writes. The pinned Bend2 build emits an ES module of policy exports for this caller. The host supplies the process, filesystem, and SQLite interfaces. The command builds that policy using the pinned, checksum-verified compiler and disables Bend telemetry. The import requires network access to fetch those pinned tools and read GitHub metadata. It downloads neither workflow logs nor artifacts.
 
 The importer checks the attempt and SHA, reads at most ten 100-job pages, and rejects changing counts, duplicate IDs, or partial inventories before writing. Replaying a complete snapshot replaces the same attempt atomically. Submission to runner allocation is distinct from execution. A cancelled job with an explicit unallocated runner ID can supply a terminal queue clock. Pending, skipped, and unresolved carried-over jobs supply no execution duration. Jobless attempts keep their status and zero job count with no inferred queue. Arbitrary job and step names are grouped under Other jobs or Other steps. The SQLite file stays local.
 
-Run the synthetic boundary check with `BARNACLES_TEST_DIRECTORY="$job" node --test collector/github/attempt.test.ts`. It compiles the actual Bend2 policy and exercises the importer and SQLite write path.
+Run the synthetic boundary checks with `npm run verify -- collector`. It compiles the actual Bend2 policy and exercises the importer and SQLite write path.
 
 ## Apparent donor code
 
@@ -96,5 +94,5 @@ Bend2 selects the first commit, first observed review, and earliest **observed a
 Run both integration tests with:
 
 ```sh
-BARNACLES_TEST_DIRECTORY="$job" node --test collector/github/attempt.test.ts collector/sources.test.ts
+npm run verify -- collector
 ```

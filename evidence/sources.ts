@@ -1,7 +1,7 @@
 import { closeSync, openSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 
-type Elapsed = { $: "Duration"; seconds: number; subtract_ms: number } | { $: "Unknown" };
+export type Elapsed = { $: "Duration"; seconds: number; subtract_ms: number } | { $: "Unknown" };
 
 export type Point = { $: "Time"; s: number; ms: number };
 export type List<T> = { $: "Nil" } | { $: "Con"; head: T; tail: List<T> };
@@ -18,7 +18,7 @@ type CellFact = { $: "NoCell" } | { $: "Launch" | "Terminal"; key: string };
 type CellLink = { $: "Unlinked" } | { $: "Linked"; owner: string; call_id: string; end: Point };
 export type Milestone = { $: "Milestone"; id: string; at: number };
 type Owners = { $: "Owners"; count: number; s: number; ms: number };
-export type ReleaseOrder = { $: "Release"; published: number; checked: number; id: string; index: number };
+export type ReleaseOrder = { $: "Release"; published: number; checked: number; id: string; dispatch: number; index: number };
 
 export type SourcePolicy = {
   reasoning(event: string, point: Point): boolean;
@@ -42,7 +42,8 @@ export type SourcePolicy = {
   keep_commit(complete: boolean, milestone: Milestone): boolean;
   pick_release(best: ReleaseOrder, next: ReleaseOrder, eligible: boolean): ReleaseOrder;
   count_owner(state: Owners, owning: boolean, s: number, ms: number): Owners;
-  release_eligible(shipped: boolean, proofMerge: string, currentMerge: string): boolean;
+  release_eligible(shipped: boolean, proofMerge: string, currentMerge: string, published: number,
+    checked: number, observedAsset: string, releaseAsset: string, observations: number): boolean;
   interval_ms(startSecond: number, startMs: number, endSecond: number, endMs: number): boolean;
   origin(creator: string, creationSource: string): string;
   owns_pr(source: string): boolean;
@@ -62,10 +63,6 @@ export type SourcePolicy = {
     opened: number, published: number): Elapsed;
 };
 
-function secondsFromElapsed(value: Elapsed): number | null {
-  return value.$ === "Duration" ? (value.seconds * 1000 - value.subtract_ms) / 1000 : null;
-}
-
 export type ThreadEvidence = {
   instance: string; id: string; created: number; updated: number; status: string; origin: string;
   settled: boolean;
@@ -81,24 +78,11 @@ export type RolloutEvidence = {
     mix?: Extract<CommandMix, { $: "Mix" }> & { seconds: number } }[];
 };
 
-export type PullRequest = {
-  repository: string; number: number; opened: number; merged: number | null;
-  mergeSha: string | null; state: string; firstCommit: { sha: string; at: number } | null;
-  firstCI?: { id: number; at: number } | null;
-  firstReview: { id: number; at: number } | null; commitsComplete: boolean; reviewsComplete: boolean;
-  updated: number;
-};
-
-export type ReleaseEvidence = {
-  id: number; tag: string; source: string; tagMatches: boolean; channel: string;
-  published: number | null; assetId: number | null; checked: number;
-  http: number | null; bytes: number | null; accessible: boolean; ancestry: string; shipped: boolean;
-  dispatch?: { id: number; at: number } | null;
-};
+export const sourcePolicy = new URL("./sources.bend", import.meta.url);
 
 const schema = readFileSync(new URL("./sources.sql", import.meta.url), "utf8");
 
-function write(path: string, action: (db: DatabaseSync) => void) {
+export function writeSources(path: string, action: (db: DatabaseSync) => void) {
   closeSync(openSync(path, "a", 0o600));
   const db = new DatabaseSync(path);
   try {
@@ -112,7 +96,7 @@ function write(path: string, action: (db: DatabaseSync) => void) {
 }
 
 export function saveThread(path: string, data: ThreadEvidence) {
-  write(path, (db) => {
+  writeSources(path, (db) => {
     const key = [data.instance, data.id] as const;
     const before = db.prepare("SELECT updated_ms FROM t3_threads WHERE instance=? AND thread_id=?").get(...key);
     if (before && Number(before.updated_ms) > data.updated) throw Error("Older T3 snapshot");
@@ -129,7 +113,7 @@ export function saveThread(path: string, data: ThreadEvidence) {
 }
 
 export function saveRollout(path: string, data: RolloutEvidence) {
-  write(path, (db) => {
+  writeSources(path, (db) => {
     const key = [data.instance, data.session] as const;
     const previous = db.prepare("SELECT line_count FROM codex_rollouts WHERE instance=? AND session_id=?").get(...key);
     if (previous && Number(previous.line_count) > data.lines) throw Error("Shorter rollout snapshot");
@@ -162,96 +146,4 @@ export function saveRollout(path: string, data: RolloutEvidence) {
       if (marker.resultCall) inputs.run(...key, marker.line, marker.resultCall);
     }
   });
-}
-
-export function saveDelivery(path: string, pr: PullRequest, release?: ReleaseEvidence) {
-  write(path, (db) => {
-    const before = db.prepare("SELECT updated_at FROM github_prs WHERE repository=? AND pr_number=?")
-      .get(pr.repository, pr.number);
-    if (before && Number(before.updated_at) > pr.updated) throw Error("Older pull request snapshot");
-    db.prepare("INSERT OR REPLACE INTO github_prs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
-      pr.repository, pr.number, pr.state, pr.opened, pr.merged, pr.mergeSha,
-      pr.firstCommit?.at ?? null, pr.firstCommit?.sha ?? null, Number(pr.commitsComplete),
-      pr.firstReview?.at ?? null, pr.firstReview?.id ?? null, Number(pr.reviewsComplete), pr.updated);
-    if (pr.firstCI) {
-      db.prepare("INSERT OR REPLACE INTO github_pr_ci VALUES (?, ?, ?, ?)")
-        .run(pr.repository, pr.number, pr.firstCI.id, pr.firstCI.at);
-    }
-    if (!release) return;
-    const key = [pr.repository, release.id, release.channel] as const;
-    db.prepare("INSERT OR REPLACE INTO github_releases VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
-      ...key, release.tag, release.source, Number(release.tagMatches), release.published, release.assetId);
-    if (release.dispatch) {
-      db.prepare("INSERT OR REPLACE INTO github_release_dispatch VALUES (?, ?, ?, ?, ?)")
-        .run(...key, release.dispatch.id, release.dispatch.at);
-    }
-    db.prepare("INSERT OR REPLACE INTO github_asset_checks VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
-      ...key, release.checked, release.assetId, release.http, release.bytes, Number(release.accessible));
-    db.prepare("INSERT OR REPLACE INTO github_release_proofs VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
-      pr.repository, pr.number, release.id, release.channel, release.checked, pr.mergeSha,
-      release.ancestry, Number(release.shipped));
-  });
-}
-
-export function deliveryReport(path: string, policy: SourcePolicy) {
-  const db = new DatabaseSync(path, { readOnly: true });
-  try {
-    const pullRequests = db.prepare(`
-      SELECT repository, pr_number, state, opened_at, merged_at, merge_sha,
-             first_commit_at, first_review_at, commits_complete, reviews_complete
-      FROM github_prs ORDER BY repository, pr_number
-    `).all();
-    const candidates = db.prepare(`
-      SELECT proof.channel, release.published_at, proof.checked_at, proof.ancestry, proof.release_id,
-             asset.asset_id, proof.shipped, proof.merge_sha
-      FROM github_release_proofs proof
-      JOIN github_releases release USING (repository, release_id, channel)
-      JOIN github_asset_checks asset USING (repository, release_id, channel, checked_at)
-      WHERE proof.repository = ? AND proof.pr_number = ? ORDER BY proof.channel
-    `);
-    const owners = db.prepare(`
-      SELECT owning, created_ms FROM t3_pr_links JOIN t3_threads USING (instance, thread_id)
-      WHERE repository = ? AND pr_number = ?
-    `);
-    const ci = db.prepare("SELECT 1 FROM sqlite_schema WHERE name='github_pr_ci'").get()
-      ? db.prepare("SELECT run_id, started_at FROM github_pr_ci WHERE repository=? AND pr_number=?") : null;
-    const dispatch = db.prepare("SELECT 1 FROM sqlite_schema WHERE name='github_release_dispatch'").get()
-      ? db.prepare("SELECT run_id, created_at FROM github_release_dispatch WHERE repository=? AND release_id=? AND channel=?") : null;
-    const none: ReleaseOrder = { $: "Release", published: 0xffffffff, checked: 0xffffffff, id: "", index: 0 };
-    return pullRequests.flatMap(({ merge_sha, ...pr }) => {
-      const key = [pr.repository, pr.pr_number] as const;
-      const firstCI = ci?.get(...key);
-      const groups = Map.groupBy(candidates.all(...key), (release) => release.channel);
-      const selected = [];
-      for (const releases of groups.values()) {
-        const first = releases.reduce((best, candidate, index) => policy.pick_release(best, {
-          $: "Release", published: Number(candidate.published_at ?? 0), checked: Number(candidate.checked_at),
-          id: String(candidate.release_id).padStart(16, "0"), index: index + 1,
-        }, policy.release_eligible(candidate.shipped === 1, String(candidate.merge_sha ?? ""), String(merge_sha ?? ""))), none);
-        if (first.index) selected.push(releases[first.index - 1]);
-      }
-      const owner = owners.all(...key).reduce((value, row) => {
-        const ms = Number(row.created_ms);
-        return policy.count_owner(value, row.owning === 1, Math.floor(ms / 1000), ms % 1000);
-      }, { $: "Owners" as const, count: 0, s: 0, ms: 0 });
-      return (selected.length ? selected : [null]).map((release) => {
-        const opened = Number(pr.opened_at);
-        const published = Number(release?.published_at ?? 0);
-        const cycle = policy.thread_to_release(owner.count, owner.s, owner.ms, opened, published);
-        const run = release && dispatch?.get(pr.repository, release.release_id, release.channel);
-        return {
-          ...pr, channel: release?.channel ?? null, published_at: release?.published_at ?? null,
-          first_ci_at: firstCI?.started_at ?? null, first_ci_run: firstCI?.run_id ?? null,
-          release_dispatched_at: run?.created_at ?? null, release_run: run?.run_id ?? null,
-          checked_at: release?.checked_at ?? null, ancestry: release?.ancestry ?? null,
-          release_id: release?.release_id ?? null, asset_id: release?.asset_id ?? null,
-          owner_count: owner.count, thread_started_ms: owner.s ? owner.s * 1000 + owner.ms : null,
-          pr_to_release_seconds: secondsFromElapsed(policy.pr_to_release(opened, published)),
-          thread_to_release_seconds: secondsFromElapsed(cycle),
-        };
-      });
-    });
-  } finally {
-    db.close();
-  }
 }
