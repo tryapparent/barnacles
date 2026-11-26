@@ -9,11 +9,13 @@ async function main() {
   if (!input || !output || !requestedRepository || extra.length) {
     throw Error("Usage: node dashboard/prepare.ts EVIDENCE_SQLITE NEW_OUTPUT_DIRECTORY OWNER/REPO [AS_OF_UTC]");
   }
-  const cutoff = asOf === undefined ? Date.now() : Date.parse(asOf);
-  if (!Number.isFinite(cutoff) || (asOf !== undefined && new Date(cutoff).toISOString() !== asOf.replace(/Z$/, ".000Z"))) {
-    throw Error("Expected AS_OF_UTC in YYYY-MM-DDTHH:MM:SSZ format");
-  }
   const repo = repository(requestedRepository);
+  const timingCutoff = asOf === undefined ? Math.floor(Date.now() / 1000) * 1000 : Date.parse(asOf);
+  if (!Number.isFinite(timingCutoff) || timingCutoff < 86400000 || (asOf !== undefined &&
+      new Date(timingCutoff).toISOString() !== asOf.replace(/(T\d{2}:\d{2}:\d{2})Z$/, "$1.000Z"))) {
+    throw Error("Expected AS_OF_UTC in UTC seconds or milliseconds at least one day after the Unix epoch");
+  }
+  const cutoff = Math.floor(timingCutoff / 1000);
   const directory = resolve(output);
   if (!statSync(input, { throwIfNoEntry: false })?.isFile()) throw Error("Expected an existing evidence SQLite file");
   if (existsSync(directory)) throw Error("Output directory already exists. Choose a new directory.");
@@ -23,11 +25,11 @@ async function main() {
     const payloads = openSync(join(staging, "tempo.ndjson"), "wx", 0o600);
     try {
       const range = await writeSnapshot(resolve(input), join(staging, "dashboard.sqlite"), scratch, repo,
-        Math.floor(cutoff / 1000), (key, trace) => {
+        cutoff, (key, trace) => {
           const { traceId, payload } = encodeTrace(key, trace);
           writeSync(payloads, JSON.stringify(payload) + "\n");
           return traceId;
-        });
+        }, undefined, timingCutoff);
       const provision = join(staging, "dashboards");
       mkdirSync(provision);
       for (const [name, config] of Object.entries(dashboards(range, repo))) {

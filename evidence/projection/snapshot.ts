@@ -182,7 +182,7 @@ function writeActionsWait(source: DatabaseSync, view: DatabaseSync, repo: string
 }
 
 export async function writeSnapshot(input: string, output: string, scratch: string, repo: string, cutoff: number,
-  writeTrace: (key: string, trace: TraceProjection) => string, actionsWaitWindow?: ActionWaitWindow) {
+  writeTrace: (key: string, trace: TraceProjection) => string, actionsWaitWindow?: ActionWaitWindow, timingCutoff = cutoff * 1000) {
   const [sources, metricModule, modelModule, waitModule] = await buildPolicies(scratch, [
     [sourcePolicy, "sources.mjs"],
     [new URL("./metrics.bend", import.meta.url), "metrics.mjs"],
@@ -212,15 +212,7 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
         PRIMARY KEY (pr, ordinal));
       CREATE TABLE delivery_stages(ordinal INTEGER PRIMARY KEY, name TEXT, mean_seconds REAL, observed INTEGER, missing INTEGER);
       CREATE TABLE work(pr INTEGER, status TEXT, created INTEGER, url TEXT);
-      CREATE TABLE timing(clock TEXT, workflow INTEGER, operation TEXT, count INTEGER,
-        mean_seconds REAL, total_seconds REAL, unmeasured INTEGER, rank INTEGER);
-      CREATE TABLE operation_totals(clock TEXT, operation TEXT, count INTEGER, mean_seconds REAL,
-        total_seconds REAL, unmeasured INTEGER, has_area INTEGER, rank INTEGER);
-      CREATE TABLE mixed_groups(clock TEXT, operation TEXT, count INTEGER, mean_seconds REAL,
-        total_seconds REAL, unmeasured INTEGER, rank INTEGER);
       CREATE TABLE category_estimates(name TEXT, seconds REAL, total REAL, error REAL, samples INTEGER);
-      CREATE TABLE workflows(clock TEXT, workflow INTEGER, total_seconds REAL, count INTEGER,
-        mean_seconds REAL, unmeasured INTEGER, rank INTEGER);
       CREATE TABLE trace(session INTEGER, source_line INTEGER, operation TEXT, clock TEXT, started INTEGER, ended INTEGER);
       CREATE TABLE trace_windows(session INTEGER, trace_id TEXT, started INTEGER, ended INTEGER, measured INTEGER);
       CREATE TABLE trace_coverage(session INTEGER, ordinal INTEGER, kind TEXT, observed INTEGER, missing INTEGER,
@@ -241,6 +233,7 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
       truncated: Boolean(gitScan.truncated), shallow: Boolean(gitScan.shallow), hasPaths: gitFiles.length > 0,
     };
     const url = (number: number) => `https://github.com/${repo}/pull/${number}`;
+    const timing = collectTiming(source, repo, metrics, true);
     const prs = table("github_prs") ? readDelivery(source, policy, repo) : [];
     const weeks = new Map<number, Shipping>();
     const release = view.prepare("INSERT INTO releases VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
@@ -255,6 +248,8 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
     }
     let delivery = emptyShipping;
     for (const row of prs) {
+      timing.observe("Releases", millis(row.published_at));
+      timing.receive("Releases", millis(row.checked_at));
       if (!metrics.visible_release(String(row.channel ?? ""), Number(row.published_at ?? 0))) continue;
       const number = Number(row.pr_number);
       release.run(number, row.opened_at, row.merged_at, row.published_at, row.checked_at,
@@ -308,7 +303,16 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
       }
     }
 
-    const timing = collectTiming(source, repo, metrics);
+    if (table("t3_threads")) {
+      for (const row of all("SELECT created_ms, updated_ms FROM t3_threads")) {
+        timing.observe("T3", Number(row.created_ms), Number(row.updated_ms));
+      }
+    }
+    if (table("t3_runs")) {
+      for (const row of all("SELECT requested_ms, started_ms, completed_ms FROM t3_runs")) {
+        timing.observe("T3", Number(row.requested_ms), Number(row.started_ms), Number(row.completed_ms));
+      }
+    }
 
     let model = estimator.empty_model();
     if (table("codex_command_mixes")) {
@@ -337,6 +341,7 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
           AND calls.call_id = result_call_id
         ORDER BY observed_ms, reasoning.source_line
       ` : "SELECT * FROM codex_reasoning ORDER BY observed_ms, source_line") : [];
+      for (const marker of markers) timing.observe("Codex", Number(marker.observed_ms));
       const sessionKey = (row: Record<string, SQLOutputValue>) => JSON.stringify([row.instance, row.session_id]);
       const sessions = Map.groupBy(spans, sessionKey);
       const bySession = Map.groupBy(markers, sessionKey);
@@ -381,33 +386,17 @@ export async function writeSnapshot(input: string, output: string, scratch: stri
         }
       }
     }
-    const ranked = timing.result();
-    const timingInsert = view.prepare("INSERT INTO timing VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-    rows(ranked.operations).forEach((row, rank) =>
-      timingInsert.run(row.clock, row.workflow, row.operation, row.stats.count,
-        seconds(metrics.mean(row.stats)), row.stats.total / 1000, row.stats.missing, rank));
-    const workflowInsert = view.prepare("INSERT INTO workflows VALUES (?, ?, ?, ?, ?, ?, ?)");
-    rows(ranked.workflows).forEach((row, rank) =>
-      workflowInsert.run(row.clock, row.workflow, row.stats.total / 1000,
-        row.stats.count, seconds(metrics.mean(row.stats)), row.stats.missing, rank));
-    const overviewInsert = view.prepare("INSERT INTO operation_totals VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-    const operations = rows(ranked.totals);
-    operations.forEach((row, rank) =>
-      overviewInsert.run(row.clock, row.operation, row.stats.count, seconds(metrics.mean(row.stats)),
-        seconds(metrics.measured_total(row.stats)), row.stats.missing, Number(metrics.operation_area(row.stats)), rank));
-    const mixInsert = view.prepare("INSERT INTO mixed_groups VALUES (?, ?, ?, ?, ?, ?, ?)");
-    rows(ranked.mixed).forEach((row, rank) =>
-      mixInsert.run(row.clock, row.operation, row.stats.count, seconds(metrics.mean(row.stats)),
-        seconds(metrics.measured_total(row.stats)), row.stats.missing, rank));
+    timing.write(view, timingCutoff);
 
     writeActionsWait(source, view, repo,
-      actionsWaitWindow ? { $: "Window", ...actionsWaitWindow } : waits.report_window(cutoff * 1000), waits);
+      actionsWaitWindow ? { $: "Window", ...actionsWaitWindow } : waits.report_window(timingCutoff), waits);
     view.exec("COMMIT");
     const from = Math.min(priorWeek, ...weeks.keys());
-    const manifest = { formatVersion: snapshotFormatVersion, generation: randomUUID(), createdAt: new Date(cutoff * 1000).toISOString(),
-      coverage: { from, to: cutoff, pullRequests: prs.length, shipped: delivery.shipped, linked: delivery.cycles.count,
+    const manifest = { formatVersion: snapshotFormatVersion, generation: randomUUID(), createdAt: new Date().toISOString(),
+      coverage: { from, to: cutoff, timingCutoffMs: timingCutoff, pullRequests: prs.length,
+        shipped: delivery.shipped, linked: delivery.cycles.count,
         rollouts: rolloutCount, traceSessions } };
-    return { from, to: cutoff, defaultTrace, traceSessions, rolloutCount, operationCount: operations.length, changedCode, manifest };
+    return { from, to: cutoff, defaultTrace, traceSessions, timingCutoff, rolloutCount, changedCode, manifest };
   } finally {
     source.close();
     view.close();
