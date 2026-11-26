@@ -80,13 +80,18 @@ test("compiled Bend2 source decisions through the SQLite import path", async () 
     const event = (s: string, payload: object) => ({ timestamp: time(s), type: "response_item", payload });
     writeFileSync(rollout, [
       { type: "session_meta", payload: { id: "session-test" } },
-      event("02.123", { type: "custom_tool_call", name: "exec", call_id: "launch", input: "a private string" }),
+      event("02.123", { type: "custom_tool_call", name: "exec", call_id: "launch",
+        input: 'const receipt = await tools.exec_command({cmd:"a private string"});' }),
+      event("02.500", { type: "reasoning", summary: [{ text: "private reasoning" }] }),
       event("03", { type: "custom_tool_call_output", call_id: "launch", output: "Script running with cell ID g10:11" }),
+      event("unknown", { type: "reasoning", content: [{ text: "unclocked reasoning" }] }),
       event("04", { type: "function_call", name: "wait", call_id: "wait", arguments: '{"cell_id":"g10:11"}' }),
       event("05", { type: "function_call_output", call_id: "wait", output: [{ text: "Script completed\nraw result" }] }),
-      event("06", { type: "custom_tool_call", name: "exec", call_id: "pending" }),
+      event("06", { type: "custom_tool_call", name: "exec", call_id: "pending", input: 'text("await tools.apply_patch(");' }),
     ].map((line) => JSON.stringify(line)).join("\n") + "\n");
     const data = await readRollout(rollout, "codex-test", policy);
+    assert.deepEqual(data.markers, [{ line: 3, at: Date.parse(time("02.500")) }]);
+    assert.deepEqual(data.calls.map(({ tool }) => tool), ["Shell command", "Cell wait", "Tool script"]);
     saveRollout(path, data);
     saveRollout(path, data);
     const db = new DatabaseSync(path, { readOnly: true });
@@ -94,11 +99,14 @@ test("compiled Bend2 source decisions through the SQLite import path", async () 
       assert.equal(db.prepare("SELECT count(*) n FROM codex_spans").get()?.n, 4);
       assert.equal(db.prepare("SELECT ended_ms-started_ms duration FROM codex_spans WHERE clock='async_cell'").get()?.duration, 2877);
       assert.equal(db.prepare("SELECT ended_ms FROM codex_calls WHERE call_id='pending'").get()?.ended_ms, null);
+      const marker = db.prepare("SELECT source_line, observed_ms FROM codex_reasoning").all();
+      assert.deepEqual(marker.map(Object.values), [[3, Date.parse(time("02.500"))]]);
       assert.equal(db.prepare("SELECT count(*) n FROM t3_runs").get()?.n, 2);
       assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
     } finally { db.close(); }
     assert.ok(!JSON.stringify(data).includes("raw result"));
     assert.ok(!JSON.stringify(data).includes("a private string"));
+    assert.ok(!JSON.stringify(data).includes("private reasoning"));
     appendFileSync(rollout, [
       event("07", { type: "function_call", name: "wait", call_id: "duplicate", arguments: '{"cell_id":"g10:11"}' }),
       event("08", { type: "function_call_output", call_id: "duplicate", output: "Script completed" }),

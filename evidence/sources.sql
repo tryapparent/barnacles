@@ -34,6 +34,12 @@ CREATE TABLE IF NOT EXISTS codex_calls (
   FOREIGN KEY (instance, session_id) REFERENCES codex_rollouts
 ) STRICT;
 
+CREATE TABLE IF NOT EXISTS codex_reasoning (
+  instance TEXT NOT NULL, session_id TEXT NOT NULL, source_line INTEGER NOT NULL, observed_ms INTEGER NOT NULL,
+  PRIMARY KEY (instance, session_id, source_line),
+  FOREIGN KEY (instance, session_id) REFERENCES codex_rollouts
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS github_prs (
   repository TEXT NOT NULL, pr_number INTEGER NOT NULL, state TEXT NOT NULL,
   opened_at INTEGER NOT NULL, merged_at INTEGER, merge_sha TEXT,

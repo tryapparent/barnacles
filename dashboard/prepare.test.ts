@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
-import { saveDelivery, saveThread } from "../evidence/sources.ts";
+import { saveDelivery, saveRollout, saveThread } from "../evidence/sources.ts";
 
 test("dashboard derives a covered comparison and preserves missing source coverage", () => {
   const parent = process.env.BARNACLES_TEST_DIRECTORY;
@@ -36,6 +36,11 @@ test("dashboard derives a covered comparison and preserves missing source covera
         pullRequests: [{ repository: repo, number: pr, source: "created", state: "merged", owning: true }],
       });
     }
+    const at = (cutoff - 1000) * 1000;
+    saveRollout(source, {
+      instance: "local", session: "point-only", lines: 5, malformed: 0, orphans: 0,
+      calls: [], markers: [{ line: 3, at }],
+    });
     const out = join(job, "out");
     execFileSync(process.execPath, ["dashboard/prepare.ts", source, out, repo], { stdio: "pipe", timeout: 60_000 });
     const db = new DatabaseSync(join(out, "dashboard.sqlite"), { readOnly: true });
@@ -44,6 +49,10 @@ test("dashboard derives a covered comparison and preserves missing source covera
       assert.deepEqual(Object.values(summary!), [2, 2, "Gardening", 3600]);
       assert.equal(db.prepare("SELECT count(*) AS n FROM time_map").get()?.n, 0);
       assert.equal(db.prepare("SELECT count(*) AS n FROM trace").get()?.n, 0);
+      assert.deepEqual(Object.values(db.prepare("SELECT session, started, ended FROM trace_windows").get()!),
+        [1, at - 1000, at + 1000]);
+      assert.deepEqual(Object.values(db.prepare("SELECT session, source_line, observed FROM trace_reasoning").get()!),
+        [1, 3, at]);
       const config = JSON.parse(readFileSync(join(out, "dashboards/shipping.json"), "utf8"));
       assert.equal(config.uid, "barnacles-shipping");
       assert.ok(config.panels.some(({ type }: { type: string }) => type === "marcusolsson-treemap-panel"));

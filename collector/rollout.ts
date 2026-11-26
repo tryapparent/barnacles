@@ -29,9 +29,19 @@ function waitTarget(input: unknown): string {
   } catch { return ""; }
 }
 
+function scriptShape(input: unknown): [string, boolean] {
+  if (typeof input !== "string") return ["", false];
+  const head = input.slice(0, 256).replace(/^\/\/ @exec: [^\n]*\n/, "").trimStart();
+  const first = head.replace(/^(?:(?:const|let) [\w$]+\s*=\s*|(?:text|image|audio|generatedImage)\(\s*)/, "")
+    .replace(/^\(\s*/, "");
+  const method = /^await\s+tools\.([\w$]+)\s*\(/.exec(first)?.[1] ?? "";
+  return [method, /^await\s+Promise\.all(?:Settled)?\s*\(\s*\[/.test(first)];
+}
+
 export async function readRollout(path: string, instance: string, policy: SourcePolicy): Promise<RolloutEvidence> {
   const file = await open(path);
   const calls = new Map<string, unknown>();
+  const markers: RolloutEvidence["markers"] = [];
   let session = "";
   let lineNumber = 0;
   let malformed = 0;
@@ -57,21 +67,24 @@ export async function readRollout(path: string, instance: string, policy: Source
         continue;
       }
       if (!session) { malformed++; continue; }
-      const type = event.type;
+      const type = str(event.type);
+      const metadata = event.internal_chat_message_metadata_passthrough as { create_time?: unknown } | undefined;
+      const original = metadata?.create_time;
+      const timestamp = (typeof original === "number" ? validMillis(Math.round(original * 1000)) : 0) || millis(envelope.timestamp);
+      const at = point(timestamp);
+      if (policy.reasoning(type, at)) markers.push({ line: lineNumber, at: timestamp });
       if (type !== "function_call" && type !== "custom_tool_call" &&
           type !== "function_call_output" && type !== "custom_tool_call_output") continue;
       const id = str(event.call_id);
       if (!/^[\w:-]+$/.test(id)) { malformed++; continue; }
-      const metadata = event.internal_chat_message_metadata_passthrough as { create_time?: unknown } | undefined;
-      const original = metadata?.create_time;
-      const timestamp = typeof original === "number" ? validMillis(Math.round(original * 1000)) : millis(envelope.timestamp);
       const state = calls.get(id) ?? unseen;
       if (type === "function_call" || type === "custom_tool_call") {
-        calls.set(id, policy.start_call(state, lineNumber, str(event.name), point(timestamp), waitTarget(event.arguments)));
+        const observed = policy.tool(str(event.name), ...scriptShape(event.input));
+        calls.set(id, policy.start_call(state, lineNumber, observed, at, waitTarget(event.arguments)));
       } else {
         const header = outputHeader(event.output);
         const yielded = /^Script running with cell ID ([\w:.-]+)/.exec(header)?.[1] ?? "";
-        calls.set(id, policy.finish_call(state, point(timestamp), yielded, /^Script completed(?:\s|$)/.test(header)));
+        calls.set(id, policy.finish_call(state, at, yielded, /^Script completed(?:\s|$)/.test(header)));
       }
     }
   } finally {
@@ -98,5 +111,5 @@ export async function readRollout(path: string, instance: string, policy: Source
       end: toMillis(record.finish), async: record.launched, ambiguous: record.ambiguous,
       ...(links.get(id) ?? { asyncEnd: null, terminalCall: null }) });
   }
-  return { instance: token(instance), session, lines: lineNumber, malformed, orphans, calls: records };
+  return { instance: token(instance), session, lines: lineNumber, malformed, orphans, calls: records, markers };
 }

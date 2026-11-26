@@ -31,7 +31,7 @@ async function main() {
     } else if (command === "rollout") {
       const data = await readRollout(second, first, policy);
       saveRollout(db, data);
-      console.log(`Imported ${data.calls.length} tool calls, ${data.calls.filter((call) => call.asyncEnd !== null).length} linked async cells`);
+      console.log(`Imported ${data.calls.length} tool calls, ${data.calls.filter((call) => call.asyncEnd !== null).length} linked async cells, and ${data.markers.length} reasoning markers`);
     } else if (command === "github") {
       const pr = pullRequest(first, positiveInt(second), policy);
       saveDelivery(db, pr);

@@ -16,6 +16,9 @@ type Metrics = {
   record_release(sample: Shipping, linked: boolean, elapsedMs: number): Shipping;
   visible_release(channel: string, published: number): boolean;
   codex_clock(clock: string): string;
+  trace_operation(clock: string, tool: string): string;
+  extend_window(window: TraceWindow, start: number, end: number): TraceWindow;
+  trace_window(focus: TraceWindow, bounds: TraceWindow, fallback: number): TraceWindow;
   focus(window: TraceWindow, clock: string, start: number, end: number): TraceWindow;
   record_interval(sample: Stats, start: number, end: number): Stats;
   mean(sample: Stats): Ratio;
@@ -40,6 +43,7 @@ function writeSnapshot(input: string, output: string, repo: string, policy: Sour
   const table = (name: string) => Boolean(source.prepare("SELECT 1 FROM sqlite_schema WHERE name=?").get(name));
   try {
     view.exec(`
+      BEGIN IMMEDIATE;
       CREATE TABLE coverage(snapshot INTEGER, pr_count INTEGER, shipped INTEGER, linked INTEGER,
         prior_week INTEGER, recent_week INTEGER, prior_count INTEGER, recent_count INTEGER,
         direction TEXT, dial INTEGER, delta_seconds REAL);
@@ -54,6 +58,9 @@ function writeSnapshot(input: string, output: string, repo: string, policy: Sour
         mean_seconds REAL, unmeasured INTEGER, rank INTEGER);
       CREATE TABLE trace(session INTEGER, lane TEXT, clock TEXT, started INTEGER, ended INTEGER);
       CREATE TABLE trace_windows(session INTEGER, started INTEGER, ended INTEGER);
+      CREATE TABLE trace_reasoning(session INTEGER, source_line INTEGER, observed INTEGER,
+        PRIMARY KEY (session, source_line));
+      CREATE INDEX trace_reasoning_window ON trace_reasoning(session, observed);
     `);
     const url = (number: number) => `https://github.com/${repo}/pull/${number}`;
     const prs = table("github_prs") ? deliveryReport(input, policy).filter((row) => row.repository === repo) : [];
@@ -128,29 +135,37 @@ function writeSnapshot(input: string, output: string, repo: string, policy: Sour
     const traceWindows = [];
     if (table("codex_spans")) {
       const spans = all("SELECT * FROM codex_spans ORDER BY started_ms, source_line, clock");
-      const sessions = Map.groupBy(spans, (row) => JSON.stringify([row.instance, row.session_id]));
+      const markers = table("codex_reasoning") ? all("SELECT * FROM codex_reasoning ORDER BY observed_ms, source_line") : [];
+      const sessionKey = (row: Record<string, SQLOutputValue>) => JSON.stringify([row.instance, row.session_id]);
+      const sessions = Map.groupBy(spans, sessionKey);
+      const bySession = Map.groupBy(markers, sessionKey);
+      for (const key of bySession.keys()) if (!sessions.has(key)) sessions.set(key, []);
       const insert = view.prepare("INSERT INTO trace VALUES (?, ?, ?, ?, ?)");
+      const mark = view.prepare("INSERT INTO trace_reasoning VALUES (?, ?, ?)");
       const windows = view.prepare("INSERT INTO trace_windows VALUES (?, ?, ?)");
-      for (const rows of sessions.values()) {
+      for (const [key, rows] of sessions) {
         const session = traceWindows.length + 1;
         let focus: TraceWindow = { $: "Window", from: 0, to: 0 };
-        let first = 0;
-        let last = 0;
+        let bounds = focus;
         for (const row of rows) {
           const clock = metrics.codex_clock(String(row.clock));
           add(clock, 0, String(row.tool), Number(row.started_ms ?? 0), Number(row.ended_ms ?? 0));
           if (row.started_ms !== null) {
-            insert.run(session, `${row.source_line} · ${row.clock === "async_cell" ? "async cell" : row.tool}`,
+            insert.run(session, `${row.source_line} · ${metrics.trace_operation(String(row.clock), String(row.tool))}`,
               clock, row.started_ms, row.ended_ms);
             const started = Number(row.started_ms);
             const ended = Number(row.ended_ms ?? started);
-            first ||= started;
-            last = Math.max(ended, last);
+            bounds = metrics.extend_window(bounds, started, ended);
             focus = metrics.focus(focus, String(row.clock), started, Number(row.ended_ms ?? 0));
           }
         }
-        const window = { session, from: (focus.from || first || cutoff * 1000) - 1000,
-          to: (focus.to || last || cutoff * 1000) + 1000 };
+        for (const row of bySession.get(key) ?? []) {
+          mark.run(session, row.source_line, row.observed_ms);
+          const observed = Number(row.observed_ms);
+          bounds = metrics.extend_window(bounds, observed, observed);
+        }
+        const limits = metrics.trace_window(focus, bounds, cutoff * 1000);
+        const window = { session, from: limits.from - 1000, to: limits.to + 1000 };
         windows.run(session, window.from, window.to);
         traceWindows.push(window);
       }
@@ -171,6 +186,7 @@ function writeSnapshot(input: string, output: string, repo: string, policy: Sour
       if (stats.total) mapInsert.run(clock, stats.total / 1000, rank);
     });
 
+    view.exec("COMMIT");
     return { from: Math.min(priorWeek, ...weeks.keys()), to: cutoff, traceWindows };
   } finally {
     source.close();
