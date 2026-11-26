@@ -65,9 +65,12 @@ The snapshot runs the compiled Bend2 projections in `evidence/projection/`. The
 shipping policy groups observed releases by UTC week, counts missing clocks per
 delivery stage, and assembles milestones. The trace policy joins optional labels
 and reasoning provenance by the source instance and session, projects parent
-spans and model-wait estimates, and ranks the default session. Timing detail
-selectors are projected before Grafana binds the selected clock, workflow, and
-operation. They preserve the existing **Mixed** drilldown and workflow filters.
+spans and model-wait estimates, and ranks the default session. The timing policy expands Actions jobs into queue and execution intervals,
+orders all intervals by start, and builds the ranked reports for both windows.
+Its merge passes use tail recursion because the pinned Bend2 list sort
+exhausts the JavaScript call stack on large imports.
+It projects the timing detail selectors before Grafana binds the chosen clock,
+workflow, and operation, including the **Mixed** drilldown.
 
 The existing host paths `evidence/projection/snapshot.ts`,
 `evidence/projection/timing.ts`, `evidence/projection/trace.ts`, and
@@ -76,9 +79,13 @@ Bend2, and encode rows and JSON for consumers. The raw trace read uses the
 existing `codex_spans` storage view. The Actions and T3 reads resolve foreign
 keys to retrieve recorded workflow and thread fields. The dashboard adapter
 keeps Grafana provisioning and parameter binding in `dashboard/panels.ts` and
-OTLP encoding in `dashboard/trace.ts`.
+the OTLP JSON adapter in `dashboard/trace.ts`. Bend2 supplies the trace ID
+inputs, span order, hierarchy, names, attributes, events, and decimal
+nanosecond clocks. The adapter applies SHA-256 and the OTLP JSON field layout.
 
 Run `npm run verify -- evidence dashboard` to exercise the compiled policies
 through snapshot preparation and the Actions report CLI with synthetic evidence.
 The dashboard fixture covers Mixed selectors, incomplete clocks, a reasoning-only
-session, and a source without optional trace metadata.
+session, and a source without optional trace metadata. The timing fixture
+checks that 20,000 CI steps with overlapping clocks produce the expected
+summed and union durations.

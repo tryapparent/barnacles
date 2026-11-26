@@ -244,8 +244,36 @@ def timing_before(left: TimingRow, right: TimingRow) -> Bool:
     case Timing{a, ac, aw, ao, Stats{an, x, am}} Timing{b, bc, bw, bo, Stats{bn, y, bm}}:
       ranks_before(x, a, y, b)
 
+def sort_merge_pass(~A: Data, ~before: A -> A -> Bool, +size: Nat, runs: List<&2, List<&2, A>>,
+                    output: List<&2, List<&2, A>>) -> List<&2, List<&2, A>>:
+  match runs:
+    case []: List.reverse(&2, List<&2, A>, output)
+    case [run]: List.reverse(&2, List<&2, A>, run <> output)
+    case first <> second <> tail:
+      sort_merge_pass(~A, ~before, size, tail, List.merge.go(~A, ~before, size, ([], first, second)) <> output)
+
+def sort_merge_runs(~A: Data, ~before: A -> A -> Bool, fuel: Nat, +size: Nat, runs: List<&2, List<&2, A>>) ->
+    List<&2, A>:
+  match fuel:
+    case 0n: List.concat(&2, A, runs)
+    case 1n+remaining:
+      match runs:
+        case []: []
+        case [run]: run
+        case _:
+          sort_merge_runs(~A, ~before, remaining, size, sort_merge_pass(~A, ~before, size, runs, []))
+
+def sort_runs(~A: Data, ~before: A -> A -> Bool, input: List<&2, A>, +size: Nat,
+              runs: List<&2, List<&2, A>>) -> List<&2, A>:
+  match input:
+    case []: sort_merge_runs(~A, ~before, size, size, List.reverse(&2, List<&2, A>, runs))
+    case item <> tail: sort_runs(~A, ~before, tail, Nat.add(size, 1n), [item] <> runs)
+
+def sort_timing(~A: Data, ~before: A -> A -> Bool, input: List<&2, A>) -> List<&2, A>:
+  sort_runs(~A, ~before, input, 0n, [])
+
 def timing_rank(groups: Map<&2, TimingRow>) -> List<&2, TimingRow>:
-  List.sort(~TimingRow, ~timing_before, Map.values(&2, TimingRow, groups))
+  sort_timing(~TimingRow, ~timing_before, Map.values(&2, TimingRow, groups))
 
 def timing_result(groups: TimingGroups) -> TimingResult:
   match groups:
@@ -441,9 +469,6 @@ def source_position(window: Focus, +latest: Nat) -> String:
 def timing_clocks() -> List<&2, String>:
   ["Tool envelopes", "Async cells", "CI queue", "CI execution", "CI steps"]
 
-def starts_before(left: Nat, right: Nat) -> Bool:
-  Nat.is_lt(left, right)
-
 type WindowRow is Data:
   WindowRow{key: String, clock: String, workflow: Nat, operation: String, occupancy: Occupancy}
 
@@ -513,7 +538,7 @@ def window_before(left: WindowRow, right: WindowRow) -> Bool:
       ranks_before(x, a, y, b)
 
 def rank_window_rows(table: Map<&2, WindowRow>) -> List<&2, WindowRow>:
-  List.sort(~WindowRow, ~window_before, Map.values(&2, WindowRow, table))
+  sort_timing(~WindowRow, ~window_before, Map.values(&2, WindowRow, table))
 
 def summarize_window(groups: WindowGroups) -> WindowSummary:
   match groups:
@@ -545,3 +570,50 @@ def window_mixed_selectors(row: WindowRow) -> List<&2, TimingSelector>:
   match row:
     case WindowRow{key, clock, workflow, +operation, occupancy}:
       [Selector{"*", "Mixed"}, Selector{"0", "Mixed"}, Selector{"*", operation}, Selector{"0", operation}]
+
+type TimingSpan is Data:
+  TimingSpan{clock: String, workflow: Nat, operation: String, start: Nat, end: Nat, codex: Bool}
+
+type WindowReport is Data:
+  WindowReport{key: String, bounds: Focus, summary: WindowSummary}
+
+def empty_window_spans() -> List<&2, TimingSpan>:
+  []
+
+def window_action_job(spans: List<&2, TimingSpan>, +workflow: Nat, +name: String, created: Nat, queued: Nat,
+                      started: Nat, ended: Nat) -> List<&2, TimingSpan>:
+  TimingSpan{"ci_execution", workflow, name, started, ended, False{}} <>
+    TimingSpan{"ci_queue", workflow, name, created, queued, False{}} <> spans
+
+def window_action_step(spans: List<&2, TimingSpan>, workflow: Nat, name: String, started: Nat, ended: Nat) ->
+    List<&2, TimingSpan>:
+  TimingSpan{"ci_step", workflow, name, started, ended, False{}} <> spans
+
+def window_codex_span(spans: List<&2, TimingSpan>, clock: String, categories: String, start: Nat, end: Nat) ->
+    List<&2, TimingSpan>:
+  TimingSpan{clock, 0n, categories, start, end, True{}} <> spans
+
+def window_span_before(left: TimingSpan, right: TimingSpan) -> Bool:
+  match left right:
+    case TimingSpan{a, b, c, start, d, e} TimingSpan{f, g, h, other_start, i, j}:
+      Nat.is_lt(start, other_start)
+
+def window_group_spans(spans: List<&2, TimingSpan>, +bounds: Focus, state: WindowGroups) -> WindowSummary:
+  match spans:
+    case []: summarize_window(state)
+    case TimingSpan{clock, workflow, operation, start, end, codex} <> tail:
+      window_group_spans(tail, bounds, window_observe(state, bounds, clock, workflow, operation, start, end, codex))
+
+def window_reports_for(windows: List<&2, TimingWindow>, +spans: List<&2, TimingSpan>) -> List<&2, WindowReport>:
+  match windows:
+    case []: []
+    case TimingWindow{key, +bounds} <> tail:
+      WindowReport{key, bounds, window_group_spans(spans, bounds, start_window_groups())} <> window_reports_for(tail, spans)
+
+def window_reports(spans: List<&2, TimingSpan>, cutoff: Nat) -> List<&2, WindowReport>:
+  window_reports_for(timing_windows(cutoff), sort_timing(~TimingSpan, ~window_span_before, spans))
+
+def measured_union(occupancy: Occupancy) -> Ratio:
+  match occupancy:
+    case Occupied{Stats{count, total, missing}, union, latest_end, unplaced}:
+      Fraction{union, Nat.min(1n, count)}

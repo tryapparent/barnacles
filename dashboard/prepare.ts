@@ -25,8 +25,8 @@ async function main() {
     const payloads = openSync(join(staging, "tempo.ndjson"), "wx", 0o600);
     try {
       const range = await writeSnapshot(resolve(input), join(staging, "dashboard.sqlite"), scratch, repo,
-        cutoff, (key, trace) => {
-          const { traceId, payload } = encodeTrace(key, trace);
+        cutoff, (_key, _trace, wire) => {
+          const { traceId, payload } = encodeTrace(wire());
           writeSync(payloads, JSON.stringify(payload) + "\n");
           return traceId;
         }, undefined, timingCutoff);

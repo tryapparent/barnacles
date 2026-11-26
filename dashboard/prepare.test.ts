@@ -166,14 +166,19 @@ test("dashboard derives a covered comparison and preserves missing source covera
       assert.ok(!JSON.stringify(full).includes("Tool script"));
       assert.equal(envelopeOnly.length, 8);
       const [window, ...spans] = full;
+      assert.equal(window.traceId, "695719703bc0fad47217c2cd16ef4ff6");
+      assert.equal(window.spanId, "39e4bba7420737a5");
+      assert.equal(Object.hasOwn(window, "parentSpanId"), false);
       const estimates = spans.filter((span: { name: string }) => span.name === "Estimated model wait");
       assert.equal(estimates.length, 1);
+      assert.equal(estimates[0].spanId, "e8edc28e125acea2");
       assert.equal(estimates[0].parentSpanId, window.spanId);
       assert.equal(estimates[0].startTimeUnixNano, ((BigInt(at) + 600n) * 1_000_000n).toString());
       assert.equal(estimates[0].endTimeUnixNano, ((BigInt(at) + 650n) * 1_000_000n).toString());
       const cell = spans.find((span: { name: string }) => span.name === "Async cell · Git inspection +1");
       const launch = spans.find((span: { name: string }) => span.name === "Git inspection +1");
       assert.equal(window.traceId, db.prepare("SELECT trace_id FROM trace_windows WHERE session=1").get()?.trace_id);
+      assert.equal(cell.spanId, "f1580dc4d6ea1977");
       assert.equal(cell.parentSpanId, window.spanId);
       assert.equal(launch.parentSpanId, cell.spanId);
       assert.ok(launch.attributes.some(({ key, value }: { key: string; value: { stringValue?: string } }) =>
@@ -358,6 +363,19 @@ test("timing windows clip spans, count overlap once and preserve unknown clocks"
           async: false, asyncEnd: null, terminalCall: null, ambiguous: false }],
       } }, admission);
     }
+    const jobStart = day / 1000 + 1;
+    const steps = Array.from({ length: 20_000 }, (_, index) => {
+      const start = jobStart + (index * 177) % 10_000;
+      return { number: index + 1, label: "Compile", status: "completed", conclusion: "success", start, end: start + 1 };
+    });
+    loadEvidence(source, { source: "github-actions", attempt: {
+      repository: "synthetic/example", runId: 1, workflowId: 1, attempt: 1, sha: "a".repeat(40),
+      status: "completed", conclusion: "success", createdAt: jobStart, startedAt: jobStart,
+      sourceUpdated: jobStart + 10_000, observedAt: jobStart + 10_001, jobs: [{
+        id: 1, label: "Build", status: "completed", conclusion: "success", created: jobStart,
+        priorExecution: false, queueEnd: jobStart, executionStart: jobStart, executionEnd: jobStart + 10_000, steps,
+      }],
+    } }, admission);
     execFileSync(process.execPath, ["dashboard/prepare.ts", source, out, "synthetic/example",
       new Date(upper).toISOString()], { stdio: "pipe", timeout: 60_000 });
     const db = new DatabaseSync(join(out, "dashboard.sqlite"), { readOnly: true });
@@ -372,7 +390,7 @@ test("timing windows clip spans, count overlap once and preserve unknown clocks"
       ]);
       assert.deepEqual(clock.all("CI steps").map(Object.values), [
         ["1h", 0, null, null, 0, 0],
-        ["24h", 0, null, null, 0, 0],
+        ["24h", 20_000, 20_000, 10_000, 0, 0],
       ]);
       const config = JSON.parse(readFileSync(join(out, "dashboards/shipping.json"), "utf8"));
       const ranked = config.panels.find(({ id }: { id: number }) => id === 10);
@@ -383,7 +401,7 @@ test("timing windows clip spans, count overlap once and preserve unknown clocks"
       assert.deepEqual(rows("'1h'"), [["Build", 25, 22, 4, 6.25], ["Git", 8, 8, 1, 8]]);
       assert.deepEqual(rows("'24h'"), [["Build", 36, 33, 6, 6], ["Git", 13, 13, 1, 13]]);
       assert.equal(db.prepare("SELECT position FROM source_bounds WHERE source='Actions' AND window='1h'").get()?.position,
-        "No observed timestamps");
+        "Before window");
     } finally { db.close(); }
   } finally { rmSync(job, { recursive: true, force: true }); }
 });

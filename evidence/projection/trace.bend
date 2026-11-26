@@ -289,3 +289,83 @@ def choose_trace(+best: TraceChoice, session: Nat, +trace_id: String, bounds: Me
       +mixed = Metrics.trace_preference(cells, count)
       Bool.pick(TraceChoice, Bool.and(Bool.not(String.eq(trace_id, "")), Metrics.trace_preferred(to, mixed, old_to, old_mixed)),
         TraceChoice{session, trace_id, from, to, mixed}, best)
+
+type TraceAttribute is Data:
+  TextAttribute{key: String, value: String}
+  IntAttribute{key: String, value: String}
+
+type TraceEvent is Data:
+  Event{name: String, time: String, attributes: List<&2, TraceAttribute>}
+
+type TraceWireSpan is Data:
+  WireSpan{id: List<&2, String>, parent: Maybe<&2, List<&2, String>>, name: String, kind: U32, start: String,
+    end: String, attributes: List<&2, TraceAttribute>, events: Maybe<&2, List<&2, TraceEvent>>}
+
+type TraceWire is Data:
+  WireTrace{id: List<&2, String>, resource: List<&2, TraceAttribute>, scope: String, spans: List<&2, TraceWireSpan>}
+
+def otlp_nanos(+ms: Nat) -> String:
+  Bool.pick(String, Nat.is_eq(ms, 0n), "0", String.append(Nat.show(ms), "000000"))
+
+def trace_event(marker: Reasoning) -> TraceEvent:
+  match marker:
+    case Reasoning{line, at, result_at, result_call_line}:
+      Event{"Reasoning recorded", otlp_nanos(at), [IntAttribute{"barnacles.source_line", Nat.show(line)}]}
+
+def trace_events(markers: List<&2, Reasoning>, output: List<&2, TraceEvent>) -> List<&2, TraceEvent>:
+  match markers:
+    case []: output
+    case marker <> tail: trace_events(tail, trace_event(marker) <> output)
+
+def root_id(key: String) -> List<&2, String>:
+  ["barnacles-codex-window", key]
+
+def measured_id(key: String, call: String, clock: String) -> List<&2, String>:
+  ["barnacles-codex-span", key, call, clock]
+
+def parent_id(+key: String, parent: Maybe<&2, String>) -> List<&2, String>:
+  match parent:
+    case None{}: root_id(key)
+    case Some{call}: measured_id(key, call, "async_cell")
+
+def measured_attributes(+clock: String, line: Nat, +command: String, +categories: String, tool: String) ->
+    List<&2, TraceAttribute>:
+  +category_fields = Bool.pick(List<&2, TraceAttribute>, String.eq(categories, ""), [],
+    [TextAttribute{"barnacles.categories", categories}, TextAttribute{"barnacles.tool", tool}])
+  TextAttribute{"barnacles.clock", clock} <> IntAttribute{"barnacles.source_line", Nat.show(line)} <>
+    Bool.pick(List<&2, TraceAttribute>, String.eq(command, ""), category_fields,
+      TextAttribute{"barnacles.submitted_command", command} <> category_fields)
+
+def trace_measured(+key: String, span: Measured) -> TraceWireSpan:
+  match span:
+    case Measured{call, terminal, parent, line, tool, command, categories, +clock, start, end, name}:
+      WireSpan{measured_id(key, call, clock), Some{parent_id(key, parent)}, name, 1, otlp_nanos(start), otlp_nanos(end),
+        measured_attributes(clock, line, command, categories, tool), None{}}
+
+def trace_estimate(+key: String, marker: Reasoning) -> TraceWireSpan:
+  match marker:
+    case Reasoning{+line, at, result_at, result_call_line}:
+      WireSpan{["barnacles-model-wait-estimate", key, Nat.show(line)], Some{root_id(key)}, "Estimated model wait", 1,
+        otlp_nanos(result_at), otlp_nanos(at), [TextAttribute{"barnacles.clock", "model_wait_estimate"},
+          TextAttribute{"barnacles.estimate_basis", "Tool result to recorded reasoning"},
+          IntAttribute{"barnacles.tool_call_line", Nat.show(result_call_line)},
+          IntAttribute{"barnacles.reasoning_line", Nat.show(line)}], None{}}
+
+def trace_estimates(+key: String, estimates: List<&2, Reasoning>, output: List<&2, TraceWireSpan>) -> List<&2, TraceWireSpan>:
+  match estimates:
+    case []: output
+    case marker <> tail: trace_estimates(key, tail, trace_estimate(key, marker) <> output)
+
+def trace_wire_spans(+key: String, spans: List<&2, Measured>, output: List<&2, TraceWireSpan>) -> List<&2, TraceWireSpan>:
+  match spans:
+    case []: output
+    case span <> tail: trace_wire_spans(key, tail, trace_measured(key, span) <> output)
+
+def trace_wire(+key: String, result: TraceResult) -> TraceWire:
+  match result:
+    case TraceResult{observations, Metrics.Window{from, to}, spans, markers, estimates, coverage, reasoning_count}:
+      root : TraceWireSpan = WireSpan{root_id(key), None{}, "Recorded session window", 1, otlp_nanos(from), otlp_nanos(to),
+        [TextAttribute{"barnacles.clock", "observation_window"}], Some{trace_events(List.reverse(&2, Reasoning, markers), [])}}
+      WireTrace{["barnacles-codex-trace", key], [TextAttribute{"service.name", "codex"}], "barnacles",
+        root <> trace_wire_spans(key, List.reverse(&2, Measured, spans),
+          trace_estimates(key, List.reverse(&2, Reasoning, estimates), []))}

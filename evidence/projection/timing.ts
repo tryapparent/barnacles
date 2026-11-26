@@ -10,20 +10,21 @@ export const millis = (time: SQLOutputValue) => Number(time ?? 0) * 1000;
 
 type Bounds = { $: "Window"; from: number; to: number };
 type WindowRow = Pick<Timing, "clock" | "workflow" | "operation"> & { occupancy: { stats: Stats; union: number; unplaced: number } };
-type Span = { clock: IntervalClock; workflow: number; operation: string; start: number; end: number; codex: boolean };
 
+type WindowSummary = { clocks: List<WindowRow>; operations: List<WindowRow>; workflows: List<WindowRow>;
+  totals: List<WindowRow>; mixed: List<WindowRow> };
 type TimingSelector = { workflow: string; operation: string };
 
 export type TimingPolicy = {
-  timing_windows(cutoff: number): List<{ key: string; bounds: Bounds }>;
-  starts_before(left: number, right: number): boolean;
   observe_timestamp(bounds: Bounds, at: number): Bounds;
   source_position(bounds: Bounds, latest: number): string;
-  start_window_groups(): unknown;
-  window_observe(state: unknown, bounds: Bounds, clock: string, workflow: number, operation: string,
-    start: number, end: number, codex: boolean): unknown;
-  summarize_window(state: unknown): { clocks: List<WindowRow>; operations: List<WindowRow>; workflows: List<WindowRow>;
-    totals: List<WindowRow>; mixed: List<WindowRow> };
+  empty_window_spans(): unknown;
+  window_action_job(spans: unknown, workflow: number, name: string, created: number, queued: number,
+    started: number, ended: number): unknown;
+  window_action_step(spans: unknown, workflow: number, name: string, start: number, end: number): unknown;
+  window_codex_span(spans: unknown, clock: string, categories: string, start: number, end: number): unknown;
+  window_reports(spans: unknown, cutoff: number): List<{ key: string; bounds: Bounds; summary: WindowSummary }>;
+  measured_union(occupancy: WindowRow["occupancy"]): Ratio;
   window_operation_selectors(row: WindowRow, groups: List<WindowRow>, total: boolean): List<TimingSelector>;
   window_mixed_selectors(row: WindowRow): List<TimingSelector>;
   mean(sample: Stats): Ratio;
@@ -42,7 +43,7 @@ type TimingSource = typeof sourceNames[number];
 export function collectTiming(source: DatabaseSync, repo: string, metrics: TimingPolicy, windowed = false) {
   const all = (sql: string) => source.prepare(sql).all(repo);
   let state = metrics.empty_timing();
-  const spans: Span[] = [];
+  let spans = metrics.empty_window_spans();
   const emptyBounds: Bounds = { $: "Window", from: 0, to: 0 };
   const sourceClocks = new Map(sourceNames.map((name) => [name, { observed: emptyBounds, receipt: emptyBounds }]));
   function observe(name: TimingSource, ...timestamps: number[]) {
@@ -60,10 +61,6 @@ export function collectTiming(source: DatabaseSync, repo: string, metrics: Timin
       receive("Actions", millis(row.observed_at));
     }
   }
-  function add(clock: IntervalClock, id: number, operation: string, start: number, end: number) {
-    observe("Actions", start, end);
-    spans.push({ clock, workflow: id, operation, start, end, codex: false });
-  }
   if (exists.get("action_jobs")) {
     for (const row of all(`
       SELECT workflow_id, label, action_jobs.created_at, queue_end, execution_start, execution_end
@@ -76,8 +73,8 @@ export function collectTiming(source: DatabaseSync, repo: string, metrics: Timin
       const started = millis(row.execution_start);
       const ended = millis(row.execution_end);
       if (windowed) {
-        add("ci_queue", workflow, label, queued, queueEnd);
-        add("ci_execution", workflow, label, started, ended);
+        observe("Actions", queued, queueEnd, started, ended);
+        spans = metrics.window_action_job(spans, workflow, label, queued, queueEnd, started, ended);
       } else {
         state = metrics.timing_action_job(state, workflow, label, queued, queueEnd, started, ended);
       }
@@ -90,14 +87,16 @@ export function collectTiming(source: DatabaseSync, repo: string, metrics: Timin
       const label = String(row.label);
       const started = millis(row.started_at);
       const ended = millis(row.completed_at);
-      if (windowed) add("ci_step", workflow, label, started, ended);
-      else state = metrics.timing_action_step(state, workflow, label, started, ended);
+      if (windowed) {
+        observe("Actions", started, ended);
+        spans = metrics.window_action_step(spans, workflow, label, started, ended);
+      } else state = metrics.timing_action_step(state, workflow, label, started, ended);
     }
   }
   return {
     observeCodex(clock: IntervalClock, categories: string, start: number, end: number) {
       observe("Codex", start, end);
-      spans.push({ clock, workflow: 0, operation: categories, start, end, codex: true });
+      spans = metrics.window_codex_span(spans, clock, categories, start, end);
     },
     result: () => metrics.timing_result(state),
     observe, receive,
@@ -133,23 +132,17 @@ export function collectTiming(source: DatabaseSync, repo: string, metrics: Timin
       const totals = view.prepare("INSERT INTO operation_totals VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
       const mixed = view.prepare("INSERT INTO mixed_groups VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
       const selection = view.prepare("INSERT INTO timing_selection VALUES (?, ?, ?, ?, ?, ?)");
-      const stats = ({ occupancy: { stats, union } }: WindowRow) => [
-        stats.count, seconds(metrics.mean(stats)), seconds(metrics.measured_total(stats)),
-        stats.count ? union / 1000 : null, stats.missing,
+      const stats = ({ occupancy }: WindowRow) => [
+        occupancy.stats.count, seconds(metrics.mean(occupancy.stats)), seconds(metrics.measured_total(occupancy.stats)),
+        seconds(metrics.measured_union(occupancy)), occupancy.stats.missing,
       ] as const;
-      spans.sort((a, b) => Number(metrics.starts_before(b.start, a.start)) - Number(metrics.starts_before(a.start, b.start)));
-      for (const { key, bounds } of rows(metrics.timing_windows(cutoff))) {
+      for (const { key, bounds, summary: report } of rows(metrics.window_reports(spans, cutoff))) {
         windows.run(key, bounds.from, bounds.to);
         sourceNames.forEach((name, ordinal) => {
           const { observed, receipt } = sourceClocks.get(name)!;
           sources.run(key, ordinal, name, observed.from || null, observed.to || null,
             receipt.to || null, metrics.source_position(bounds, observed.to));
         });
-        let state = metrics.start_window_groups();
-        for (const { clock, workflow, operation, start, end, codex } of spans) {
-          state = metrics.window_observe(state, bounds, clock, workflow, operation, start, end, codex);
-        }
-        const report = metrics.summarize_window(state);
         for (const row of rows(report.clocks)) {
           const [count, , total, union, missing] = stats(row);
           clocks.run(key, row.clock, count, total, union, missing, row.occupancy.unplaced);

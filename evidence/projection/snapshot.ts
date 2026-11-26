@@ -5,7 +5,7 @@ import { deliveryPolicy, readDelivery, type DeliveryPolicy } from "../delivery/d
 import type { AttemptIdentity } from "../storage/actions.ts";
 import type { List } from "../storage/sources.ts";
 import { collectTiming, millis, rows, seconds, type Stats, type TimingPolicy } from "./timing.ts";
-import { writeTraces, type TracePolicy, type TraceProjection } from "./trace.ts";
+import { writeTraces, type TracePolicy, type TraceWriter } from "./trace.ts";
 
 type Shipping = { $: "Delivery"; shipped: number; cycles: Stats };
 type CycleStage = { $: "Measured"; ms: number } | { $: "Missing" };
@@ -177,7 +177,7 @@ function writeActionsWait(source: DatabaseSync, view: DatabaseSync, repo: string
 }
 
 export async function writeSnapshot(input: string, output: string, scratch: string, repo: string, cutoff: number,
-  writeTrace: (key: string, trace: TraceProjection) => string, actionsWaitWindow?: ActionWaitWindow, timingCutoff = cutoff * 1000) {
+  writeTrace: TraceWriter, actionsWaitWindow?: ActionWaitWindow, timingCutoff = cutoff * 1000) {
   const [deliveryModule, metricModule, modelModule, traceModule, waitModule] = await buildPolicies(scratch, [
     [deliveryPolicy, "delivery.mjs"],
     [new URL("./metrics.bend", import.meta.url), "metrics.mjs"],
