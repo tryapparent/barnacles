@@ -270,7 +270,7 @@ function writeSnapshot(input: string, output: string, otlp: string, repo: string
         seconds(metrics.measured_total(row.stats)), row.stats.missing, rank));
 
     view.exec("COMMIT");
-    return { from: Math.min(priorWeek, ...weeks.keys()), to: cutoff, defaultTrace, traceSessions };
+    return { from: Math.min(priorWeek, ...weeks.keys()), to: cutoff, defaultTrace, traceSessions, operationCount: operations.size };
   } finally {
     closeSync(payloads);
     source.close();

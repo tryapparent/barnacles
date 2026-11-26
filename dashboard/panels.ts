@@ -7,7 +7,7 @@ const timingPath = "/d/barnacles-timing/timing";
 const tracePath = "/d/barnacles-trace/trace";
 
 type Window = { from: number; to: number };
-type Range = Window & { traceSessions: number; defaultTrace?: Window & { session: number; traceId: string } };
+type Range = Window & { operationCount: number; traceSessions: number; defaultTrace?: Window & { session: number; traceId: string } };
 type FieldProperty = { id: string; value: unknown };
 type Override = { matcher: { id: string; options: string }; properties: FieldProperty[] };
 
@@ -74,6 +74,11 @@ export function dashboards(range: Range) {
   const overviewOperation = "${overview_operation:sqlstring}";
   const operationLink = link("Open operation breakdown",
     timingPath + "?var-clock=${operation_clock:percentencode}&var-operation=${__data.fields[\"Name\"]:percentencode}");
+  const operations = [
+    variable("operation_clock", "Clock", "SELECT DISTINCT clock FROM operation_totals ORDER BY clock", "Tool envelopes"),
+    variable("overview_operation", "Operation", `SELECT 'All operations' AS operation
+      UNION SELECT operation FROM operation_totals WHERE clock = ${operationClock} ORDER BY operation`, "All operations"),
+  ];
   const shipping = board("barnacles-shipping", "Barnacles · Shipping review", from, to, [
     block(1, "Linux Main · x86_64", [0, 0, 9, 3],
       "Verified AppImage releases in the imported sample."),
@@ -84,13 +89,14 @@ export function dashboards(range: Range) {
           { type: "special", options: { match: "null", result: { text: "Insufficient coverage" } } }],
         thresholds: { mode: "absolute", steps: [{ value: null, color: yellow }, { value: 0, color: green }] } },
       [], [], "Direction comes only from the mean thread-to-release time in the latest two completed UTC weeks."),
-    data(3, "marcusolsson-treemap-panel", "Recorded time by operation", [9, 3, 15, 6],
+    range.operationCount ? data(3, "marcusolsson-treemap-panel", "Recorded time by operation", [9, 3, 15, 6],
       `SELECT operation AS "Name", total_seconds AS "Total" FROM operation_totals
         WHERE clock = ${operationClock} AND has_area = 1
           AND (${overviewOperation} = 'All operations' OR operation = ${overviewOperation}) ORDER BY rank`,
       { tiling: "treemapSquarify", textField: "Name", sizeField: "Total" },
       { unit: "s", color: { mode: "fixed", fixedColor: "#BB8E4F" }, links: [operationLink] }, [], [],
-      "Tile area shows total duration for the selected clock. Spans can overlap. The table lists all operations, including those without measured time."),
+      "Tile area shows total duration for the selected clock. Spans can overlap. The table lists all operations, including those without measured time.")
+      : block(3, "Recorded time by operation", [9, 3, 15, 6], "Import a Codex rollout or GitHub Actions attempt and rebuild the snapshot to see operation timings."),
     data(4, "table", "Cycle-time comparison", [0, 9, 9, 5],
       `SELECT delta_seconds AS "Change", prior_count AS "Prior PRs", recent_count AS "Recent PRs" FROM coverage`,
       { showHeader: true }, { noValue: "—", custom: { minWidth: 80 } }, [byName("Change", unit("s"))], [],
@@ -103,14 +109,14 @@ export function dashboards(range: Range) {
       'SELECT pr_count AS "PRs observed", shipped AS "Access verified", linked AS "Thread linked" FROM coverage',
       { reduceOptions, colorMode: "none", graphMode: "none", justifyMode: "center" },
       { color: { mode: "fixed", fixedColor: ink } }),
-    data(10, "table", "Operations ranked by time", [9, 9, 15, 11],
+    ...(range.operationCount ? [data(10, "table", "Operations ranked by time", [9, 9, 15, 11],
       `SELECT operation AS "Name", count AS "Spans", mean_seconds AS "Mean", total_seconds AS "Total"
         FROM operation_totals WHERE clock = ${operationClock}
           AND (${overviewOperation} = 'All operations' OR operation = ${overviewOperation}) ORDER BY rank`,
       { showHeader: true, enablePagination: true, cellHeight: "sm" }, { noValue: "—", custom: { minWidth: 56 } },
       [byName("Name", { id: "custom.wrapText", value: true }, links(operationLink)),
         byName("Spans", width(58)), byName("Mean", unit("s"), width(70)), byName("Total", unit("s"), width(79))], [],
-      "Spans counts intervals with both clocks. Spans × mean gives total recorded time. Mixed commands share one measured duration. Open Timing breakdown for missing clocks and individual CI workflows."),
+      "Spans counts intervals with both clocks. Spans × mean gives total recorded time. Mixed commands share one measured duration. Open Timing breakdown for missing clocks and individual CI workflows.")] : []),
     data(15, "table", "Estimated category times", [0, 26, 24, 8],
       `SELECT name AS "Group", CASE WHEN seconds IS NOT NULL THEN printf('%.3g ± %.2g', seconds, error) END AS "s/cmd",
         CASE WHEN total < 60 THEN printf('%.2g s', total)
@@ -150,10 +156,9 @@ export function dashboards(range: Range) {
       'SELECT pr AS "PR", status AS "T3 status", created AS "Thread started", url AS "URL" FROM work ORDER BY created DESC',
       { showHeader: true }, {}, prLinks, ["Thread started"],
       "Only imported T3 threads with an explicit owning link to an observed open pull request."),
-  ], [link("Timing breakdown", timingPath + "?var-clock=${operation_clock:percentencode}"), link("Rollout waterfall", tracePath)], [
-    variable("operation_clock", "Clock", "SELECT DISTINCT clock FROM operation_totals ORDER BY clock", "Tool envelopes"),
-    variable("overview_operation", "Operation", `SELECT 'All operations' AS operation
-      UNION SELECT operation FROM operation_totals WHERE clock = ${operationClock} ORDER BY operation`, "All operations"),
+  ], [link("Timing breakdown", range.operationCount ? timingPath + "?var-clock=${operation_clock:percentencode}" : timingPath),
+    link("Rollout waterfall", tracePath)], [
+    ...(range.operationCount ? operations : []),
     variable("cycle_pr", "Cycle-time PR", "SELECT CAST(pr AS TEXT) FROM releases ORDER BY published DESC, pr DESC", ""),
   ]);
 
