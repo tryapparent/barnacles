@@ -49,7 +49,7 @@ function clock(value: unknown): number {
   return Number.isInteger(seconds) && seconds > 0 && seconds <= 0xffffffff ? seconds : 0;
 }
 
-function readGitHub(path: string): unknown {
+export function readGitHub(path: string): unknown {
   try {
     return JSON.parse(execFileSync("gh", ["api", "--method", "GET", "--hostname", "github.com", path], {
       encoding: "utf8",

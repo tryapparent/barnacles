@@ -39,3 +39,53 @@ Use the reviewed upstream revision `ed8e448f6b7d0826b1922a97fcef9691c9f5676f` as
 - [Release guidance](https://github.com/tryapparent/apparent/blob/ed8e448f6b7d0826b1922a97fcef9691c9f5676f/composition/enablement/release/README.md) supplies the channel and artifact semantics. Keep the Apparent release tag convention in its source adapter.
 
 Apparent's review ranking and dispatch orchestration serve a different workflow. Barnacles has no dependency on its desktop stack, CI hooks, or dispatch tooling.
+
+## Import T3, Codex, and GitHub delivery
+
+Use the same private job directory and SQLite file as the Actions import. Each command fetches the pinned Bend2 compiler and compiles the shared source policy. GitHub imports also require authenticated `gh`; release access checks use anonymous `curl`.
+
+```sh
+node collector/import-sources.ts "$job" t3 "$job/t3.json"
+node collector/import-sources.ts "$job" rollout local-codex "$rollout"
+node collector/import-sources.ts "$job" github tryapparent/apparent 2085 \
+  linux-main-v2-fad85e0d1ad703cc04bdf0392f9a411498dec22b
+node collector/import-sources.ts "$job" github tryapparent/apparent 2071 \
+  linux-main-v2-9c1ffc52836711a006b4a983146655c04970f0bf
+node collector/import-sources.ts "$job" report
+```
+
+### T3 metadata
+
+Fetch the chosen thread with the supported `t3_thread_read` tool (`limit: 1`, `maxCharsPerItem: 1`, `runLimit: 50`) and fetch its links separately with `list_thread_pull_requests` for the same ID. This captures archived links as well as active ones. From the structured responses, write only the following projection to the private input file:
+
+```js
+const { thread, recentRuns } = threadRead.structuredContent;
+const { pullRequests, nextCursor } = pullRequestList.structuredContent;
+const snapshot = {
+  instance: "local-t3",
+  thread: (({ threadId, createdAt, updatedAt, status, createdBy, creationSource, settled }) =>
+    ({ threadId, createdAt, updatedAt, status, createdBy, creationSource, settled }))(thread),
+  recentRuns: recentRuns.map(({ runId, requestedAt, startedAt, completedAt, status }) =>
+    ({ runId, requestedAt, startedAt, completedAt, status })),
+  links: { nextCursor, pullRequests: pullRequests.map(({ host, number, repository, source, state }) =>
+    ({ host, number, repository, source, state })) },
+};
+```
+
+Use a stable instance name per T3 environment. Follow and combine link pages before setting the cursor to null. A non-null cursor is rejected. Thread run data covers the runs in the read response. The importer keeps the provider's link source and treats `created` and `agent` as ownership evidence. Manual links, multiple candidate owners, and chronological conflicts remain visible as coverage gaps. Direct web or mobile user creation supports the manual T3 origin. Other origins stay unknown until the provider supplies explicit evidence.
+
+### Codex rollout
+
+Set `rollout` to one permitted retained JSONL file by exact session or workspace evidence. The host decodes one file of up to 64 MiB, including original provider timestamps when present. Bend2 pairs calls with results, handles missing and ambiguous endpoints, and correlates a yielded tool cell with an unambiguous terminal wait receipt. A cell span ends when the terminal result was observed and can overlap the envelope and other work. Other process receipt formats remain outside this slice. No titles, messages, raw arguments, outputs, or file paths go into SQLite. A rollout import by itself establishes no T3 or GitHub link.
+
+### GitHub PR and release
+
+Pass a PR number alone to capture PR, commit, and review metadata. For release evidence, pass an explicit Linux Main tag. The adapter checks the tag's direct Git ref, equality or ancestry with the PR merge SHA, one uploaded x86_64 AppImage, and an anonymous one-byte Range receipt. It preserves PR metadata when release collection fails. The first 100 commit and review records are sufficient for the verified examples. Counts and caps qualify the first observed review and whether the commit sample is complete. Other channels and annotated tags need their own eligibility support.
+
+Bend2 selects the first commit, first observed review, and earliest **observed and verified** release per PR and surface from decoded evidence. Publication and access observation have separate timestamps. For PR #2085 the T3 metadata projection supplies one owning link. PR #2071 has PR-to-release data with no verified T3 owner. The report can be regenerated without rereading GitHub.
+
+Run both integration tests with:
+
+```sh
+BARNACLES_TEST_DIRECTORY="$job" node --test collector/github/attempt.test.ts collector/sources.test.ts
+```
