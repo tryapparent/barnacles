@@ -33,7 +33,7 @@ export type TimingPolicy = {
   window_observe(state: unknown, bounds: Bounds, clock: string, workflow: number, operation: string,
     start: number, end: number, codex: boolean): unknown;
   summarize_window(state: unknown): { clocks: List<WindowRow>; operations: List<WindowRow>; workflows: List<WindowRow>;
-    totals: List<WindowRow>; mixed: List<WindowRow> };
+    totals: List<WindowRow>; mixed: List<WindowRow>; hours: List<WindowRow> };
   mean(sample: Stats): Ratio;
   operation_area(sample: Stats): boolean;
   measured_total(sample: Stats): Ratio;
@@ -124,6 +124,8 @@ export function collectTiming(source: DatabaseSync, repo: string, metrics: Timin
         mean_seconds REAL, total_seconds REAL, union_seconds REAL, unmeasured INTEGER, has_area INTEGER, rank INTEGER);
       CREATE TABLE mixed_groups(window TEXT, clock TEXT, operation TEXT, count INTEGER, mean_seconds REAL,
         total_seconds REAL, union_seconds REAL, unmeasured INTEGER, rank INTEGER);
+      CREATE TABLE operation_hours(window TEXT, clock TEXT, operation TEXT, hour INTEGER, total_millis INTEGER, rank INTEGER);
+      CREATE INDEX operation_hour_lookup ON operation_hours(window, clock, operation, rank);
       CREATE TABLE workflows(window TEXT, clock TEXT, workflow INTEGER, total_seconds REAL, union_seconds REAL,
         count INTEGER, mean_seconds REAL, unmeasured INTEGER, rank INTEGER);
     `);
@@ -133,6 +135,7 @@ export function collectTiming(source: DatabaseSync, repo: string, metrics: Timin
       const timing = view.prepare("INSERT INTO timing VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
       const workflows = view.prepare("INSERT INTO workflows VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
       const totals = view.prepare("INSERT INTO operation_totals VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+      const hours = view.prepare("INSERT INTO operation_hours VALUES (?, ?, ?, ?, ?, ?)");
       const mixed = view.prepare("INSERT INTO mixed_groups VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
       const stats = ({ occupancy: { stats, union } }: WindowRow) => [
         stats.count, seconds(metrics.mean(stats)), seconds(metrics.measured_total(stats)),
@@ -163,6 +166,8 @@ export function collectTiming(source: DatabaseSync, repo: string, metrics: Timin
         });
         rows(report.totals).forEach((row, rank) =>
           totals.run(key, row.clock, row.operation, ...stats(row), Number(metrics.operation_area(row.occupancy.stats)), rank));
+        rows(report.hours).forEach((row, rank) =>
+          hours.run(key, row.clock, row.operation, row.workflow, row.occupancy.stats.total, rank));
         rows(report.mixed).forEach((row, rank) =>
           mixed.run(key, row.clock, row.operation, ...stats(row), rank));
       }

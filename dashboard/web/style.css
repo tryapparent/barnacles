@@ -15,6 +15,7 @@
   --red: #f47768;
   --amber: #f2b826;
   --green: #65c392;
+  --operation-other: #bcbec2;
   --pixel: "Geist Pixel", ui-monospace, monospace;
 }
 
@@ -544,10 +545,42 @@ summary { cursor: pointer; }
 .fleet-prs { display: flex; flex-wrap: wrap; gap: 2px 16px; margin-block: 3px 8px; }
 .fleet-prs a { display: block; padding-block: 4px; }
 
+.operation-scope {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 2px 12px;
+  margin-block: 8px 4px;
+  color: var(--quiet);
+  font-size: 12px;
+}
+.operation-scope h3 {
+  margin: 0;
+  font: inherit;
+  overflow-wrap: anywhere;
+}
+.operation-scope button, .operation-list button {
+  padding: 0;
+  min-height: 24px;
+  font: inherit;
+  color: var(--ink);
+  text-align: start;
+  text-decoration: underline;
+  text-underline-offset: .2em;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+.operation-list { list-style: none; margin: 0; padding: 0; color: var(--quiet); font-size: 12px; }
+.operation-list [data-compact="false"] { display: none; }
+.operation-list [data-compact="true"] { margin-block-start: 4px; }
+@media (forced-colors: active) {
+  .operation-list [data-compact="false"] { display: list-item; }
+}
 .operation-map {
   position: relative;
   height: 204px;
-  margin-block-start: 14px;
   isolation: isolate;
 }
 .operation-tile {
@@ -557,6 +590,14 @@ summary { cursor: pointer; }
   color: var(--surface);
   overflow: hidden;
   isolation: isolate;
+  padding: 0;
+  text-align: start;
+  font: inherit;
+}
+button.operation-tile { cursor: zoom-in; display: flex; align-items: flex-start; }
+button.operation-tile:is(:hover, :focus-visible) {
+  outline: 2px solid var(--surface);
+  outline-offset: -5px;
 }
 .operation-dither {
   z-index: -1;

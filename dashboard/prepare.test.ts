@@ -566,6 +566,23 @@ test("shipping API preserves historical and partial evidence and reads a replace
       status: "completed", origin: "manual_t3", settled: true, runs: [],
       pullRequests: [{ repository: repo, number: 101, source: "created", state: "merged", owning: true }],
     } });
+    const hour = Math.floor(cutoff / 3600) * 3600000;
+    const operations = [
+      ["File inspection", hour - 7200000, 30000], ["File inspection", hour - 3600000, 20000],
+      ["Rust build", hour - 3600000, 15000], ["Git inspection", hour - 3600000, 9000],
+      ["Git push", hour - 3600000, 4000], ["Browser", hour - 3600000, 2000],
+      ["Shell", hour - 3600000, 1000], ["Unknown", hour - 3600000, null],
+    ] as const;
+    const batch = { source: "codex" as const, rollout: {
+      instance: "synthetic", session: "review-map", lines: operations.length, malformed: 0, orphans: 0, markers: [],
+      calls: operations.map(([categories, start, elapsed], index) => ({
+        id: `map-${index}`, tool: "exec_command", categories, command: null, line: index + 1,
+        start, end: elapsed === null ? null : start + elapsed,
+        async: false, asyncEnd: null, terminalCall: null, ambiguous: false,
+      })),
+    } };
+    loadEvidence(source, batch);
+    loadEvidence(source, batch);
     await prepare(snapshot);
     const db = new DatabaseSync(join(snapshot, "dashboard.sqlite"), { readOnly: true });
     try {
@@ -628,7 +645,16 @@ test("shipping API preserves historical and partial evidence and reads a replace
       [[202, "pr-opened"], [101, "access-verified"]]);
     assert.equal(report.deliveries.nextOffset, 1);
     assert.equal(report.deliveries.maxMeasuredMillis, 700_000);
-    assert.deepEqual(report.operations.items, []);
+    const tiles = report.operations.map;
+    assert.deepEqual(tiles.map(({ label, totalSeconds, grouped }: { label: string; totalSeconds: number; grouped: number }) =>
+      [label, totalSeconds, grouped]), [["File inspection", 50, 0], ["Rust build", 15, 0],
+      ["Git inspection", 9, 0], ["Other", 7, 3]]);
+    assert.deepEqual(tiles[0].children.map(({ totalSeconds }: { totalSeconds: number }) => totalSeconds), [30, 20]);
+    assert.deepEqual(tiles[3].children.map(({ label }: { label: string }) => label), ["Git push", "Browser", "Shell"]);
+    assert.equal(report.operations.items.find(({ operation }: { operation: string }) => operation === "Unknown").unmeasuredSpans, 1);
+    const selectedMap = (await get("/api/v1/shipping?operation=File%20inspection")).operations.map;
+    assert.deepEqual(selectedMap, [tiles[0]]);
+    assert.deepEqual((await get("/api/v1/shipping?clock=Async%20cells")).operations.map, []);
     assert.equal(report.operations.window, "24h");
     const page = await get("/api/v1/shipping?limit=1&offset=1");
     assert.deepEqual(page.shipments.dailyStages, report.shipments.dailyStages);

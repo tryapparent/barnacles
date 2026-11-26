@@ -329,11 +329,11 @@ type WindowRow is Data:
 
 type WindowGroups is Data:
   WindowGroups{clocks: Map<&2, WindowRow>, operations: Map<&2, WindowRow>, workflows: Map<&2, WindowRow>,
-               totals: Map<&2, WindowRow>, mixed: Map<&2, WindowRow>}
+               totals: Map<&2, WindowRow>, mixed: Map<&2, WindowRow>, hours: Map<&2, WindowRow>}
 
 type WindowSummary is Data:
   WindowSummary{clocks: List<&2, WindowRow>, operations: List<&2, WindowRow>, workflows: List<&2, WindowRow>,
-                totals: List<&2, WindowRow>, mixed: List<&2, WindowRow>}
+                totals: List<&2, WindowRow>, mixed: List<&2, WindowRow>, hours: List<&2, WindowRow>}
 
 def window_record_found(found: Map<&2, WindowRow> & WindowRow, interval: WindowedInterval) -> Map<&2, WindowRow>:
   match found:
@@ -352,7 +352,7 @@ def start_clock_groups(clocks: List<&2, String>, groups: Map<&2, WindowRow>) -> 
 
 def start_window_groups() -> WindowGroups:
   WindowGroups{start_clock_groups(timing_clocks(), Map.new(&2, WindowRow)), Map.new(&2, WindowRow),
-    Map.new(&2, WindowRow), Map.new(&2, WindowRow), Map.new(&2, WindowRow)}
+    Map.new(&2, WindowRow), Map.new(&2, WindowRow), Map.new(&2, WindowRow), Map.new(&2, WindowRow)}
 
 def window_mix(empty: Bool, table: Map<&2, WindowRow>, +clock: String, +group: String, interval: WindowedInterval) ->
     Map<&2, WindowRow>:
@@ -360,20 +360,27 @@ def window_mix(empty: Bool, table: Map<&2, WindowRow>, +clock: String, +group: S
     case True{}: table
     case False{}: window_record(table, timing_group_key(clock, group), clock, 0n, group, interval)
 
+def window_hour(table: Map<&2, WindowRow>, +clock: String, +operation: String, +interval: WindowedInterval) -> Map<&2, WindowRow>:
+  match interval:
+    case Clipped{start, end}:
+      +hour = Nat.div(start, 3600000n)
+      window_record(table, timing_group_key(timing_key(clock, hour), operation), clock, hour, operation, interval)
+    case _: table
+
 def window_add(groups: WindowGroups, +clock: String, +workflow: Nat, +operation: String, +group: String,
                +interval: WindowedInterval) -> WindowGroups:
   match groups interval:
-    case WindowGroups{clocks, ops, flows, totals, mixed} Outside{}:
-      WindowGroups{clocks, ops, flows, totals, mixed}
-    case WindowGroups{clocks, ops, flows, totals, mixed} Unplaced{}:
-      WindowGroups{window_record(clocks, clock, clock, 0n, "", interval), ops, flows, totals, mixed}
-    case WindowGroups{clocks, ops, flows, totals, mixed} _:
+    case WindowGroups{clocks, ops, flows, totals, mixed, hours} Outside{}:
+      WindowGroups{clocks, ops, flows, totals, mixed, hours}
+    case WindowGroups{clocks, ops, flows, totals, mixed, hours} Unplaced{}:
+      WindowGroups{window_record(clocks, clock, clock, 0n, "", interval), ops, flows, totals, mixed, hours}
+    case WindowGroups{clocks, ops, flows, totals, mixed, hours} _:
       +prefix = timing_key(clock, workflow)
       WindowGroups{window_record(clocks, clock, clock, 0n, "", interval),
         window_record(ops, timing_group_key(prefix, operation), clock, workflow, operation, interval),
         window_record(flows, prefix, clock, workflow, "", interval),
         window_record(totals, timing_group_key(clock, operation), clock, 0n, operation, interval),
-        window_mix(String.eq(group, ""), mixed, clock, group, interval)}
+        window_mix(String.eq(group, ""), mixed, clock, group, interval), window_hour(hours, clock, operation, interval)}
 
 type ProcessAttribution is Data:
   ProcessAttribution{cell_status: String, wait_status: String, wait_category: String, io_status: String, io_category: String}
@@ -439,9 +446,9 @@ def rank_window_rows(table: Map<&2, WindowRow>) -> List<&2, WindowRow>:
 
 def summarize_window(groups: WindowGroups) -> WindowSummary:
   match groups:
-    case WindowGroups{clocks, ops, flows, totals, mixed}:
+    case WindowGroups{clocks, ops, flows, totals, mixed, hours}:
       WindowSummary{rank_window_rows(clocks), rank_window_rows(ops), rank_window_rows(flows),
-        rank_window_rows(totals), rank_window_rows(mixed)}
+        rank_window_rows(totals), rank_window_rows(mixed), rank_window_rows(hours)}
 
 type ReviewFact is Data:
   ReviewPR{pr: Nat, release: Bool, thread: Nat, commit: Nat, opened: Nat, ci: Nat, merged: Nat,
@@ -664,3 +671,45 @@ def review_page(accum: ReviewFold, +limit: Nat, +offset: Nat) -> ReviewResult:
 def review_report(facts: List<&2, ReviewFact>, from: Nat, to: Nat, fleet_from: Nat, limit: Nat, offset: Nat) -> ReviewResult:
   review_page(review_collect(facts, from, to, fleet_from,
     ReviewAccum{[], [], review_empty_shipments(), Map.new(&2, ReviewWeek), Map.new(&2, ReviewDay)}), limit, offset)
+
+type MapWeight is Data:
+  MapWeight{index: Nat, millis: Nat}
+
+type MapTile is Data:
+  MapTile{index: Nat, millis: Nat, grouped: Nat, children: List<&2, MapTile>}
+
+def map_weight_total(weights: List<&2, MapWeight>) -> Nat:
+  match weights:
+    case []: 0n
+    case MapWeight{index, millis} <> tail: Nat.add(millis, map_weight_total(tail))
+
+def map_positive_weights(weights: List<&2, Nat>, +index: Nat) -> List<&2, MapWeight>:
+  match weights:
+    case []: []
+    case +millis <> tail:
+      +rest = map_positive_weights(tail, Nat.add(index, 1n))
+      Bool.pick(List<&2, MapWeight>, Nat.is_lt(0n, millis), MapWeight{index, millis} <> rest, rest)
+
+def map_visible(weights: List<&2, MapWeight>, +shown: Nat, level_total: Nat) -> Bool:
+  match weights:
+    case []: False{}
+    case MapWeight{index, millis} <> tail:
+      Bool.or(Nat.is_eq(shown, 0n), Bool.and(Nat.is_lt(shown, 4n), Nat.is_le(level_total, Nat.mul(millis, 12n))))
+
+def map_level(weights: List<&2, MapWeight>, visible: Bool, +total: Nat, +remaining: Nat, shown: Nat, +level_total: Nat) ->
+    List<&2, MapTile>:
+  match weights visible:
+    case [] _: []
+    case MapWeight{index, +millis} <> +tail True{}:
+      +next = Nat.add(shown, 1n)
+      MapTile{index, millis, 0n, []} <> map_level(tail, map_visible(tail, next, level_total),
+        Nat.sub(total, millis), Nat.sub(remaining, 1n), next, level_total)
+    case MapWeight{index, +millis} <> +tail False{}:
+      [MapTile{0n, total, remaining,
+        MapTile{index, millis, 0n, []} <> map_level(tail, map_visible(tail, 1n, total),
+          Nat.sub(total, millis), Nat.sub(remaining, 1n), 1n, total)}]
+
+def review_operation_map(weights: List<&2, Nat>) -> List<&2, MapTile>:
+  +positive = map_positive_weights(weights, 0n)
+  +total = map_weight_total(positive)
+  map_level(positive, True{}, total, List.length(&2, MapWeight, positive), 0n, total)
