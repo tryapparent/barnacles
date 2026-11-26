@@ -387,13 +387,11 @@ h2, figcaption { font-size: 17px; line-height: 1.24; }
   padding-block-end: 24px;
 }
 .daily-slot { position: relative; block-size: var(--daily-plot-height); }
-.daily-column, .daily-gap {
+.daily-column {
   display: grid;
   justify-items: center;
   inline-size: 100%;
   block-size: 100%;
-}
-.daily-column {
   position: relative;
   align-items: end;
   padding: 0;
@@ -410,7 +408,7 @@ h2, figcaption { font-size: 17px; line-height: 1.24; }
   inset: auto 3px 0;
   border-block-end: 2px solid var(--accent);
 }
-.daily-stack, .daily-zero { inline-size: clamp(16px, 74%, 46px); }
+.daily-stack, .daily-zero { inline-size: 74%; }
 .daily-stack {
   display: flex;
   flex-direction: column-reverse;

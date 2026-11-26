@@ -51,6 +51,7 @@ type ReviewFact = {
 type ReviewItem = { $: "Item"; pr: number; order: number; changed: number; stage: string;
   milestones: List<{ key: string; phase: string; observed: number; elapsed: CycleStage }> };
 type ReviewWindow = { $: "ReviewRange"; from: number; to: number; fleet_from: number } | { $: "InvalidRange" };
+type ReviewDay = { start: number; shipped: number; stages: List<{ phase: string; sample: Stats }> };
 type MapTile = { index: number; millis: number; grouped: number; children: List<MapTile> };
 type CategoryInput = { $: "CategoryInput"; workflow: number; operation: string; detail: string; millis: number };
 type CategoryTile = { label: string; millis: number; children: unknown };
@@ -79,7 +80,8 @@ type ReviewPolicy = {
     $: "ReviewReport"; total: number; next_offset: number; max_measured_ms: number; deliveries: List<ReviewItem>;
     fleet: List<ReviewItem>; verified: Shipping;
     weeks: List<{ start: number; sample: Shipping }>;
-    days?: List<{ start: number; shipped: number; stages: List<{ phase: string; sample: Stats }> }>;
+    days?: List<ReviewDay>;
+    chart?: { from: number; days: List<ReviewDay> };
   };
   mean: TimingPolicy["mean"];
 };
@@ -618,6 +620,12 @@ export async function openShippingReview(directory: string) {
           const row = week.get(start);
           return { startsAt: utc(start * 1000), attributedShipments: row?.cycle_count ?? 0, meanSeconds: row?.mean_seconds ?? null };
         };
+        const encodeDays = (days: List<ReviewDay>) => rows(days).map(({ start, shipped, stages }) => ({
+          startsAt: utc(start), verified: shipped,
+          stages: rows(stages).map(({ phase, sample }) => ({
+            phase, measured: sample.count, meanSeconds: seconds(policy.mean(sample)),
+          })),
+        }));
         return {
           repository: repo, surface: reviewContext, snapshotAt: utc(snapshotAt),
           window: { from: utc(window.from), to: utc(window.to) },
@@ -630,12 +638,8 @@ export async function openShippingReview(directory: string) {
             verified: report.verified.shipped, attributed: report.verified.cycles.count,
             weekly: rows(report.weeks).map(({ start, sample }) => ({ startsAt: utc(start * 1000), verified: sample.shipped,
               attributed: sample.cycles.count, meanCycleSeconds: seconds(policy.mean(sample.cycles)) })),
-            dailyStages: report.days && rows(report.days).map(({ start, shipped, stages }) => ({
-              startsAt: utc(start), verified: shipped,
-              stages: rows(stages).map(({ phase, sample }) => ({
-                phase, measured: sample.count, meanSeconds: seconds(policy.mean(sample)),
-              })),
-            })),
+            dailyStages: report.days && encodeDays(report.days),
+            dailyChart: report.chart && { from: utc(report.chart.from), days: encodeDays(report.chart.days) },
           },
           operations: {
             scope: "snapshot", window: timingWindow, clock: input.clock, operation: input.operation ?? null,

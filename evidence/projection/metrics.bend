@@ -796,12 +796,15 @@ def review_day_add(found: Map<&2, ReviewDay> & ReviewDay, key: String, item: Rev
       Map.set(&2, ReviewDay, days, key, ReviewDayBucket{start, Nat.add(shipped, 1n),
         review_stage_samples(List.drop(&2, ReviewMoment, events, 1n), stages)})
 
+def review_midnight(+date: Nat) -> Nat:
+  Nat.sub(date, Nat.mod(date, 86400000n))
+
 def review_add_shipment(+published: Nat, +linked: Bool, +cycle: Nat, item: ReviewItem, accum: ReviewFold) -> ReviewFold:
   match accum:
     case ReviewAccum{deliveries, fleet, verified, weeks, days}:
       +bucket = week(Nat.div(published, 1000n))
       +key = Nat.show(bucket)
-      +day = Nat.sub(published, Nat.mod(published, 86400000n))
+      +day = review_midnight(published)
       +day_key = Nat.show(day)
       ReviewAccum{deliveries, fleet, record_release(verified, linked, cycle),
         review_week_add(Map.get(ReviewWeek, ReviewBucket{bucket, review_empty_shipments()}, weeks, key), key, linked, cycle),
@@ -852,9 +855,20 @@ def review_day_newest(a: ReviewDay, b: ReviewDay) -> Bool:
   match a b:
     case ReviewDayBucket{left, count_a, stages_a} ReviewDayBucket{right, count_b, stages_b}: Nat.is_le(right, left)
 
+def review_recent_days(days: List<&2, ReviewDay>, +first_day: Nat) -> List<&2, ReviewDay>:
+  match days:
+    case []: []
+    case +day <> rest:
+      match day:
+        case ReviewDayBucket{start, count, stages}:
+          Bool.pick(List<&2, ReviewDay>, Nat.is_le(first_day, start), day <> review_recent_days(rest, first_day), [])
+
+type ReviewChart is Data:
+  ReviewChartWindow{from: Nat, days: List<&2, ReviewDay>}
+
 type ReviewResult is Data:
   ReviewReport{total: Nat, next_offset: Nat, max_measured_ms: Nat, deliveries: List<&2, ReviewItem>, fleet: List<&2, ReviewItem>,
-    verified: ShippingSample, weeks: List<&2, ReviewWeek>, days: List<&2, ReviewDay>}
+    verified: ShippingSample, weeks: List<&2, ReviewWeek>, days: List<&2, ReviewDay>, chart: ReviewChart}
 
 def review_count_facts(facts: List<&2, ReviewFact>) -> Nat:
   List.length(&2, ReviewFact, facts)
@@ -873,20 +887,22 @@ def review_max_measured(items: List<&2, ReviewItem>, +maximum: Nat) -> Nat:
     case Item{pr, order, changed, stage, events} <> rest:
       review_max_measured(rest, Nat.max(maximum, review_measured_time(events, 0n)))
 
-def review_page(accum: ReviewFold, +limit: Nat, +offset: Nat) -> ReviewResult:
+def review_page(accum: ReviewFold, +limit: Nat, +offset: Nat, from: Nat, to: Nat) -> ReviewResult:
   match accum:
     case ReviewAccum{+deliveries, fleet, verified, weeks, days}:
       +total = List.length(&2, ReviewItem, deliveries)
       +next = Nat.add(offset, limit)
+      +ordered_days = List.sort(~ReviewDay, ~review_day_newest, review_days(Map.to_list(&2, ReviewDay, days)))
+      +chart_from = Nat.max(from, Nat.sub(review_midnight(to), 2592000000n))
       ReviewReport{total, Bool.pick(Nat, Nat.is_lt(next, total), next, 0n), review_max_measured(deliveries, 0n),
         List.take(&2, ReviewItem, List.drop(&2, ReviewItem, List.sort(~ReviewItem, ~review_newest, deliveries), offset), limit),
         List.sort(~ReviewItem, ~review_newest, fleet), verified,
         List.sort(~ReviewWeek, ~review_week_before, review_weeks(Map.to_list(&2, ReviewWeek, weeks))),
-        List.sort(~ReviewDay, ~review_day_newest, review_days(Map.to_list(&2, ReviewDay, days)))}
+        ordered_days, ReviewChartWindow{chart_from, review_recent_days(ordered_days, review_midnight(chart_from))}}
 
-def review_report(facts: List<&2, ReviewFact>, from: Nat, to: Nat, fleet_from: Nat, limit: Nat, offset: Nat) -> ReviewResult:
+def review_report(facts: List<&2, ReviewFact>, +from: Nat, +to: Nat, fleet_from: Nat, limit: Nat, offset: Nat) -> ReviewResult:
   review_page(review_collect(facts, from, to, fleet_from,
-    ReviewAccum{[], [], review_empty_shipments(), Map.new(&2, ReviewWeek), Map.new(&2, ReviewDay)}), limit, offset)
+    ReviewAccum{[], [], review_empty_shipments(), Map.new(&2, ReviewWeek), Map.new(&2, ReviewDay)}), limit, offset, from, to)
 
 type MapWeight is Data:
   MapWeight{index: Nat, millis: Nat}

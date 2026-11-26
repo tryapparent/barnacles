@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { countLabel, dayLabel, duration, pagePath, stages, type DeliveryDay, type Review, type OperationTile, type Week } from "../api";
+import { countLabel, dayLabel, duration, pagePath, stages, type DeliveryChart, type DeliveryDay, type Review, type OperationTile, type Week } from "../api";
 
 function sector(inner: number, outer: number, from: number, to: number) {
   function point(radius: number, degrees: number) {
@@ -327,7 +327,6 @@ export function StageKey() {
     <li key={key} className={`stage-${color}`}>{label}</li>)}</ul>;
 }
 
-const dayMillis = 86_400_000;
 const fullDayLabel = new Intl.DateTimeFormat(undefined, { timeZone: "UTC", dateStyle: "long" });
 
 function DailyValues({ day }: { day: DeliveryDay }) {
@@ -343,22 +342,17 @@ function DailyValues({ day }: { day: DeliveryDay }) {
   </table>;
 }
 
-function DailyColumns({ days, window }: { days: DeliveryDay[]; window: Review["window"] }) {
+function DailyColumns({ days }: { days: DeliveryDay[] }) {
   const [selected, setSelected] = useState<string | null>(null);
-  const first = Date.parse(window.from.slice(0, 10));
-  const last = Date.parse(window.to.slice(0, 10));
-  const count = (last - first) / dayMillis + 1;
-  const stacks = days.map((day) => ({
+  const count = days.length;
+  const stacks = [...days].reverse().map((day) => ({
     day, height: day.stages.reduce((total, stage) => total + (stage.meanSeconds ?? 0), 0),
   }));
-  const byDate = new Map(stacks.map((stack) => [stack.day.startsAt, stack]));
-  const detail = selected === null ? undefined : byDate.get(selected)?.day;
+  const detail = days.find((day) => day.startsAt === selected);
   const longest = Math.max(...stacks.map(({ height }) => height));
   const step = longest >= 3600 ? 1800 : 60;
   const scale = Math.max(1, Math.ceil(longest / (2 * step))) * 2 * step;
   return <>
-    <p className="fine daily-intro">Publication day (UTC). Gaps have no verified shipments in this window.
-      Select a column for stage means and counts.</p>
     <StageKey />
     <div className="daily-figure">
       <div className="daily-axis" aria-hidden="true">
@@ -366,15 +360,14 @@ function DailyColumns({ days, window }: { days: DeliveryDay[]; window: Review["w
       </div>
       <div className="daily-scroll" role="region" aria-label="Daily duration columns" tabIndex={0}>
         <div className="daily-columns" data-dense={count > 5} style={{ "--daily-count": count } as CSSProperties}>
-          {Array.from({ length: count }, (_, index) => {
-            const timestamp = first + index * dayMillis;
-            const date = new Date(timestamp).toISOString();
-            const stack = byDate.get(date);
+          {stacks.map((stack, index) => {
+            const date = stack.day.startsAt;
+            const timestamp = Date.parse(date);
             const pressed = selected === date;
             const label = fullDayLabel.format(timestamp);
             const tick = count <= 5 || index === count - 1 || (index % 5 === 0 && index < count - 3);
             return <div key={date} className="daily-slot">
-              {stack ? <button type="button" className="daily-column" aria-pressed={pressed}
+              <button type="button" className="daily-column" aria-pressed={pressed}
                 aria-label={`${label}, ${countLabel(stack.day.verified)} verified`} aria-controls="daily-stage-values"
                 title={`${label} · ${countLabel(stack.day.verified)} verified`}
                 onClick={() => setSelected(pressed ? null : date)}>
@@ -387,7 +380,7 @@ function DailyColumns({ days, window }: { days: DeliveryDay[]; window: Review["w
                   })}
                 </span> : <span className="daily-zero" aria-hidden="true"
                   title={stack.day.stages.some(({ meanSeconds }) => meanSeconds === 0) ? `${duration(0)} measured` : "Stage times unknown"} />}
-              </button> : <span className="daily-gap" title={`${label} · No verified shipments`} />}
+              </button>
               {tick && <time className="daily-tick" dateTime={date} aria-hidden="true">{dayLabel(date)}</time>}
             </div>;
           })}
@@ -398,12 +391,16 @@ function DailyColumns({ days, window }: { days: DeliveryDay[]; window: Review["w
   </>;
 }
 
-export function DailyStages({ days, window }: { days: DeliveryDay[] | undefined; window: Review["window"] }) {
+export function DailyStages({ chart, window }: { chart: DeliveryChart | undefined; window: Review["window"] }) {
+  const bounded = chart && chart.from !== window.from;
   return <section className="delivery daily-chart" aria-labelledby="daily-title">
     <h2 id="daily-title">Mean delivery stages by day</h2>
-    {days === undefined ? <p className="fine">Daily stage data needs a refreshed evidence snapshot.</p> :
-      days.length ? <DailyColumns days={days} window={window} /> :
-        <p className="fine">No verified shipments in this review window.</p>}
+    {bounded && <p className="fine">Chart window · {dayLabel(chart.from)}–{dayLabel(window.to)} UTC</p>}
+    {chart === undefined ? <p className="fine">Daily stage data needs a refreshed evidence snapshot.</p> :
+      chart.days.length ? <>
+        <p className="fine daily-intro">Publication days with verified shipments (UTC). Select a column for stage means and counts.</p>
+        <DailyColumns days={chart.days} />
+      </> : <p className="fine">No verified shipments in this chart window.</p>}
   </section>;
 }
 

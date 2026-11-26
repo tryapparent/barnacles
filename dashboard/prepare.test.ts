@@ -767,6 +767,7 @@ test("shipping API preserves historical and partial evidence and reads a replace
     assert.equal(report.operations.window, "24h");
     const page = await get("/api/v1/shipping?limit=1&offset=1");
     assert.deepEqual(page.shipments.dailyStages, report.shipments.dailyStages);
+    assert.deepEqual(page.shipments.dailyChart, report.shipments.dailyChart);
     assert.equal(page.deliveries.nextOffset, null);
     assert.equal(page.deliveries.maxMeasuredMillis, report.deliveries.maxMeasuredMillis);
     const detail = await get(page.deliveries.items[0].detailPath);
@@ -778,6 +779,7 @@ test("shipping API preserves historical and partial evidence and reads a replace
     assert.equal(historical.shipments.verified, 0);
     assert.deepEqual(historical.shipments.weekly, []);
     assert.deepEqual(historical.shipments.dailyStages, []);
+    assert.deepEqual(historical.shipments.dailyChart.days, []);
     assert.equal(historical.fleet.items[0].stage, "published");
     assert.equal(historical.deliveries.items[0].milestones[7].observedAt, null);
     assert.equal((await get("/api/v1/pull-requests/202?asOf=" + time(at - 399), 404)).error.code,
@@ -800,6 +802,10 @@ test("shipping API preserves historical and partial evidence and reads a replace
     save({ ...partialShipment, number: 404, opened: shipped.opened - 86400, merged: shipped.merged! - 86400 },
       { ...proof, id: 23, tag: "previous-day-release", published: proof.published - 86400, checked: proof.checked - 86400,
         dispatch: null });
+    const chartStart = Date.parse(iso(cutoff).slice(0, 10)) / 1000 - 30 * 86400;
+    const olderRelease = chartStart - 1;
+    save({ ...partialShipment, number: 505, opened: olderRelease - 300, merged: olderRelease - 100 },
+      { ...proof, id: 24, tag: "older-release", published: olderRelease, checked: olderRelease + 50, dispatch: null });
     const calls = [0, 1, 2].map((number) => ({
       id: `capture-${number}`, line: number + 2, tool: "Shell command", command: null, start: (at + number) * 1000,
       end: null, async: false, asyncEnd: null, terminalCall: null, ambiguous: number === 2,
@@ -851,6 +857,11 @@ test("shipping API preserves historical and partial evidence and reads a replace
     assert.deepEqual(shipments.dailyStages[0].stages[0], { phase: "pre-commit", measured: 1, meanSeconds: 100 });
     assert.deepEqual(shipments.dailyStages[0].stages.at(-1), { phase: "access-verified", measured: 2, meanSeconds: 50 });
     assert.deepEqual(shipments.dailyStages[1].stages[0], { phase: "pre-commit", measured: 0, meanSeconds: null });
+    assert.deepEqual(shipments.dailyChart.days, shipments.dailyStages);
+    const wide = await get("/api/v1/shipping?from=" + time(olderRelease));
+    assert.equal(wide.shipments.verified, 4);
+    assert.equal(wide.shipments.dailyStages.length, 3);
+    assert.deepEqual(wide.shipments.dailyChart, { from: iso(chartStart), days: shipments.dailyStages });
   } finally {
     server?.kill();
     if (stopped) await stopped;

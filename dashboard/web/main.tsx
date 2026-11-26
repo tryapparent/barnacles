@@ -420,7 +420,7 @@ function App() {
     </div>}
     {review && <>
       <Overview review={review} />
-      <DailyStages days={review.shipments.dailyStages} window={review.window} />
+      <DailyStages chart={review.shipments.dailyChart} window={review.window} />
       <DeliveryTimeline key={review.snapshotAt} review={review} selection={selection} />
       <ProcessTimings />
     </>}
