@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
@@ -32,11 +32,17 @@ test("compiled Bend2 source decisions through the SQLite import path", async () 
       ] },
     };
     const read = (path: string) => {
-      if (path.includes("/commits?")) return [{ sha: merged, commit: { committer: { date: time("04") } } }];
-      if (path.includes("/reviews?")) return [{ id: 7, submitted_at: time("06") }];
+      if (path.includes("/commits?")) return [
+        { sha: released, commit: { committer: { date: time("07") } } },
+        { sha: merged, commit: { committer: { date: time("04") } } },
+      ];
+      if (path.includes("/reviews?")) return [
+        { id: 8, submitted_at: time("07") }, { id: 1, submitted_at: time("01") },
+        { id: 7, submitted_at: time("06") },
+      ];
       if (path.includes("/pulls/")) return { number: 9, base: { repo: { full_name: repo } },
         merged: true, created_at: time("05"), merged_at: time("09"),
-        merge_commit_sha: merged, commits: 1, updated_at: time("09") };
+        merge_commit_sha: merged, commits: 2, updated_at: time("09") };
       if (path.includes("/releases/")) return { id: 2, tag_name: tag, draft: false,
         published_at: time("10"), assets: [{ id: 4, size: 100, state: "uploaded", name: "demo-linux-x86_64.AppImage" }] };
       if (path.includes("/git/ref/")) return { object: { type: "commit", sha: released } };
@@ -47,11 +53,16 @@ test("compiled Bend2 source decisions through the SQLite import path", async () 
     };
     const path = join(job, "evidence.sqlite");
     const pr = pullRequest(repo, 9, policy, read);
+    assert.equal(pr.firstCommit?.sha, merged);
+    assert.equal(pr.firstReview?.id, 7);
     const failure = releaseEvidence(pr, tag, policy, read, () => ({ http: 206, bytes: 1, range: false }));
     saveDelivery(path, pr, failure);
     assert.equal(deliveryReport(path, policy)[0].pr_to_release_seconds, null);
     const proof = releaseEvidence(pr, tag, policy, read, () => ({ http: 206, bytes: 1, range: true }));
     saveDelivery(path, pr, proof);
+    saveDelivery(path, pr, { ...proof, id: 1, published: proof.published! + 1 });
+    saveDelivery(path, pr, { ...proof, id: 12 });
+    assert.equal(deliveryReport(path, policy)[0].release_id, 2);
     assert.equal(deliveryReport(path, policy)[0].pr_to_release_seconds, 5);
     assert.equal(deliveryReport(path, policy)[0].thread_to_release_seconds, null);
 
@@ -88,6 +99,12 @@ test("compiled Bend2 source decisions through the SQLite import path", async () 
     } finally { db.close(); }
     assert.ok(!JSON.stringify(data).includes("raw result"));
     assert.ok(!JSON.stringify(data).includes("a private string"));
+    appendFileSync(rollout, [
+      event("07", { type: "function_call", name: "wait", call_id: "duplicate", arguments: '{"cell_id":"g10:11"}' }),
+      event("08", { type: "function_call_output", call_id: "duplicate", output: "Script completed" }),
+    ].map((line) => JSON.stringify(line)).join("\n") + "\n");
+    const ambiguous = await readRollout(rollout, "codex-test", policy);
+    assert.equal(ambiguous.calls.find(({ id }) => id === "launch")?.asyncEnd, null);
   } finally {
     rmSync(job, { recursive: true, force: true });
   }

@@ -1,6 +1,5 @@
-import type { PullRequest, ReleaseEvidence } from "../../evidence/source-records.ts";
 import { execFileSync } from "node:child_process";
-import type { SourcePolicy } from "../../evidence/source-policy.ts";
+import type { Milestone, PullRequest, ReleaseEvidence, SourcePolicy } from "../../evidence/sources.ts";
 import { array, repository, row, seconds, sha, str } from "../wire.ts";
 import { positiveInt, readGitHub } from "./attempt.ts";
 
@@ -32,17 +31,24 @@ export function pullRequest(repo: string, number: number, policy: SourcePolicy, 
   const merged = policy.merged_at(opened, seconds(pr.merged_at), pr.merged === true) || null;
   const commitCount = pr.commits === 0 ? 0 : positiveInt(pr.commits);
   const commits = array(read(path + "/commits?per_page=100"), 100);
-  const commitsComplete = commits.length === commitCount;
-  const commitTimes = commits.map((value) => {
+  const empty: Milestone = { $: "Milestone", id: "", at: 0xffffffff };
+  const commitsComplete = policy.commit_complete(commitCount, commits.length);
+  const earliestCommit = commits.reduce<Milestone>((best, value) => {
     const commit = row(value);
-    return { sha: sha(commit.sha), at: seconds(row(row(commit.commit).committer).date) };
-  }).sort((a, b) => a.at - b.at);
-  const firstCommit = commitsComplete && commitTimes[0]?.at ? commitTimes[0] : null;
+    return policy.pick_milestone(best, {
+      $: "Milestone", id: sha(commit.sha), at: seconds(row(row(commit.commit).committer).date),
+    });
+  }, empty);
   const reviews = array(read(path + "/reviews?per_page=100"), 100);
-  const firstReview = reviews.map((value) => {
+  const earliestReview = reviews.reduce<Milestone>((best, value) => {
     const review = row(value);
-    return { id: positiveInt(review.id), at: seconds(review.submitted_at) };
-  }).filter(({ at }) => policy.pr_milestone(opened, at)).sort((a, b) => a.at - b.at)[0] ?? null;
+    return policy.pick_review(best, {
+      $: "Milestone", id: String(positiveInt(review.id)), at: seconds(review.submitted_at),
+    }, opened);
+  }, empty);
+  const firstCommit = policy.keep_commit(commitsComplete, earliestCommit)
+    ? { sha: earliestCommit.id, at: earliestCommit.at } : null;
+  const firstReview = earliestReview.id ? { id: Number(earliestReview.id), at: earliestReview.at } : null;
   return {
     repository: name, number, opened, merged, mergeSha: merged ? sha(pr.merge_commit_sha) : null,
     state: policy.link_state(merged ? "merged" : str(pr.state)),

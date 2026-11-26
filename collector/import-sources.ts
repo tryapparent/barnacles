@@ -1,8 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { deliveryReport, saveDelivery, saveRollout, saveThread } from "../evidence/sources.ts";
-import type { SourcePolicy } from "../evidence/source-policy.ts";
+import { deliveryReport, saveDelivery, saveRollout, saveThread, type SourcePolicy } from "../evidence/sources.ts";
 import { buildPolicy } from "./build.ts";
 import { positiveInt } from "./github/attempt.ts";
 import { pullRequest, releaseEvidence } from "./github/delivery.ts";

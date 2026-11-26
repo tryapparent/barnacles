@@ -76,13 +76,13 @@ Use a stable instance name per T3 environment. Follow and combine link pages bef
 
 ### Codex rollout
 
-Set `rollout` to one permitted retained JSONL file by exact session or workspace evidence. The reader processes one file of up to 64 MiB. It adapts Apparent's timestamp and call/result pairing, including original provider timestamps when present. It correlates a yielded tool cell with an unambiguous terminal wait receipt. A cell span ends when the terminal result was observed and can overlap the envelope and other work. Other process receipt formats remain outside this slice. No titles, messages, raw arguments, outputs, or file paths go into SQLite. A rollout import by itself establishes no T3 or GitHub link.
+Set `rollout` to one permitted retained JSONL file by exact session or workspace evidence. The host decodes one file of up to 64 MiB, including original provider timestamps when present. Bend2 pairs calls with results, handles missing and ambiguous endpoints, and correlates a yielded tool cell with an unambiguous terminal wait receipt. A cell span ends when the terminal result was observed and can overlap the envelope and other work. Other process receipt formats remain outside this slice. No titles, messages, raw arguments, outputs, or file paths go into SQLite. A rollout import by itself establishes no T3 or GitHub link.
 
 ### GitHub PR and release
 
 Pass a PR number alone to capture PR, commit, and review metadata. For release evidence, pass an explicit Linux Main tag. The adapter checks the tag's direct Git ref, equality or ancestry with the PR merge SHA, one uploaded x86_64 AppImage, and an anonymous one-byte Range receipt. It preserves PR metadata when release collection fails. The first 100 commit and review records are sufficient for the verified examples. Counts and caps qualify the first observed review and whether the commit sample is complete. Other channels and annotated tags need their own eligibility support.
 
-The report picks the earliest **observed and verified** release per PR and surface. Publication and access observation have separate timestamps. For PR #2085 the T3 metadata projection supplies one owning link. PR #2071 has PR-to-release data with no verified T3 owner. The report can be regenerated without rereading GitHub.
+Bend2 selects the first commit, first observed review, and earliest **observed and verified** release per PR and surface from decoded evidence. Publication and access observation have separate timestamps. For PR #2085 the T3 metadata projection supplies one owning link. PR #2071 has PR-to-release data with no verified T3 owner. The report can be regenerated without rereading GitHub.
 
 Run both integration tests with:
 

@@ -10,12 +10,12 @@ Barnacles is a public MIT-licensed project for observing how coding-agent work r
 
 Keep the dependency direction from collector to evidence and from dashboard to evidence views. Keep source clients and credentials out of evidence queries and dashboards. Put commands and focused verification instructions in the owning directory as they become runnable.
 
-## Bend2 first
+## Bend2 is the implementation language
 
-- Write new and changed product logic in Bend2. This includes source normalization, classification, evidence validation and attribution, clock selection, metrics, and state transitions. When touching an existing host-language decision, migrate the smallest complete decision and switch its real callers to Bend2 in the same change.
-- Keep host code at the runtime boundary for API and filesystem access, foreign-format decoding, SQLite transactions, Grafana integration, and build wiring. Move decisions behind those boundaries into Bend2 wherever the pinned toolchain supports them.
-- For logic that must stay in another language, document the exact caller, runtime constraint, and affected behavior beside the code. A host-language adapter or an existing implementation alone is insufficient justification.
-- Verify the compiled Bend2 module through the normal entry point. Keep one implementation of each decision and keep generated modules out of Git.
+- Implement all Barnacles product behavior in Bend2. This includes pairing, correlation, filtering, classification, validation of evidence, state updates, selection and ranking, attribution, and metric calculations. Apply this rule to new code and migrate the complete decision when changing existing behavior.
+- Keep the TypeScript host to external I/O, foreign-format decoding and encoding, compiler wiring, and SQLite transactions. SQL supplies schema, storage constraints, and raw evidence reads. Make domain decisions in Bend2 even when a TypeScript loop or SQL query could do the work.
+- If the pinned compiler or runtime blocks a required Bend2 implementation, record the exact limitation and affected behavior. Get an explicit scope decision before adding a host-language implementation of that product behavior.
+- Review every changed host and SQL branch for misplaced product decisions. Exercise the compiled Bend2 code through the real entry point before claiming completion. Keep generated modules out of Git.
 
 ## Evidence and privacy
 
