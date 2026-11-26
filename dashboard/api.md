@@ -36,6 +36,24 @@ JSON as an agent. Review filters and PR detail links are encoded in the URL.
 The page shows the snapshot timestamp and supports keyboard navigation and
 reduced motion.
 
+### GitHub polling settings
+
+Set `BARNACLES_POLL_SETTINGS` to the same absolute file path in the Harbor and
+[collector processes](../collector/README.md#poll-github-for-harbor). Keep the
+file in a private writable directory outside the snapshot. Harbor shows
+**Settings → GitHub polling** when this path is configured. The interval
+defaults to **15 minutes** and accepts whole minutes from 1 to 1440. Saving
+updates the schedule without restarting either process. The interval is shared
+by users of the same Harbor instance.
+
+When polling is configured, an open Shipping review checks for a fresh snapshot
+every 30 seconds while the tab is visible and no PR is selected. The browser
+reads only the local Harbor API. A selected PR keeps its evidence view stable.
+
+`GET /settings/polling` returns the saved interval as `{"minutes":15}`.
+Harbor saves via `PUT /settings/polling?minutes=15` with a same-origin check
+and the same access controls as the review API.
+
 For a private Tailscale Serve deployment, set `BARNACLES_PROXY_HOST` to the
 exact Serve hostname and port as sent in the HTTP Host header, and
 `BARNACLES_PROXY_USER` to the authorized Tailscale login. This keeps the app

@@ -71,8 +71,8 @@ export function detailPage(number: number, to: string) {
   return pagePath({ pr: number, to, offset: null }, `#delivery-pr-${number}`);
 }
 
-export async function fetchEvidence<T>(path: string, signal: AbortSignal): Promise<T> {
-  const response = await fetch(path, { signal, credentials: "same-origin", headers: { Accept: "application/json" } });
+export async function fetchEvidence<T>(path: string, signal: AbortSignal, method = "GET"): Promise<T> {
+  const response = await fetch(path, { method, signal, credentials: "same-origin", headers: { Accept: "application/json" } });
   if (!response.ok) {
     const data = await response.json().catch(() => null);
     throw Error(data?.error?.message ?? "The evidence request failed. Try again.");

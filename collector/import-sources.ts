@@ -1,12 +1,52 @@
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { sourcePolicy, admissionPolicy, deliveryPolicy, type AdmissionPolicy, type DeliveryPolicy, deliveryReport, rolloutCoverage, waitReport, watchOverlaps, loadEvidence, type SourcePolicy } from "../evidence/index.ts";
+import { setTimeout as sleep } from "node:timers/promises";
+import {
+  admissionPolicy, deliveryPolicy, deliveryReport, harborSnapshotPublisher, loadEvidence, readPollMinutes, repository,
+  rolloutCoverage, sourcePolicy, waitReport, watchOverlaps, type AdmissionPolicy, type DeliveryPolicy, type SourcePolicy,
+} from "../evidence/index.ts";
 import { buildPolicy, buildPolicies, loadPolicy } from "../tooling/bend.ts";
-import { positiveInt } from "./github/attempt.ts";
-import { pullRequest, releaseEvidence } from "./github/delivery.ts";
+import { positiveInt, type ClockPolicy } from "./github/attempt.ts";
+import { pollGitHub, pullRequest, releaseEvidence } from "./github/delivery.ts";
 import { inspectRollout } from "./codex/rollout.ts";
 import { str, token } from "./wire.ts";
 import { t3Snapshot } from "./t3.ts";
+
+async function poll(db: string, scratch: string, repo: string, snapshot: string, policy: SourcePolicy, admission: AdmissionPolicy, once: boolean) {
+  const configured = process.env.BARNACLES_POLL_SETTINGS;
+  if (!configured) throw Error("Set BARNACLES_POLL_SETTINGS to the shared polling settings file");
+  const settings = resolve(configured);
+  const publish = harborSnapshotPublisher(resolve(snapshot), repo, scratch);
+  let minutes = readPollMinutes(settings);
+  const clocks = await loadPolicy<ClockPolicy>(
+    await buildPolicy(scratch, new URL("./github/clocks.bend", import.meta.url), "clocks.mjs"));
+  let reportedSettingsError = false;
+  for (;;) {
+    try {
+      const result = pollGitHub(db, repo, policy, clocks, admission);
+      await publish(db);
+      console.log(JSON.stringify(result));
+      if (once && result.failed) throw Error("GitHub poll completed with missing records");
+    } catch (error) {
+      if (once) throw error;
+      console.error(`GitHub poll failed: ${(error as Error).message}`);
+    }
+    if (once) return;
+    const finished = performance.now();
+    for (;;) {
+      try {
+        minutes = readPollMinutes(settings);
+        reportedSettingsError = false;
+      } catch (error) {
+        if (!reportedSettingsError) console.error((error as Error).message);
+        reportedSettingsError = true;
+      }
+      const remaining = finished + minutes * 60_000 - performance.now();
+      if (remaining <= 0) break;
+      await sleep(Math.min(5000, remaining));
+    }
+  }
+}
 
 async function main() {
   const [directory, command, first, second, third, fourth, ...extra] = process.argv.slice(2);
@@ -16,8 +56,9 @@ async function main() {
     (command === "watch-overlaps" && first && second && third && fourth) ||
     (command === "t3" && first && !second) ||
     (command === "rollout" && first && second && !fourth) ||
-    (command === "github" && first && second && !fourth)
-  )) throw Error("Usage: import-sources.ts JOB_DIRECTORY { t3 SNAPSHOT | rollout INSTANCE FILE [SOURCE_ID] | github OWNER/REPO PR [TAG] | report | rollout-coverage | waits [SESSION [CALL]] | watch-overlaps OWNER/REPO RUN SHA ATTEMPT }");
+    (command === "github" && first && second && !fourth) ||
+    (command === "poll-github" && first && second && (!third || third === "--once") && !fourth)
+  )) throw Error("Usage: import-sources.ts JOB_DIRECTORY { t3 SNAPSHOT | rollout INSTANCE FILE [SOURCE_ID] | github OWNER/REPO PR [TAG] | poll-github OWNER/REPO HARBOR_SNAPSHOT [--once] | report | rollout-coverage | waits [SESSION [CALL]] | watch-overlaps OWNER/REPO RUN SHA ATTEMPT }");
 
   const db = join(resolve(directory), "evidence.sqlite");
   if (command === "waits") {
@@ -38,7 +79,9 @@ async function main() {
     const [output, admissionFile] = await buildPolicies(scratch, [[sourcePolicy, "sources.mjs"], [admissionPolicy, "admission.mjs"]]);
     const admission = await loadPolicy<AdmissionPolicy>(admissionFile);
     const policy: SourcePolicy = await loadPolicy(output);
-    if (command === "t3") {
+    if (command === "poll-github") {
+      await poll(db, scratch, repository(first, policy), second, policy, admission, third === "--once");
+    } else if (command === "t3") {
       const info = statSync(first);
       if (!info.isFile() || info.size > 1024 * 1024) throw Error("Expected a bounded T3 metadata snapshot");
       const data = t3Snapshot(JSON.parse(readFileSync(first, "utf8")), policy);

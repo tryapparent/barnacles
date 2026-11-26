@@ -92,7 +92,7 @@ function provenanceLabel(source: string) {
 
 type Request<T> = { state: "loading" } | { state: "ready"; data: T } | { state: "error"; message: string };
 
-function useEvidence<T>(path: string) {
+function useEvidence<T extends object>(path: string, refresh = false) {
   const [result, setResult] = useState<Request<T>>({ state: "loading" });
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
@@ -105,7 +105,77 @@ function useEvidence<T>(path: string) {
     });
     return () => controller.abort();
   }, [path, attempt]);
+  useEffect(() => {
+    if (!refresh) return;
+    let pending: AbortController | undefined;
+    const timer = window.setInterval(() => {
+      if (document.hidden || pending) return;
+      const controller = pending = new AbortController();
+      fetchEvidence<T>(path, controller.signal).then((data) => {
+        if (controller.signal.aborted) return;
+        setResult((prior) => prior.state === "ready" && "snapshotAt" in prior.data &&
+          "snapshotAt" in data && prior.data.snapshotAt === data.snapshotAt ? prior : { state: "ready", data });
+      }).catch(() => undefined).finally(() => { pending = undefined; });
+    }, 30_000);
+    return () => {
+      window.clearInterval(timer);
+      pending?.abort();
+    };
+  }, [path, refresh]);
   return { result, retry: () => setAttempt((count) => count + 1) };
+}
+
+function PollIntervalForm({ path, initial }: { path: string; initial: number }) {
+  const [value, setValue] = useState(String(initial));
+  const [saved, setSaved] = useState(initial);
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState("");
+  const [error, setError] = useState("");
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (saving) return;
+    setSaving(true);
+    setError("");
+    setStatus("");
+    try {
+      const result = await fetchEvidence<{ minutes: number }>(
+        path + "?" + new URLSearchParams({ minutes: String(Number(value)) }), AbortSignal.timeout(10_000), "PUT");
+      setSaved(result.minutes);
+      setValue(String(result.minutes));
+      setStatus("Polling interval saved.");
+    } catch (failure) {
+      setError(failure instanceof Error && failure.name !== "TimeoutError"
+        ? failure.message : "The save timed out. Try again.");
+    } finally {
+      setSaving(false);
+    }
+  }
+  return <form className="poll-form" onSubmit={save}>
+    <label htmlFor="poll-interval">Poll interval (minutes)</label>
+    <div className="poll-controls">
+      <input className="control-input" id="poll-interval" type="number" min="1" max="1440" step="1"
+        required readOnly={saving} value={value} onChange={(event) => {
+          setValue(event.currentTarget.value);
+          setStatus("");
+          setError("");
+        }} />
+      <Button type="submit" disabled={saving || Number(value) === saved}>{saving ? "Saving…" : "Save"}</Button>
+    </div>
+    <p role="status">{status}</p>
+    {error && <p role="alert">{error}</p>}
+  </form>;
+}
+
+function PollSettings({ path }: { path: string }) {
+  const { result, retry } = useEvidence<{ minutes: number }>(path);
+  return <section className="poll-settings" id="poll-settings" aria-labelledby="poll-settings-title">
+    <h2 id="poll-settings-title">GitHub polling</h2>
+    {result.state === "loading" && <p role="status">Loading polling interval…</p>}
+    {result.state === "error" && <div className="poll-error">
+      <p role="alert">{result.message}</p><Button variant="outline" onClick={retry}>Retry</Button>
+    </div>}
+    {result.state === "ready" && <PollIntervalForm path={path} initial={result.data.minutes} />}
+  </section>;
 }
 
 function PullRequestEvidence({ path, milestones }: { path: string; milestones: Milestone[] }) {
@@ -240,9 +310,12 @@ function selectedPullRequest(): number | null {
 
 function App() {
   const path = shippingPath();
-  const { result, retry } = useEvidence<Review>(path);
-  const review = result.state === "ready" ? result.data : null;
   const [selection, setSelection] = useState(() => ({ pr: selectedPullRequest(), revision: 0 }));
+  const [showSettings, setShowSettings] = useState(false);
+  const { result: api } = useEvidence<{ pollingSettings?: string }>("/api/v1");
+  const settingsPath = api.state === "ready" ? api.data.pollingSettings : undefined;
+  const { result, retry } = useEvidence<Review>(path, Boolean(settingsPath) && selection.pr === null);
+  const review = result.state === "ready" ? result.data : null;
   const select = (event: MouseEvent<HTMLAnchorElement>, pr: number) => {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
@@ -263,8 +336,12 @@ function App() {
       <div className="scope">
         {review && <span>{review.repository} · Linux Main x86_64</span>}
         <a href={path}>Review API JSON</a>
+        {settingsPath && <button type="button" className="settings-toggle" aria-expanded={showSettings}
+          aria-controls={showSettings ? "poll-settings" : undefined}
+          onClick={() => setShowSettings((open) => !open)}>Settings</button>}
       </div>
     </header>
+    {showSettings && settingsPath && <PollSettings path={settingsPath} />}
     {result.state === "loading" && <div className="page-message"><p role="status">Loading prepared evidence…</p></div>}
     {result.state === "error" && <div className="page-message" role="alert"><p>{result.message}</p>
       <div className="detail-links"><Button onClick={retry}>Retry review</Button><a href="/">Reset filters</a></div>
@@ -278,7 +355,7 @@ function App() {
       <Fleet fleet={review.fleet} onSelect={select} />
       <Overview review={review} />
       <DailyStages days={review.shipments.dailyStages} />
-      <DeliveryTimeline review={review} selection={selection} />
+      <DeliveryTimeline key={review.snapshotAt} review={review} selection={selection} />
     </>}
   </main>;
 }

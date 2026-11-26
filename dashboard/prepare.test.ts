@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { request as httpRequest } from "node:http";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
@@ -588,6 +589,7 @@ test("shipping API preserves historical and partial evidence and reads a replace
   const source = join(job, "evidence.sqlite");
   const snapshot = join(job, "snapshot");
   const replacement = join(job, "replacement");
+  const settings = join(job, "poll-interval");
   const repo = "synthetic/harbor";
   const at = Math.floor(Date.now() / 1000) - 60;
   const iso = (seconds: number) => new Date(seconds * 1000).toISOString();
@@ -646,7 +648,8 @@ test("shipping API preserves historical and partial evidence and reads a replace
     const web = process.env.BARNACLES_WEB_BUILD;
     const proxyUser = "owner@example.invalid";
     server = spawn(process.execPath, ["dashboard/prepare.ts", "--serve", snapshot, "0", ...(web ? [web] : [])], {
-      env: { ...process.env, BARNACLES_PROXY_HOST: "harbor.example.invalid:8443", BARNACLES_PROXY_USER: proxyUser },
+      env: { ...process.env, BARNACLES_PROXY_HOST: "harbor.example.invalid:8443", BARNACLES_PROXY_USER: proxyUser,
+        BARNACLES_POLL_SETTINGS: settings },
       stdio: ["ignore", "pipe", "pipe"],
     });
     server.stderr?.resume();
@@ -679,6 +682,26 @@ test("shipping API preserves historical and partial evidence and reads a replace
       assert.equal((await call("/dashboard.sqlite")).status, 404);
     }
     assert.equal((await get("/api/v1")).endpoints.shipping.path, "/api/v1/shipping");
+    const settingsPath = (await get("/api/v1")).pollingSettings;
+    assert.equal(settingsPath, "/settings/polling");
+    assert.deepEqual(await get(settingsPath), { minutes: 15 });
+    const update = (value: string, origin: string, user = proxyUser) => new Promise<number | undefined>((resolve, reject) => {
+      const req = httpRequest(base + settingsPath + "?" + new URLSearchParams({ minutes: value }), {
+        method: "PUT", headers: { Host: "harbor.example.invalid:8443", "Tailscale-User-Login": user, Origin: origin },
+      }, (response) => {
+        response.resume();
+        resolve(response.statusCode);
+      });
+      req.once("error", reject).setTimeout(10_000, () => req.destroy(Error("Polling settings request timed out"))).end();
+    });
+    const origin = "https://harbor.example.invalid:8443";
+    assert.equal(await update("5", "https://other.example.invalid"), 403);
+    assert.equal(await update("5", origin, "guest@example.invalid"), 403);
+    assert.equal(await update("0", origin), 400);
+    assert.deepEqual(await get(settingsPath), { minutes: 15 });
+    assert.equal(await update("5", origin), 200);
+    assert.equal(readFileSync(settings, "utf8"), "5\n");
+    assert.deepEqual(await get(settingsPath), { minutes: 5 });
     const report = await get("/api/v1/shipping?limit=1");
     assert.equal(report.snapshotAt, iso(cutoff));
     assert.deepEqual(report.snapshotCoverage, { observedPullRequests: 2, verifiedShipments: 1, attributedShipments: 1 });
