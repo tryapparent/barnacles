@@ -6,7 +6,7 @@ Barnacles is a public MIT-licensed project for observing how coding-agent work r
 
 - [Collector](collector/README.md) reads source evidence and emits allowlisted records.
 - [Evidence](evidence/README.md) owns SQLite, record identities, delivery joins, and metric definitions.
-- [Dashboard](dashboard/README.md) provisions Grafana against evidence views.
+- [Harbor](dashboard/api.md) owns the browser dashboard and its read-only shipping API. Build new dashboard work for Harbor. Use the [Grafana documentation](dashboard/README.md) as a reference for the retired preview.
 
 Keep the dependency direction from collector to evidence and from dashboard to evidence views. Keep source clients and credentials out of evidence queries and dashboards. Put commands and focused verification instructions in the owning directory as they become runnable.
 
@@ -35,7 +35,7 @@ Put explanations in visible Markdown documentation. Staged code and configuratio
 
 ## Verification and delivery
 
-- Verify the changed entry point. For dashboard changes, inspect the actual Grafana build for the supported sizes, themes, keyboard paths, and relevant data states. Use the approved design reference when available.
+- Verify the changed entry point. For dashboard changes, inspect the actual Harbor build for the supported sizes, themes, keyboard paths, and relevant data states. Use the approved design reference when available.
 - Record the exact commands and evidence for the change and state any gaps. Deployment, source-side instrumentation, and spend require separate authorization.
 - Treat a draft PR as a checkpoint. For ordinary implementation work, follow the PR through checks and review, resolve in-scope blockers, and merge it when eligible. Finish the task after confirming the merge and completing any required post-merge verification.
 - Honor explicit draft-only requests, merge holds, and required approvals. When T3 requires a PR watch, register it and yield. Resume the merge work when the watch reports an update.

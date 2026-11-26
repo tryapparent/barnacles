@@ -1,7 +1,7 @@
 # Shipping review API
 
 The harbor dashboard and an automated reader use the same versioned read-only
-HTTP interface. The API reads the same prepared SQLite snapshot as Grafana.
+HTTP interface. The API reads the prepared SQLite evidence snapshot.
 Bend2 owns evidence selection, milestone state and elapsed time, ranking,
 pagination, and shipment counts. The Node host handles HTTP, JSON and SQLite I/O.
 
@@ -34,7 +34,7 @@ node dashboard/prepare.ts --serve "$job/grafana" 3031 "$job/harbor"
 Open [Shipping review](http://127.0.0.1:3031/). The browser requests the same
 JSON as an agent. Review filters and PR detail links are encoded in the URL.
 The page shows the snapshot timestamp and supports keyboard navigation and
-reduced motion. Grafana remains the reader for its provisioned drilldowns.
+reduced motion.
 
 For a private Tailscale Serve deployment, set `BARNACLES_PROXY_HOST` to the
 exact Serve hostname and port as sent in the HTTP Host header, and
@@ -82,10 +82,10 @@ up to 366 days. The response includes both `snapshotAt` and its effective
 | Field | Meaning |
 | --- | --- |
 | `snapshotCoverage` | Unique observed PRs, verified Linux Main x86_64 shipments, and shipments with an attributable thread-to-publication cycle in the prepared sample. |
-| `cycleComparison` | The Grafana comparison of the latest two completed UTC weeks at snapshot time, with direction, signed delta, and each week's measured mean and sample count. An insufficient comparison has a null delta. |
+| `cycleComparison` | The comparison of the latest two completed UTC weeks at snapshot time, with direction, signed delta, and each week's measured mean and sample count. An insufficient comparison has a null delta. |
 | `shipments` | PRs with publication inside the selected window and verified access by its cutoff. Weekly buckets use Mondays in UTC. A missing bucket means the selected sample supplied no verified shipment for that week. |
 | `shipments.dailyStages` | The same verified PRs grouped by UTC publication day, newest first. Each consecutive stage reports its measured PR count and mean seconds. A null mean indicates missing coverage. Older prepared review policies omit this field. |
-| `operations` | Ranked elapsed times ending at the snapshot cutoff, using the default 24-hour reporting window in Grafana. Available clocks and operation names are included. Cumulative spans can overlap. |
+| `operations` | Ranked elapsed times ending at the snapshot cutoff, using the default 24-hour reporting window. Available clocks and operation names are included. Cumulative spans can overlap. |
 | `fleet` | PRs with a milestone in the last 24 hours of the effective window, or the whole window if shorter. Each PR has one current stage, a last observed time, and a detail link. |
 | `deliveries` | PRs with a milestone inside the effective window, ordered newest start first with observed PR clocks as a fallback. Each item has the ordered milestone list and a detail link. |
 
