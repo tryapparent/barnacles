@@ -129,7 +129,8 @@ h2, figcaption { font-size: 17px; line-height: 1.24; }
   position: relative;
   height: var(--water-height);
   isolation: isolate;
-  overflow: hidden;
+  container-type: inline-size;
+  z-index: 1;
   border-block: 1px solid var(--rule);
   background: var(--brand-primary);
 }
@@ -139,17 +140,56 @@ h2, figcaption { font-size: 17px; line-height: 1.24; }
   inset: 0 0 auto;
   z-index: -1;
   width: 100%;
-  height: var(--water-height);
+  height: 100%;
   image-rendering: pixelated;
 }
 
 .fleet-ship {
   position: absolute;
-  z-index: 1;
   border: 1px solid transparent;
+  text-decoration: none;
 }
+.fleet-ship::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  z-index: 3;
+}
+
 .fleet-ship:hover { border-color: var(--accent); }
 .fleet-ship:focus-visible { outline-offset: 0; }
+
+.fleet-ship-tooltip {
+  --label-edge: 4.75rem;
+  position: absolute;
+  z-index: 1;
+  top: 100%;
+  left: clamp(calc(50% + var(--label-edge) - var(--ship-x)), 50%,
+    calc(50% + 100cqw - var(--label-edge) - var(--ship-x)));
+  translate: -50% 0;
+  width: max-content;
+  max-width: 9rem;
+  padding-top: 4px;
+  visibility: hidden;
+}
+
+.fleet-ship:is(:hover, :focus-visible):not([data-tooltip-dismissed]) .fleet-ship-tooltip {
+  visibility: visible;
+}
+.fleet-ship:hover .fleet-ship-tooltip { z-index: 2; }
+
+.fleet-ship-callout {
+  display: grid;
+  gap: 2px;
+  padding: 5px 9px;
+  border: 1px solid var(--rule);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.fleet-ship-callout > span + span { color: var(--quiet); }
 
 .fleet-celestial {
   position: absolute;
