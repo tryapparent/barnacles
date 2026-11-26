@@ -3,11 +3,21 @@ import { execFileSync } from "node:child_process";
 
 import type { ActionAttempt, AttemptIdentity } from "../../evidence/actions.ts";
 type Json = Record<string, unknown>;
-type Clock = {
-  queue_known: (created: number, started: number, completed: number, allocation: number) => number;
-  execution_known: Clock["queue_known"];
-  has_prior_execution: (created: number, started: number) => boolean;
-  step_known: (start: number, end: number, jobStart: number, jobEnd: number) => number;
+type MatchIdentity = (run: string, attempt: string, sha: string,
+  expectedRun: string, expectedAttempt: string, expectedSha: string) => boolean;
+type Policy = {
+  attempt_matches: MatchIdentity;
+  job_matches: (...args: [...Parameters<MatchIdentity>, missingAttempt: boolean]) => boolean;
+  job_clocks: (created: number, started: number, completed: number, status: string,
+    conclusion: string, assigned: boolean, zeroRunner: boolean) => {
+      queue_end: number; execution_end: number; prior_execution: boolean;
+    };
+  step_known: (start: number, end: number, jobStart: number, jobEnd: number,
+    status: string, conclusion: string) => boolean;
+  source_status: (value: string) => string;
+  source_conclusion: (value: string) => string;
+  job_label: (value: string) => string;
+  step_label: (value: string) => string;
 };
 
 export function positiveInt(value: unknown): number {
@@ -25,8 +35,12 @@ function object(value: unknown): Json {
   return value as Json;
 }
 
-function text(value: unknown, allowed: readonly string[], fallback = "unknown"): string {
-  return typeof value === "string" && allowed.includes(value) ? value : fallback;
+function wireText(value: unknown): string {
+  return typeof value === "string" && value.length <= 128 ? value : "";
+}
+
+function wireId(value: unknown): string {
+  return typeof value === "number" && Number.isSafeInteger(value) ? String(value) : "";
 }
 
 function clock(value: unknown): number {
@@ -48,32 +62,17 @@ function readGitHub(path: string): unknown {
   }
 }
 
-const statuses = ["completed", "queued", "pending", "waiting", "in_progress", "requested"];
-const conclusions = ["success", "failure", "cancelled", "skipped", "neutral", "timed_out", "action_required",
-  "startup_failure", "stale"];
-const pending = ["queued", "pending", "waiting", "requested"];
-
-// Deliberately retain only known static display labels. Run-step names can contain shell code.
-const jobLabels = ["admit", "macos / frontend", "macos / Build signed Mac candidate",
-  "linux / Build x86_64 AppImage", "linux / cli", "publish-linux", "publish-nightly"];
-const stepLabels = ["Set up job", "Assemble signed notarized candidate", "Validate candidate installation",
-  "Sign Sparkle bytes and seal candidate", "Complete job"];
-
-function normalizeJob(job: Json, policy: Clock) {
+function normalizeJob(job: Json, policy: Policy) {
   const id = positiveInt(job.id);
   const created = clock(job.created_at);
   const started = clock(job.started_at);
   const completed = clock(job.completed_at);
-  const status = text(job.status, statuses);
-  const conclusion = text(job.conclusion, conclusions);
-  const allocation = pending.includes(status) || conclusion === "skipped" ? 0
-    : typeof job.runner_id === "number" && job.runner_id > 0 ? 1
-    : job.runner_id === 0 && status === "completed" && conclusion === "cancelled" ? 2
-    : 0;
-  const queueEnd = policy.queue_known(created, started, completed, allocation)
-    ? (allocation === 1 ? started : completed) : null;
-  const executionEnd = status === "completed" && policy.execution_known(created, started, completed, allocation)
-    ? completed : null;
+  const status = policy.source_status(wireText(job.status));
+  const conclusion = policy.source_conclusion(wireText(job.conclusion));
+  const { queue_end, execution_end, prior_execution } = policy.job_clocks(
+    created, started, completed, status, conclusion,
+    typeof job.runner_id === "number" && job.runner_id > 0, job.runner_id === 0,
+  );
   if (!Array.isArray(job.steps)) throw new Error("Missing GitHub job steps array");
   const seen = new Set<number>();
   const steps = job.steps.map((item) => {
@@ -83,20 +82,20 @@ function normalizeJob(job: Json, policy: Clock) {
     seen.add(number);
     const start = clock(step.started_at);
     const end = clock(step.completed_at);
-    const status = text(step.status, statuses);
-    const conclusion = text(step.conclusion, conclusions);
-    const known = executionEnd !== null && conclusion !== "skipped" &&
-      status === "completed" && policy.step_known(start, end, started, executionEnd) !== 0;
-    return { number, label: text(step.name, stepLabels, "Other steps"), status, conclusion,
+    const status = policy.source_status(wireText(step.status));
+    const conclusion = policy.source_conclusion(wireText(step.conclusion));
+    const known = policy.step_known(start, end, started, execution_end, status, conclusion);
+    return { number, label: policy.step_label(wireText(step.name)), status, conclusion,
       start: known ? start : null, end: known ? end : null };
   });
   return {
-    id, label: text(job.name, jobLabels, "Other jobs"), status, conclusion, created: created || null,
-    priorExecution: policy.has_prior_execution(created, started), queueEnd, executionStart: executionEnd === null ? null : started, executionEnd, steps,
+    id, label: policy.job_label(wireText(job.name)), status, conclusion, created: created || null,
+    priorExecution: prior_execution, queueEnd: queue_end || null,
+    executionStart: execution_end ? started : null, executionEnd: execution_end || null, steps,
   };
 }
 
-export function collectAttempt(identity: AttemptIdentity, policy: Clock, read = readGitHub): ActionAttempt {
+export function collectAttempt(identity: AttemptIdentity, policy: Policy, read = readGitHub): ActionAttempt {
   const { repository, runId, attempt, sha } = identity;
   if (!/^[\w.-]+\/[\w.-]+$/.test(repository) || repository.split("/").some((part) => part === "." || part === "..") ||
       !/^[a-f0-9]{40}$/.test(sha)) throw new Error("Expected owner/repository and full lowercase commit SHA");
@@ -104,7 +103,8 @@ export function collectAttempt(identity: AttemptIdentity, policy: Clock, read = 
   positiveInt(attempt);
   const path = `repos/${repository}/actions/runs/${runId}/attempts/${attempt}`;
   const run = object(read(path));
-  if (run.id !== runId || run.run_attempt !== attempt || run.head_sha !== sha) {
+  const expected = [String(runId), String(attempt), sha] as const;
+  if (!policy.attempt_matches(wireId(run.id), wireId(run.run_attempt), wireText(run.head_sha), ...expected)) {
     throw new Error("GitHub attempt identity does not match the request");
   }
   const jobs = new Map<number, ReturnType<typeof normalizeJob>>();
@@ -119,8 +119,10 @@ export function collectAttempt(identity: AttemptIdentity, policy: Clock, read = 
     total = count;
     for (const item of response.jobs) {
       const job = object(item);
-      if (job.run_id !== runId || job.head_sha !== sha ||
-          (job.run_attempt !== undefined && job.run_attempt !== attempt)) {
+      if (!policy.job_matches(
+        wireId(job.run_id), wireId(job.run_attempt), wireText(job.head_sha), ...expected,
+        job.run_attempt === undefined,
+      )) {
         throw new Error("GitHub job identity does not match the attempt");
       }
       const normalized = normalizeJob(job, policy);
@@ -129,8 +131,8 @@ export function collectAttempt(identity: AttemptIdentity, policy: Clock, read = 
     }
     if (jobs.size === total) {
       return {
-        ...identity, workflowId: positiveInt(run.workflow_id), status: text(run.status, statuses),
-        conclusion: text(run.conclusion, conclusions), createdAt: clock(run.created_at) || null,
+        ...identity, workflowId: positiveInt(run.workflow_id), status: policy.source_status(wireText(run.status)),
+        conclusion: policy.source_conclusion(wireText(run.conclusion)), createdAt: clock(run.created_at) || null,
         startedAt: clock(run.run_started_at) || null, sourceUpdated: clock(run.updated_at),
         observedAt: Math.floor(Date.now() / 1000), jobs: [...jobs.values()],
       };

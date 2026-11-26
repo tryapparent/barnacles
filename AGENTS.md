@@ -10,6 +10,13 @@ Barnacles is a public MIT-licensed project for observing how coding-agent work r
 
 Keep the dependency direction from collector to evidence and from dashboard to evidence views. Keep source clients and credentials out of evidence queries and dashboards. Put commands and focused verification instructions in the owning directory as they become runnable.
 
+## Bend2 first
+
+- Write new and changed product logic in Bend2. This includes source normalization, classification, evidence validation and attribution, clock selection, metrics, and state transitions. When touching an existing host-language decision, migrate the smallest complete decision and switch its real callers to Bend2 in the same change.
+- Keep host code at the runtime boundary for API and filesystem access, foreign-format decoding, SQLite transactions, Grafana integration, and build wiring. Move decisions behind those boundaries into Bend2 wherever the pinned toolchain supports them.
+- For logic that must stay in another language, document the exact caller, runtime constraint, and affected behavior beside the code. A host-language adapter or an existing implementation alone is insufficient justification.
+- Verify the compiled Bend2 module through the normal entry point. Keep one implementation of each decision and keep generated modules out of Git.
+
 ## Evidence and privacy
 
 - Treat thread start, merge, landed CI success, publication, and verified access as distinct facts. Shipping requires evidence for the intended surface and an explicit delivery mapping. Preserve partial coverage and unknown clocks.

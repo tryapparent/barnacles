@@ -63,6 +63,11 @@ test("Bend2 clocks reach SQLite through the exact-attempt importer", async () =>
     assert.throws(() => collectAttempt(identity, policy, (path) =>
       path.includes("/jobs?") ? { total_count: 1, jobs: [] } : run), /Partial GitHub job inventory/);
     assert.throws(() => collectAttempt({ ...identity, sha: "b".repeat(40) }, policy, read), /identity/);
+    assert.throws(() => collectAttempt(identity, policy, (path) => path.includes("/jobs?")
+      ? { total_count: 1, jobs: [{ ...allocated, run_attempt: 1 }] } : run), /job identity/);
+    const withoutJobAttempt = collectAttempt(identity, policy, (path) => path.includes("/jobs?")
+      ? { total_count: 1, jobs: [{ ...allocated, run_attempt: undefined }] } : run);
+    assert.equal(withoutJobAttempt.jobs.length, 1);
     const jobless = collectAttempt(identity, policy, (path) =>
       path.includes("/jobs?") ? { total_count: 0, jobs: [] } : { ...run, status: "queued" });
     assert.deepEqual(jobless.jobs, []);
