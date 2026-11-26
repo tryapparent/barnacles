@@ -124,6 +124,27 @@ def trace_parent(clock: String, count: Nat, start: Nat, end: Nat, parent_start: 
   Bool.and(String.eq(clock, "tool_envelope"), Bool.and(Nat.is_eq(count, 1n),
     Bool.and(Nat.is_le(parent_start, start), Nat.is_le(end, parent_end))))
 
+type ActivityScan is Data:
+  Scan{latest_end: Nat, open: Bool}
+
+type ActivityStep is Data:
+  Hold{}
+  Advance{scan: ActivityScan}
+
+def scan_activity(scan: ActivityScan, start: Nat, +end: Nat, until: Nat) -> ActivityStep:
+  match scan:
+    case Scan{latest_end, open}:
+      Bool.pick(ActivityStep, Nat.is_lt(start, until),
+        Advance{Scan{Nat.max(latest_end, end), Bool.or(open, Nat.is_eq(end, 0n))}}, Hold{})
+
+def rollout_clean(malformed: Nat, orphans: Nat) -> Bool:
+  Nat.is_eq(Nat.add(malformed, orphans), 0n)
+
+def estimate_model_wait(clean: Bool, +result: Nat, at: Nat, scan: ActivityScan) -> Bool:
+  match scan:
+    case Scan{latest_end, open}:
+      Bool.and(clean, Bool.and(Bool.not(open),
+        Bool.and(Nat.is_le(latest_end, result), Bool.and(Nat.is_lt(0n, result), Nat.is_lt(result, at)))))
 
 def ranks_before(+total: Nat, key: String, +other_total: Nat, other_key: String) -> Bool:
   Bool.or(Nat.is_lt(other_total, total),

@@ -24,6 +24,8 @@ The `action_occupancy` view groups measured durations by repository, workflow, c
 
 `codex_reasoning` stores an observation timestamp keyed by collector instance, session, and source line. These points have no duration and are excluded from span counts and occupancy. Databases imported before this table was added have no reasoning coverage until the corresponding rollouts are reimported.
 
+`codex_reasoning_inputs` links a reasoning observation to the preceding tool result's call identity when the importer observes them in sequence. The dashboard derives a positive gap only with a paired tool end and no overlapping or potentially open tool activity. Malformed records and orphan outputs suppress estimates for that rollout. Older snapshots can still render their original spans and reasoning events.
+
 `codex_commands` and `codex_categories` store allowlisted command labels and distinct submitted operation categories by instance, session, and call ID. The Tempo projection hashes source keys into stable trace and span IDs, and exports observed timestamps, source line numbers, clock names, and safe labels. Categories attach to the existing span, so several categories can share one observed interval. Imports that predate categories retain their original labels until reimported. Exact source identities stay in this SQLite schema.
 
 `codex_command_mixes` stores repeated operation counts and the matched inner shell receipt duration using the same call identity. It supplies evidence for estimation and does not alter the trace clock. Reimport a rollout to populate this table.

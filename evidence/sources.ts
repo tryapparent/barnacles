@@ -22,6 +22,7 @@ export type ReleaseOrder = { $: "Release"; published: number; checked: number; i
 
 export type SourcePolicy = {
   reasoning(event: string, point: Point): boolean;
+  model_wait_input(previous: string, envelope: string, kind: string, callId: string): string;
   tool(name: string, direct: List<ShellCommand>, wrapped: List<ToolInvocation>): unknown;
   command_mix(commands: List<ShellCommand>): CommandMix;
   keep_mix_receipt(seconds: number, exitCode: number, running: boolean, endSeen: boolean, ambiguous: boolean): boolean;
@@ -74,7 +75,7 @@ export type ThreadEvidence = {
 
 export type RolloutEvidence = {
   instance: string; session: string; lines: number; malformed: number; orphans: number;
-  markers: { line: number; at: number }[];
+  markers: { line: number; at: number; resultCall?: string }[];
   calls: { id: string; line: number; tool: string; command: string | null; start: number | null; end: number | null;
     async: boolean; asyncEnd: number | null; terminalCall: string | null; ambiguous: boolean; categories?: string;
     mix?: Extract<CommandMix, { $: "Mix" }> & { seconds: number } }[];
@@ -152,9 +153,14 @@ export function saveRollout(path: string, data: RolloutEvidence) {
       if (call.mix) mixes.run(...key, call.id, call.mix.file_count, call.mix.git_count,
         call.mix.build_count, call.mix.push_count, call.mix.seconds);
     }
+    db.prepare("DELETE FROM codex_reasoning_inputs WHERE instance=? AND session_id=?").run(...key);
     db.prepare("DELETE FROM codex_reasoning WHERE instance=? AND session_id=?").run(...key);
     const markers = db.prepare("INSERT INTO codex_reasoning VALUES (?, ?, ?, ?)");
-    for (const marker of data.markers) markers.run(...key, marker.line, marker.at);
+    const inputs = db.prepare("INSERT INTO codex_reasoning_inputs VALUES (?, ?, ?, ?)");
+    for (const marker of data.markers) {
+      markers.run(...key, marker.line, marker.at);
+      if (marker.resultCall) inputs.run(...key, marker.line, marker.resultCall);
+    }
   });
 }
 
