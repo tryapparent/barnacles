@@ -20,7 +20,7 @@ Codex JSONL     T3 snapshots     GitHub APIs
 
 - [Collector](collector/README.md) documents source boundaries and code to adapt from Apparent.
 - [Evidence](evidence/README.md) defines record identities, release attribution, and metrics.
-- The [Plow dashboard](https://plow.tryapparent.com/app) shows thread activity and time summaries with synthetic evidence. See the [dashboard guide](dashboard/plow/README.md) to build and test it.
+- The [Plow dashboard](https://plow.tryapparent.com/app) shows thread activity and time summaries from collected session evidence. See the [dashboard guide](dashboard/plow/README.md) to build and test it.
 
 ## Try it locally
 
@@ -41,7 +41,7 @@ node dashboard/plow/build.ts "$plow_build_dir"
 node dashboard/plow/smoke.mjs "$plow_build_dir"
 ```
 
-Open `index.html` in the build directory for the standalone dashboard.
+The smoke command serves the built dashboard with synthetic evidence.
 
 The [Actions import](collector/README.md#run-the-actions-import) and the [T3, Codex, and GitHub delivery imports](collector/README.md#import-t3-codex-and-github-delivery) write local SQLite evidence. Use the delivery report to inspect verified releases and thread-to-release coverage.
 

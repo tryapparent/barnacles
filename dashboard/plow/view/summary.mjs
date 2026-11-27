@@ -5,9 +5,9 @@ const collapse = document.getElementById('collapse')
 const utcWindow = document.getElementById('utc-window')
 const timelineSelection = document.getElementById('timeline-selection')
 const categories = [
-  { kind: 1, name: 'Workflows or waits', style: 'workflow' },
-  { kind: 2, name: 'Agent work', style: 'agent' },
-  { kind: 0, name: 'Unclear', style: 'unclear' },
+  { kind: 1, name: 'Admission wait', style: 'workflow' },
+  { kind: 2, name: 'Provider run', style: 'agent' },
+  { kind: 0, name: 'Unobserved', style: 'unclear' },
 ]
 const summaryTraces = asList(evidenceRows.map((trace, index) => ({
   $: 'SummaryTrace', index: index + 1, start: trace.startUtcMs, parts: trace.evidence,
@@ -20,6 +20,7 @@ let selection = policy.initial_overview()
 let previousWindow = ''
 let matches = new Map()
 
+const shareLabel = new Intl.NumberFormat('en', { style: 'percent', maximumFractionDigits: 1 })
 const utc = time => utcDay.format(time) + ' ' + utcClock.format(time)
 const durationLabel = ms => {
   const minutes = Math.round(ms / 60000)
@@ -28,7 +29,7 @@ const durationLabel = ms => {
   return Math.floor(minutes / 60) + 'h ' + minutes % 60 + 'm'
 }
 const threadCount = count => count === 1 ? '1 thread' : count + ' threads'
-const operationLabel = name => selection.category === 0 ? 'Unclear interval' : name
+const operationLabel = name => selection.category === 0 ? 'Unobserved interval' : name
 
 function resetRange() {
   applyZoom(1, .5)
@@ -91,7 +92,7 @@ function renderSummary(windowStart, windowEnd) {
   const operations = group ? [...values(group.operations)].map(operation => ({
     key: operation.name,
     name: operationLabel(operation.name),
-    metric: durationLabel(operation.duration) + ' · ' + Math.round(100 * operation.duration / group.duration) + '%',
+    metric: durationLabel(operation.duration) + ' · ' + shareLabel.format(operation.duration / group.duration),
     active: operation.name === selection.operation,
     select: () => selectOperation(operation.name),
   })) : []
@@ -109,7 +110,7 @@ function renderSummary(windowStart, windowEnd) {
       return {
         ...category,
         duration: group ? durationLabel(group.duration) : '0m',
-        share: group ? Math.round(100 * group.duration / result.duration) : 0,
+        share: shareLabel.format(group ? group.duration / result.duration : 0),
         expanded: category.kind === selection.category,
         select: () => selectCategory(category),
       }
@@ -162,5 +163,7 @@ function paintThreadMatch(row, rail, index) {
   }
 }
 
-applyZoom(1,.5)
-document.fonts.ready.then(()=>{draw();paintWindow()})
+if (traces.length > 0) {
+  applyZoom(1,.5)
+  document.fonts.ready.then(()=>{draw();paintWindow()})
+}

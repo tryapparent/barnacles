@@ -7,7 +7,7 @@ type Category = {
   name: string;
   style: string;
   duration: string;
-  share: number;
+  share: string;
   expanded: boolean;
   select: () => void;
 };
@@ -59,7 +59,7 @@ export function Summary() {
         className={`category-tile ${category.style}`} data-kind={category.kind}
         aria-expanded={category.expanded} aria-controls="operation-panel" onClick={category.select}>
         <span className="category-name">{category.name}</span>
-        <span className="category-metric">{category.duration}<span className="category-share">{`${category.share}%`}</span></span>
+        <span className="category-metric">{category.duration}<span className="category-share">{category.share}</span></span>
         <span className="category-icon" aria-hidden="true">{category.expanded ? "−" : "+"}</span>
       </Button>)}
     </div>

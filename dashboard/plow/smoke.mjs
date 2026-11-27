@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
+import { DatabaseSync } from 'node:sqlite'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { chromium } from 'playwright'
@@ -9,7 +11,26 @@ if (!directory) throw new Error('Pass the Plow build output directory.')
 const { default: worker } = await import(pathToFileURL(resolve(directory, 'worker.mjs')).href)
 const app = 'https://plow.tryapparent.com/app'
 const audience = 'fixture-audience'
-const env = { PLOW_ACCESS_AUDIENCE: audience }
+const demo = [
+  {startUtcMs: 1795726800000, work: [[12960, 16920, "Release verification"]], wait: [[0, 12960, "Publish artifacts"]], end: 16920},
+  {startUtcMs: 1795719600000, work: [[0, 5040, "Code changes"]], wait: [[5040, 18360, "CI checks"]], end: 20700},
+  {startUtcMs: 1795712400000, work: [[0, 3240, "Code changes"], [13680, 16920, "Local testing"]], wait: [[3240, 13680, "CI checks"]], end: 16920},
+  {startUtcMs: 1795705200000, work: [], wait: [[0, 12240, "CI checks"]], end: 16200},
+  {startUtcMs: 1795698000000, work: [[0, 8640, "Code changes"]], wait: [[8640, 15480, "CI checks"]], end: 15480},
+  {startUtcMs: 1795694400000, work: [], wait: [[5940, 17280, "Publish artifacts"]], end: 17280},
+  {startUtcMs: 1795687200000, work: [[0, 2880, "Code changes"]], wait: [[2880, 7380, "CI checks"]], end: 7380},
+  {startUtcMs: 1795680000000, work: [[10440, 13320, "Local testing"]], wait: [[0, 10440, "CI checks"]], end: 13320},
+  {startUtcMs: 1795676400000, work: [[0, 5400, "Local testing"]], wait: [[5400, 14760, "CI checks"]], end: 14760},
+  {startUtcMs: 1795608000000, work: [[0, 4680, "Code changes"]], wait: [[4680, 14760, "CI checks"]], end: 17280},
+]
+const feed = { observed: 1795730400000, traces: demo.map(trace => ({ ...trace, errors: [] })) }
+let storedFeed = JSON.stringify(feed)
+let reads = 0
+const env = { PLOW_ACCESS_AUDIENCE: audience, PLOW_SESSION_FEED: { get: async key => {
+  assert.equal(key, 'session-timeline-v1')
+  reads++
+  return storedFeed
+} } }
 const history = 'https://preview.tail-fixture.ts.net:19531/sessions'
 const linked = { ...env, PLOW_SESSION_HISTORY_URL: history }
 const context = { access: { aud: audience } }
@@ -18,10 +39,34 @@ assert.equal((await worker.fetch(request, env, {})).status, 403)
 assert.equal((await worker.fetch(request, {}, context)).status, 403)
 assert.equal((await worker.fetch(request, env, { access: { aud: 'another-app' } })).status, 403)
 assert.equal((await worker.fetch(new Request('https://preview.workers.dev/app'), env, context)).status, 404)
+assert.equal((await worker.fetch(new Request(app, { method: 'POST' }), env, context)).status, 405)
+assert.equal(reads, 0)
 const allowed = await worker.fetch(request, env, context)
 assert.equal(allowed.status, 200)
 assert.equal(allowed.headers.get('Cache-Control'), 'private, no-store')
-assert.equal(await allowed.text(), await readFile(resolve(directory, 'index.html'), 'utf8'))
+assert.notEqual(await allowed.text(), await readFile(resolve(directory, 'index.html'), 'utf8'))
+
+const dbPath = resolve(directory, 'projection-fixture.sqlite')
+const projectedPath = resolve(directory, 'projection-fixture.json')
+const db = new DatabaseSync(dbPath)
+db.exec(`
+  CREATE TABLE t3_threads(instance TEXT, thread_id TEXT, created_ms INTEGER, updated_ms INTEGER);
+  CREATE TABLE t3_runs(instance TEXT, thread_id TEXT, run_id TEXT, requested_ms INTEGER, started_ms INTEGER,
+    completed_ms INTEGER, status TEXT);
+  INSERT INTO t3_threads VALUES ('t3','older',100,1200),('t3','latest',1500,3000),('t3','unknown',3200,3400);
+  INSERT INTO t3_runs VALUES ('t3','older','a',110,300,900,'failed'),('t3','latest','b',2000,2400,NULL,'running'),
+    ('t3','latest','c',2100,NULL,NULL,'queued'),('t3','latest','d',NULL,2300,3200,'completed'),
+    ('another','latest','e',1600,1700,1800,'completed');
+`)
+db.close()
+execFileSync(process.execPath, ['dashboard/plow/build.ts', '--project-feed', dbPath, projectedPath])
+assert.deepEqual(JSON.parse(await readFile(projectedPath, 'utf8')), {
+  observed: 3000,
+  traces: [
+    { startUtcMs: 1500, end: .9, work: [], wait: [[.5,.9,'T3 admission']], errors: [] },
+    { startUtcMs: 100, end: .8, work: [[.2,.8,'Provider run']], wait: [[.01,.2,'T3 admission']], errors: [.8] },
+  ],
+})
 const denied = await worker.fetch(request, linked, {})
 assert.equal(denied.status, 403)
 assert.ok(!(await denied.text()).includes(history))
@@ -39,7 +84,7 @@ try {
     const errors = []
     page.on('pageerror', error => errors.push(error.message))
     page.on('console', message => {
-      if (message.type() === 'error') errors.push(message.text())
+      if (message.type() === 'error' && !message.text().includes('503')) errors.push(message.text())
     })
     await page.route(app, async route => {
       const response = await worker.fetch(new Request(route.request().url()), linked, context)
@@ -54,7 +99,7 @@ try {
     assert.equal((await header.boundingBox()).width, width)
     assert.equal(await header.getByRole('heading', { level: 1 }).innerText(), 'Thread activity')
     assert.equal(await header.getByText('plow', { exact: true }).isVisible(), true)
-    assert.equal(await header.getByText('Sample data', { exact: true }).isVisible(), true)
+    assert.match(await header.locator('#feed-cutoff').innerText(), /Observed through .* UTC/)
     await header.locator('img').evaluate(image => image.decode())
     const screenshot = async name => {
       if (process.env.PLOW_SCREENSHOTS) await page.screenshot({ path: resolve(directory, `${width}-${name}.png`), fullPage: true })
@@ -71,12 +116,12 @@ try {
     const total = page.locator('#summary-total')
     const initial = await range.innerText()
     assert.ok((await summary.boundingBox()).y < (await timeline.boundingBox()).y)
-    const workflow = summary.getByRole('button', { name: /Workflows or waits/ })
+    const workflow = summary.getByRole('button', { name: /Admission wait/ })
     assert.equal(await workflow.getAttribute('data-slot'), 'button')
     const publish = summary.getByRole('button', { name: /Publish artifacts/ })
     const ci = summary.getByRole('button', { name: /CI checks/ })
     const titles = () => timeline.locator('.trace:visible .sample-title').allTextContents()
-    const matchingThreads = ['Release packaging', 'Export retries']
+    const matchingThreads = ['Thread 1', 'Thread 6']
     const geometry = () => page.evaluate(() => {
       const bounds = element => {
         const { x, y, width, height } = element.getBoundingClientRect()
@@ -176,7 +221,7 @@ try {
     await assertStable('reset zoom and close operation breakdown')
     await screenshot('recovered')
 
-    await summary.getByRole('button', { name: /^Agent work/ }).click()
+    await summary.getByRole('button', { name: /^Provider run/ }).click()
     const operationButtons = summary.getByRole('group', { name: 'Operations' }).getByRole('button')
     assert.ok(await operationButtons.count() > 2)
     await operationButtons.last().focus()
@@ -185,7 +230,7 @@ try {
     }
     await assertStable('focus the last operation in the breakdown')
     await summary.getByRole('button', { name: /^Local testing/ }).click()
-    assert.deepEqual(await titles(), ['Settings cleanup', 'Runner diagnostics', 'Dependency update'])
+    assert.deepEqual(await titles(), ['Thread 3', 'Thread 8', 'Thread 9'])
     await assertPacked(3)
     await assertStable('filter to Local testing')
     await screenshot('local-testing')
@@ -193,11 +238,11 @@ try {
     await workflow.click()
     await publish.click()
     await brush(.60, .72)
-    assert.deepEqual(await titles(), ['Export retries'])
-    const inspect = timeline.getByRole('button', { name: /^Inspect Export retries/ })
+    assert.deepEqual(await titles(), ['Thread 6'])
+    const inspect = timeline.getByRole('button', { name: /^Inspect Thread 6/ })
     await inspect.click()
     assert.equal(await inspect.getAttribute('aria-expanded'), 'true')
-    const inspector = timeline.getByRole('region', { name: /Export retries · Recorded timeline/ })
+    const inspector = timeline.getByRole('region', { name: /Thread 6 · Recorded timeline/ })
     assert.match(await inspector.innerText(), /Publish artifacts/)
     assert.equal(await inspector.evaluate(element => element === document.activeElement), true)
     await assertStable('open thread inspector')
@@ -229,6 +274,19 @@ try {
     assert.equal(await instructions.count(), 0)
     await assertStable('close chart help')
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
+    storedFeed = JSON.stringify({ observed: 0, traces: [] })
+    await page.reload()
+    await page.getByText('No measured session time has been imported yet.').waitFor()
+    assert.equal(await timeline.isVisible(), false)
+    await screenshot('no-evidence')
+    storedFeed = null
+    assert.equal((await page.reload()).status(), 503)
+    await page.getByText('Session data is temporarily unavailable.', { exact: false }).waitFor()
+    assert.equal(await timeline.isVisible(), false)
+    await screenshot('unavailable')
+    storedFeed = JSON.stringify(feed)
+    await page.reload()
+    await timeline.waitFor()
     await page.route(history, route => route.fulfill({ contentType: 'text/html', body: '<h1>Plow session history</h1>' }))
     await link.press('Enter')
     await page.waitForURL(history)

@@ -1,4 +1,6 @@
 const html = "__PLOW_HTML__"
+const emptyFeed = '{"observed":0,"traces":[],"unavailable":true}'
+const maxFeedLength = 128 * 1024
 const headers = {
   'Content-Type': 'text/html; charset=utf-8',
   'Cache-Control': 'private, no-store',
@@ -27,6 +29,15 @@ export default {
     }
     const destination = sessionHistoryUrl(env.PLOW_SESSION_HISTORY_URL)
     const content = destination ? html.replace('data-session-history=""', `data-session-history="${destination}"`) : html
-    return new Response(request.method === 'HEAD' ? null : content, { headers })
+    try {
+      const raw = await env.PLOW_SESSION_FEED?.get('session-timeline-v1')
+      if (!raw || raw.length > maxFeedLength) throw Error('Feed unavailable')
+      const feed = JSON.parse(raw)
+      if (!Number.isSafeInteger(feed.observed) || !Array.isArray(feed.traces)) throw Error('Invalid feed')
+      const payload = JSON.stringify(feed).replaceAll('<', '\\u003c')
+      return new Response(request.method === 'HEAD' ? null : content.replace(emptyFeed, () => payload), { headers })
+    } catch {
+      return new Response(request.method === 'HEAD' ? null : content, { status: 503, headers })
+    }
   },
 }

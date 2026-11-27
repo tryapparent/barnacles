@@ -28,7 +28,8 @@
     "evidence/storage/sources.sql",
     "evidence/storage/sources.ts",
     "evidence/projection/timing.ts",
-    "evidence/projection/trace.ts"
+    "evidence/projection/trace.ts",
+    "evidence/analysis/session-history.ts"
   ],
   "Grafana and Tempo provisioning, serialization, and runtime": [
     "dashboard/enablement/deploy/compose.yaml",

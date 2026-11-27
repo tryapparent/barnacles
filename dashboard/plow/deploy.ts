@@ -4,6 +4,40 @@ import { setTimeout } from "node:timers/promises";
 import { sessionHistoryUrl } from "./worker.mjs";
 
 const account = process.env.CLOUDFLARE_ACCOUNT_ID;
+const namespace = process.env.PLOW_SESSION_NAMESPACE_ID;
+
+if (process.argv[2] === "--publish-feed") {
+  const [path, ...extra] = process.argv.slice(3);
+  const credential = process.env.PLOW_KV_TOKEN_FILE;
+  if (!account || !/^[a-f0-9]{32}$/.test(account) || !namespace ||
+      !/^[a-f0-9]{32}$/.test(namespace) || !credential || !path || extra.length) {
+    throw Error("Set the Plow account, KV namespace and token file, then pass a projected feed file.");
+  }
+  const payload = await readFile(path);
+  if (!payload.length || payload.length > 128 * 1024) throw Error("Invalid Plow session feed size.");
+  const token = (await readFile(credential, "utf8")).trim();
+  if (!token) throw Error("The Plow KV credential file is empty.");
+  const key = `https://api.cloudflare.com/client/v4/accounts/${account}/storage/kv/namespaces/${namespace}/values/session-timeline-v1`;
+  const authorization = { Authorization: `Bearer ${token}` };
+  const current = await fetch(key, { headers: authorization, signal: AbortSignal.timeout(30_000) });
+  if (current.ok) {
+    if (payload.equals(Buffer.from(await current.arrayBuffer()))) {
+      console.log("The Plow session feed is current.");
+      process.exit(0);
+    }
+  } else if (current.status !== 404) {
+    throw Error(`Reading the Plow session feed failed with HTTP ${current.status}.`);
+  }
+  const response = await fetch(key, {
+    method: "PUT", body: payload, headers: { ...authorization, "Content-Type": "application/json" },
+    signal: AbortSignal.timeout(30_000),
+  });
+  const result = await response.json() as { success: boolean };
+  if (!response.ok || !result.success) throw Error(`Publishing the Plow session feed failed with HTTP ${response.status}.`);
+  console.log("Published the Plow session feed.");
+  process.exit(0);
+}
+
 const token = process.env.PLOW_WORKER_TOKEN;
 const audience = process.env.PLOW_ACCESS_AUDIENCE;
 const sha = process.env.GITHUB_SHA;
@@ -12,7 +46,7 @@ const configuredHistory = process.env.PLOW_SESSION_HISTORY_URL;
 const history = sessionHistoryUrl(configuredHistory);
 if (configuredHistory && !history) throw new Error("Expected a private HTTPS Plow /sessions URL.");
 if (!account || !/^[a-f0-9]{32}$/.test(account) || !token || !audience ||
-    !/^[a-f0-9]{64}$/.test(audience) || !sha || !/^[a-f0-9]{40}$/.test(sha) || !workerPath) {
+    !/^[a-f0-9]{64}$/.test(audience) || !namespace || !/^[a-f0-9]{32}$/.test(namespace) || !sha || !/^[a-f0-9]{40}$/.test(sha) || !workerPath) {
   throw new Error("Missing Plow deployment configuration.");
 }
 
@@ -87,6 +121,7 @@ bundle.set("metadata", new Blob([JSON.stringify({
   compatibility_date: "2026-11-27",
   bindings: [
     { type: "plain_text", name: "PLOW_ACCESS_AUDIENCE", text: audience },
+    { type: "kv_namespace", name: "PLOW_SESSION_FEED", namespace_id: namespace },
     ...(history ? [{ type: "secret_text", name: "PLOW_SESSION_HISTORY_URL", text: history }] : []),
   ],
   annotations: { "workers/tag": sha, "workers/message": `Plow main ${sha}` },
