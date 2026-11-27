@@ -16,6 +16,17 @@ timeline viewport. Selecting the operation again clears the
 filter. Changing the time range updates the matches while preserving the
 selected operation.
 
+Drag across the bars to select and zoom to a range. Select a bar with the
+pointer, Enter, or Space to fit its exact start and end. Ctrl+scroll zooms
+around the pointer and Ctrl+↑/↓ zooms in steps. Drag the UTC ruler or use
+horizontal scrolling to pan. Hover over a phase or red marker to see its
+recorded activity or exact failure times. Use Inspect for the recorded
+thread details.
+
+The minimap’s UI SDK Slider thumbs resize the range. Drag the middle to pan
+or drag outside the selection to select a different interval. Home or a
+double-click on the minimap resets the view. The eye button opens the guide.
+
 **Agent work share** averages each measured thread’s provider-run time divided
 by its classified provider-run plus admission-wait time. Bend2 groups threads
 in creation order into batches of ten. It keeps up to five complete batches
@@ -53,10 +64,10 @@ PLOW_SCREENSHOTS=1 node dashboard/plow/smoke.mjs "$plow_build_dir"
 ```
 
 The smoke check serves the built page over loopback HTTP with signed fixture
-tokens. It checks Access denial, response headers, and Chrome at 320, 390,
-640, 728, 1120, 1440, and 1920 pixels. It exercises compact thread filtering
-and stable page regions during keyboard operation, zoom, pan, and inspection.
-It also checks the empty and unavailable feed states. Screenshots are optional.
+tokens. It checks Access denial and response headers, then exercises the Timeline
+in Chrome at 1024, 1120, 1440, and 1920 pixels. It covers exact keyboard fit, range
+resizing, chart selection, grouped failure hover, filtering, stable panel
+geometry, and empty and unavailable feeds. Screenshots are optional.
 
 ## Deployment
 

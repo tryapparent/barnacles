@@ -47,28 +47,81 @@ def replay(+saved_seq: U32, +incoming_seq: U32, saved: String, incoming: String)
   Bool.pick(Replay, U32.is_lt(saved_seq, incoming_seq), Write{},
     Bool.pick(Replay, Bool.or(U32.is_gt(saved_seq, incoming_seq), String.eq(saved, incoming)), Ignore{}, Conflict{}))
 
-type Rotation is Data:
-  Rotation{total: Nat, threads: List<&2, String>}
+type Target is Data:
+  Target{id: String, updated: Nat}
 
-def unique_sorted(ids: List<&2, String>, +previous: String, +acc: List<&2, String>, +total: Nat) -> Rotation:
-  match ids:
-    case []: Rotation{total, List.reverse(&2, String, acc)}
-    case +id <> rest:
-      +duplicate = String.eq(previous, id)
-      unique_sorted(rest, id, Bool.pick(List<&2, String>, duplicate, acc, id <> acc),
-        Bool.pick(Nat, duplicate, total, Nat.add(total, 1n)))
+type Task is Data:
+  Task{id: String, cursor: String, priority: Nat, revision: Nat, keep: Bool}
 
-def prior_count(+after: String, ids: List<&2, String>, +count: Nat) -> Nat:
-  match ids:
-    case []: count
-    case id <> rest:
-      prior_count(after, rest, Bool.pick(Nat, String.is_lt(after, id), count, Nat.add(count, 1n)))
+def dated_before(+a: Nat, +id: String, +b: Nat, +other: String) -> Bool:
+  Bool.or(Nat.is_gt(a, b), Bool.and(Nat.is_eq(a, b), String.is_lt(id, other)))
 
-def batch(after: String, inventory: Rotation) -> Rotation:
-  match inventory:
-    case Rotation{+total, +sorted}:
-      +newer = List.take(&2, String, List.drop(&2, String, sorted, prior_count(after, sorted, 0n)), 32n)
-      Rotation{total, List.take(&2, String, List.append(&2, String, newer, sorted), Nat.min(total, 32n))}
+def target_before(left: Target, right: Target) -> Bool:
+  match left right:
+    case Target{id, a} Target{other, b}: dated_before(a, id, b, other)
 
-def rotation(after: String, ids: List<&2, String>) -> Rotation:
-  batch(after, unique_sorted(Metrics.sort_timing(~String, ~String.is_lt, ids), "", [], 0n))
+def identity_before(left: Target, right: Target) -> Bool:
+  match left right:
+    case Target{+id, a} Target{+other, b}:
+      Bool.or(String.is_lt(id, other), Bool.and(String.eq(id, other), Nat.is_gt(a, b)))
+
+def unique_targets(input: List<&2, Target>, +previous: String, +output: List<&2, Target>) -> List<&2, Target>:
+  match input:
+    case []: output
+    case Target{+id, updated} <> rest:
+      unique_targets(rest, id,
+        Bool.pick(List<&2, Target>, String.eq(previous, id), output, Target{id, updated} <> output))
+
+def inventory(input: List<&2, Target>) -> List<&2, Target>:
+  Metrics.sort_timing(~Target, ~target_before, unique_targets(Metrics.sort_timing(~Target, ~identity_before, input), "", []))
+
+def plan(target: Target, +cursor: String, +known: Bool, +revision: Nat, +frontier: Nat, +refresh: Bool) -> Maybe<&2, Task>:
+  match target:
+    case Target{+id, +updated}:
+      +pending = nonempty(cursor)
+      +current = Bool.and(known, Nat.is_le(updated, revision))
+      Bool.pick(Maybe<&2, Task>, refresh,
+        Some{Task{id, "", updated, updated, Bool.or(pending, current)}},
+        Bool.pick(Maybe<&2, Task>, pending,
+          Some{Task{id, cursor, Bool.pick(Nat, known, frontier, updated), Bool.pick(Nat, known, revision, updated), False{}}},
+          Bool.pick(Maybe<&2, Task>, current, None{}, Some{Task{id, "", updated, updated, False{}}})))
+
+def task_before(left: Task, right: Task) -> Bool:
+  match left right:
+    case Task{id, _, a, _, _} Task{other, _, b, _, _}: dated_before(a, id, b, other)
+
+def within_day(limit: Nat, input: List<&2, Task>, +day: Nat) -> List<&2, Task>:
+  match limit:
+    case 0n: []
+    case 1n+remaining:
+      match input:
+        case []: []
+        case Task{+id, +cursor, +priority, +revision, +keep} <> tail:
+          Bool.pick(List<&2, Task>, Nat.is_eq(day, Nat.div(priority, 86400000n)),
+            Task{id, cursor, priority, revision, keep} <> within_day(remaining, tail, day), [])
+
+def recent(input: List<&2, Target>) -> List<&2, Target>:
+  List.take(&2, Target, input, 32n)
+
+def newest_day(sorted: List<&2, Task>) -> List<&2, Task>:
+  match sorted:
+    case []: []
+    case Task{id, cursor, +priority, revision, keep} <> rest:
+      Task{id, cursor, priority, revision, keep} <> within_day(31n, rest, Nat.div(priority, 86400000n))
+
+def batch(input: List<&2, Task>) -> List<&2, Task>:
+  newest_day(Metrics.sort_timing(~Task, ~task_before, input))
+
+def older_frontier(+previous: Nat, +oldest: Nat) -> Nat:
+  Bool.pick(Nat, Nat.is_eq(previous, 0n), oldest, Nat.min(previous, oldest))
+
+def earliest(+saved: Nat, +at: Nat) -> Nat:
+  Bool.pick(Nat, Nat.is_eq(saved, 0n), at, Bool.pick(Nat, Nat.is_eq(at, 0n), saved, Nat.min(saved, at)))
+
+type Pace is Data:
+  Pace{workers: Nat, pause: Nat}
+
+def pacing(+previous: Nat, elapsed: Nat, failed: Bool) -> Pace:
+  +unhealthy = Bool.or(failed, Nat.is_gt(elapsed, 1000n))
+  +pause = Bool.pick(Nat, unhealthy, Nat.min(60000n, Nat.max(1000n, Nat.mul(previous, 2n))), Nat.max(50n, Nat.div(previous, 2n)))
+  Pace{Bool.pick(Nat, Nat.is_ge(pause, 1000n), 1n, 2n), pause}

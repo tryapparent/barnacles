@@ -53,6 +53,17 @@ type JoinedJob = { $: "Job"; id: string; label: string; status: string; conclusi
 type JoinedReplay = { runs: number; spans: number; attempts: number; jobs: number; carried: number };
 type Window = { $: "DayWindow"; from: number; to: number };
 type Observation = { $: "DayObservation"; rule: string; id: string };
+
+export async function measureOutcomeDelay(windows: List<unknown>, scratch: string, window?: Pick<Window, "from" | "to">) {
+  type Report = { totals: unknown; patterns: unknown };
+  const policy = await loadPolicy<{ outcome_delays(w: List<unknown>): Report;
+    outcome_delays_in_window(w: List<unknown>, from: number, to: number): Report }>(
+    await buildPolicy(scratch, new URL("./outcome-delay.bend", import.meta.url), "outcome-delay.mjs"));
+  if (!window) return policy.outcome_delays(windows);
+  const { totals, patterns } = policy.outcome_delays_in_window(windows, window.from, window.to);
+  return { totals, patterns };
+}
+
 type JoinedPolicy = {
   project(thread: string, runs: List<JoinedRun>, spans: List<JoinedSpan>, attempts: number, jobs: List<JoinedJob>): JoinedReplay;
   files(result: JoinedReplay): List<unknown>;
@@ -236,9 +247,9 @@ export async function publishJoinedAnalysis(input: string, output: string, scrat
       });
       const projected = historyList(cohort.map(({ detail: { id, coverage }, observations }): RankedThread =>
         ({ $: "Thread", id, codex: coverage.codexSpans, ci: coverage.githubAttempts, observations })));
+      const analyzedAt = new Date(asOf).toISOString();
       const latest = {
-        version: 2, analyzedAt: new Date(asOf).toISOString(),
-        window: { from: new Date(window.from).toISOString(), to: new Date(window.to).toISOString() },
+        version: 2, analyzedAt, window: { from: new Date(window.from).toISOString(), to: analyzedAt },
         coverage: summary.source_coverage(projected),
         outcomeImpact,
         ranking: rows(summary.ranking(projected)),

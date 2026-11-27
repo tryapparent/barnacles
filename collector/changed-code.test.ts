@@ -6,34 +6,46 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { buildPolicy, loadPolicy } from "../tooling/bend.ts";
-import { openT3History, type List } from "../evidence/index.ts";
+import { openT3History } from "../evidence/index.ts";
 import { bendList, bendValues } from "./wire.ts";
+import type { HistoryPolicy } from "./codex/otel.ts";
 
-test("T3 history rotates through large inventories and resumes after restart", async () => {
+test("T3 backfill resumes older pages, ranks days newest first and slows under load", async () => {
   const job = mkdtempSync(join(process.env.PLOW_TEST_DIRECTORY!, "t3-history-"));
   const path = join(job, "state.sqlite");
+  const day = 86400000;
+  const yesterday = 1700006400000;
+  const target = (id: string, updated: number) => ({ $: "Target" as const, id, updated });
   try {
-    const policy = await loadPolicy<{
-      replay: Parameters<typeof openT3History>[2];
-      rotation(after: string, ids: List<string>): { total: number; threads: List<string> };
-    }>(await buildPolicy(job, new URL("./t3-otel/history.bend", import.meta.url), "history.mjs"));
-    const ids = Array.from({ length: 12_000 }, (_, i) => String(i).padStart(5, "0"));
-    const inventory = bendList([...ids].reverse().concat(ids[0], ids[13]));
+    const policy = await loadPolicy<HistoryPolicy>(await buildPolicy(job, new URL("./t3-otel/history.bend", import.meta.url), "history.mjs"));
+    const older = target("first-lexically", yesterday - 7 * day);
+    const newer = target("yesterday", yesterday);
+    const head = target("latest", yesterday + day);
+    const entries = Array.from({ length: 12_000 }, (_, i) => target("id-" + i, older.updated - i));
+    const catalog = [...bendValues(policy.inventory(bendList([...entries, older, head, newer, target(head.id, older.updated)])))];
+    assert.equal(catalog.length, 12_003);
+    assert.deepEqual(catalog.slice(0, 2), [head, newer]);
+
     const writer = openT3History(path, "test", policy.replay);
-    const last = writer.rotation();
-    const first = policy.rotation(last, inventory);
-    assert.equal(first.total, ids.length);
-    assert.deepEqual([...bendValues(first.threads)], ids.slice(0, 32));
-    assert.ok(writer.advance(last, ids[31]));
-    assert.equal(writer.advance(last, ids[15]), false);
-    writer.close();
+    try {
+      writer.commit(head.id, "", "saved-cursor", 1, [], { revision: head.updated, frontier: older.updated });
+    } finally { writer.close(); }
     const restarted = openT3History(path, "test", policy.replay);
     try {
-      assert.deepEqual([...bendValues(policy.rotation(restarted.rotation(), inventory).threads)], ids.slice(32, 64));
-      assert.deepEqual([...bendValues(policy.rotation(ids.at(-2)!, inventory).threads)], [ids.at(-1), ...ids.slice(0, 31)]);
-    } finally {
-      restarted.close();
-    }
+      const state = restarted.checkpoints().get(head.id)!;
+      const resumed = policy.plan(head, state.cursor, true, state.mark!.revision, state.mark!.frontier, false);
+      const staleTask = policy.plan(older, "", false, 0, 0, false);
+      const recentTask = policy.plan(newer, "", false, 0, 0, false);
+      assert.ok(resumed.$ === "Some" && staleTask.$ === "Some" && recentTask.$ === "Some");
+      assert.equal(resumed.value.cursor, "saved-cursor");
+      assert.deepEqual([...bendValues(policy.batch(bendList([
+        resumed.value, staleTask.value, recentTask.value,
+      ])))].map(item => item.id), [newer.id]);
+      assert.deepEqual(policy.pacing(50, 2, false), { $: "Pace", workers: 2, pause: 50 });
+      assert.deepEqual(policy.pacing(50, 1001, false), { $: "Pace", workers: 1, pause: 1000 });
+      assert.deepEqual(policy.pacing(1000, 2, true), { $: "Pace", workers: 1, pause: 2000 });
+      assert.equal(policy.older_frontier(yesterday, older.updated), older.updated);
+    } finally { restarted.close(); }
   } finally {
     rmSync(job, { recursive: true, force: true });
   }
