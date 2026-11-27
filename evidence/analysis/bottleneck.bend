@@ -337,15 +337,51 @@ def observe_hosted_same_head_supersession(state: Replay, thread: String, id: Str
 def observe_jobless_run_control_conflict(state: Replay, thread: String, id: String, +run: String,
   jobs_run: String, cancel_run: String, force_run: String, status: String, jobs: U32,
   normal_error: String, force_status: U32, force_error: String,
-  +jobs_observed: U32, +cancel_denied: U32, +status_observed: U32, force_denied: U32) -> Replay:
+  +jobs_observed: U32, +cancel_denied: U32, +status_observed: U32, +force_denied: U32) -> Replay:
   +same_run = Bool.and(String.eq(run, jobs_run), Bool.and(String.eq(run, cancel_run), String.eq(run, force_run)))
   +queued = Bool.and(String.eq(status, "queued"), U32.is_eq(jobs, 0))
   +normal = String.eq(normal_error, "Cannot cancel a workflow run that is completed")
   +forced = Bool.and(U32.is_eq(force_status, 409), String.eq(force_error, "Cannot cancel a workflow run that has not been queued yet."))
-  +before = Bool.and(U32.is_gt(jobs_observed, 0), U32.is_ge(cancel_denied, jobs_observed))
-  +after = Bool.and(U32.is_ge(status_observed, cancel_denied), U32.is_ge(force_denied, status_observed))
+  +before = Bool.and(U32.is_gt(jobs_observed, 0),
+    Bool.and(U32.is_ge(cancel_denied, jobs_observed), U32.is_ge(status_observed, jobs_observed)))
+  +after = Bool.and(U32.is_ge(force_denied, cancel_denied), U32.is_ge(force_denied, status_observed))
+  +nearby = U32.is_le(U32.sub(force_denied, jobs_observed), 300)
+  +observations = Bool.or(U32.is_ge(status_observed, cancel_denied), nearby)
   observe_failure(state, thread, id, "ci-jobless-run-state-conflict",
-    Bool.and(same_run, Bool.and(queued, Bool.and(Bool.and(normal, forced), Bool.and(before, after)))))
+    Bool.and(same_run, Bool.and(queued, Bool.and(Bool.and(normal, forced), Bool.and(observations, Bool.and(before, after))))))
+
+def observe_manual_workflow_completion(state: Replay, thread: String, id: String, +run: String,
+  pending_run: String, observed_run: String, attempt: U32, event: String, +head: String, pending_head: String,
+  observed_head: String, +pending_status: String, observed_status: String, +conclusion: String, observed_conclusion: String,
+  +pending_at: U32, +last_job_end: U32, +provider_updated: U32, +observed_at: U32) -> Replay:
+  +identity = Bool.and(Bool.and(String.eq(run, pending_run), String.eq(run, observed_run)),
+    Bool.and(String.eq(head, pending_head), String.eq(head, observed_head)))
+  +dispatch = Bool.and(U32.is_eq(attempt, 1), String.eq(event, "workflow_dispatch"))
+  +pending = Bool.or(String.eq(pending_status, "in_progress"), String.eq(pending_status, "queued"))
+  +terminal = Bool.and(String.eq(observed_status, "completed"),
+    Bool.and(Bool.not(String.is_empty(conclusion)), String.eq(conclusion, observed_conclusion)))
+  +clock = Bool.and(Bool.and(U32.is_gt(pending_at, 0), U32.is_gt(last_job_end, 0)),
+    Bool.and(U32.is_gt(provider_updated, pending_at), U32.is_ge(provider_updated, last_job_end)))
+  +gap = U32.sub(observed_at, provider_updated)
+  +material = Bool.and(U32.is_gt(observed_at, provider_updated), U32.is_ge(gap, 300))
+  observe_failure_with_duration(state, thread, id, "ci-manual-run-terminal-read-gap",
+    Bool.and(Bool.and(identity, dispatch), Bool.and(Bool.and(pending, terminal), Bool.and(clock, material))), gap)
+
+def observe_local_electron_sandbox(state: Replay, thread: String, id: String, operation: String,
+  +runtime: String, diagnostic: String, terminal: String, failed: Bool) -> Replay:
+  +producer = Bool.and(String.eq(operation, "local-electron-launch"), String.starts_with(runtime, "/"))
+  +expected = String.append(
+    "The SUID sandbox helper binary was found, but is not configured correctly. Rather than run without sandboxing I'm aborting now. You need to make sure that ",
+    String.append(runtime, "/chrome-sandbox is owned by root and has mode 4755."))
+  +signal = String.append(runtime, "/electron exited with signal SIGTRAP")
+  +receipt = Bool.and(String.eq(diagnostic, expected), String.eq(terminal, signal))
+  observe_failure(state, thread, id, "local-electron-sandbox-helper-refused", Bool.and(failed, Bool.and(producer, receipt)))
+
+def observe_actions_job_log_escape_refusal(state: Replay, thread: String, id: String, operation: String,
+  job: String, response_job: String, diagnostic: String, failed: Bool) -> Replay:
+  +producer = Bool.and(String.eq(operation, "actions-job-logs"), String.eq(job, response_job))
+  +receipt = String.eq(diagnostic, "the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway")
+  observe_failure(state, thread, id, "ci-job-log-escape-refused", Bool.and(failed, Bool.and(producer, receipt)))
 
 def observe_hosted_workflow_startup_failure(state: Replay, thread: String, id: String, status: String,
   conclusion: String, job_count: U32, attempt: U32) -> Replay:
