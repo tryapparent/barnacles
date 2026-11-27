@@ -66,9 +66,10 @@ PLOW_SCREENSHOTS=1 node dashboard/plow/smoke.mjs "$plow_build_dir"
 
 The smoke check runs the built Worker with a simulated Access session, verifies
 denial with an absent or mismatched audience, and exercises the exact HTML and
-response policy through Chrome at 320, 390, 640, 728, 1120, 1440, and 1920 pixels.
-It checks the projector, feed availability, compact thread filtering, and
-stable page regions during keyboard operation, zoom, pan, and inspection.
+response policy in Chrome at desktop widths of 1024, 1120, 1440, and 1920 pixels.
+It checks feed availability, compact thread filtering, exact keyboard fit,
+range-handle resizing, chart selection, grouped failure hover, and stable page
+regions while the chart and inspector change.
 Screenshots are optional.
 
 ## Deployment

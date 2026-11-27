@@ -33,6 +33,7 @@ function miniPosition(event) {
   return Math.min(1, Math.max(0, (event.clientX - box.left) / box.width))
 }
 let gesture = null
+let previousTap = null
 navigatorTrack.addEventListener('pointerdown', event => {
   if (event.button !== 0 || gesture || event.target.closest('.mini-handle')) return
   const start = miniPosition(event)
@@ -58,11 +59,16 @@ navigatorTrack.addEventListener('pointermove', event => {
 })
 navigatorTrack.addEventListener('pointerup', event => {
   if (gesture?.id !== event.pointerId) return
-  if (gesture.mode === 'brush') {
-    const stop = miniPosition(event)
-    const distance = Math.abs(stop - gesture.start)
-    if (distance * minimap.clientWidth < 4 && zoom > 1) panWindow(0, frame.start + scale * stop - duration() / 2)
-    else selectWindow(Math.min(stop, gesture.start), Math.max(stop, gesture.start), distance * minimap.clientWidth, frame)
+  const stop = miniPosition(event)
+  const distance = Math.abs(stop - gesture.start) * minimap.clientWidth
+  if (distance < 4) {
+    const repeat = previousTap && event.timeStamp - previousTap.time < 450 && Math.abs(event.clientX - previousTap.x) < 8
+    previousTap = repeat ? null : { time: event.timeStamp, x: event.clientX }
+    if (repeat) applyWindow(frame)
+    else if (gesture.mode === 'brush' && zoom > 1) panWindow(0, frame.start + scale * stop - duration() / 2)
+  } else {
+    previousTap = null
+    if (gesture.mode === 'brush') selectWindow(Math.min(stop, gesture.start), Math.max(stop, gesture.start), distance, frame)
   }
   gesture = null
   miniBrush.hidden = true
@@ -71,7 +77,6 @@ navigatorTrack.addEventListener('lostpointercapture', () => {
   gesture = null
   miniBrush.hidden = true
 })
-navigatorTrack.addEventListener('dblclick', () => applyWindow(frame))
 navigatorTrack.addEventListener('keydown', event => {
   if (!['ArrowLeft', 'ArrowRight', 'Home'].includes(event.key)) return
   event.preventDefault()
