@@ -9,8 +9,8 @@ function resetShipTooltip(event: SyntheticEvent<HTMLAnchorElement>) {
   event.currentTarget.removeAttribute("data-tooltip-dismissed");
 }
 
-export function Fleet({ fleet, onSelect, children }: { fleet: Review["fleet"];
-  onSelect: (event: MouseEvent<HTMLAnchorElement>, number: number) => void; children: ReactNode }) {
+export function Fleet({ fleet, onSelect, children, headerAction }: { fleet: Review["fleet"];
+  onSelect: (event: MouseEvent<HTMLAnchorElement>, number: number) => void; children: ReactNode; headerAction: ReactNode }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const localClock = useRef<HTMLTimeElement>(null);
   const shipLinks = useRef(new Map<number, HTMLAnchorElement>());
@@ -84,7 +84,7 @@ export function Fleet({ fleet, onSelect, children }: { fleet: Review["fleet"];
 
   return <section className="fleet" aria-labelledby="fleet-title">
     <div className="fleet-window">
-      <header className="harbor-title"><h1>Barnacles</h1></header>
+      <header className="harbor-title"><h1>Barnacles</h1>{headerAction}</header>
       <canvas className="fleet-water" aria-hidden="true" ref={canvas} />
       {contacts.map(({ item, label }) => <a key={item.number} className="fleet-ship" aria-label={`Open PR #${item.number} evidence`}
         aria-describedby={`fleet-ship-stage-${item.number}`} href={detailPage(item.number, fleet.to)}

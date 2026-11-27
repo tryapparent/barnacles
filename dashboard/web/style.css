@@ -137,11 +137,19 @@ h2, figcaption { font-size: 17px; line-height: 1.24; }
 
 .harbor-title {
   position: absolute;
+  inset-inline: 0;
   z-index: 2;
   padding: 20px 24px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px 14px;
   pointer-events: none;
   text-shadow: 0 1px 4px #02070d;
 }
+
+.harbor-title .control-button { pointer-events: auto; }
 
 .fleet-water {
   position: absolute;

@@ -405,15 +405,17 @@ function App() {
   const settingsToggle = settingsPath && <button type="button" className="settings-toggle" aria-expanded={showSettings}
     aria-controls={showSettings ? "poll-settings" : undefined}
     onClick={() => setShowSettings((open) => !open)}>Settings</button>;
+  const changesLink = <Button asChild variant="outline"><a href="/changed-code">Changed Code Analysis</a></Button>;
   return <main className="review">
     {!review && <header className="masthead">
       <h1>Barnacles</h1>
+      {changesLink}
       <div className="scope">
         <a href={path}>Review API JSON</a>
         {settingsToggle}
       </div>
     </header>}
-    {review && <Fleet fleet={review.fleet} onSelect={select}>
+    {review && <Fleet fleet={review.fleet} onSelect={select} headerAction={changesLink}>
       <div className="review-info">
         <span>{dayLabel(review.window.from)}–{dayLabel(review.window.to)} UTC</span>
         <span>Snapshot · <time dateTime={review.snapshotAt}>{utcLabel(review.snapshotAt)}</time></span>
@@ -421,7 +423,6 @@ function App() {
         <div className="scope">
           <span>{review.repository} · Linux Main x86_64</span>
           <a href={path}>Review API JSON</a>
-          <a href="/changed-code">Changed Code Analysis</a>
           {settingsToggle}
           <a href="#process-timing" onClick={openProcessTimings}>Process timings</a>
         </div>
