@@ -253,14 +253,11 @@ function deployAnalysis(release: string) {
     const id = compose(stack, "ps", "-a", "-q", service);
     if (!id) throw Error("Expected the installed analysis services");
     const info = JSON.parse(docker("inspect", id))[0];
-    return { image: info.Image, tag: info.Config.Image, health: info.State.Health?.Status,
+    return { service, image: info.Image, tag: info.Config.Image, health: info.State.Health?.Status,
       source: info.Config.Labels["com.docker.compose.project.config_files"], backup: `${project}-${service}-rollback:latest` };
   });
   if (previous.every(item => item.source === stack && item.health === "healthy")) return;
-  const original = previous[0].source;
-  if (!original || !existsSync(original) || !previous.every(item => item.source === original)) {
-    throw Error("Missing the installed analysis release");
-  }
+  if (previous.some(item => !item.source || !existsSync(item.source))) throw Error("Missing an installed analysis release");
   for (const item of previous) docker("image", "tag", item.image, item.backup);
   let switching = false;
   try {
@@ -269,14 +266,19 @@ function deployAnalysis(release: string) {
     compose(stack, "up", "--detach", "--no-build", "--force-recreate", "--wait", "--wait-timeout", "155", ...services);
     console.log("Promoted live T3 analysis from the verified collector release");
   } catch {
-    for (const item of previous) docker("image", "tag", item.backup, item.tag);
-    if (switching) {
-      const legacyAlias = original !== stack && realpathSync(original) === stack;
-      dockerCommand(["compose", "--project-name", project, "--env-file", settings, "--profile", "analysis",
-        "-f", original, "up", "--detach", "--no-build", "--force-recreate", ...services],
-      legacyAlias ? { ...process.env, PLOW_ANALYSIS_HISTORY_DIR: "" } : process.env);
+    let rollbackFailed = false;
+    for (const item of previous) {
+      try {
+        docker("image", "tag", item.backup, item.tag);
+        if (switching) {
+          const legacyAlias = item.source !== stack && realpathSync(item.source) === stack;
+          dockerCommand(["compose", "--project-name", project, "--env-file", settings, "--profile", "analysis",
+            "-f", item.source, "up", "--detach", "--no-deps", "--no-build", "--force-recreate", item.service],
+          legacyAlias ? { ...process.env, PLOW_ANALYSIS_HISTORY_DIR: "" } : process.env);
+        }
+      } catch { rollbackFailed = true; }
     }
-    throw Error("Live T3 analysis promotion failed");
+    throw Error(rollbackFailed ? "Live T3 analysis rollback failed" : "Live T3 analysis promotion failed");
   }
 }
 
@@ -286,8 +288,9 @@ if (import.meta.main && process.argv[2] === "--analysis-api") {
   try {
     deployT3History(process.argv[3]);
     deployAnalysis(process.argv[3]);
-  } catch {
-    console.error("Could not promote T3 collection and analysis");
+  } catch (error) {
+    const detail = error instanceof Error && !("status" in error) ? error.message : "Docker command failed";
+    console.error(`Could not promote T3 collection and analysis (${detail})`);
     process.exitCode = 1;
   }
 } else if (import.meta.main) {
