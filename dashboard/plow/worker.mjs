@@ -37,19 +37,26 @@ function chartJson(_key, value) {
   return entries;
 }
 
-export function dashboardData(raw, type, policy) {
+export function dashboardData(raw, type, policy, range) {
   const feed = JSON.parse(feedPayload(raw));
   if (feed.unavailable) return;
   const { observed, traces, overview } = feed;
-  if (type === "Timeline") return JSON.stringify({ observed, traces });
   const millis = (seconds) => Math.round(seconds * 1000);
-  const rows = (overview?.traces ?? traces).map((row, index) => {
+  const candidates = overview?.traces ?? traces;
+  const rows = candidates.map(row => {
     const intervals = (clock, kind) =>
       clock.map(([a, b, name]) => ({ $: "Interval", a: millis(a), b: millis(b), name, kind }));
-    return { $: "ChartRow", index: index + 1, start: row.startUtcMs, duration: millis(row.end),
+    return { $: "ChartRow", start: row.startUtcMs, duration: millis(row.end),
       intervals: bendList([...intervals(row.work, 2), ...intervals(row.detail ?? [], 3), ...intervals(row.wait, 1)]) };
   });
-  return JSON.stringify({ observed, ...policy.charts(bendList(rows), overview?.to ?? observed) }, chartJson);
+  const all = bendList(rows);
+  const { from, to, covered, indices } = policy.activity(all, range, overview?.to ?? observed,
+    overview?.from !== undefined, overview?.from ?? 0);
+  if (!covered) return;
+  const selected = chartJson("", indices);
+  if (type === "Timeline") return JSON.stringify({ observed, range, from, to, traces: selected.map(index => candidates[index]) });
+  const chart = policy.charts(bendList(selected.map(index => rows[index])), all, range, from, to);
+  return JSON.stringify({ observed, range, ...chart }, chartJson);
 }
 
 export function accessVerifier(jwtVerify, keys, issuer, audience) {

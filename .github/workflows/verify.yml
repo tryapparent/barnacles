@@ -94,7 +94,8 @@ jobs:
             const trace = { startUtcMs: to - 60000, end: 60, work: [[0, 45, "Provider run"]],
               wait: [[45, 60, "Admission wait"]], errors: [50] };
             writeFileSync(feedFile, JSON.stringify({ observed, traces: [], overview: { to, traces: [trace] } }));
-            assert.deepEqual((await call("get_plow_timeline", {})).structuredContent, { observed, traces: [] });
+            assert.deepEqual((await call("get_plow_timeline", {})).structuredContent,
+              { observed, range: "24h", from: to - 86400000, to, traces: [trace] });
             const charts = (await call("get_plow_charts", {})).structuredContent;
             assert.equal(charts.observed, observed);
             assert.equal(charts.to, to);
@@ -102,8 +103,14 @@ jobs:
             assert.equal(charts.time_summary.duration, 60000);
             assert.equal(charts.agent_work_trend.length, 6);
             assert.equal(charts.agent_work_trend.at(-1).basis_points, 7500);
-            writeFileSync(feedFile, JSON.stringify({ observed, traces: [trace] }));
-            assert.deepEqual((await call("get_plow_timeline", {})).structuredContent, { observed, traces: [trace] });
+            assert.equal((await call("get_plow_charts", { range: "7d" })).isError, true);
+            const from = to - 7 * 86400000;
+            writeFileSync(feedFile, JSON.stringify({ observed, traces: [], overview: { from, to, traces: [trace] } }));
+            assert.deepEqual((await call("get_plow_timeline", { range: "7d" })).structuredContent,
+              { observed, range: "7d", from, to, traces: [trace] });
+            const weekly = (await call("get_plow_charts", { range: "7d" })).structuredContent;
+            assert.equal(weekly.agent_work_trend.length, 7);
+            assert.equal(weekly.time_summary.duration, 60000);
           } finally {
             await client.close();
             server.closeAllConnections();
