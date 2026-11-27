@@ -14,8 +14,12 @@
   "Docker Compose native declaration for the isolated GitHub pilot": [
     "collector/github/compose.yaml"
   ],
+  "Docker Compose native declaration for isolated T3 OTLP intake": [
+    "collector/t3-otel/compose.yaml"
+  ],
   "OpenTelemetry Collector native configuration and transport filtering": [
-    "collector/codex/otelcol.yaml"
+    "collector/codex/otelcol.yaml",
+    "collector/t3-otel/otelcol.yaml"
   ],
   "SQLite I/O, runtime entrypoints, and Bend2 interface types": [
     "evidence/storage/actions.sql",
