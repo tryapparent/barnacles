@@ -65,7 +65,7 @@ def evidence(+input: List<&2, Interval>, duration: Nat) -> List<&2, Part>:
   groups(split(List.sort(~Nat,~n_before,boundaries(input,duration)),input,0n),True{})
 
 def base(+kind: U32) -> String:
-  Bool.pick(String,U32.is_eq(kind,2),"#6a934f",Bool.pick(String,U32.is_eq(kind,1),"#392820","#f2f5f6"))
+  Bool.pick(String,U32.is_eq(kind,2),"#6a934f",Bool.pick(String,U32.is_eq(kind,1),"#392820","#ffffff"))
 
 def variant(kind: U32, index: Nat) -> String:
   +first = Nat.is_eq(Nat.mod(index,2n),0n)
@@ -92,7 +92,7 @@ def colors(parts: List<&2, Part>, +prior: U32, +details: Bool) -> List<&2, Entry
 
 def real_color(parts: List<&2, Entry>) -> String:
   match parts:
-    case []: "#f2f5f6"
+    case []: base(0)
     case Entry{_,_,+kind,_,+paint} <> rest:
       Bool.pick(String,U32.is_eq(kind,0),real_color(rest),paint)
 

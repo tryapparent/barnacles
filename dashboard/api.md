@@ -259,7 +259,7 @@ shows the selected window on a full-trace ruler. A slash
 marks a known start with an unknown end. Intervals can overlap. A mentioned
 run or PR is shown with that relationship in its record details.
 
-The Plow treatment uses Cool Mist for the page, Ink for the plot,
+The Plow treatment uses White for the page, Ink for the plot,
 Meadow for observed intervals, and Original Cream for admission
 and queue intervals. Lane labels and mark shapes identify the underlying
 evidence. The dashboard bundles Young Serif from the [Plow brand

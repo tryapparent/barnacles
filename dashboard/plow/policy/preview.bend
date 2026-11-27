@@ -118,10 +118,10 @@ def gather_labels(entries: List<&2, Spans.Entry>, +scale: Nat, +width: Nat, +det
 
 def layout(+truth: List<&2, Spans.Part>, +scale: Nat, +width: Nat, +details: Bool, measurements: List<&2, Measurement>, failures: List<&2,Nat>) -> Layout:
   +display = Spans.groups(truth,details)
-  +colored = Spans.paint_gaps(Spans.colors(display,0,details),"#f2f5f6")
+  +colored = Spans.paint_gaps(Spans.colors(display,0,details),Spans.base(0))
   +entries = Spans.collapse(List.length(&2,Spans.Entry,colored),colored,True{},scale,width)
   +margin = Nat.div(Nat.add(Nat.mul(5n,scale),width),width)
-  Layout{entries,gather_labels(label_regions(bridge_labels(entries,0,"#f2f5f6",scale,width)),scale,width,details,measurements,
+  Layout{entries,gather_labels(label_regions(bridge_labels(entries,0,Spans.base(0),scale,width)),scale,width,details,measurements,
     Bool.pick(List<&2,Nat>,details,List.sort(~Nat,~Spans.n_before,failures),[]),margin)}
 
 def shared_scale(durations: List<&2, Nat>, +longest: Nat) -> Nat:
