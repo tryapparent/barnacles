@@ -1,10 +1,12 @@
 # Dashboard deployment
 
-## Harbor on Clanker
+<a name="harbor-on-clanker"></a>
 
-Clanker runs Harbor and its evidence poller as enabled systemd user services. The
-existing Tailscale Serve route is the permanent Harbor URL. To find it, read the
-loopback port from Harbor's `ExecStart` and match that port to its proxy target
+## Plow sessions on Clanker
+
+Clanker runs Plow and its evidence poller as enabled systemd user services. The
+existing Tailscale Serve route is the permanent private Plow URL. To find it, read the
+loopback port from the service's `ExecStart` and match that port to its proxy target
 in Serve. Keep the private URL in host configuration.
 
 ```sh
@@ -12,18 +14,32 @@ systemctl --user show barnacles-harbor.service -p WorkingDirectory -p ExecStart
 tailscale serve status
 ```
 
-For an authorized deployment, stage the reviewed source, built frontend and
-matching prepared snapshot together in a new release directory. Verify the
-candidate locally on a separate loopback port. Stop that temporary process
-after the check.
+### CI/CD
 
-Record the previous target of the deployment's `current` symlink. Stop
-`barnacles-harbor-poller.service`, then `barnacles-harbor.service`. Atomically
-replace the symlink with one pointing at the staged release, then start Harbor
-and its poller. Reuse the existing service ports, Serve route, identity settings
-and persistent collector state. Verify the dashboard, an asset and
-`/api/v1/shipping?limit=1` through the same authorized tailnet URL. If the
-release fails, repeat the switch with the previous target and verify again.
+A successful main push publishes the `plow-sessions` artifact with the built
+browser client, the source archive, and the commit SHA. The Clanker
+`plow-sessions.timer` checks for that artifact on the current main revision and
+passes it to the existing private service. The poller’s evidence database stays
+on Clanker. The deploy job prepares a new snapshot and preserves the private
+session study from the active release. It checks the candidate on loopback
+before switching the existing release symlink. A failed live check reactivates
+the previous release.
+
+Put the existing private Plow origin in
+`~/.local/share/barnacles/harbor/cd/url` with mode 0600. If the active release
+has no session study, place the approved private `session-study.sqlite` in the
+same directory with mode 0600 for the initial release. The user running the
+timer needs read access to the GitHub Actions artifact through `gh`.
+Run `dashboard/enablement/deploy/plow-sessions.sh --install` from reviewed main
+to install and enable the user service and timer.
+
+Use `systemctl --user start plow-sessions.service` to run a release check
+immediately. The same job validates the current main SHA and successful CI
+run on every invocation. After a rollback, `cd/failed-revision` suppresses
+further activation of that SHA until the operator resolves the failure. Refer
+to the user service journal for the release SHA and run ID. See the
+[Plow preview deployment](../../plow/README.md#deployment) for enabling the
+Session history link after the private route is ready.
 
 ## Grafana and Tempo
 

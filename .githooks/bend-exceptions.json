@@ -105,6 +105,9 @@
     "public/compose.yaml",
     "public/index.html"
   ],
+  "Plow sessions release transport and systemd activation": [
+    "dashboard/enablement/deploy/plow-sessions.sh"
+  ],
   "Plow browser presentation, compiled policy packaging, and Cloudflare deployment I/O": [
     "dashboard/plow/assets/OFL.txt",
     "dashboard/plow/assets/geist.woff2",

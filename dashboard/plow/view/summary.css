@@ -1,4 +1,8 @@
-.prototype{position:absolute;top:32px;right:32px;color:var(--muted);font-size:12px}
+.preview-header,.preview-links{display:flex;align-items:center;flex-wrap:wrap;gap:0 12px}
+.preview-header{justify-content:space-between}
+.prototype{color:var(--muted);font-size:12px}
+#session-history-link{display:inline-flex;align-items:center;min-height:44px;color:#3d5b2c;font-size:14px;font-weight:650;text-underline-offset:3px}
+#session-history-link:hover{color:var(--ink)}
 .utc-window{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums;margin-top:6px}
 .summary-panel{margin-top:23px}
 .summary-top{display:flex;align-items:end;justify-content:space-between;column-gap:16px;row-gap:4px;flex-wrap:wrap}
@@ -35,7 +39,6 @@
 #timeline-selection{margin-top:15px;color:var(--ink);font-weight:600}
 #timeline-selection:focus{outline:2px solid #52733d;outline-offset:3px}
 @media(max-width:575px){
-  .prototype{position:static;margin-top:8px}
   h1{margin-top:8px}
   .treemap.split{height:auto;grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:auto auto}
   .treemap.split .tile:first-child{grid-row:auto;grid-column:1 / -1}

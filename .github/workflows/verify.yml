@@ -17,6 +17,20 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run verify
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          package="$RUNNER_TEMP/plow-sessions"
+          mkdir -p "$package"
+          npm run build:harbor -- --outDir "$package/web"
+          git archive --format=tar.gz --prefix=source/ "$GITHUB_SHA" > "$package/source.tar.gz"
+          printf '%s\n' "$GITHUB_SHA" > "$package/revision"
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: plow-sessions
+          path: ${{ runner.temp }}/plow-sessions
+          if-no-files-found: error
+          retention-days: 7
   compose:
     runs-on: ubuntu-latest
     timeout-minutes: 12
@@ -74,3 +88,4 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.PLOW_CLOUDFLARE_ACCOUNT_ID }}
           PLOW_ACCESS_AUDIENCE: ${{ vars.PLOW_ACCESS_AUDIENCE }}
           PLOW_WORKER_TOKEN: ${{ secrets.PLOW_WORKER_TOKEN }}
+          PLOW_SESSION_HISTORY_URL: ${{ secrets.PLOW_SESSION_HISTORY_URL }}

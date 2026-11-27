@@ -11,7 +11,8 @@ policies under `policy/`. The registered host paths provide HTML, embedded
 fonts, DOM and browser input adapters, build packaging, Chromium verification,
 and the JavaScript Worker module and Cloudflare API calls that those runtimes
 require. Generated files stay out of Git. This standalone preview uses neither
-Harbor's snapshot nor the public Plow site's origin.
+the private sessions snapshot nor the public Plow site's origin. When configured, the
+Session history link takes signed-in readers to Plow’s session view on the tailnet.
 
 ## Build and verify
 
@@ -41,6 +42,9 @@ Configure the environment with `PLOW_CLOUDFLARE_ACCOUNT_ID` and
 `PLOW_ACCESS_AUDIENCE` variables and a `PLOW_WORKER_TOKEN` secret with Individual
 Workers Editor access scoped to the existing `plow-private-preview` Worker.
 The deployed module checks the Cloudflare Access context for that audience.
+After verifying the live Plow Session history route, set the optional
+`PLOW_SESSION_HISTORY_URL` environment secret to its full private HTTPS URL.
+The Worker includes the link in authorized pages with that setting.
 Cloudflare Access policies, host routes, and alternate URL settings stay in
 Cloudflare. The workflow checks that alternate URLs are disabled and signed-out
 requests go to Access before and after activation. The workflow summary ties
