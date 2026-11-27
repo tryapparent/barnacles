@@ -758,6 +758,21 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       failure: "ERR_TEST_FAILURE", exitCode: 1 };
     const runRead = { kind: "actions-rate-limit", thread: "t", id: "run-read-quota", operation: "actions-run-read",
       status: 403, failed: true, line: "failed to get run: HTTP 403: API rate limit exceeded" };
+    const fixtureMeasurements = { kind: "local-fixture-comparison", thread: "t", id: "measured-fixture",
+      beforeCommand: "python3 -m cProfile -m unittest discover -s tests", afterCommand: "python3 -m cProfile -m unittest discover -s tests",
+      beforeCases: 39, afterCases: 39, beforeWorkers: 1, afterWorkers: 1, beforeMs: 72541, afterMs: 37184,
+      beforeObserved: 100, afterObserved: 200, beforePassed: true, afterPassed: true };
+    const configAncestry = { kind: "rust-config-ancestry-refusal", thread: "t", id: "rust-config-refused",
+      operation: "cargo-test", origin: "config-writer", diagnostic: "Config ancestry must be trusted or sticky",
+      failure: "rust-test-panic", failed: true };
+    const display = { kind: "electron-display-unavailable", thread: "t", id: "missing-test-display",
+      operation: "node-test", origin: "electron-ozone-x11", line: "Missing X server or $DISPLAY",
+      terminal: "The platform failed to initialize. Exiting.", failed: true };
+    const supersession = { kind: "hosted-same-head-supersession", thread: "t", id: "same-head-cancelled",
+      pr: 51, previousRun: "12345678901", nextRun: "12345678902", previousWorkflow: "80", nextWorkflow: "80",
+      previousHead: "a".repeat(40), nextHead: "a".repeat(40), previousJob: "contracts", nextJob: "contracts", previousConclusion: "cancelled",
+      annotation: "Canceling since a higher priority waiting request for repository-checks-pull_request-51 exists",
+      assigned: true, previousStarted: 100, previousEnded: 180, nextCreated: 170 };
     const facts = [
       admission, admission,
       { ...admission, id: "superseded", annotation: "Canceling since a higher priority waiting request exists" },
@@ -1046,6 +1061,27 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       { ...nativeProbe, id: "mac-unknown-fixture", fixture: "tests/mac-alternate.cjs" },
       runRead, runRead,
       { ...runRead, id: "run-read-other-error", line: "failed to get run: HTTP 403: Permission denied" },
+      fixtureMeasurements, fixtureMeasurements,
+      { ...fixtureMeasurements, id: "changed-fixture-coverage", afterCases: 38 },
+      { ...fixtureMeasurements, id: "changed-test-command", afterCommand: "python3 -m cProfile -m unittest discover -s app" },
+      { ...fixtureMeasurements, id: "added-workers", afterWorkers: 2 },
+      { ...fixtureMeasurements, id: "result-not-green", afterPassed: false },
+      { ...fixtureMeasurements, id: "minor-improvement", afterMs: 55000 },
+      { ...fixtureMeasurements, id: "tiny-suite", beforeMs: 15000, afterMs: 5000 },
+      { ...fixtureMeasurements, id: "slower", afterMs: 90000 },
+      configAncestry, configAncestry,
+      { ...configAncestry, id: "passing-security-assertion", failed: false },
+      { ...configAncestry, id: "other-config-error", diagnostic: "Configuration file does not exist" },
+      display, display,
+      { ...display, id: "browser-still-running", terminal: "Started" },
+      { ...display, id: "different-platform", origin: "electron-platform-wayland" },
+      supersession, supersession,
+      { ...supersession, id: "different-head-cancellation", nextHead: "b".repeat(40) },
+      { ...supersession, id: "different-workflow", nextWorkflow: "81" },
+      { ...supersession, id: "same-run-attempt", nextRun: supersession.previousRun },
+      { ...supersession, id: "unassigned-cancellation", assigned: false },
+      { ...supersession, id: "replacement-after-cancel", nextCreated: 181 },
+      { ...supersession, id: "actor-cancelled-run", annotation: "The run was canceled by @example." },
       read, read, { ...read, id: "b", at: 160 }, { ...read, thread: "t2", at: 170 },
       timing, timing, { ...timing, id: "unpaired", end: 0 },
       attempt, { ...attempt, id: "changed", key: "gate:v2", start: 115, end: 120, failed: false, succeeded: true },
@@ -1109,7 +1145,8 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
         "ci-manual-status-read-repeated", "staged-source-token-budget", "ci-bun-test-deadline",
         "pr-create-graphql-ref-resolution", "git-push-github-workflow-scope-refused", "local-t3-worktree-path-missing",
         "provider-audio-input-unsupported", "ci-status-reporter-rate-limited", "ci-macos-system-events-probe-failed",
-        "ci-observer-rate-limited",
+        "ci-observer-rate-limited", "local-verification-fixture-measured-speedup", "local-rust-config-ancestry-refused",
+        "local-electron-display-unavailable", "ci-same-head-job-superseded",
         "recovered-attempt", "runner"]);
     assert.ok(!first.includes("installed tools"));
     assert.ok(!first.includes("#42:"));
@@ -1142,7 +1179,8 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       ["budget-refusal", "", 0, 0], ["fixture-deadline", "", 5, 0],
       ["pr-unresolved-refs", "", 0, 0], ["push-scope", "", 0, 0], ["missing-checkout", "", 0, 0],
       ["rejected-audio", "", 0, 0], ["reconcile-quota", "", 0, 0], ["system-events-probe", "", 0, 0],
-      ["run-read-quota", "", 0, 0],
+      ["run-read-quota", "", 0, 0], ["measured-fixture", "", 35, 0], ["rust-config-refused", "", 0, 0],
+      ["missing-test-display", "", 0, 0], ["same-head-cancelled", "", 80, 0],
       ["recovered", "first", 20, 0], ["tail", "", 250, 10],
     ]);
   } finally {

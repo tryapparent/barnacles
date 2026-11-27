@@ -288,6 +288,52 @@ def observe_staged_source_budget(state: Replay, thread: String, id: String, oper
   observe_failure(state, thread, id, "staged-source-token-budget",
     Bool.and(failed, Bool.and(guard, Bool.and(checked_file, exceeded))))
 
+def observe_verification_fixture_comparison(state: Replay, thread: String, id: String,
+  +before_command: String, after_command: String, +before_cases: U32, after_cases: U32,
+  +before_workers: U32, after_workers: U32, +before_ms: U32, +after_ms: U32,
+  +before_observed: U32, after_observed: U32, before_passed: Bool, after_passed: Bool) -> Replay:
+  +same_suite = Bool.and(String.eq(before_command, after_command),
+    String.starts_with(before_command, "python3 -m cProfile -m unittest discover "))
+  +cases = Bool.and(U32.is_gt(before_cases, 0), U32.is_eq(before_cases, after_cases))
+  +workers = Bool.and(U32.is_gt(before_workers, 0), U32.is_eq(before_workers, after_workers))
+  +ordered = Bool.and(U32.is_gt(before_observed, 0), U32.is_gt(after_observed, before_observed))
+  +control = Bool.and(Bool.and(same_suite, Bool.and(cases, workers)),
+    Bool.and(ordered, Bool.and(before_passed, after_passed)))
+  +saving = U32.sub(before_ms, after_ms)
+  +times = Bool.and(U32.is_gt(after_ms, 0), U32.is_gt(before_ms, after_ms))
+  +material = Bool.and(U32.is_ge(saving, 15000), U32.is_ge(saving, U32.inc(U32.div(U32.sub(before_ms, 1), 4))))
+  observe_failure_with_duration(state, thread, id, "local-verification-fixture-measured-speedup",
+    Bool.and(control, Bool.and(times, material)), U32.div(saving, 1000))
+
+def observe_rust_config_ancestry(state: Replay, thread: String, id: String, operation: String,
+  origin: String, diagnostic: String, failure: String, failed: Bool) -> Replay:
+  +producer = Bool.and(String.eq(operation, "cargo-test"), String.eq(origin, "config-writer"))
+  +receipt = Bool.and(String.eq(diagnostic, "Config ancestry must be trusted or sticky"),
+    String.eq(failure, "rust-test-panic"))
+  observe_failure(state, thread, id, "local-rust-config-ancestry-refused", Bool.and(failed, Bool.and(producer, receipt)))
+
+def observe_electron_display(state: Replay, thread: String, id: String, operation: String, origin: String,
+  line: String, terminal: String, failed: Bool) -> Replay:
+  +producer = Bool.and(String.eq(operation, "node-test"), String.eq(origin, "electron-ozone-x11"))
+  +receipt = Bool.and(String.eq(line, "Missing X server or $DISPLAY"),
+    String.eq(terminal, "The platform failed to initialize. Exiting."))
+  observe_failure(state, thread, id, "local-electron-display-unavailable", Bool.and(failed, Bool.and(producer, receipt)))
+
+def observe_hosted_same_head_supersession(state: Replay, thread: String, id: String, +pr: U32,
+  previous_run: String, next_run: String, previous_workflow: String, next_workflow: String,
+  previous_head: String, next_head: String, previous_job: String, next_job: String, previous_conclusion: String,
+  annotation: String, assigned: Bool, +previous_started: U32, +previous_ended: U32, +next_created: U32) -> Replay:
+  +same_work = Bool.and(Bool.not(String.eq(previous_run, next_run)), Bool.and(String.eq(previous_workflow, next_workflow),
+    Bool.and(String.eq(previous_head, next_head), String.eq(previous_job, next_job))))
+  +reason = String.append("Canceling since a higher priority waiting request for repository-checks-pull_request-",
+    String.append(U32.show(pr), " exists"))
+  +cancelled = Bool.and(assigned, Bool.and(U32.is_gt(pr, 0),
+    Bool.and(String.eq(previous_conclusion, "cancelled"), String.eq(annotation, reason))))
+  +overlap = Bool.and(U32.is_gt(previous_started, 0),
+    Bool.and(U32.is_gt(next_created, previous_started), U32.is_ge(previous_ended, next_created)))
+  observe_failure_with_duration(state, thread, id, "ci-same-head-job-superseded",
+    Bool.and(same_work, Bool.and(cancelled, overlap)), U32.sub(previous_ended, previous_started))
+
 def observe_hosted_bun_test_deadline(state: Replay, thread: String, id: String, step: String, conclusion: String,
   diagnostic: String, +path: String, test: String, exit_code: U32, +budget_ms: U32, +elapsed_ms: U32) -> Replay:
   +suite = Bool.and(String.starts_with(step, "Run bun test "), Bool.and(String.eq(conclusion, "failure"), U32.is_eq(exit_code, 1)))
