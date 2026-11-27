@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
-import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
+import { closeSync, constants, fstatSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import type { KernelCapture, List, Point } from "../evidence/index.ts";
+import { join } from "node:path";
+import { backupAnalysisInput, joinedTargets, publishJoinedAnalysis } from "../evidence/index.ts";
 import { buildPolicy, loadPolicy } from "../tooling/bend.ts";
 
 export type ObjectRow = Record<string, unknown>;
@@ -314,3 +316,34 @@ export function t3HistoryTargets(env = process.env) {
     default: throw Error("Invalid T3 history scope");
   }
 }
+
+
+async function refreshAnalysis() {
+  const [root, input, traces, receipts, output] = process.argv.slice(2);
+  const { importLiveSession } = await import("./t3.ts");
+  const bearer = process.env.PLOW_T3_READ_TOKEN_FILE;
+  if (bearer) process.env.PLOW_T3_READ_TOKEN = readFileSync(bearer, "utf8").trim();
+  const scratch = mkdtempSync(join(root, "analysis-refresh-"));
+  try {
+    const path = join(scratch, "joined.sqlite");
+    await backupAnalysisInput(input, path);
+    const files = readdirSync(receipts).filter((name) => name.endsWith(".json")).sort();
+    if (files.length > 50) throw Error("Too many join receipts");
+    for (const file of files) await importLiveSession(path, scratch, join(receipts, file), traces);
+    const codexInstance = process.env.PLOW_ANALYSIS_CODEX_INSTANCE;
+    const t3Instance = process.env.PLOW_ANALYSIS_T3_INSTANCE;
+    if (codexInstance && t3Instance && process.env.PLOW_T3_ORIGIN) {
+      const targetPath = join(scratch, "target.json");
+      for (const { thread } of await joinedTargets(path, scratch, t3Instance)) {
+        writeFileSync(targetPath, JSON.stringify({ t3Instance, threadId: thread, codexInstance }), { mode: 0o600 });
+        try { await importLiveSession(path, scratch, targetPath, traces); }
+        catch (error) { if (!(error instanceof Error) || !/\((NoBinding|Ambiguous)\)$/.test(error.message)) throw error; }
+      }
+    }
+    console.log(await publishJoinedAnalysis(path, output, scratch));
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
+if (import.meta.main) refreshAnalysis();

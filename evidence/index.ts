@@ -16,3 +16,5 @@ export { T3OtelConflict, openT3Otel, type T3OtelSpan, type T3OtelPolicy } from "
 export { joinSession, sessionJoinPolicy, type NativeBinding, type SessionJoinPolicy } from "./storage/load.ts";
 
 export const t3OtelPolicy = new URL("./storage/t3-otel.bend", import.meta.url);
+
+export { backupAnalysisInput, joinedTargets, publishJoinedAnalysis } from "./analysis/session-history.ts";
