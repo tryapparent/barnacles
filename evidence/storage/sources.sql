@@ -204,3 +204,18 @@ CREATE TABLE IF NOT EXISTS codex_kernel_captures (
   call_id TEXT NOT NULL, source_line INTEGER NOT NULL, started_ms INTEGER NOT NULL, trace_json TEXT NOT NULL,
   UNIQUE (instance, session_id, call_id)
 ) STRICT;
+
+CREATE TABLE IF NOT EXISTS codex_otel_spans (
+  instance TEXT NOT NULL, trace_id TEXT NOT NULL, span_id TEXT NOT NULL, parent_span_id TEXT,
+  operation TEXT NOT NULL, start_ns TEXT NOT NULL, end_ns TEXT NOT NULL, status_code INTEGER NOT NULL,
+  conversation_id TEXT, turn_id TEXT, call_id TEXT, fingerprint TEXT NOT NULL,
+  PRIMARY KEY (instance, trace_id, span_id)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS codex_otel_span_events (
+  instance TEXT NOT NULL, trace_id TEXT NOT NULL, span_id TEXT NOT NULL, event_index INTEGER NOT NULL,
+  event TEXT NOT NULL, observed_ns TEXT NOT NULL, conversation_id TEXT, turn_id TEXT, call_id TEXT,
+  reported_duration_ms INTEGER, success INTEGER,
+  PRIMARY KEY (instance, trace_id, span_id, event_index),
+  FOREIGN KEY (instance, trace_id, span_id) REFERENCES codex_otel_spans
+) STRICT;

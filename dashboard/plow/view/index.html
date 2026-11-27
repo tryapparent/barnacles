@@ -27,7 +27,7 @@
   <p id="summary-note" class="summary-note"></p>
   <div id="tiles" class="treemap"></div>
   <section id="operation-panel" hidden aria-labelledby="operation-heading">
-    <div class="operation-heading"><h3 id="operation-heading"></h3><button type="button" id="collapse">Close breakdown <span aria-hidden="true">×</span></button></div>
+    <div class="operation-heading"><h3 id="operation-heading"></h3><button type="button" id="collapse" aria-label="Close breakdown"><span aria-hidden="true">×</span></button></div>
     <div id="operation-tiles" role="group" aria-label="Operations"></div>
     <p id="operation-empty" class="summary-note" hidden>No operations in this range. Try zooming out.</p>
   </section>
@@ -35,6 +35,9 @@
 <section id="timeline-panel" aria-labelledby="timeline-heading">
 <div class="timeline-heading-row">
 <div><h2 id="timeline-heading">Timeline</h2><p id="timeline-selection" role="status"></p></div>
+</div>
+<div class="time-strip">
+<div class="navigator"><div id="minimap" class="minimap" tabindex="0" role="slider" aria-label="Position of visible time range" aria-description="Use the left and right arrow keys to pan when zoomed in." aria-valuemin="0" aria-valuemax="100" aria-valuenow="50"><div class="mini-threads"></div><div class="mini-window"></div><div class="mini-brush" hidden></div></div></div>
 <div class="controls zoom-tools" role="group" aria-label="Zoom time range">
   <button type="button" id="zoom-out" aria-label="Zoom out" title="Zoom out">−</button>
   <button type="button" id="zoom-in" aria-label="Zoom in" title="Zoom in">+</button>
@@ -42,9 +45,10 @@
   <output id="zoom-mode" aria-live="polite"></output>
 </div>
 </div>
-<div class="navigator"><div id="minimap" class="minimap" tabindex="0" role="slider" aria-label="Position of visible time range" aria-description="Use the left and right arrow keys to pan when zoomed in." aria-valuemin="0" aria-valuemax="100" aria-valuenow="50"><div class="mini-threads"></div><div class="mini-window"></div><div class="mini-brush" hidden></div></div></div>
+<div class="time-caption">
 <p class="utc-window" id="utc-window" aria-live="polite"></p>
 <ul class="chart-key" aria-label="Chart key"><li><i class="work-key"></i>Agent work</li><li><i class="wait-key"></i>Workflows or waits</li><li><i class="unclear-key"></i>Unclear (blended)</li><li id="failure-key" hidden><i class="failure-key"></i>Failure</li></ul>
+</div>
 <div class="timeline-viewport" id="timeline-viewport" tabindex="0" role="region" aria-label="Scrollable UTC timelines"><div class="timeline-grid" id="timeline-grid"><div class="table-head"><span class="pinned-heading">Thread</span><span id="chart-ruler" class="chart-ruler" aria-label="Timeline axis in UTC"><span class="utc-meta">UTC</span><span id="scale-caption" class="utc-scale"></span></span></div>
 <ol class="rows" id="traces" aria-label="Sample thread timelines"></ol></div></div>
 <div class="inspector-slot"><section class="inspect-panel" id="thread-inspector" tabindex="0" aria-labelledby="inspector-heading" hidden></section></div>

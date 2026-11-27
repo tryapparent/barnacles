@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { closeSync, openSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { buildPolicy, loadPolicy } from "../../tooling/bend.ts";
@@ -86,4 +87,52 @@ export function githubPollRows(path: string, repository: string) {
   } finally {
     db.close();
   }
+}
+
+
+type CodexSpan = {
+  $: "NativeSpan"; trace_id: string; span_id: string; parent_id: string; operation: string;
+  start_ns: string; end_ns: string; conversation: string; turn: string; call: string; status: number;
+};
+
+type CodexSpanEvent = {
+  $: "NativeEvent"; event: string; at_ns: string; conversation: string; turn: string; call: string;
+  duration_ms: string; success: string;
+};
+
+export type CodexOtelPolicy = {
+  observe_span(trace: string, span: string, parent: string, operation: string, start: string, end: string,
+    conversation: string, turn: string, call: string, status: number):
+    { $: "UnrecognizedSpan" | "InvalidSpan" } | { $: "ObservedSpan"; fact: CodexSpan };
+  observe_event(event: string, at: string, conversation: string, turn: string, call: string,
+    duration: string, success: string):
+    { $: "UnrecognizedEvent" | "InvalidEvent" } | { $: "ObservedEvent"; fact: CodexSpanEvent };
+  admit_replay(saved: string, received: string): boolean;
+};
+
+export type CodexOtelFact = { span: CodexSpan; events: CodexSpanEvent[] };
+export const codexOtelPolicy = new URL("./codex-otel.bend", import.meta.url);
+export class CodexOtelConflict extends Error {}
+
+export function saveCodexOtel(path: string, instance: string, facts: CodexOtelFact[], policy: CodexOtelPolicy) {
+  writeSources(path, (db) => {
+    const read = db.prepare("SELECT fingerprint FROM codex_otel_spans WHERE instance=? AND trace_id=? AND span_id=?");
+    const insertSpan = db.prepare("INSERT INTO codex_otel_spans VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    const insertEvent = db.prepare("INSERT INTO codex_otel_span_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    for (const fact of facts) {
+      const { span, events } = fact;
+      const identity = [instance, span.trace_id, span.span_id] as const;
+      const fingerprint = createHash("sha256").update(JSON.stringify(fact)).digest("hex");
+      const previous = read.get(...identity);
+      if (previous) {
+        if (!policy.admit_replay(String(previous.fingerprint), fingerprint)) throw new CodexOtelConflict();
+        continue;
+      }
+      insertSpan.run(...identity, span.parent_id || null, span.operation, span.start_ns, span.end_ns, span.status,
+        span.conversation || null, span.turn || null, span.call || null, fingerprint);
+      events.forEach((event, index) => insertEvent.run(...identity, index, event.event, event.at_ns, event.conversation || null,
+        event.turn || null, event.call || null, event.duration_ms ? Number(event.duration_ms) : null,
+        event.success ? Number(event.success === "true") : null));
+    }
+  });
 }

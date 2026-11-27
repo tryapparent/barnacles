@@ -38,11 +38,12 @@ Start with **The Long Field**. Keep the horizon low, leave room for the headline
 
 ## Stable page layout
 
-At a given viewport size, keep the document dimensions and the outer bounds of page regions stable during interactions. Apply this rule to pointer and keyboard interactions and to every state they trigger, including animations, loading, and errors. The layout can adapt when the viewport changes or the user navigates to another page.
+At a given viewport size, keep the page frame and surrounding regions in place during pointer and keyboard interactions. A control should change the content it acts on without shifting unrelated headings, controls, or panels.
 
-- Reserve an empty slot in the initial layout for dropdowns and disclosures at page level. When one opens, it may fill only that slot. Keep the slot the same size when the panel closes, and keep it clear of other content and controls.
-- Size regions for controls, results, and feedback in advance. Inside a bounded scroll region, let content reflow as items expand, collapse, or are filtered. A filtered list should close up around its remaining items. Its content height and scroll position can change while the scroll region keeps its outer bounds. Keep scrollbar space stable.
-- Verify at each supported breakpoint. Compare document dimensions and outer region bounds in document coordinates before, during, and after interactions. Check the content and scroll behavior inside each scroll region separately.
+- Within a panel, users can scroll, filter, sort, expand, or collapse its content. Let results reflow inside that panel. When a filter removes a row, remove its space as well.
+- Use a stable container for lists, results, and feedback that change independently of the page. Use internal scrolling or pagination when content exceeds it, and reserve scrollbar space where a scrollbar can appear.
+- A disclosure can open or close intentionally within the region it belongs to. If that would push unrelated regions around, give it a reserved area or a dedicated panel.
+- At each supported breakpoint, check the bounds of the affected container and its surroundings across pointer and keyboard interactions. Also check that the content inside the container updates as expected.
 
 ## Homepage copy
 
