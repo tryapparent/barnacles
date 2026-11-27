@@ -45,7 +45,8 @@ def published_entry(+owner: String, +target: String) -> Bool:
 def local_import(+owner: String, +path: String, +target: String, target_owner: String) -> Bool:
   Bool.or(String.eq(owner, target_owner), Bool.or(published_entry(owner, target),
     Bool.or(Bool.and(String.eq(path, "dashboard/prepare.test.ts"), String.eq(target, "evidence/index.ts")),
-      Bool.and(String.eq(path, "dashboard/web/vite.config.ts"), String.eq(target, "tooling/bend.ts")))))
+      Bool.and(Bool.or(String.eq(path, "dashboard/web/vite.config.ts"), String.eq(path, "dashboard/plow/build.ts")),
+        String.eq(target, "tooling/bend.ts")))))
 
 def disallowed_specifier(+value: String) -> Bool:
   Bool.or(String.is_empty(value), Bool.or(String.contains(value, "\\"),
@@ -56,9 +57,13 @@ def ordinary_import(+value: String, owner: String, path: String, target: String,
   Bool.and(Bool.not(disallowed_specifier(value)),
     Bool.or(Bool.not(String.starts_with(value, ".")), local_import(owner, path, target, target_owner)))
 
+def generated_import(+path: String, +expression: String) -> Bool:
+  Bool.or(Bool.and(String.eq(path, "tooling/bend.ts"), String.eq(expression, "pathToFileURL(path).href")),
+    Bool.and(String.eq(path, "dashboard/plow/smoke.mjs"),
+      String.eq(expression, "pathToFileURL(resolve(directory, 'worker.mjs')).href")))
+
 def allowed_import(owner: String, +path: String, callee: String, expression: String, value: String, target: String, target_owner: String) -> Bool:
-  Bool.or(Bool.and(String.eq(path, "tooling/bend.ts"),
-      Bool.and(String.eq(callee, "import"), String.eq(expression, "pathToFileURL(path).href"))),
+  Bool.or(Bool.and(String.eq(callee, "import"), generated_import(path, expression)),
     ordinary_import(value, owner, path, target, target_owner))
 
 def builds_harbor(scopes: List<&2, String>) -> Bool:
