@@ -6,7 +6,7 @@ Plow is a public MIT-licensed project for observing how coding-agent work reache
 
 - [Collector](collector/README.md) reads source evidence and emits allowlisted records.
 - [Evidence](evidence/README.md) owns SQLite, record identities, delivery joins, and metric definitions.
-- [Plow](dashboard/plow/README.md) owns the browser dashboard and its Cloudflare Worker. The [dashboard guide](dashboard/README.md) documents local snapshot preparation.
+- [Plow](dashboard/plow/README.md) owns the browser dashboard and its Clanker origin. The [dashboard guide](dashboard/README.md) documents local snapshot preparation.
 
 Build the Plow interface in React with the shared [shadcn controls](dashboard/web/controls.tsx). Keep timeline geometry in the chart renderer and evidence decisions in Bend2.
 
@@ -21,7 +21,7 @@ Keep the dependency direction from collector to evidence and from dashboard to e
 
 ## Plow hosting
 
-- Follow the [Plow deployment guide](dashboard/plow/README.md#deployment) for the Cloudflare Worker at `plow.tryapparent.com/app`. Keep candidate checks on loopback.
+- Follow the [Plow deployment guide](dashboard/plow/README.md#deployment) for the Docker Compose origin and Cloudflare Access at `plow.tryapparent.com/app`. Keep candidate checks on loopback.
 
 ## Bend2 is the implementation language
 
