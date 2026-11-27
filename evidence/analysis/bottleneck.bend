@@ -362,11 +362,60 @@ def observe_forge_response(state: Replay, thread: String, id: String, operation:
   +valid = Bool.and(Bool.and(create, server_error), Bool.and(failed, identified))
   observe_failure(state, thread, id, "pr-create-http-server-error", valid)
 
+def observe_github_pr_ref_resolution(state: Replay, thread: String, id: String, base: String,
+  head: String, line: String, failed: Bool) -> Replay:
+  +expected = String.append("pull request create failed: GraphQL: Head sha can't be blank, Base sha can't be blank, No commits between ",
+    String.append(base, String.append(" and ", String.append(head, ", Head ref must be a branch (createPullRequest)"))))
+  observe_failure(state, thread, id, "pr-create-graphql-ref-resolution", Bool.and(failed, String.eq(line, expected)))
+
+def observe_github_workflow_scope(state: Replay, thread: String, id: String, operation: String,
+  +workflow: String, diagnostic: String, failed: Bool) -> Replay:
+  +push = Bool.and(String.eq(operation, "git-push-https"), String.eq(diagnostic, "oauth-workflow-scope"))
+  +yaml = Bool.or(String.ends_with(workflow, ".yml"), String.ends_with(workflow, ".yaml"))
+  +scoped_file = Bool.and(String.starts_with(workflow, ".github/workflows/"), yaml)
+  observe_failure(state, thread, id, "git-push-github-workflow-scope-refused", Bool.and(failed, Bool.and(push, scoped_file)))
+
+def observe_t3_worktree_missing(state: Replay, thread: String, id: String, expected: String,
+  path: String, operation: String, diagnostic: String, failed: Bool) -> Replay:
+  +bound = Bool.and(String.eq(expected, path), String.eq(operation, "ls-worktree"))
+  observe_failure(state, thread, id, "local-t3-worktree-path-missing",
+    Bool.and(failed, Bool.and(bound, String.eq(diagnostic, "enoent"))))
+
+def observe_provider_input_rejection(state: Replay, +thread: String, id: String, source_thread: String,
+  visibility: String, item_type: String, item_status: String, truncated: Bool, status: U32,
+  error_type: String, parameter: String, code: String, message: String) -> Replay:
+  +original = Bool.and(String.eq(thread, source_thread), Bool.and(String.eq(visibility, "local"), Bool.not(truncated)))
+  +result = Bool.and(String.eq(item_type, "error"), Bool.and(String.eq(item_status, "failed"), U32.is_eq(status, 400)))
+  +shape = Bool.and(String.eq(error_type, "invalid_request_error"),
+    Bool.and(String.eq(parameter, "input"), String.eq(code, "unsupported_parameter")))
+  +audio = String.eq(message, "Audio input is not supported for this request.")
+  observe_failure(state, thread, id, "provider-audio-input-unsupported",
+    Bool.and(original, Bool.and(result, Bool.and(shape, audio))))
+
+def observe_hosted_status_write(state: Replay, thread: String, id: String, step: String, conclusion: String,
+  writer: String, method: String, endpoint: String, revision: String, status: U32, reason: String, exit_code: U32) -> Replay:
+  +reporter = Bool.and(String.eq(step, "Reconcile all PRs using trusted default-branch policy"),
+    String.eq(writer, "verification-status-reporter"))
+  +write = Bool.and(String.eq(method, "POST"), Bool.and(String.eq(endpoint, "commit-status"), Bool.not(String.is_empty(revision))))
+  +failed = Bool.and(String.eq(conclusion, "failure"), U32.is_eq(exit_code, 1))
+  +throttle = Bool.and(U32.is_eq(status, 403), String.eq(reason, "installation-rate-limit"))
+  observe_failure(state, thread, id, "ci-status-reporter-rate-limited",
+    Bool.and(reporter, Bool.and(write, Bool.and(failed, throttle))))
+
+def observe_hosted_macos_probe(state: Replay, thread: String, id: String, step: String, conclusion: String,
+  fixture: String, command: String, failure: String, exit_code: U32) -> Replay:
+  +tool = Bool.and(String.eq(step, "Native Mac Storage and error-reporting controls against the installed Rust GUI"),
+    String.eq(fixture, "capture/desktop/ui/frontend/tests/mac-storage-native.cjs"))
+  +probe = Bool.and(String.eq(command, "system-events-ui-elements-enabled"), String.eq(failure, "ERR_TEST_FAILURE"))
+  +failed = Bool.and(String.eq(conclusion, "failure"), U32.is_eq(exit_code, 1))
+  observe_failure(state, thread, id, "ci-macos-system-events-probe-failed", Bool.and(tool, Bool.and(probe, failed)))
+
 def observe_actions_rate_limit(state: Replay, thread: String, id: String, +operation: String, status: U32, +line: String,
   failed: Bool) -> Replay:
   +read = Bool.and(String.eq(operation, "actions-job-read"), String.eq(line, "gh: API rate limit exceeded (HTTP 403)"))
-  +watch = Bool.and(String.eq(operation, "actions-run-watch"), String.eq(line, "failed to get run: HTTP 403: API rate limit exceeded"))
-  +valid = Bool.and(failed, Bool.and(U32.is_eq(status, 403), Bool.or(read, watch)))
+  +run = Bool.or(String.eq(operation, "actions-run-watch"), String.eq(operation, "actions-run-read"))
+  +run_limit = Bool.and(run, String.eq(line, "failed to get run: HTTP 403: API rate limit exceeded"))
+  +valid = Bool.and(failed, Bool.and(U32.is_eq(status, 403), Bool.or(read, run_limit)))
   observe_failure(state, thread, id, "ci-observer-rate-limited", valid)
 
 def observe_job_rerun(state: Replay, thread: String, id: String, job: String, line: String, failed: Bool) -> Replay:
