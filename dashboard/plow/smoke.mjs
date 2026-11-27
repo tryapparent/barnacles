@@ -178,7 +178,7 @@ try {
     await assertStable('reset zoom and close operation breakdown')
     await screenshot('recovered')
 
-    await summary.getByRole('button', { name: /^Agent work/ }).click()
+    await summary.getByRole('button', { name: /^Provider run/ }).click()
     const operationButtons = summary.getByRole('group', { name: 'Operations' }).getByRole('button')
     assert.ok(await operationButtons.count() > 2)
     await operationButtons.last().focus()
