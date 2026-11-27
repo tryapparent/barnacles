@@ -164,8 +164,9 @@ function ProcessTimings() {
   const [choice, setChoice] = useState(0);
   const captures = result.state === "ready" ? result.data.captures : [];
   const capture = captures[choice] ?? captures[0];
-  return <section className="process-timings" id="process-timing" aria-labelledby="process-title">
-    <h2 id="process-title">Local process timings</h2>
+  return <details className="process-timings" id="process-timing">
+    <summary>Local process timings</summary>
+    <p className="fine process-note">Captures are linked to individual tool calls. PR attribution is unavailable.</p>
     {result.state === "loading" && <p className="fine" role="status">Loading process captures…</p>}
     {result.state === "error" && <div className="detail-links" role="alert"><p>{result.message}</p>
       <Button onClick={retry}>Retry process timings</Button></div>}
@@ -179,7 +180,15 @@ function ProcessTimings() {
       </div> : <p className="fine">Tool call · <time dateTime={capture.startedAt}>{utcLabel(capture.startedAt)}</time></p>}
       <ProcessWaterfall capture={capture} />
     </>}
-  </section>;
+  </details>;
+}
+
+function openProcessTimings() {
+  const timings = document.querySelector<HTMLDetailsElement>("#process-timing");
+  if (!timings) return;
+  timings.open = true;
+  timings.querySelector("summary")?.focus({ preventScroll: true });
+  timings.scrollIntoView();
 }
 
 function PollIntervalForm({ path, initial }: { path: string; initial: number }) {
@@ -311,21 +320,23 @@ function DeliveryTimeline({ review, selection }: { review: Review; selection: { 
       document.removeEventListener("scrollend", open);
     };
   }, [selection, found]);
-  return <section className="delivery" aria-labelledby="delivery-title">
-    <h2 id="delivery-title">Delivery cycle time</h2>
+  return <>
     {items.length ? <>
       <StageKey />
+      <p className="fine delivery-note">Bars show measured time between milestones. Missing clocks leave gaps in coverage. PRs in the same release can share the time from publication to the access check.</p>
+      <div className="delivery-lanes" aria-hidden="true">
+        <span>Merged or later</span><span>Before merge</span>
+      </div>
       <div className="delivery-list">{items.map((item) => {
         const measured = item.milestones.flatMap((entry) => entry.elapsedMillis !== null && entry.elapsedMillis > 0 ?
           [{ ...entry, elapsedMillis: entry.elapsedMillis }] : []);
         const total = measured.reduce((sum, entry) => sum + entry.elapsedMillis, 0);
         const rowWidth = 100 * Math.log1p(total / 60_000) / Math.log1p(Math.max(1, maxMeasuredMillis) / 60_000);
-        return <details key={item.number} id={`delivery-pr-${item.number}`} className="thread">
+        return <details key={item.number} id={`delivery-pr-${item.number}`} className="thread" data-stage={item.stage}>
           <summary>
             <span className="thread-meta">
               <span className="thread-name">{item.title ?? "Pull request title unavailable"}</span>
-              <span className="sr-only">{stageLabel(item.stage)}</span>
-              <time dateTime={item.lastObservedAt}>{dayLabel(item.lastObservedAt)}</time>
+              <span className="thread-status">{stageLabel(item.stage)} · <time dateTime={item.lastObservedAt}>{dayLabel(item.lastObservedAt)}</time></span>
             </span>
             <span className="thread-bar" aria-hidden="true">{measured.length ? measured.map((entry) => {
               const elapsed = entry.elapsedMillis;
@@ -333,7 +344,7 @@ function DeliveryTimeline({ review, selection }: { review: Review; selection: { 
               return <span key={entry.key} className={`stage-segment ${phaseClass(entry)}`}
                 style={{ width: `${rowWidth * elapsed / total}%` }}
                 title={`${milestoneLabel(entry.key)} · ${label}`}><span>{label}</span></span>;
-            }) : <span className="thread-unmeasured">—</span>}</span>
+            }) : <span className="thread-unmeasured">No timed stages</span>}</span>
           </summary>
           {selected === item.number ? <PullRequestEvidence path={item.detailPath} milestones={item.milestones} /> :
             <Waterfall milestones={item.milestones} />}
@@ -354,7 +365,7 @@ function DeliveryTimeline({ review, selection }: { review: Review; selection: { 
     {selected !== null && !found && nextOffset === null && <p className="fine" role="status">
       PR #{selected} has no row in this window. <a href={`/api/v1/pull-requests/${selected}?asOf=${encodeURIComponent(review.window.to)}`}>PR evidence JSON</a>
     </p>}
-  </section>;
+  </>;
 }
 
 function selectedPullRequest(): number | null {
@@ -382,11 +393,15 @@ function App() {
     return () => window.removeEventListener("popstate", restore);
   }, []);
   useEffect(() => {
-    const hash = location.hash;
-    if (review && (hash === "#delivery-title" || hash === "#process-timing")) {
-      document.getElementById(hash.slice(1))?.scrollIntoView();
-    }
-  }, [review]);
+    if (result.state !== "ready") return;
+    const reveal = () => {
+      if (location.hash === "#process-timing") openProcessTimings();
+      if (location.hash === "#delivery-title") document.getElementById("delivery-title")?.scrollIntoView();
+    };
+    reveal();
+    window.addEventListener("hashchange", reveal);
+    return () => window.removeEventListener("hashchange", reveal);
+  }, [result.state]);
   const settingsToggle = settingsPath && <button type="button" className="settings-toggle" aria-expanded={showSettings}
     aria-controls={showSettings ? "poll-settings" : undefined}
     onClick={() => setShowSettings((open) => !open)}>Settings</button>;
@@ -408,7 +423,7 @@ function App() {
           <a href={path}>Review API JSON</a>
           <a href="/changed-code">Changed Code Analysis</a>
           {settingsToggle}
-          <a href="#process-timing">Process timings</a>
+          <a href="#process-timing" onClick={openProcessTimings}>Process timings</a>
         </div>
       </div>
     </Fleet>}
@@ -420,8 +435,11 @@ function App() {
     {review && <>
       <Overview review={review} />
       <DailyStages chart={review.shipments.dailyChart} window={review.window} />
-      <DeliveryTimeline key={review.snapshotAt} review={review} selection={selection} />
-      <ProcessTimings />
+      <section className="delivery" aria-labelledby="delivery-title">
+        <h2 id="delivery-title">Delivery cycle time</h2>
+        <ProcessTimings />
+        <DeliveryTimeline key={review.snapshotAt} review={review} selection={selection} />
+      </section>
     </>}
   </main>;
 }

@@ -162,6 +162,11 @@ as its own interval after publication.
 intervals across the selected delivery rows, independent of pagination. The
 browser uses it to hold the scale steady as more rows enter the list. Row widths
 use a compressed scale so short intervals stay visible alongside long ones.
+The delivery list places PRs with an observed merge or later milestone in the
+left lane and earlier PRs in the right lane, on the same duration scale. Each
+row names its latest observed milestone. A color represents a positive
+interval with both consecutive clocks in order. PRs from the same release can
+share a publication-to-access-check interval.
 Selecting a ship scrolls to its delivery row and opens the milestone waterfall
 there. The link keeps the PR number and cutoff so it can be opened directly.
 Waterfalls use a linear UTC scale.
@@ -202,7 +207,9 @@ a capture-local `id`, `parent` (1 denotes the measured command root),
 `depth`, safe executable `name`, and `start`, `end`, and `elapsed` in
 microseconds. The time origin is the kernel-observed launch.
 
-Harbor links to this waterfall from the masthead. It shows captured local
+Harbor links to this waterfall from the masthead and opens it within the
+delivery section. Capture identities establish the rollout call. The API
+has no verified lineage from that call to a PR. It shows captured local
 commands independently of the selected PR or shipping date filter. See
 [local process timing](../evidence/README.md#local-process-timing) for
 provenance and coverage.
