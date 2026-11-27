@@ -9,6 +9,7 @@ import { sourcePolicy, admissionPolicy, deliveryPolicy, type AdmissionPolicy, ty
 import { buildPolicies, loadPolicy } from "../tooling/bend.ts";
 import { fileURLToPath } from "node:url";
 import { pullRequest, releaseEvidence } from "./github/delivery.ts";
+import type { GitHubReader } from "./github/attempt.ts";
 import { inspectRollout, readRollout } from "./codex/rollout.ts";
 import { t3Snapshot } from "./t3.ts";
 
@@ -77,22 +78,23 @@ test("compiled Bend2 source decisions through the SQLite import path", async () 
       loadEvidence(path, { source: "github-delivery", pullRequest, release }, admission);
     const saveRollout = (rollout: RolloutEvidence) => loadEvidence(path, { source: "codex", rollout }, admission);
     const saveThread = (thread: ThreadEvidence) => loadEvidence(path, { source: "t3", thread }, admission);
-    const pr = pullRequest(repo, 9, policy, read, true);
+    const pull = (source: GitHubReader = read) => pullRequest(repo, 9, policy, source, true);
+    const pr = await pull();
     assert.equal(pr.firstCommit?.sha, merged);
     assert.equal(pr.firstReview?.id, 7);
     assert.deepEqual(pr.firstCI, { id: 102, at: Date.parse(time("07")) / 1000 });
     const alternateRuns = (replace: (inventory: { total_count: number; workflow_runs: unknown[] }) => unknown) =>
       (path: string) => path.includes("/actions/runs?") ? replace(read(path) as { total_count: number; workflow_runs: unknown[] }) : read(path);
-    assert.equal(pullRequest(repo, 9, policy, alternateRuns((runs) => ({ ...runs, total_count: 5 })), true).firstCI, null);
-    assert.equal(pullRequest(repo, 9, policy, alternateRuns((runs) => ({
+    assert.equal((await pull(alternateRuns((runs) => ({ ...runs, total_count: 5 })))).firstCI, null);
+    assert.equal((await pull(alternateRuns((runs) => ({
       total_count: 2, workflow_runs: [runs.workflow_runs[0], runs.workflow_runs[0]],
-    })), true).firstCI, null);
+    })))).firstCI, null);
     const repeatedCommits = (path: string) => {
       if (!path.includes("/commits?")) return read(path);
       const [first] = read(path) as object[];
       return [first, first];
     };
-    const incomplete = pullRequest(repo, 9, policy, repeatedCommits, true);
+    const incomplete = await pull(repeatedCommits);
     assert.equal(incomplete.commitsComplete, false);
     assert.equal(incomplete.firstCommit, null);
     assert.equal(incomplete.firstCI, null);
@@ -100,14 +102,14 @@ test("compiled Bend2 source decisions through the SQLite import path", async () 
       total_count: 1, workflow_runs: [{ ...(runs.workflow_runs[0] as object), head_repository: { id: 77 },
         pull_requests: [{ number: 9, base: { repo: { id: 4 } } }] }],
     }))(path);
-    assert.equal(pullRequest(repo, 9, policy, (path) => path.includes("/commits?") ? [] : read(path), true).firstCI, null);
-    assert.equal(pullRequest(repo, 9, policy, explicit, true).firstCI?.id, 102);
+    assert.equal((await pull((path) => path.includes("/commits?") ? [] : read(path))).firstCI, null);
+    assert.equal((await pull(explicit)).firstCI?.id, 102);
     const repeatedAssets = (path: string) => {
       if (!path.includes("/releases/")) return read(path);
       const release = read(path) as { assets: unknown[] };
       return { ...release, assets: [...release.assets, ...release.assets] };
     };
-    const noProbe = releaseEvidence(pr, tag, policy, repeatedAssets, () => assert.fail("Ambiguous assets must not be probed"));
+    const noProbe = await releaseEvidence(pr, tag, policy, repeatedAssets, () => assert.fail("Ambiguous assets must not be probed"));
     assert.equal(noProbe.assetId, null);
     assert.equal(noProbe.shipped, false);
     const repeatedDispatch = (path: string) => {
@@ -116,15 +118,15 @@ test("compiled Bend2 source decisions through the SQLite import path", async () 
       return { total_count: 2, workflow_runs: [...releaseRuns.workflow_runs, ...releaseRuns.workflow_runs] };
     };
     const available = () => ({ http: 206, bytes: 1, range: true });
-    assert.equal(releaseEvidence(pr, tag, policy, repeatedDispatch, available, true).dispatch, null);
-    const failure = releaseEvidence(pr, tag, policy, read, () => ({ http: 206, bytes: 1, range: false }));
+    assert.equal((await releaseEvidence(pr, tag, policy, repeatedDispatch, available, true)).dispatch, null);
+    const failure = await releaseEvidence(pr, tag, policy, read, () => ({ http: 206, bytes: 1, range: false }));
     saveDelivery(pr, failure);
     const unverified = deliveryReport(path, reportPolicy)[0];
     assert.equal(unverified.pr_to_release_seconds, null);
     assert.equal(unverified.coverage.release_link, "release_unverified");
     assert.equal(unverified.coverage.endpoints.published, "missing");
     assert.equal(unverified.coverage.stages.merge_to_publication, "missing_end");
-    const proof = releaseEvidence(pr, tag, policy, read, () => ({ http: 206, bytes: 1, range: true }), true);
+    const proof = await releaseEvidence(pr, tag, policy, read, available, true);
     saveDelivery(pr, proof);
     assert.equal(deliveryReport(path, reportPolicy)[0].first_ci_run, 102);
     assert.equal(deliveryReport(path, reportPolicy)[0].release_run, 205);

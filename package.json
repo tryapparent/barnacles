@@ -31,6 +31,8 @@
   },
   "type": "module",
   "dependencies": {
+    "@octokit/auth-app": "8.3.1",
+    "@octokit/core": "7.0.8",
     "@radix-ui/react-slot": "1.5.0",
     "@radix-ui/react-tabs": "1.2.1",
     "@radix-ui/react-tooltip": "1.4.1",
