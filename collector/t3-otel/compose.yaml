@@ -75,6 +75,7 @@ services:
       TMPDIR: /tmp
       PLOW_T3_INSTANCE: ${PLOW_T3_INSTANCE:?Set the trusted T3 instance identifier}
       PLOW_T3_HISTORY_ORIGIN: ${PLOW_T3_HISTORY_ORIGIN:-}
+      PLOW_T3_HISTORY_SCOPE: ${PLOW_T3_HISTORY_SCOPE:-allowlist}
       PLOW_T3_HISTORY_TARGETS_FILE: /run/plow-history-targets
     user: '10001:10001'
     restart: unless-stopped

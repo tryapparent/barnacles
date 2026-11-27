@@ -143,17 +143,45 @@ expiration so the operator can rotate it before expiry.
 
 Set the [history profile inputs](../../../collector/t3-otel/README.md#read-history-from-stock-t3)
 in the private Compose environment file, then apply through the launcher.
-Use a bounded allowlist of thread IDs whose history this collector can
-read. The runtime needs only the reachable T3 API and its read credential.
+Set `PLOW_T3_HISTORY_SCOPE=all` for discovery across the source instance's
+active and archived threads. For a narrower scope supply an allowlist.
+The runtime needs only the reachable T3 API and its read credential.
 Keep the source profile and stock release version in the rollout record.
 Check the `history` service's pass counters and the command and cursor
 tables on the evidence volume. A running container alone does not show a
 successful read.
 
+### Apply the private history route
+
+For a T3 server bound to Clanker loopback, apply the versioned Tailscale
+Serve route from the verified release. Supply the approved dedicated
+tailnet hostname and port and the existing T3 API loopback port.
+`PLOW_COLLECTOR_SERVE_SUDO=1` selects Clanker's existing passwordless
+Serve administration when needed.
+
+```sh
+export PLOW_T3_HISTORY_SERVE_HOST="$approved_history_host_and_port"
+export PLOW_T3_HISTORY_LOOPBACK_PORT="$t3_api_loopback_port"
+"$release_source/dashboard/run.sh" t3-history-ingress
+```
+
+The launcher owns only `/api/orchestration`, `/api/auth/websocket-ticket`
+and `/ws` on that dedicated HTTPS listener. It adopts matching routes,
+adds missing routes, and rejects conflicting handlers or Funnel. T3
+authenticates both the HTTP history reads and the WebSocket ticket.
+Set the poller's origin to the resulting HTTPS host and port. Check
+from the poller's network that the root returns 404, requests for
+the shell API and ticket without a bearer return 401, and an
+authenticated pass discovers and imports archive evidence. The T3 API
+stays on loopback.
+
 To pause reads, remove `history` from the environment file's
 `COMPOSE_PROFILES` and reapply. The launcher stops the history service
 and retains the evidence volume and cursors. Stop the history service
-before rolling back to a release that predates it.
+before rolling back to a release that predates it. Switch the profile
+back to `allowlist` to roll back discovery, and remove only the ticket
+and WebSocket paths with `tailscale serve --https="$history_port" --set-path="$path" off`.
+Keep the orchestration path for the history reader.
 
 ## Rollback
 

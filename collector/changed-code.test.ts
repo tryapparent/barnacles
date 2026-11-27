@@ -1,10 +1,91 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+import { buildPolicy, loadPolicy } from "../tooling/bend.ts";
+import { openT3History, type List } from "../evidence/index.ts";
+import { bendList, bendValues } from "./wire.ts";
+
+test("T3 history rotates through large inventories and resumes after restart", async () => {
+  const job = mkdtempSync(join(process.env.PLOW_TEST_DIRECTORY!, "t3-history-"));
+  const path = join(job, "state.sqlite");
+  try {
+    const policy = await loadPolicy<{
+      replay: Parameters<typeof openT3History>[2];
+      rotation(after: string, ids: List<string>): { total: number; threads: List<string> };
+    }>(await buildPolicy(job, new URL("./t3-otel/history.bend", import.meta.url), "history.mjs"));
+    const ids = Array.from({ length: 12_000 }, (_, i) => String(i).padStart(5, "0"));
+    const inventory = bendList([...ids].reverse().concat(ids[0], ids[13]));
+    const writer = openT3History(path, "test", policy.replay);
+    const last = writer.rotation();
+    const first = policy.rotation(last, inventory);
+    assert.equal(first.total, ids.length);
+    assert.deepEqual([...bendValues(first.threads)], ids.slice(0, 32));
+    assert.ok(writer.advance(last, ids[31]));
+    assert.equal(writer.advance(last, ids[15]), false);
+    writer.close();
+    const restarted = openT3History(path, "test", policy.replay);
+    try {
+      assert.deepEqual([...bendValues(policy.rotation(restarted.rotation(), inventory).threads)], ids.slice(32, 64));
+      assert.deepEqual([...bendValues(policy.rotation(ids.at(-2)!, inventory).threads)], [ids.at(-1), ...ids.slice(0, 31)]);
+    } finally {
+      restarted.close();
+    }
+  } finally {
+    rmSync(job, { recursive: true, force: true });
+  }
+});
+
+test("T3 ingress adopts its existing path, rolls back partial apply, and refuses foreign routes", () => {
+  const job = mkdtempSync(join(process.env.PLOW_TEST_DIRECTORY!, "t3-ingress-"));
+  const state = join(job, "serve.json");
+  const serve = join(job, "tailscale");
+  const host = "test.tailnet.ts.net:8444";
+  const paths = ["/api/orchestration", "/api/auth/websocket-ticket", "/ws"];
+  const config = {
+    TCP: { 8444: { HTTPS: true } },
+    Web: { [host]: { Handlers: { [paths[0]]: { Proxy: "http://127.0.0.1:3784/api/orchestration" } } } },
+  };
+  const snapshot = () => JSON.parse(readFileSync(state, "utf8"));
+  writeFileSync(state, JSON.stringify(config));
+  writeFileSync(serve, `#!${process.execPath}
+const {readFileSync,writeFileSync}=require("node:fs");
+const file=process.env.FIXTURE_SERVE, args=process.argv.slice(2), host=process.env.PLOW_T3_HISTORY_SERVE_HOST;
+const conf=JSON.parse(readFileSync(file,"utf8"));
+if(args[0]==="status") console.log(JSON.stringify({Self:{DNSName:"test.tailnet.ts.net."}}));
+else if(args[1]==="status") console.log(JSON.stringify(conf));
+else {
+  const path=args.find(arg=>arg.startsWith("--set-path=")).split("=")[1], target=args.at(-1), handlers=conf.Web[host].Handlers;
+  if(path===process.env.FIXTURE_FAILURE) process.exit(1);
+  if(target==="off") delete handlers[path];
+  else handlers[path]={Proxy:target};
+  writeFileSync(file,JSON.stringify(conf));
+}
+`, { mode: 0o700 });
+  const run = (failure = "") => execFileSync("sh", [fileURLToPath(new URL("../dashboard/run.sh", import.meta.url)), "t3-history-ingress"], {
+    env: { ...process.env, PATH: `${job}:${process.env.PATH}`, FIXTURE_SERVE: state, FIXTURE_FAILURE: failure,
+      PLOW_COLLECTOR_SERVE_SUDO: "0", PLOW_T3_HISTORY_SERVE_HOST: host, PLOW_T3_HISTORY_LOOPBACK_PORT: "3784" },
+    stdio: "pipe",
+  });
+  try {
+    assert.throws(() => run("/ws"));
+    assert.deepEqual(snapshot(), config);
+    run();
+    const applied = snapshot();
+    assert.deepEqual(Object.keys(applied.Web[host].Handlers).sort(), paths.sort());
+    run();
+    assert.deepEqual(snapshot(), applied);
+    applied.Web[host].Handlers["/"] = { Proxy: "http://127.0.0.1:9876" };
+    writeFileSync(state, JSON.stringify(applied));
+    assert.throws(() => run());
+    assert.deepEqual(snapshot(), applied);
+  } finally {
+    rmSync(job, { recursive: true, force: true });
+  }
+});
 
 test("PR watch replay requires the stamped revision and exact completed run", () => {
   const directory = process.env.PLOW_TEST_DIRECTORY;

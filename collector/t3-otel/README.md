@@ -56,13 +56,26 @@ the OTLP receiver URL.
 | `COMPOSE_PROFILES` | Include `history` to run the poller |
 | `PLOW_T3_HISTORY_ORIGIN` | Private HTTPS T3 server origin, or loopback HTTP in a disposable test |
 | `PLOW_T3_HISTORY_READ_TOKEN_FILE` | Absolute path to a file containing a T3 session bearer with only `orchestration:read` |
-| `PLOW_T3_HISTORY_TARGETS_FILE` | Absolute path to a JSON array of up to 32 authorized T3 thread IDs for this instance |
+| `PLOW_T3_HISTORY_SCOPE` | `all` discovers active and archived threads. The default `allowlist` uses a supplied set of IDs. |
+| `PLOW_T3_HISTORY_TARGETS_FILE` | In `allowlist` mode, absolute path to a JSON array of up to 32 authorized T3 thread IDs for this instance |
 
-The two files must be readable by service UID `10001`. Mount both
+The configured files must be readable by service UID `10001`. Mount them
 read-only and keep them out of Git. Use a separate credential from the
 two OTLP bearers. See the [Clanker rollout guide](../../dashboard/enablement/deploy/t3-otlp.md#enable-stock-t3-history).
 
 The service polls on startup and waits 15 minutes after each pass.
+In `all` mode each pass discovers the active inventory through the
+shell API and the archived inventory through the stock read-scoped
+`orchestration.getArchivedShellSnapshot` WebSocket call. Discovery
+requires both inventories. Plow retains thread IDs for scheduling only.
+It deduplicates threads present in both snapshots and attempts up to
+32 threads in ID order per pass, wrapping after the last ID. Each
+attempt advances the durable rotation, including a failed thread read.
+Failed reads get another attempt on the next rotation. If inventory
+retrieval fails, the pass reports failure without moving the rotation.
+Each inventory has a 64 MiB response limit and a 50,000-row decoder
+limit. A response outside the limits counts as a discovery failure.
+
 Each target gets a fresh head snapshot and at most one older page per
 pass. The history cursor and evidence for each successful page commit
 together. On source failure the cursor stays in place for retry, except
@@ -71,7 +84,8 @@ starts again at the head. A completed scan starts a fresh sweep on a
 later pass so updates to older commands can be picked up. Cycle logs
 give counts for head pages, older pages, completed scans and failures.
 Completion covers retained history for the configured target at the time
-of the scan.
+of the scan. In `all` mode the poller also logs the count of distinct
+discovered threads. A rotation of 1,000 threads takes at least 32 passes.
 
 T3 returns a broader history payload to authorized readers. Plow keeps
 only local Codex commands with a strong native item reference and T3
