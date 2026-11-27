@@ -26,6 +26,32 @@ export function feedPayload(raw) {
   return JSON.stringify(feed).replaceAll('<', '\\u003c')
 }
 
+const bendList = (items) =>
+  items.reduceRight((tail, head) => ({ $: "Con", head, tail }), { $: "Nil" });
+
+function chartJson(_key, value) {
+  const list = value;
+  if (list?.$ !== "Con" && list?.$ !== "Nil") return value;
+  const entries = [];
+  for (let next = list; next.$ === "Con"; next = next.tail) entries.push(next.head);
+  return entries;
+}
+
+export function dashboardData(raw, type, policy) {
+  const feed = JSON.parse(feedPayload(raw));
+  if (feed.unavailable) return;
+  const { observed, traces, overview } = feed;
+  if (type === "Timeline") return JSON.stringify({ observed, traces });
+  const millis = (seconds) => Math.round(seconds * 1000);
+  const rows = (overview?.traces ?? traces).map((row, index) => {
+    const intervals = (clock, kind) =>
+      clock.map(([a, b, name]) => ({ $: "Interval", a: millis(a), b: millis(b), name, kind }));
+    return { $: "ChartRow", index: index + 1, start: row.startUtcMs, duration: millis(row.end),
+      intervals: bendList([...intervals(row.work, 2), ...intervals(row.detail ?? [], 3), ...intervals(row.wait, 1)]) };
+  });
+  return JSON.stringify({ observed, ...policy.charts(bendList(rows), overview?.to ?? observed) }, chartJson);
+}
+
 export function accessVerifier(jwtVerify, keys, issuer, audience) {
   return async token => {
     if (typeof token !== 'string' || !token) return false

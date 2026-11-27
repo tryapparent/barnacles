@@ -108,6 +108,12 @@ services:
       - "127.0.0.1:${PLOW_ANALYSIS_PORT:-15480}:8080"
     volumes:
       - analysis:/analysis:ro
+      - type: bind
+        source: ${PLOW_MCP_FEED_DIR:-./mcp}
+        target: /dashboard-feed
+        read_only: true
+        bind:
+          create_host_path: false
     healthcheck:
       test: [CMD, node, -e, "fetch('http://127.0.0.1:8080/api/v1/bottlenecks').then(r=>process.exit(r.status===403?0:1),()=>process.exit(1))"]
       interval: 3s
