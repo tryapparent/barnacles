@@ -130,6 +130,31 @@ native server used `service.name=t3code-server`. Verify that identity and
 trace arrival on the intended sender build with a synthetic thread event
 after opt-in. The server must receive the config at launch.
 
+## Enable stock T3 history
+
+Use the official stable T3 server's existing private API origin. The
+Compose reader requires HTTPS for a non-loopback origin and does not
+publish a port. The stock v0.1.13 compatibility check uses the existing
+`orchestration:read` session scope. Issue a dedicated session using the
+stock T3 session CLI on the source server. Put the bearer in the approved
+1Password vault and materialize the read-only file for UID `10001` using
+the same private mount procedure as above. Set and track the session
+expiration so the operator can rotate it before expiry.
+
+Set the [history profile inputs](../../../collector/t3-otel/README.md#read-history-from-stock-t3)
+in the private Compose environment file, then apply through the launcher.
+Use a bounded allowlist of thread IDs whose history this collector can
+read. The runtime needs only the reachable T3 API and its read credential.
+Keep the source profile and stock release version in the rollout record.
+Check the `history` service's pass counters and the command and cursor
+tables on the evidence volume. A running container alone does not show a
+successful read.
+
+To pause reads, remove `history` from the environment file's
+`COMPOSE_PROFILES` and reapply. The launcher stops the history service
+and retains the evidence volume and cursors. Stop the history service
+before rolling back to a release that predates it.
+
 ## Rollback
 
 Pause affected senders, then revert only the approved T3 ingress mapping.

@@ -106,6 +106,73 @@ export type HistoryFact = {
   $: "Fact"; position: number; id: string; kind: string; status: string; seconds: number; millis: number;
 };
 
+export type T3Command = {
+  $: "Command"; id: string; thread: string; run: string; provider_thread: string; provider_turn: string;
+  native_item: string; status: string; exit_code: string; started: string; completed: string; updated: string;
+};
+
+export function openT3History(path: string, instance: string,
+  replay: (saved: number, incoming: number, previous: string, next: string) => { $: "Write" | "Ignore" | "Conflict" }) {
+  closeSync(openSync(path, "a", 0o600));
+  const db = new DatabaseSync(path);
+  try {
+    db.exec(`
+      PRAGMA busy_timeout = 5000;
+      PRAGMA synchronous = FULL;
+      CREATE TABLE IF NOT EXISTS t3_history_progress (
+        instance TEXT NOT NULL, thread_id TEXT NOT NULL, cursor TEXT NOT NULL,
+        PRIMARY KEY (instance, thread_id)
+      ) STRICT, WITHOUT ROWID;
+      CREATE TABLE IF NOT EXISTS t3_history_commands (
+        instance TEXT NOT NULL, thread_id TEXT NOT NULL, item_id TEXT NOT NULL, snapshot_sequence INTEGER NOT NULL,
+        run_id TEXT, provider_thread_id TEXT NOT NULL, provider_turn_id TEXT NOT NULL, native_item_id TEXT NOT NULL,
+        status TEXT NOT NULL, exit_code INTEGER, t3_started_ms INTEGER, t3_completed_ms INTEGER, t3_updated_ms INTEGER,
+        PRIMARY KEY (instance, thread_id, item_id)
+      ) STRICT, WITHOUT ROWID;
+    `);
+    const cursor = db.prepare("SELECT cursor FROM t3_history_progress WHERE instance=? AND thread_id=?");
+    const progress = db.prepare("INSERT INTO t3_history_progress VALUES (?, ?, ?) ON CONFLICT DO UPDATE SET cursor=excluded.cursor");
+    const read = db.prepare(`SELECT snapshot_sequence, run_id, provider_thread_id, provider_turn_id, native_item_id,
+      status, exit_code, t3_started_ms, t3_completed_ms, t3_updated_ms
+      FROM t3_history_commands WHERE instance=? AND thread_id=? AND item_id=?`);
+    read.setReturnArrays(true);
+    const save = db.prepare(`INSERT INTO t3_history_commands VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT DO UPDATE SET snapshot_sequence=excluded.snapshot_sequence, run_id=excluded.run_id,
+      provider_thread_id=excluded.provider_thread_id, provider_turn_id=excluded.provider_turn_id,
+      native_item_id=excluded.native_item_id, status=excluded.status, exit_code=excluded.exit_code,
+      t3_started_ms=excluded.t3_started_ms, t3_completed_ms=excluded.t3_completed_ms, t3_updated_ms=excluded.t3_updated_ms`);
+    const readCursor = (thread: string) => String(cursor.get(instance, thread)?.cursor ?? "");
+    return {
+      cursor: readCursor,
+      commit(thread: string, expected: string, next: string, sequence: number, commands: T3Command[]) {
+        db.exec("BEGIN IMMEDIATE");
+        try {
+          if (readCursor(thread) !== expected) throw Error("T3 history cursor changed during capture");
+          for (const item of commands) {
+            const key = [instance, thread, item.id] as const;
+            const values = [item.run || null, item.provider_thread, item.provider_turn, item.native_item, item.status,
+              item.exit_code === "" ? null : Number(item.exit_code), Number(item.started) || null,
+              Number(item.completed) || null, Number(item.updated) || null];
+            const previous = read.get(...key) as unknown[] | undefined;
+            const outcome = previous ? replay(Number(previous[0]), sequence, JSON.stringify(previous.slice(1)), JSON.stringify(values)).$ : "Write";
+            if (outcome === "Conflict") throw Error("Conflicting T3 command at the same snapshot sequence");
+            if (outcome === "Write") save.run(...key, sequence, ...values);
+          }
+          progress.run(instance, thread, next);
+          db.exec("COMMIT");
+        } catch (error) {
+          db.exec("ROLLBACK");
+          throw error;
+        }
+      },
+      close: () => db.close(),
+    };
+  } catch (error) {
+    db.close();
+    throw error;
+  }
+}
+
 
 export function openHistory(path: string, source: string, repository: string, targets: string[]) {
   closeSync(openSync(path, "a", 0o600));

@@ -271,7 +271,8 @@ manage_t3_otlp() (
 
   case "$action" in
     apply)
-      if ! compose config --format json | jq -e '
+      config=$(compose config --format json)
+      if ! printf '%s\n' "$config" | jq -e '
         [.services[].ports[]?] as $ports |
         all(.services[]; .network_mode != "host") and
         $ports == .services.traces.ports and ($ports | length) == 1 and
@@ -280,6 +281,19 @@ manage_t3_otlp() (
       ' >/dev/null; then
         printf '%s\n' 'Expected only the loopback TCP mapping for the T3 traces service.' >&2
         exit 1
+      fi
+      if printf '%s\n' "$config" | jq -e '.services | has("history")' >/dev/null; then
+        if ! printf '%s\n' "$config" | jq -e '
+          (.services.history.environment.PLOW_T3_HISTORY_ORIGIN | length > 0) and
+          (.secrets.t3_history_read.file | startswith("/") and . != "/dev/null") and
+          any(.services.history.volumes[];
+            .target == "/run/plow-history-targets" and (.source | startswith("/") and . != "/dev/null"))
+        ' >/dev/null; then
+          printf '%s\n' 'The T3 history profile needs an API origin, read credential file, and targets file.' >&2
+          exit 1
+        fi
+      else
+        compose --profile history stop history
       fi
       compose up --detach --build --wait --wait-timeout 60
       listener=$(compose port traces 4318)
@@ -307,8 +321,8 @@ manage_t3_otlp() (
       printf '%s\n' 'The T3 Collector and evidence receiver did not both pass the bearer-gate check.' >&2
       exit 1
       ;;
-    status) compose ps --all ;;
-    stop) compose stop ;;
+    status) compose --profile history ps --all ;;
+    stop) compose --profile history stop ;;
     *) printf '%s\n' 'Usage: dashboard/run.sh t3-otlp apply|status|stop' >&2; exit 2 ;;
   esac
 )

@@ -34,7 +34,7 @@ services:
         condition: service_completed_successfully
 
   evidence:
-    build:
+    build: &t3-evidence-build
       context: ../..
       dockerfile_inline: |
         FROM node:22.23.0-bookworm-slim@sha256:d9f850096136edbc402debdd8729579a288aac64574ada0ff4db26b6ae58b0b2
@@ -43,6 +43,7 @@ services:
         COPY tooling/bend.ts tooling/
         RUN node --input-type=module -e 'import {prepareCompiler} from "./tooling/bend.ts"; await prepareCompiler("/app")' && chmod -R a+rX /app/compiler
         COPY collector/codex/otel.ts collector/codex/
+        COPY collector/t3-otel/history.bend collector/t3-otel/
         COPY collector/wire.ts collector/
         COPY evidence evidence
     entrypoint: [/bin/sh, -c, 'umask 077 && exec node collector/codex/otel.ts --t3 /evidence/data "$$PLOW_T3_INSTANCE"']
@@ -65,6 +66,34 @@ services:
       volume-init:
         condition: service_completed_successfully
 
+  history:
+    profiles: [history]
+    build: *t3-evidence-build
+    entrypoint: [/bin/sh, -c, 'umask 077 && exec node collector/codex/otel.ts --t3-history /evidence/data "$$PLOW_T3_INSTANCE" "$$@"', history]
+    environment:
+      PLOW_BEND_BUNDLE: /app/compiler
+      TMPDIR: /tmp
+      PLOW_T3_INSTANCE: ${PLOW_T3_INSTANCE:?Set the trusted T3 instance identifier}
+      PLOW_T3_HISTORY_ORIGIN: ${PLOW_T3_HISTORY_ORIGIN:-}
+      PLOW_T3_HISTORY_TARGETS_FILE: /run/plow-history-targets
+    user: '10001:10001'
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    secrets: [t3_history_read]
+    volumes:
+      - evidence:/evidence
+      - type: bind
+        source: ${PLOW_T3_HISTORY_TARGETS_FILE:-/dev/null}
+        target: /run/plow-history-targets
+        read_only: true
+        bind: {create_host_path: false}
+    tmpfs: [/tmp]
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
+
 networks:
   storage:
     internal: true
@@ -78,3 +107,5 @@ secrets:
     file: ${PLOW_T3_INGRESS_SECRET_FILE:?Set the private T3 ingress token file}
   t3_backend:
     file: ${PLOW_T3_BACKEND_SECRET_FILE:?Set the private T3 backend token file}
+  t3_history_read:
+    file: ${PLOW_T3_HISTORY_READ_TOKEN_FILE:-/dev/null}

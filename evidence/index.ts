@@ -1,6 +1,7 @@
 export { admissionPolicy, buildAdmissionPolicy, loadEvidence, type AdmissionPolicy, type ChangedCodeFile, type EvidenceBatch } from "./storage/load.ts";
 export { deliveryPolicy, deliveryReport, type DeliveryPolicy, type PullRequest, type ReleaseEvidence } from "./delivery/delivery.ts";
 export { openHistory, type ActionAttempt, type AttemptIdentity, type HistoryProgress, type HistoryFact } from "./storage/actions.ts";
+export { openT3History, type T3Command } from "./storage/actions.ts";
 export {
   sourcePolicy, processTimingPolicy, saveKernelCapture, rolloutCoverage, waitReport, watchOverlaps,
   type KernelPolicy, type KernelCapture,
