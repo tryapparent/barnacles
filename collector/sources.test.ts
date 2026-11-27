@@ -660,6 +660,21 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       line: "guest user desktop did not become ready within 150s", required: "none", elapsedMs: 150_520 };
     const vmReady = { ...vmBoot, id: "vm-ready", stage: "readiness", failureType: "CalledProcessError",
       driverExit: 69, line: "missing required guest command: compositor", required: "compositor", elapsedMs: 0 };
+    const statusGate = { kind: "workflow-status-gate", thread: "t", id: "portable-gate", dependentJob: "linux",
+      prerequisite: "portable", attemptStarted: 80, earliestJobStarted: 90, previousCompleted: 100, gateCompleted: 220,
+      dependentStarted: 222 };
+    const ownership = { kind: "connect-deployment-receipt", thread: "t", id: "activation",
+      conclusion: "failure", exitCode: 1, revision: "f".repeat(40), receiptRevision: "f".repeat(40),
+      phase: "active-unverified", line: "AssertionError [ERR_ASSERTION]: Another publisher owns the active deployment",
+      origin: "verifyActivationHistory:connect/tooling/hosting/scripts/profile.ts", started: 100, ended: 108 };
+    const alreadyActive = { ...ownership, id: "already-active", phase: "preflight", started: 200, ended: 210,
+      line: 'AssertionError [ERR_ASSERTION]: Expected "actual" to be strictly unequal to:',
+      origin: "candidate-not-equal-previous:connect/tooling/hosting/scripts/deploy.ts",
+      previousVersion: "v-digest", comparedVersion: "v-digest" };
+    const pendingCapture = { ...captureAccess, id: "upload-pending", operation: "apparent-fetch",
+      line: "Error: Capture is still pending; retry fetch later" };
+    const unsafeOutput = { ...captureAccess, id: "shared-dir",
+      line: "Error: Unsafe shared or unowned directory tree; run apparent connect alternatives for local inspection and authorized transfer options" };
     const facts = [
       admission, admission,
       { ...admission, id: "superseded", annotation: "Canceling since a higher priority waiting request exists" },
@@ -820,6 +835,24 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       { ...vmBoot, id: "scenario-failure", scenarioStarted: true },
       { ...vmBoot, id: "other-vm", command: "qemu" },
       { ...vmReady, id: "different-missing-command", required: "ffmpeg" },
+      statusGate, statusGate,
+      { ...statusGate, id: "carried-jobs", attemptStarted: 210 },
+      { ...statusGate, id: "unknown-attempt", attemptStarted: 0 },
+      { ...statusGate, id: "too-short", gateCompleted: 159 },
+      { ...statusGate, id: "reversed-gate", previousCompleted: 221 },
+      { ...statusGate, id: "already-started", dependentStarted: 219 },
+      { ...statusGate, id: "same-job", prerequisite: "linux" },
+      ownership, ownership, alreadyActive,
+      { ...ownership, id: "incorrect-receipt", receiptRevision: "a".repeat(40) },
+      { ...ownership, id: "before-activation", phase: "preflight" },
+      { ...ownership, id: "unexpected-result", conclusion: "success" },
+      { ...alreadyActive, id: "different-version", comparedVersion: "v-other" },
+      { ...alreadyActive, id: "missing-version", previousVersion: null, comparedVersion: null },
+      { ...alreadyActive, id: "other-assertion", origin: "after-activation:connect/tooling/hosting/scripts/deploy.ts" },
+      pendingCapture, pendingCapture, unsafeOutput,
+      { ...pendingCapture, id: "successful-fetch", failed: false },
+      { ...pendingCapture, id: "inspect-is-not-transfer", operation: "apparent-inspect" },
+      { ...unsafeOutput, id: "other-command", operation: "apparent-open" },
       read, read, { ...read, id: "b", at: 160 }, { ...read, thread: "t2", at: 170 },
       timing, timing, { ...timing, id: "unpaired", end: 0 },
       attempt, { ...attempt, id: "changed", key: "gate:v2", start: 115, end: 120, failed: false, succeeded: true },
@@ -842,8 +875,11 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       { $: "Cost", clock: "ci-benchmark-owner-step", operation: "connect-watch", count: 1, seconds: 91, unknown: 0 },
       { $: "Cost", clock: "ci-benchmark-owner-step", operation: "record-start", count: 3, seconds: 1640, unknown: 0 },
       { $: "Cost", clock: "ci-benchmark-owner-step", operation: "record-stop", count: 1, seconds: 1300, unknown: 0 },
+      { $: "Cost", clock: "ci-connect-delivery-owner-step", operation: "active-unverified", count: 1, seconds: 8, unknown: 0 },
+      { $: "Cost", clock: "ci-connect-delivery-owner-step", operation: "preflight", count: 1, seconds: 10, unknown: 0 },
       { $: "Cost", clock: "ci-native-prerequisite-step", operation: "bend-toolchain", count: 1, seconds: 13, unknown: 0 },
       { $: "Cost", clock: "ci-native-prerequisite-step", operation: "circle-vision", count: 1, seconds: 113, unknown: 0 },
+      { $: "Cost", clock: "ci-workflow-status-gate", operation: "linux needs portable", count: 1, seconds: 120, unknown: 0 },
       { $: "Cost", clock: "local-build-admission", operation: "t3-build", count: 2, seconds: 123, unknown: 0 },
       { $: "Cost", clock: "runner", operation: "build", count: 1, seconds: 129, unknown: 1 },
       { $: "Cost", clock: "t3-pr-watch-parked", operation: "checks-passed", count: 1, seconds: 80, unknown: 0 },
@@ -864,6 +900,8 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
         "ci-apt-mirror-probe-exhausted", "ci-pages-preflight-unauthorized", "ci-observer-rate-limited",
         "ci-observer-rate-limited", "local-verification-state-repolled", "local-vm-ssh-boot-timeout",
         "local-vm-missing-guest-command",
+        "ci-workflow-status-gate", "ci-connect-activation-ownership-conflict", "ci-connect-candidate-already-active",
+        "capture-upload-pending", "capture-directory-unsafe",
         "recovered-attempt", "runner"]);
     assert.ok(!first.includes("installed tools"));
     assert.ok(!first.includes("#42:"));
@@ -883,6 +921,8 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       ["mirror-probe", "", 0, 0], ["pages-auth", "", 0, 0], ["job-read-quota", "", 0, 0],
       ["watch-quota", "", 0, 0], ["poll-2", "poll-1", 0, 0], ["vm-boot", "", 150, 0],
       ["vm-ready", "", 0, 0],
+      ["portable-gate", "", 120, 0], ["activation", "", 8, 0], ["already-active", "", 10, 0],
+      ["upload-pending", "", 0, 0], ["shared-dir", "", 0, 0],
       ["recovered", "first", 20, 0], ["tail", "", 250, 10],
     ]);
   } finally {
