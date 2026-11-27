@@ -11,4 +11,7 @@ export { readPollMinutes, repository } from "./repository.ts";
 export { actionsWaitCapturePlan, harborSnapshotPublisher } from "./projection/snapshot.ts";
 export { githubPollRows } from "./storage/load.ts";
 export { CodexOtelConflict, codexOtelPolicy, saveCodexOtel, type CodexOtelFact, type CodexOtelPolicy } from "./storage/load.ts";
-export { T3OtelConflict, openT3Otel, t3OtelPolicy, type T3OtelSpan, type T3OtelPolicy } from "./storage/load.ts";
+export { T3OtelConflict, openT3Otel, type T3OtelSpan, type T3OtelPolicy } from "./storage/load.ts";
+export { joinSession, sessionJoinPolicy, type NativeBinding, type SessionJoinPolicy } from "./storage/load.ts";
+
+export const t3OtelPolicy = new URL("./storage/t3-otel.bend", import.meta.url);

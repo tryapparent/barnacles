@@ -4,7 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { buildPolicy, loadPolicy } from "../../tooling/bend.ts";
 import { admissionPolicy, saveAttempt, saveAttempts, type ActionAttempt, type AdmissionPolicy } from "./actions.ts";
 import { saveDelivery, type PullRequest, type ReleaseEvidence } from "../delivery/delivery.ts";
-import { saveRejectedRollout, saveRollout, saveThread, writeSources, type RolloutEvidence, type RolloutImport, type ThreadEvidence } from "./sources.ts";
+import { saveRejectedRollout, saveRollout, saveThread, writeSources, type List, type RolloutEvidence, type RolloutImport, type ThreadEvidence } from "./sources.ts";
 
 export type ChangedCodeFile = ({ path: string } | { pathBytesBase64: string }) & { commits: number };
 type ChangedCodeReport = {
@@ -114,11 +114,15 @@ export type CodexOtelFact = { span: CodexSpan; events: CodexSpanEvent[] };
 export const codexOtelPolicy = new URL("./codex-otel.bend", import.meta.url);
 export class CodexOtelConflict extends Error {}
 
+const codexSpanFingerprint = "SELECT fingerprint FROM codex_otel_spans WHERE instance=? AND trace_id=? AND span_id=?";
+const insertCodexSpan = "INSERT INTO codex_otel_spans VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+const insertCodexEvent = "INSERT INTO codex_otel_span_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+
 export function saveCodexOtel(path: string, instance: string, facts: CodexOtelFact[], policy: CodexOtelPolicy) {
   writeSources(path, (db) => {
-    const read = db.prepare("SELECT fingerprint FROM codex_otel_spans WHERE instance=? AND trace_id=? AND span_id=?");
-    const insertSpan = db.prepare("INSERT INTO codex_otel_spans VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-    const insertEvent = db.prepare("INSERT INTO codex_otel_span_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    const read = db.prepare(codexSpanFingerprint);
+    const insertSpan = db.prepare(insertCodexSpan);
+    const insertEvent = db.prepare(insertCodexEvent);
     for (const fact of facts) {
       const { span, events } = fact;
       const identity = [instance, span.trace_id, span.span_id] as const;
@@ -137,6 +141,110 @@ export function saveCodexOtel(path: string, instance: string, facts: CodexOtelFa
   });
 }
 
+export const sessionJoinPolicy = new URL("./session-join.bend", import.meta.url);
+
+type JoinState = { $: "Linked" | "Missing" | "Conflict" };
+
+export type NativeBinding = {
+  $: "NativeBinding"; thread: string; reference: string; driver: string; native_driver: string; native_id: string; strength: string;
+};
+
+export type SessionJoinPolicy = {
+  repository_name(value: string): string;
+  choose_binding(thread: string, requested: string, refs: List<NativeBinding>):
+    { $: "NoBinding" | "Ambiguous" } | { $: "Bound"; session_id: string; reference_id: string };
+  exact_join(expected: string, captured: string): JoinState;
+  ci_kind(kind: string): boolean;
+  span_decision(session: string, observations: List<string>): JoinState;
+};
+
+export type SessionJoinInput = {
+  t3Instance: string; threadId: string; codexInstance: string; sessionId: string; referenceId: string;
+  ci?: { observationId: string; kind: string; repository: string; runId: number; attempt: number; sha: string };
+};
+
+export function joinSession(path: string, traces: string, input: SessionJoinInput,
+  policy: SessionJoinPolicy, asList: (values: string[]) => List<string>) {
+  const source = new DatabaseSync(traces, { readOnly: true });
+  const { t3Instance, threadId, codexInstance, sessionId, referenceId, ci } = input;
+  const threadKey = [t3Instance, threadId] as const;
+  const sessionKey = [codexInstance, sessionId] as const;
+  let acceptedSpans = 0;
+  let conflictingSpans = 0;
+  let ciStatus: "Linked" | "Missing" | "Conflict" | "Absent" = "Absent";
+  try {
+    source.exec("PRAGMA busy_timeout = 5000; BEGIN");
+    const spans = source.prepare(`
+      SELECT * FROM codex_otel_spans WHERE instance=?1 AND (conversation_id=?2 OR (trace_id, span_id) IN (
+        SELECT trace_id, span_id FROM codex_otel_span_events WHERE instance=?1 AND conversation_id=?2))
+      LIMIT 4097`).all(...sessionKey);
+    if (spans.length > 4096) throw Error("Too many spans for one session join");
+    const sourceEvents = source.prepare(
+      "SELECT * FROM codex_otel_span_events WHERE instance=? AND trace_id=? AND span_id=? ORDER BY event_index");
+    writeSources(path, (db) => {
+      if (!db.prepare("SELECT 1 FROM t3_threads WHERE instance=? AND thread_id=?").get(...threadKey)) {
+        throw Error("Import the T3 thread before joining a session");
+      }
+      const currentOwner = db.prepare("SELECT t3_instance, thread_id FROM t3_live_codex_links WHERE codex_instance=? AND session_id=?")
+        .get(...sessionKey);
+      const owner = currentOwner ? JSON.stringify([currentOwner.t3_instance, currentOwner.thread_id]) : "";
+      if (policy.exact_join(JSON.stringify(threadKey), owner).$ === "Conflict") {
+        throw Error("Codex session already bound to a different T3 thread");
+      }
+      db.prepare("INSERT INTO t3_live_codex_links VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING")
+        .run(...sessionKey, ...threadKey, referenceId);
+      const savedSpan = db.prepare(codexSpanFingerprint);
+      const insertSpan = db.prepare(insertCodexSpan);
+      const insertEvent = db.prepare(insertCodexEvent);
+      const linkSpan = db.prepare("INSERT INTO t3_live_codex_span_links VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING");
+      for (const span of spans) {
+        const key = [span.instance, span.trace_id, span.span_id] as const;
+        const events = sourceEvents.all(...key);
+        const observations = [span, ...events].map((entry) => String(entry.conversation_id ?? ""));
+        const decision = policy.span_decision(sessionId, asList(observations));
+        if (decision.$ !== "Linked") {
+          conflictingSpans += Number(decision.$ === "Conflict");
+          continue;
+        }
+        const saved = savedSpan.get(...key);
+        const replay = policy.exact_join(String(span.fingerprint), String(saved?.fingerprint ?? ""));
+        if (replay.$ === "Conflict") throw Error("Conflicting Codex span replay");
+        if (replay.$ === "Missing") {
+          insertSpan.run(...key, span.parent_span_id, span.operation, span.start_ns, span.end_ns, span.status_code,
+            span.conversation_id, span.turn_id, span.call_id, span.fingerprint);
+          for (const event of events) {
+            insertEvent.run(...key, event.event_index, event.event, event.observed_ns, event.conversation_id, event.turn_id,
+              event.call_id, event.reported_duration_ms, event.success);
+          }
+        }
+        linkSpan.run(...key, sessionId);
+        acceptedSpans++;
+      }
+      if (!ci) return;
+      if (!policy.ci_kind(ci.kind)) throw Error("Expected a CI query or watch observation");
+      const key = [...threadKey, ci.observationId] as const;
+      const identity = [ci.kind, ci.repository, ci.runId, ci.attempt, ci.sha] as const;
+      const recorded = db.prepare(`
+        SELECT kind, repository, run_id, attempt, head_sha FROM t3_ci_observations
+        WHERE t3_instance=? AND thread_id=? AND observation_id=?`).get(...key);
+      const replay = policy.exact_join(JSON.stringify(identity), recorded
+        ? JSON.stringify([recorded.kind, recorded.repository, recorded.run_id, recorded.attempt, recorded.head_sha]) : "");
+      if (replay.$ === "Conflict") throw Error("Conflicting CI observation replay");
+      if (replay.$ === "Missing") db.prepare("INSERT INTO t3_ci_observations VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(...key, ...identity);
+      const attempts = db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='action_attempts'").get();
+      const captured = attempts ? db.prepare("SELECT head_sha FROM action_attempts WHERE repository=? AND run_id=? AND attempt=?")
+        .get(ci.repository, ci.runId, ci.attempt) : undefined;
+      ciStatus = policy.exact_join(ci.sha, String(captured?.head_sha ?? "")).$;
+      if (ciStatus === "Linked") db.prepare("INSERT INTO t3_ci_links VALUES (?, ?, ?) ON CONFLICT DO NOTHING").run(...key);
+      else db.prepare("DELETE FROM t3_ci_links WHERE t3_instance=? AND thread_id=? AND observation_id=?").run(...key);
+    });
+  } finally {
+    source.close();
+  }
+  return { acceptedSpans, conflictingSpans, ci: ciStatus };
+}
+
 export type T3OtelSpan = {
   $: "T3Span"; trace_id: string; span_id: string; parent_id: string; operation: string;
   start_ns: string; end_ns: string; thread_id: string; command_id: string; command_type: string;
@@ -151,7 +259,6 @@ export type T3OtelPolicy = {
   admit_replay(saved: string, received: string): boolean;
 };
 
-export const t3OtelPolicy = new URL("./t3-otel.bend", import.meta.url);
 export class T3OtelConflict extends Error {}
 
 export function openT3Otel(path: string, instance: string, policy: T3OtelPolicy) {
@@ -161,24 +268,16 @@ export function openT3Otel(path: string, instance: string, policy: T3OtelPolicy)
     PRAGMA busy_timeout = 5000;
     PRAGMA synchronous = FULL;
     CREATE TABLE IF NOT EXISTS t3_otel_spans (
-      instance TEXT NOT NULL,
-      trace_id TEXT NOT NULL,
-      span_id TEXT NOT NULL,
-      parent_span_id TEXT,
-      operation TEXT NOT NULL,
-      start_ns TEXT NOT NULL,
-      end_ns TEXT NOT NULL,
-      thread_id TEXT,
-      command_id TEXT,
-      command_type TEXT,
-      ingested_ms INTEGER NOT NULL,
+      instance TEXT NOT NULL, trace_id TEXT NOT NULL, span_id TEXT NOT NULL,
+      parent_span_id TEXT, operation TEXT NOT NULL, start_ns TEXT NOT NULL, end_ns TEXT NOT NULL,
+      thread_id TEXT, command_id TEXT, command_type TEXT, ingested_ms INTEGER NOT NULL,
       PRIMARY KEY (instance, trace_id, span_id)
     ) STRICT, WITHOUT ROWID;
   `);
   const read = db.prepare(`SELECT parent_span_id, operation, start_ns, end_ns, thread_id, command_id, command_type
     FROM t3_otel_spans WHERE instance=? AND trace_id=? AND span_id=?`);
-  const insert = db.prepare(`INSERT INTO t3_otel_spans (instance, trace_id, span_id, parent_span_id, operation,
-    start_ns, end_ns, thread_id, command_id, command_type, ingested_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  read.setReturnArrays(true);
+  const insert = db.prepare("INSERT INTO t3_otel_spans VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
   const save = (facts: T3OtelSpan[], ingestedMs: number) => {
     db.exec("BEGIN IMMEDIATE");
     try {
@@ -187,13 +286,8 @@ export function openT3Otel(path: string, instance: string, policy: T3OtelPolicy)
         const values = [fact.parent_id || null, fact.operation, fact.start_ns, fact.end_ns,
           fact.thread_id || null, fact.command_id || null, fact.command_type || null];
         const previous = read.get(...identity);
-        if (previous) {
-          const saved = [previous.parent_span_id, previous.operation, previous.start_ns, previous.end_ns,
-            previous.thread_id, previous.command_id, previous.command_type];
-          if (!policy.admit_replay(JSON.stringify(saved), JSON.stringify(values))) throw new T3OtelConflict();
-        } else {
-          insert.run(...identity, ...values, ingestedMs);
-        }
+        if (!previous) insert.run(...identity, ...values, ingestedMs);
+        else if (!policy.admit_replay(JSON.stringify(previous), JSON.stringify(values))) throw new T3OtelConflict();
       }
       db.exec("COMMIT");
     } catch (error) {

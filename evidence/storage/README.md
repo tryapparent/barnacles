@@ -15,3 +15,26 @@ The [Codex OTLP boundary](../../collector/codex/README.md) uses [its own admissi
 ## Live T3 Code traces
 
 The [T3 OTLP intake](../../collector/t3-otel/README.md) writes a separate SQLite database. The `t3_otel_spans` primary key is the configured source instance, trace ID and span ID. The writer keeps an optional parent span ID even if that span has never been observed. Source clocks are exact decimal Unix nanosecond strings. The first committed observation keeps a writer-side Unix millisecond ingest clock. Identical normalized evidence leaves the existing row and its ingest clock intact, even when sent in a different batch. A conflicting observation rolls back the entire incoming write transaction. An admitted operation or command type records source evidence for that span. It establishes no run, notification, process exit or delivery outcome.
+
+## Live session links
+
+`t3_live_codex_links` associates a scoped native session with its T3 thread
+and retains the provider reference ID. `t3_live_codex_span_links` records the
+exact span coordinates selected by Bend2. The join copies only those
+normalized spans and events from the read-only trace database, preserving
+their clocks and fingerprints. An explicit conversation ID on the span or
+one of its events establishes membership. Conflicting conversation IDs leave
+the span out. Other spans can still arrive or remain unbound.
+
+`t3_ci_observations` retains explicit query or watch receipts. A row in
+`t3_ci_links` confirms that the imported repository, run, attempt, and tested
+SHA match the receipt. GitHub jobs and attempts are stored once even when
+many threads reference them. The receipt alone supplies no clock for result
+delivery, agent pickup, or a blocked milestone.
+
+Run the [one-session join](../../collector/README.md#join-a-live-codex-session-to-t3-and-github)
+again after missing evidence arrives. Identical replays preserve one row per
+identity. A conflicting replay of an existing span fingerprint or observation
+ID aborts the destination transaction. A missing attempt or mismatched SHA
+leaves the observation available with no verified link. The command reports
+the accepted and conflicting span counts and the CI link status.
