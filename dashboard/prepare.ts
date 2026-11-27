@@ -4,7 +4,14 @@ import { createServer } from "node:http";
 import { DatabaseSync } from "node:sqlite";
 import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { createRemoteJWKSet, jwtVerify } from "jose";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { z } from "zod";
 import { snapshotFormatVersion, writeSnapshot } from "../evidence/read.ts";
+import { buildPolicy, loadPolicy } from "../tooling/bend.ts";
+import { accessVerifier } from "./plow/worker.mjs";
 
 function validateSnapshot(directory: string) {
   const path = join(directory, "snapshot.json");
@@ -63,11 +70,86 @@ async function prepare(args: string[]) {
   }
 }
 
-function serveAnalysis(file: string, port: string) {
+const threadId = /^[a-f0-9]{24}$/;
+
+function readAnalysis(file: string, thread?: string): string | undefined {
+  const db = new DatabaseSync(file, { readOnly: true });
+  try {
+    db.exec("PRAGMA busy_timeout=3000");
+    const item = thread
+      ? db.prepare("SELECT payload FROM analysis_threads WHERE id=?").get(thread)
+      : db.prepare("SELECT payload FROM analysis_summary WHERE id=1").get();
+    return item ? String(item.payload) : undefined;
+  } finally {
+    db.close();
+  }
+}
+
+type Tool = { name: string; description: string; thread: boolean };
+type ToolList = { $: "Con"; head: Tool; tail: ToolList } | { $: "Nil" };
+
+async function analysisMcp(file: string) {
+  const { PLOW_MCP_ACCESS_TEAM: team, PLOW_MCP_ACCESS_AUDIENCE: audience } = process.env;
+  if (!team && !audience) return;
+  if (!/^[a-z0-9-]+$/.test(team ?? "") || !/^[a-f0-9]{64}$/.test(audience ?? "")) {
+    throw Error("Invalid Plow MCP Access issuer or audience.");
+  }
+  const issuer = `https://${team}.cloudflareaccess.com`;
+  const keys = createRemoteJWKSet(new URL("/cdn-cgi/access/certs", issuer));
+  const verify = accessVerifier(jwtVerify, keys, issuer, audience);
+  const scratch = mkdtempSync(join(tmpdir(), "apparent-dev-plow-mcp-"));
+  let tools: ToolList;
+  try {
+    const policy = await buildPolicy(scratch, new URL("../mcp/tools.bend", import.meta.url), "tools.mjs");
+    tools = (await loadPolicy<{ tools(): ToolList }>(policy)).tools();
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+  return async (request: import("node:http").IncomingMessage, response: import("node:http").ServerResponse) => {
+    response.setHeader("Cache-Control", "private, no-store");
+    if (request.headers.origin && request.headers.origin !== "https://plow.tryapparent.com") {
+      return response.writeHead(403).end();
+    }
+    if (!await verify(request.headers["cf-access-jwt-assertion"])) return response.writeHead(401).end();
+    const server = new McpServer({ name: "Plow", version: "1.0.0" });
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+    response.once("close", () => void server.close());
+    for (let list = tools; list.$ === "Con"; list = list.tail) {
+      const { name, description, thread } = list.head;
+      server.registerTool(name, {
+        description, inputSchema: thread ? { threadId: z.string().regex(threadId) } : {},
+        annotations: { readOnlyHint: true, openWorldHint: false },
+      }, args => {
+        const id = "threadId" in args ? args.threadId : undefined;
+        try {
+          const payload = readAnalysis(file, id);
+          if (payload) {
+            return { content: [{ type: "text", text: payload }], structuredContent: JSON.parse(payload) };
+          }
+          if (id) return { isError: true, content: [{ type: "text", text: "Thread is absent from the current analysis." }] };
+        } catch {}
+        return { isError: true, content: [{ type: "text", text: "Plow analysis is unavailable." }] };
+      });
+    }
+    await server.connect(transport);
+    await transport.handleRequest(request, response);
+  };
+}
+
+export async function serveAnalysis(file: string, port: string) {
   const user = process.env.PLOW_ANALYSIS_USER;
   if (!file || !user || !/^[0-9]{1,5}$/.test(port)) throw Error("Expected an analysis database, port and private API identity");
   const origin = "https://plow.tryapparent.com";
-  createServer((request, response) => {
+  const mcp = await analysisMcp(file);
+  return createServer((request, response) => {
+    const path = request.url?.split("?", 1)[0];
+    if (path === "/app/mcp" && mcp) {
+      void mcp(request, response).catch(() => {
+        if (!response.headersSent) response.writeHead(500);
+        response.end();
+      });
+      return;
+    }
     const start = (status: number) => response.writeHead(status, {
       "Content-Type": "application/json",
       "Cache-Control": "private, no-store",
@@ -78,24 +160,16 @@ function serveAnalysis(file: string, port: string) {
       Vary: "Origin",
     });
     if (request.headers.origin !== undefined && request.headers.origin !== origin) return start(403).end();
-    const path = request.url?.split("?", 1)[0];
     const summary = path === "/api/v1/bottlenecks";
-    const thread = /^\/api\/v1\/bottlenecks\/threads\/([a-f0-9]{24})$/.exec(path ?? "")?.[1];
+    const id = path?.startsWith("/api/v1/bottlenecks/threads/") ? path.slice("/api/v1/bottlenecks/threads/".length) : "";
+    const thread = threadId.test(id) ? id : undefined;
     if (!summary && !thread) return start(404).end();
     if (request.headers["tailscale-user-login"] !== user) return start(403).end();
     if (request.method === "OPTIONS") return start(204).end();
     if (request.method !== "GET") return start(405).end();
     try {
-      const db = new DatabaseSync(file, { readOnly: true });
-      try {
-        db.exec("PRAGMA busy_timeout=3000");
-        const item = thread
-          ? db.prepare("SELECT payload FROM analysis_threads WHERE id=?").get(thread)
-          : db.prepare("SELECT payload FROM analysis_summary WHERE id=1").get();
-        start(item ? 200 : thread ? 404 : 503).end(item ? String(item.payload) : undefined);
-      } finally {
-        db.close();
-      }
+      const payload = readAnalysis(file, thread);
+      start(payload ? 200 : thread ? 404 : 503).end(payload);
     } catch {
       start(503).end();
     }
@@ -139,16 +213,16 @@ function deployT3History(release: string) {
   }
 }
 
-if (process.argv[2] === "--analysis-api") {
-  serveAnalysis(process.argv[3], process.argv[4]);
-} else if (process.argv[2] === "--deploy-t3-history") {
+if (import.meta.main && process.argv[2] === "--analysis-api") {
+  await serveAnalysis(process.argv[3], process.argv[4]);
+} else if (import.meta.main && process.argv[2] === "--deploy-t3-history") {
   try {
     deployT3History(process.argv[3]);
   } catch {
     console.error("Could not promote the T3 history service");
     process.exitCode = 1;
   }
-} else {
+} else if (import.meta.main) {
   prepare(process.argv.slice(2)).catch((error: Error) => {
     console.error(error.message);
     process.exitCode = 1;
