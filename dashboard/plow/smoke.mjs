@@ -1,7 +1,5 @@
-import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
+import { deepEqual, equal, match, notEqual, ok } from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
-import { DatabaseSync } from 'node:sqlite'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { chromium } from 'playwright'
@@ -23,11 +21,16 @@ const demo = [
   {startUtcMs: 1795676400000, work: [[0, 5400, "Local testing"]], wait: [[5400, 14760, "CI checks"]], end: 14760},
   {startUtcMs: 1795608000000, work: [[0, 4680, "Code changes"]], wait: [[4680, 14760, "CI checks"]], end: 17280},
 ]
-const feed = { observed: 1795730400000, traces: demo.map(trace => ({ ...trace, errors: [] })) }
+const fixtureTimes = Array.from({ length: 30 }, (_, i) => ({
+  work: i === 0 ? 10 : i >= 20 ? 40 : 0,
+  workflow: i === 1 ? 10000 : i >= 20 ? 60 : 0,
+}))
+const feed = { observed: 1795730400000, traces: demo.map(trace => ({ ...trace, errors: [] })),
+  history: { first: 11, threads: fixtureTimes } }
 let storedFeed = JSON.stringify(feed)
 let reads = 0
 const env = { PLOW_ACCESS_AUDIENCE: audience, PLOW_SESSION_FEED: { get: async key => {
-  assert.equal(key, 'session-timeline-v1')
+  equal(key, 'session-timeline-v1')
   reads++
   return storedFeed
 } } }
@@ -35,46 +38,25 @@ const history = 'https://preview.tail-fixture.ts.net:19531/sessions'
 const linked = { ...env, PLOW_SESSION_HISTORY_URL: history }
 const context = { access: { aud: audience } }
 const request = new Request(app)
-assert.equal((await worker.fetch(request, env, {})).status, 403)
-assert.equal((await worker.fetch(request, {}, context)).status, 403)
-assert.equal((await worker.fetch(request, env, { access: { aud: 'another-app' } })).status, 403)
-assert.equal((await worker.fetch(new Request('https://preview.workers.dev/app'), env, context)).status, 404)
-assert.equal((await worker.fetch(new Request(app, { method: 'POST' }), env, context)).status, 405)
-assert.equal(reads, 0)
+equal((await worker.fetch(request, env, {})).status, 403)
+equal((await worker.fetch(request, {}, context)).status, 403)
+equal((await worker.fetch(request, env, { access: { aud: 'another-app' } })).status, 403)
+equal((await worker.fetch(new Request('https://preview.workers.dev/app'), env, context)).status, 404)
+equal((await worker.fetch(new Request(app, { method: 'POST' }), env, context)).status, 405)
+equal(reads, 0)
 const allowed = await worker.fetch(request, env, context)
-assert.equal(allowed.status, 200)
-assert.equal(allowed.headers.get('Cache-Control'), 'private, no-store')
-assert.notEqual(await allowed.text(), await readFile(resolve(directory, 'index.html'), 'utf8'))
+equal(allowed.status, 200)
+equal(allowed.headers.get('Cache-Control'), 'private, no-store')
+notEqual(await allowed.text(), await readFile(resolve(directory, 'index.html'), 'utf8'))
 
-const dbPath = resolve(directory, 'projection-fixture.sqlite')
-const projectedPath = resolve(directory, 'projection-fixture.json')
-const db = new DatabaseSync(dbPath)
-db.exec(`
-  CREATE TABLE t3_threads(instance TEXT, thread_id TEXT, created_ms INTEGER, updated_ms INTEGER);
-  CREATE TABLE t3_runs(instance TEXT, thread_id TEXT, run_id TEXT, requested_ms INTEGER, started_ms INTEGER,
-    completed_ms INTEGER, status TEXT);
-  INSERT INTO t3_threads VALUES ('t3','older',100,1200),('t3','latest',1500,3000),('t3','unknown',3200,3400);
-  INSERT INTO t3_runs VALUES ('t3','older','a',110,300,900,'failed'),('t3','latest','b',2000,2400,NULL,'running'),
-    ('t3','latest','c',2100,NULL,NULL,'queued'),('t3','latest','d',NULL,2300,3200,'completed'),
-    ('another','latest','e',1600,1700,1800,'completed');
-`)
-db.close()
-execFileSync(process.execPath, ['dashboard/plow/build.ts', '--project-feed', dbPath, projectedPath])
-assert.deepEqual(JSON.parse(await readFile(projectedPath, 'utf8')), {
-  observed: 3000,
-  traces: [
-    { startUtcMs: 1500, end: .9, work: [], wait: [[.5,.9,'T3 admission']], errors: [] },
-    { startUtcMs: 100, end: .8, work: [[.2,.8,'Provider run']], wait: [[.01,.2,'T3 admission']], errors: [.8] },
-  ],
-})
 const denied = await worker.fetch(request, linked, {})
-assert.equal(denied.status, 403)
-assert.ok(!(await denied.text()).includes(history))
+equal(denied.status, 403)
+ok(!(await denied.text()).includes(history))
 const invalid = await worker.fetch(request, { ...env, PLOW_SESSION_HISTORY_URL: 'https://preview.tail-fixture.ts.net/shipping' }, context)
-assert.match(await invalid.text(), /data-session-history=""/)
+match(await invalid.text(), /data-session-history=""/)
 const head = await worker.fetch(new Request(app, { method: 'HEAD' }), linked, context)
-assert.equal(head.status, 200)
-assert.equal(await head.text(), '')
+equal(head.status, 200)
+equal(await head.text(), '')
 
 
 const browser = await chromium.launch({ channel: 'chrome' })
@@ -93,31 +75,31 @@ try {
     await page.goto(app)
     await page.evaluate(() => document.fonts.ready)
     const board = await page.locator('.board').boundingBox()
-    assert.equal(board.x, 0)
-    assert.equal(board.width, width)
+    equal(board.x, 0)
+    equal(board.width, width)
     const header = page.locator('.activity-header')
-    assert.equal((await header.boundingBox()).width, width)
-    assert.equal(await header.getByRole('heading', { level: 1 }).innerText(), 'Thread activity')
-    assert.equal(await header.getByText('plow', { exact: true }).isVisible(), true)
-    assert.match(await header.locator('#feed-cutoff').innerText(), /Observed through .* UTC/)
+    equal((await header.boundingBox()).width, width)
+    equal(await header.getByRole('heading', { level: 1 }).innerText(), 'Thread activity')
+    equal(await header.getByText('plow', { exact: true }).isVisible(), true)
+    match(await header.locator('#feed-cutoff').innerText(), /Observed through .* UTC/)
     await header.locator('img').evaluate(image => image.decode())
     const screenshot = async name => {
       if (process.env.PLOW_SCREENSHOTS) await page.screenshot({ path: resolve(directory, `${width}-${name}.png`), fullPage: true })
     }
     const link = page.getByRole('link', { name: 'Session history' })
-    assert.equal(await link.getAttribute('href'), history)
-    assert.ok(await link.isVisible())
+    equal(await link.getAttribute('href'), history)
+    ok(await link.isVisible())
     await page.keyboard.press('Tab')
-    assert.equal(await link.evaluate(element => element.matches(':focus-visible')), true)
+    equal(await link.evaluate(element => element.matches(':focus-visible')), true)
     const summary = page.locator('#summary-panel')
     const timeline = page.locator('#timeline-panel')
     const range = page.locator('#utc-window')
     const fit = page.getByRole('button', { name: 'Fit all', exact: true })
     const total = page.locator('#summary-total')
     const initial = await range.innerText()
-    assert.ok((await summary.boundingBox()).y < (await timeline.boundingBox()).y)
+    ok((await summary.boundingBox()).y < (await timeline.boundingBox()).y)
     const workflow = summary.getByRole('button', { name: /Admission wait/ })
-    assert.equal(await workflow.getAttribute('data-slot'), 'button')
+    equal(await workflow.getAttribute('data-slot'), 'button')
     const publish = summary.getByRole('button', { name: /Publish artifacts/ })
     const ci = summary.getByRole('button', { name: /CI checks/ })
     const titles = () => timeline.locator('.trace:visible .sample-title').allTextContents()
@@ -141,43 +123,63 @@ try {
     const rowSlots = () => page.locator('.trace:visible').evaluateAll(rows =>
       rows.map(row => [row.offsetTop, row.offsetHeight]))
     const originalSlots = await rowSlots()
-    const assertPacked = async count => assert.deepEqual(await rowSlots(), originalSlots.slice(0, count))
+    const assertPacked = async count => deepEqual(await rowSlots(), originalSlots.slice(0, count))
     const overview = await geometry()
-    const assertStable = async state => assert.deepEqual(await geometry(), overview, `${width}px · ${state}`)
-    assert.equal(await summary.locator('.category-tile').count(), 3)
-    assert.equal((await titles()).length, 10)
-    assert.match(await total.innerText(), /43h 24m across 10 threads/)
-    assert.ok(await timeline.getByRole('button', { name: 'Zoom in' }).isVisible())
-    assert.equal(await fit.isDisabled(), true)
+    const assertStable = async state => deepEqual(await geometry(), overview, `${width}px · ${state}`)
+    equal(await summary.locator('.category-tile').count(), 3)
+    ok(await summary.locator('.category-tile').evaluateAll(tiles => tiles.every(tile => {
+      const bounds = tile.getBoundingClientRect()
+      const share = tile.querySelector('.category-share').getBoundingClientRect()
+      return share.bottom <= bounds.bottom && share.right <= bounds.right
+    })))
+    equal((await titles()).length, 10)
+    match(await total.innerText(), /43h 24m across 10 threads/)
+    ok(await timeline.getByRole('button', { name: 'Zoom in' }).isVisible())
+    equal(await fit.isDisabled(), true)
+    const trend = page.getByRole('region', { name: 'Agent work share' })
+    equal(await trend.locator('svg').getByText('Threads 11–20').isVisible(), true)
+    const batchData = trend.getByRole('button', { name: 'Batch data' })
+    equal(await batchData.getAttribute('data-slot'), 'collapsible-trigger')
+    equal(await batchData.getAttribute('data-variant'), 'outline')
+    await batchData.focus()
+    await page.keyboard.press('Enter')
+    equal(await batchData.getAttribute('aria-expanded'), 'true')
+    await assertStable('open batch data')
+    equal(await batchData.evaluate(element => element.matches(':focus-visible')), true)
+    const batchRows = trend.getByRole('row')
+    match(await batchRows.nth(1).innerText(), /50\.0%\s+2 of 10/)
+    match(await batchRows.nth(2).innerText(), /Unknown\s+0 of 10/)
+    await page.keyboard.press('Space')
+    equal(await batchData.getAttribute('aria-expanded'), 'false')
     await screenshot('overview')
 
     await workflow.focus()
     await page.keyboard.press('Enter')
-    assert.equal(await workflow.getAttribute('aria-expanded'), 'true')
-    assert.equal((await titles()).length, 10)
-    assert.equal(await workflow.evaluate(element => element === document.activeElement), true)
+    equal(await workflow.getAttribute('aria-expanded'), 'true')
+    equal((await titles()).length, 10)
+    equal(await workflow.evaluate(element => element === document.activeElement), true)
     await assertStable('open operation breakdown')
     await screenshot('category')
 
     await publish.focus()
     await page.keyboard.press('Space')
-    assert.equal(await publish.getAttribute('aria-pressed'), 'true')
-    assert.equal(await publish.evaluate(element => element.matches(':focus-visible')), true)
-    assert.deepEqual(await titles(), matchingThreads)
-    assert.equal(await timeline.locator('.match-span:visible').count(), 2)
-    assert.match(await page.locator('#timeline-selection').innerText(), /Publish artifacts · 2 threads shown/)
-    assert.equal(await range.innerText(), initial)
+    equal(await publish.getAttribute('aria-pressed'), 'true')
+    equal(await publish.evaluate(element => element.matches(':focus-visible')), true)
+    deepEqual(await titles(), matchingThreads)
+    equal(await timeline.locator('.match-span:visible').count(), 2)
+    match(await page.locator('#timeline-selection').innerText(), /Publish artifacts · 2 threads shown/)
+    equal(await range.innerText(), initial)
     await assertPacked(2)
     await assertStable('filter to Publish artifacts')
     await screenshot('filtered')
 
     await ci.click()
-    assert.equal((await titles()).length, 8)
-    assert.equal(await timeline.locator('.match-span:visible').count(), 8)
+    equal((await titles()).length, 8)
+    equal(await timeline.locator('.match-span:visible').count(), 8)
     await assertPacked(8)
     await assertStable('switch filter to CI checks')
     await page.keyboard.press('Escape')
-    assert.equal((await titles()).length, 10)
+    equal((await titles()).length, 10)
     await assertPacked(10)
     await assertStable('clear filter with Escape')
     const scrollport = timeline.getByRole('region', { name: 'Scrollable UTC timelines' })
@@ -187,7 +189,7 @@ try {
     await assertStable('scroll inside the timeline')
     await publish.click()
     await publish.click()
-    assert.equal((await titles()).length, 10)
+    equal((await titles()).length, 10)
     await publish.click()
 
     const brush = async (from, to) => {
@@ -200,10 +202,10 @@ try {
       await page.mouse.up()
     }
     await brush(.01, .12)
-    assert.equal((await titles()).length, 0)
+    equal((await titles()).length, 0)
     await assertPacked(0)
-    assert.match(await timeline.innerText(), /No matching threads in this range/)
-    assert.match(await page.locator('#zoom-mode').innerText(), /Details/)
+    match(await timeline.innerText(), /No matching threads in this range/)
+    match(await page.locator('#zoom-mode').innerText(), /Details/)
     await assertStable('empty filtered range')
     await screenshot('empty')
     await page.getByRole('slider').focus()
@@ -211,26 +213,26 @@ try {
     await assertStable('pan with keyboard')
 
     await fit.click()
-    assert.equal(await range.innerText(), initial)
-    assert.deepEqual(await titles(), matchingThreads)
+    equal(await range.innerText(), initial)
+    deepEqual(await titles(), matchingThreads)
     await summary.getByRole('button', { name: 'Close breakdown' }).click()
-    assert.equal(await workflow.getAttribute('aria-expanded'), 'false')
-    assert.equal(await workflow.evaluate(element => element === document.activeElement), true)
-    assert.equal((await titles()).length, 10)
+    equal(await workflow.getAttribute('aria-expanded'), 'false')
+    equal(await workflow.evaluate(element => element === document.activeElement), true)
+    equal((await titles()).length, 10)
     await assertPacked(10)
     await assertStable('reset zoom and close operation breakdown')
     await screenshot('recovered')
 
     await summary.getByRole('button', { name: /^Provider run/ }).click()
     const operationButtons = summary.getByRole('group', { name: 'Operations' }).getByRole('button')
-    assert.ok(await operationButtons.count() > 2)
+    ok(await operationButtons.count() > 2)
     await operationButtons.last().focus()
     if (width === 320) {
-      assert.ok(await summary.locator('#operation-panel').evaluate(element => element.scrollTop > 0))
+      ok(await summary.locator('#operation-panel').evaluate(element => element.scrollTop > 0))
     }
     await assertStable('focus the last operation in the breakdown')
     await summary.getByRole('button', { name: /^Local testing/ }).click()
-    assert.deepEqual(await titles(), ['Thread 3', 'Thread 8', 'Thread 9'])
+    deepEqual(await titles(), ['Thread 3', 'Thread 8', 'Thread 9'])
     await assertPacked(3)
     await assertStable('filter to Local testing')
     await screenshot('local-testing')
@@ -238,30 +240,30 @@ try {
     await workflow.click()
     await publish.click()
     await brush(.60, .72)
-    assert.deepEqual(await titles(), ['Thread 6'])
+    deepEqual(await titles(), ['Thread 6'])
     const inspect = timeline.getByRole('button', { name: /^Inspect Thread 6/ })
     await inspect.click()
-    assert.equal(await inspect.getAttribute('aria-expanded'), 'true')
+    equal(await inspect.getAttribute('aria-expanded'), 'true')
     const inspector = timeline.getByRole('region', { name: /Thread 6 · Recorded timeline/ })
-    assert.match(await inspector.innerText(), /Publish artifacts/)
-    assert.equal(await inspector.evaluate(element => element === document.activeElement), true)
+    match(await inspector.innerText(), /Publish artifacts/)
+    equal(await inspector.evaluate(element => element === document.activeElement), true)
     await assertStable('open thread inspector')
     await screenshot('details')
     await page.keyboard.press('Escape')
-    assert.equal(await inspect.getAttribute('aria-expanded'), 'false')
-    assert.equal(await inspect.evaluate(element => element === document.activeElement), true)
+    equal(await inspect.getAttribute('aria-expanded'), 'false')
+    equal(await inspect.evaluate(element => element === document.activeElement), true)
     await assertStable('close thread inspector with Escape')
     await page.keyboard.press('Enter')
-    assert.equal(await inspector.isVisible(), true)
+    equal(await inspector.isVisible(), true)
     await brush(.01, .12)
-    assert.equal(await inspector.isVisible(), false)
+    equal(await inspector.isVisible(), false)
     await assertStable('filter excludes inspected thread')
 
     const help = page.locator('.reading-help summary')
     const instructions = page.getByRole('region', { name: 'Chart instructions' })
     await help.focus()
     await page.keyboard.press('Enter')
-    assert.equal(await instructions.isVisible(), true)
+    equal(await instructions.isVisible(), true)
     if (width === 320) {
       await instructions.focus()
       await page.keyboard.press('End')
@@ -271,18 +273,18 @@ try {
     await assertStable('open chart help')
     await screenshot('help')
     await page.keyboard.press('Enter')
-    assert.equal(await instructions.count(), 0)
+    equal(await instructions.count(), 0)
     await assertStable('close chart help')
-    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
+    ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
     storedFeed = JSON.stringify({ observed: 0, traces: [] })
     await page.reload()
     await page.getByText('No measured session time has been imported yet.').waitFor()
-    assert.equal(await timeline.isVisible(), false)
+    equal(await timeline.isVisible(), false)
     await screenshot('no-evidence')
     storedFeed = null
-    assert.equal((await page.reload()).status(), 503)
+    equal((await page.reload()).status(), 503)
     await page.getByText('Session data is temporarily unavailable.', { exact: false }).waitFor()
-    assert.equal(await timeline.isVisible(), false)
+    equal(await timeline.isVisible(), false)
     await screenshot('unavailable')
     storedFeed = JSON.stringify(feed)
     await page.reload()
@@ -290,8 +292,8 @@ try {
     await page.route(history, route => route.fulfill({ contentType: 'text/html', body: '<h1>Plow session history</h1>' }))
     await link.press('Enter')
     await page.waitForURL(history)
-    assert.ok(await page.getByRole('heading', { name: 'Plow session history' }).isVisible())
-    assert.deepEqual(errors, [])
+    ok(await page.getByRole('heading', { name: 'Plow session history' }).isVisible())
+    deepEqual(errors, [])
     await page.close()
   }
 } finally {

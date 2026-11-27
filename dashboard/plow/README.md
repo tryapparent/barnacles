@@ -16,10 +16,20 @@ timeline viewport. Selecting the operation again clears the
 filter. Changing the time range updates the matches while preserving the
 selected operation.
 
-React renders the dashboard shell and time summary with the shared
-[shadcn controls](../web/controls.tsx). The timeline renderer handles UTC
-geometry, scrolling, and brush interaction. Vite packages the UI into the
-Worker-served page.
+**Agent work share** averages each measured thread’s provider-run time divided
+by its classified provider-run plus admission-wait time. Bend2 groups threads
+in creation order into batches of ten. It keeps up to five complete batches
+and skips the unfinished batch in the chart. Unknown clocks retain their
+thread positions. A batch without classified time appears as a gap. The ten
+detailed timeline traces and their visible-range filters are separate from
+historical batches.
+
+React renders the dashboard shell and operation summary with the shared
+[shadcn controls](../web/controls.tsx). The timeline renderer handles the
+custom UTC geometry, scrolling, and brush interaction. Vite bundles the UI
+into the Worker-served page with the existing fonts and field artwork. The
+Batch data disclosure uses [UI SDK Collapsible](https://ui-sdk.dev/docs/react/components/collapsible)
+with the shared shadcn button.
 
 The pinned Bend2 compiler builds the interval, grouping, ranking, and timeline
 policies under `policy/`. The registered host paths provide HTML, embedded
@@ -97,5 +107,8 @@ second command conditional on the first succeeding. Remove the temporary
 directory on exit. A repeat checks the existing value and skips an identical
 write. Keep the publisher and the Worker namespace in the same account. If a
 projection or upload fails, the last successful feed remains available with
-its original observation timestamp. The publication timer reads imported
+its original observation timestamp. The feed caps compact history at five complete batches plus nine pending
+threads. The publisher and Worker allow up to 132 KiB, including 4 KiB of
+headroom for history.
+The publication timer reads imported
 evidence and does not collect new T3 records.

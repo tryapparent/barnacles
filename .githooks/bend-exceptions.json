@@ -105,6 +105,7 @@
     "dashboard/web/controls.tsx",
     "dashboard/web/main.tsx",
     "dashboard/web/tsconfig.json",
+    "dashboard/web/visual/agent-work-trend.tsx",
     "dashboard/web/visual/charts.tsx",
     "dashboard/web/vite.config.ts"
   ]
