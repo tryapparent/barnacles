@@ -648,28 +648,30 @@ test("bottleneck replay binds verification and recovery to original receipts", (
     receipt: "terminal-tool-deadline", limitSeconds: 420 };
   const mcpDeadline = { ...commandDeadline, id: "mcp-deadline", itemType: "dynamic_tool", operation: "t3-thread-wait",
     completed: 1300, observed: 1301, elapsedMs: 300_039, receipt: "mcp-tool-deadline", limitSeconds: 300 };
-  const refused = { kind: "t3-command-refusal", ...ownership, id: "background-wrapper",
+  const refused = { kind: "t3-command-refusal", ...ownership, id: `foreground-shell-wrapper:${unknownExit}`,
     itemType: "command_execution", status: "failed", receipt: "foreground-shell-wrapper",
     exitCode: unknownExit };
   const refusals = [
-    ["background-wrapper", "foreground-shell-wrapper", unknownExit, "t3-terminal-backgrounding-refused"],
-    ["background-ampersand", "foreground-ampersand", unknownExit, "t3-terminal-backgrounding-refused"],
-    ["comment-format", "github-view-comment-format", 1, "github-view-comment-format-conflict"],
-    ["git-spawn", "git-fork-resource-unavailable", 255, "git-child-process-spawn-refused"],
-    ["shell-retry", "shell-fork-retry", 0, "local-shell-fork-retry-observed"],
-    ["vm-auth", "ssh-authentication-denied", 255, "ssh-authentication-refused"],
-    ["nomac-lock", "nomac-queue-busy", 75, "native-mac-queue-lock-busy"],
-    ["nomac-lock-legacy", "nomac-queue-busy", 2, "native-mac-queue-lock-busy"],
-    ["nomac-credit", "nomac-insufficient-credit", 2, "native-mac-credit-refused"],
-    ["github-project-scope", "github-project-read-scope", 1, "github-project-read-scope-refused"],
-    ["gitlab-option", "gitlab-unknown-option", 1, "gitlab-cli-option-refused"],
-    ["gitlab-cutoff", "gitlab-pipeline-age-refused", 0, "gitlab-pipeline-age-cutoff-observed"],
-    ["unknown-tool", "tool-t3-unknown-name", unknownExit, "t3-tool-name-unresolved", "dynamic_tool"],
-    ["delegate-output", "tool-t3-delegate-response-invalid", unknownExit, "t3-delegation-response-invalid", "dynamic_tool"],
-    ["send-output", "tool-t3-send-response-invalid", unknownExit, "t3-thread-send-response-invalid", "dynamic_tool"],
-    ["direct-tool", "tool-t3-direct-invocation-required", unknownExit, "t3-tool-invocation-route-refused", "dynamic_tool"],
+    ["foreground-shell-wrapper", unknownExit, "t3-terminal-backgrounding-refused"],
+    ["foreground-ampersand", unknownExit, "t3-terminal-backgrounding-refused"],
+    ["github-view-comment-format", 1, "github-view-comment-format-conflict"],
+    ["git-fork-resource-unavailable", 255, "git-child-process-spawn-refused"],
+    ["shell-fork-retry", 0, "local-shell-fork-retry-observed"],
+    ["ssh-authentication-denied", 255, "ssh-authentication-refused"],
+    ["nomac-queue-busy", 75, "native-mac-queue-lock-busy"],
+    ["nomac-queue-busy", 2, "native-mac-queue-lock-busy"],
+    ["nomac-insufficient-credit", 2, "native-mac-credit-refused"],
+    ["github-project-read-scope", 1, "github-project-read-scope-refused"],
+    ["gitlab-unknown-option", 1, "gitlab-cli-option-refused"],
+    ["gitlab-pipeline-age-refused", 0, "gitlab-pipeline-age-cutoff-observed"],
+    ["tool-t3-unknown-name", unknownExit, "t3-tool-name-unresolved", "dynamic_tool"],
+    ["tool-t3-delegate-response-invalid", unknownExit, "t3-delegation-response-invalid", "dynamic_tool"],
+    ["tool-t3-send-response-invalid", unknownExit, "t3-thread-send-response-invalid", "dynamic_tool"],
+    ["tool-t3-direct-invocation-required", unknownExit, "t3-tool-invocation-route-refused", "dynamic_tool"],
+    ["patch-anchor-ambiguous", unknownExit, "t3-patch-anchor-ambiguous", "file_change"],
+    ["patch-anchor-missing", unknownExit, "t3-patch-anchor-missing", "file_change"],
   ] as const;
-  const auth = { ...refused, id: "vm-auth", receipt: "ssh-authentication-denied", exitCode: 255 };
+  const auth = { ...refused, id: "ssh-authentication-denied:255", receipt: "ssh-authentication-denied", exitCode: 255 };
   const facts = [
     worktree, worktree,
     { ...worktree, id: "same-removal", at: 110 },
@@ -802,8 +804,8 @@ test("bottleneck replay binds verification and recovery to original receipts", (
     { ...commandDeadline, id: "running-command", status: "running" },
     mcpDeadline, mcpDeadline,
     { ...mcpDeadline, id: "other-mcp-call", operation: "browser" },
-    ...refusals.map(([id, receipt, exitCode, , itemType = "command_execution"]) =>
-      ({ ...refused, id, receipt, exitCode, status: exitCode === 0 ? "completed" : "failed", itemType })),
+    ...refusals.map(([receipt, exitCode, , itemType = "command_execution"]) =>
+      ({ ...refused, id: `${receipt}:${exitCode}`, receipt, exitCode, status: exitCode === 0 ? "completed" : "failed", itemType })),
     refused, auth,
     { ...auth, id: "vm-connect", receipt: "ssh-connection-refused" },
     { ...auth, id: "vm-file-permission", receipt: "filesystem-permission-denied" },
@@ -821,6 +823,7 @@ test("bottleneck replay binds verification and recovery to original receipts", (
     { ...refused, id: "inherited-refusal", visibility: "inherited" },
     { ...refused, id: "other-thread-refusal", sourceThread: "other" },
     { ...refused, id: "copied-refusal", itemType: "assistant_message" },
+    { ...refused, id: "command-patch", receipt: "patch-anchor-ambiguous" },
   ];
   try {
     writeFileSync(file, facts.map(fact => JSON.stringify(fact)).join("\n") + "\n");
@@ -838,9 +841,8 @@ test("bottleneck replay binds verification and recovery to original receipts", (
       ["draft-tag-readback", "ci-release-tag-readback-not-found"],
       ["pages-seal-refusal", "ci-pages-artifact-input-refused"],
       ["copy-target", "ci-native-copy-id-target-refused"],
-      ["memory-pressure", "local-build-memory-gate-with-worker-slots"],
-      ["memory-second-observation", "local-build-memory-gate-with-worker-slots"],
-      ["memory-second-thread", "local-build-memory-gate-with-worker-slots"],
+      ...["memory-pressure", "memory-second-observation", "memory-second-thread"]
+        .map(id => [id, "local-build-memory-gate-with-worker-slots"]),
       ["failed-prepare", "t3-worktree-recreation-failed-before-provider", 3],
       ["reengagement", "t3-early-stop-acknowledged", 130],
       ["monitoring-reengagement", "t3-monitoring-stop-acknowledged", 130],
@@ -869,7 +871,7 @@ test("bottleneck replay binds verification and recovery to original receipts", (
       ["terminal-deadline", "t3-terminal-tool-deadline", 420],
       ["terminal-deadline-before-floor", "t3-terminal-tool-deadline", 419],
       ["mcp-deadline", "t3-mcp-tool-deadline", 300],
-      ...refusals.map(([id, , , rule]) => [id, rule]),
+      ...refusals.map(([receipt, exitCode, rule]) => [`${receipt}:${exitCode}`, rule]),
     ].map(([id, rule, seconds = 0]) => [id, rule, seconds]));
     const { patterns, costs } = JSON.parse(text);
     const expectedCosts = [

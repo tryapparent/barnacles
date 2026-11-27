@@ -332,8 +332,7 @@ def observe_failure(state: Replay, thread: String, id: String, label: String, fa
 
 def observe_t3_command_refusal(state: Replay, +thread: String, id: String, source_thread: String, visibility: String,
   item_type: String, status: String, +receipt: String, code: U32) -> Replay:
-  +expected = Bool.pick(String, String.starts_with(receipt, "tool-"), "dynamic_tool", "command_execution")
-  +local = Bool.and(local_source(thread, source_thread, visibility), String.eq(item_type, expected))
+  +local = Bool.and(local_source(thread, source_thread, visibility), Tools.refusal_source(item_type, receipt))
   observe_failure(state, thread, id, Tools.refusal_label((status, receipt, code)), local)
 
 def observe_staged_source_budget(state: Replay, thread: String, id: String, operation: String, phase: String,

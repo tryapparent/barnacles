@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { promisify } from "node:util";
+
+const run = promisify(execFile);
 
 type Call = (route: string, init?: RequestInit) => Promise<Response>;
 
@@ -51,9 +54,8 @@ export async function verifySessionStudy(job: string, snapshot: string, cutoff: 
   writeFileSync(replayFile, JSON.stringify({ findings: [
     signal, { ...signal, id: "8:1:900" }, { ...signal, thread: "sample-1" }, { ...signal, rule: "ci-execution" },
   ] }));
-  const importStudy = () => execFileSync(process.execPath, ["dashboard/prepare.ts", "--session-study", snapshot, studyFile, replayFile],
-    { stdio: ["ignore", "pipe", "pipe"] });
-  importStudy();
+  const importStudy = () => run(process.execPath, ["dashboard/prepare.ts", "--session-study", snapshot, studyFile, replayFile]);
+  await importStudy();
   const observed = await get(path);
   assert.deepEqual(observed.study, { cutoff: cutoff * 1000, replay: true });
   assert.deepEqual(observed.sessions.map((entry: { thread: { title: string }; count: number; signals: number }) =>
@@ -71,6 +73,6 @@ export async function verifySessionStudy(job: string, snapshot: string, cutoff: 
   assert.equal((await get("/api/v1/sessions?session=" + "e".repeat(64), 404)).error.code, "session_not_observed");
   await get("/api/v1/sessions?session=one&session=two", 400);
   writeFileSync(studyFile, JSON.stringify({ cutoff: cutoff * 1000, threads: [{}] }));
-  assert.throws(importStudy);
+  await assert.rejects(importStudy);
   assert.deepEqual(await get(path), observed);
 }
