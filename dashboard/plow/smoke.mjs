@@ -23,7 +23,7 @@ assert.equal(await allowed.text(), await readFile(resolve(directory, 'index.html
 
 const browser = await chromium.launch({ channel: 'chrome' })
 try {
-  for (const width of [320, 390, 728, 1120, 1440, 1920]) {
+  for (const width of [320, 390, 640, 728, 1120, 1440, 1920]) {
     const page = await browser.newPage({ viewport: { width, height: 900 } })
     const errors = []
     page.on('pageerror', error => errors.push(error.message))
@@ -67,7 +67,8 @@ try {
       }
       const selectors = ['.activity-header', '#summary-panel', '.summary-top', '#summary-total',
         '#summary-note', '#tiles', '#operation-panel', '#timeline-panel', '.timeline-heading-row',
-        '#timeline-selection', '.zoom-tools', '#zoom-mode', '.navigator', '#utc-window', '.chart-key',
+        '#timeline-selection', '.time-strip', '.zoom-tools', '#zoom-out', '#zoom-in', '#zoom-fit',
+        '#zoom-mode', '.navigator', '#minimap', '.time-caption', '#utc-window', '.chart-key',
         '#timeline-viewport', '.inspector-slot', '.reading-help']
       return {
         page: [document.documentElement.scrollWidth, document.documentElement.scrollHeight],
@@ -138,8 +139,9 @@ try {
     await fit.click()
     assert.equal(await range.innerText(), initial)
     assert.deepEqual(await titles(), matchingThreads)
-    await workflow.click()
+    await summary.getByRole('button', { name: 'Close breakdown' }).click()
     assert.equal(await workflow.getAttribute('aria-expanded'), 'false')
+    assert.equal(await workflow.evaluate(element => element === document.activeElement), true)
     assert.equal((await titles()).length, 10)
     await assertStable('reset zoom and close operation breakdown')
     await screenshot('recovered')
@@ -199,4 +201,4 @@ try {
   await browser.close()
 }
 
-console.log('Plow Worker access guard, timeline filtering, and stable layout passed at 320, 390, 728, 1120, 1440 and 1920 pixels.')
+console.log('Plow Worker access guard, timeline filtering, and stable layout passed at 320, 390, 640, 728, 1120, 1440 and 1920 pixels.')
