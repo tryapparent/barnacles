@@ -1,8 +1,23 @@
-import { readFile, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "vite";
+import { projectPlowFeed } from "../../evidence/read.ts";
 import { buildPolicies } from "../../tooling/bend.ts";
+
+if (process.argv[2] === "--project-feed") {
+  const [database, destination, ...extra] = process.argv.slice(3);
+  if (!database || !destination || extra.length) throw Error("Pass the input evidence database and a new feed file.");
+  const scratch = await mkdtemp(join(tmpdir(), "apparent-dev-plow-projection-"));
+  try {
+    const feed = await projectPlowFeed(resolve(database), scratch);
+    await writeFile(destination, JSON.stringify(feed), { flag: "wx", mode: 0o600 });
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
+  process.exit(0);
+}
 
 const output = process.argv[2];
 if (!output) throw new Error("Pass an existing build output directory.");

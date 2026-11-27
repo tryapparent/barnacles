@@ -36,20 +36,5 @@ def collect_trend(input: List<&2,TrendThread>, +first: Nat, size: Nat, score: Tr
     case TrendThread{_,_,work,workflow} <> rest 1n+left:
       collect_trend(rest,first,left,record_trend(work,workflow,score))
 
-def agent_work_trend(threads: List<&2,TrendThread>) -> List<&2,TrendBatch>:
-  collect_trend(List.sort(~TrendThread,~trend_before,threads),1n,9n,TrendScore{0n,0n})
-
-def newest_thread_first(a: TrendThread, b: TrendThread) -> Bool:
-  match a b:
-    case TrendThread{+x,i,_,_} TrendThread{+y,j,_,_}:
-      Bool.or(Nat.is_lt(y,x),Bool.and(Nat.is_eq(x,y),Nat.is_le(i,j)))
-
-def take_thread_positions(threads: List<&2,TrendThread>, limit: Nat) -> List<&2,Nat>:
-  match threads limit:
-    case [] _: []
-    case _ 0n: []
-    case TrendThread{_,position,_,_} <> rest 1n+left:
-      position <> take_thread_positions(rest,left)
-
-def recent_thread_positions(threads: List<&2,TrendThread>) -> List<&2,Nat>:
-  take_thread_positions(List.sort(~TrendThread,~newest_thread_first,threads),10n)
+def agent_work_trend(threads: List<&2,TrendThread>, first: Nat) -> List<&2,TrendBatch>:
+  collect_trend(List.sort(~TrendThread,~trend_before,threads),first,9n,TrendScore{0n,0n})

@@ -48,41 +48,45 @@ export function AgentWorkTrend() {
   const label = (batch: Batch) => `${batch.first}–${batch.last}`;
   return <section className="agent-work-trend" aria-labelledby={id}>
     <h2 id={id}>Agent work share</h2>
-    {first && paths.length > 0 ? <svg viewBox="0 0 400 145" role="img" aria-label="Agent work share by batch. Exact values are in Batch data.">
-      <defs>
-        <linearGradient id={`${id}-cream`} x1="0" x2="0" y1="0" y2="1">
-          <stop stopColor="var(--cream)" stopOpacity=".38" /><stop offset=".65" stopColor="var(--cream)" /><stop offset="1" stopColor="var(--cream)" />
-        </linearGradient>
-        <pattern id={`${id}-etch`} width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(32)">
-          <path d="M0 0v5" stroke="var(--meadow)" strokeOpacity=".69" strokeWidth="1.1" />
-        </pattern>
-      </defs>
-      {paths.filter(path => path.length > 1).map(({ fill, first }) => <g key={first.x}>
-        <path d={fill} fill={`url(#${id}-cream)`} /><path d={fill} fill={`url(#${id}-etch)`} />
-      </g>)}
-      {[100, 50, 0].map(value => <g key={value}>
-        <path d={`M48 ${112 - value}H389`} stroke="currentColor" strokeOpacity=".21" />
-        <text x="43" y={116 - value} textAnchor="end">{value}%</text>
-      </g>)}
-      {paths.map(({ curve, first, length }) => <path key={first.x}
-        d={length === 1 ? `M${first.x - 4},${first.y}h8` : curve}
-        fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />)}
-      <text x="51" y="134">Threads {label(first)}</text>
-      {last !== first && <text x="389" y="134" textAnchor="end">Threads {label(last)}</text>}
-    </svg> : <p className="agent-work-empty">{first ? "No classified time in the recorded batches." : "The trend starts after 10 threads."}</p>}
-    {first && <Collapsible>
-      <CollapsibleTrigger render={<Button variant="outline" className="batch-trigger" />}>Batch data</CollapsibleTrigger>
-      <CollapsiblePanel>
-        <p>Each batch groups 10 consecutive threads. Every measured thread counts equally. Unclear time is excluded.</p>
-        <table aria-label="Agent work share by thread range">
-          <thead><tr><th scope="col">Threads</th><th scope="col">Agent work</th><th scope="col">Measured</th></tr></thead>
-          <tbody>{data.map(batch => <tr key={batch.first}>
-            <th scope="row">{label(batch)}</th>
-            <td>{batch.measured > 0 ? `${(batch.basis_points / 100).toFixed(1)}%` : "Unknown"}</td>
-            <td>{batch.measured} of 10</td>
-          </tr>)}</tbody>
-        </table>
-      </CollapsiblePanel>
-    </Collapsible>}
+    <Collapsible className="trend-disclosure">
+      <div className="trend-plot">
+      {first && paths.length > 0 ? <svg viewBox="0 0 400 145" role="img" aria-label="Agent work share by batch. Exact values are in Batch data.">
+        <defs>
+          <linearGradient id={`${id}-cream`} x1="0" x2="0" y1="0" y2="1">
+            <stop stopColor="var(--cream)" stopOpacity=".38" /><stop offset=".65" stopColor="var(--cream)" /><stop offset="1" stopColor="var(--cream)" />
+          </linearGradient>
+          <pattern id={`${id}-etch`} width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(32)">
+            <path d="M0 0v5" stroke="var(--meadow)" strokeOpacity=".69" strokeWidth="1.1" />
+          </pattern>
+        </defs>
+        {paths.filter(path => path.length > 1).map(({ fill, first }) => <g key={first.x}>
+          <path d={fill} fill={`url(#${id}-cream)`} /><path d={fill} fill={`url(#${id}-etch)`} />
+        </g>)}
+        {[100, 50, 0].map(value => <g key={value}>
+          <path d={`M48 ${112 - value}H389`} stroke="currentColor" strokeOpacity=".21" />
+          <text x="43" y={116 - value} textAnchor="end">{value}%</text>
+        </g>)}
+        {paths.map(({ curve, first, length }) => <path key={first.x}
+          d={length === 1 ? `M${first.x - 4},${first.y}h8` : curve}
+          fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />)}
+        <text x="51" y="134">Threads {label(first)}</text>
+        {last !== first && <text x="389" y="134" textAnchor="end">Threads {label(last)}</text>}
+      </svg> : <p className="agent-work-empty">{first ? "No classified time in the recorded batches." : "The trend starts after 10 threads."}</p>}
+      </div>
+      {first && <>
+        <CollapsibleTrigger render={<Button variant="outline" className="batch-trigger" />}>Batch data</CollapsibleTrigger>
+        <CollapsiblePanel className="trend-batch-panel" role="region" aria-label="Batch data" tabIndex={0}>
+          <p>Each batch groups 10 consecutive threads. Every measured thread counts equally. Unclear time is excluded.</p>
+          <table aria-label="Agent work share by thread range">
+            <thead><tr><th scope="col">Threads</th><th scope="col">Agent work</th><th scope="col">Measured</th></tr></thead>
+            <tbody>{data.map(batch => <tr key={batch.first}>
+              <th scope="row">{label(batch)}</th>
+              <td>{batch.measured > 0 ? `${(batch.basis_points / 100).toFixed(1)}%` : "Unknown"}</td>
+              <td>{batch.measured} of 10</td>
+            </tr>)}</tbody>
+          </table>
+        </CollapsiblePanel>
+      </>}
+    </Collapsible>
   </section>;
 }

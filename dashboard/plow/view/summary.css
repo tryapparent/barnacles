@@ -100,6 +100,11 @@
   .trace .meta span{white-space:normal}
 }
 @media(max-width:360px){
+  .category-tile{padding-inline:6px}
+  .category-name{grid-column:1 / -1}
+  .category-icon{grid-row:2;align-self:end}
+  .category-metric{grid-column:1 / -1;grid-row:2;display:grid;grid-template-columns:minmax(0,1fr)}
+  .category-share{padding-inline-end:14px}
   .category-name{font-size:12px}
   .category-metric{font-size:16px}
   .utc-tick{font-size:10px}
@@ -124,3 +129,9 @@
 .agent-work-trend .batch-trigger{font:inherit}
 .agent-work-trend .agent-work-empty{margin:12px 0 0}
 @media (max-width:730px){.activity-overview{grid-template-columns:1fr}.agent-work-trend svg{font-size:17px}}
+
+.trend-disclosure{position:relative;display:grid;grid-template-columns:minmax(0,1fr);row-gap:3px}
+.trend-plot{grid-area:1/1;min-block-size:120px}
+.trend-batch-panel{grid-area:1/1;position:absolute;inset:0;overflow:auto;scrollbar-gutter:stable}
+.trend-disclosure:has(.batch-trigger[aria-expanded=true]) .trend-plot{visibility:hidden}
+.trend-disclosure .batch-trigger{grid-area:2/1;justify-self:start}

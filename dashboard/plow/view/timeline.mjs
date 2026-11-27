@@ -1,4 +1,23 @@
-const traces = JSON.parse(document.getElementById('trace-data').textContent)
+const feed = JSON.parse(document.getElementById('trace-data').textContent)
+const traces = feed.traces.map((trace, index) => ({
+  ...trace,
+  title: 'Thread ' + (index + 1),
+  shortTitle: 'Thread ' + (index + 1),
+}))
+const feedStatus = document.getElementById('feed-status')
+const feedContent = document.getElementById('feed-content')
+if (!feed.unavailable && traces.length === 0) {
+  feedStatus.textContent = 'No measured session time has been imported yet.'
+}
+feedStatus.hidden = traces.length > 0
+feedContent.hidden = traces.length === 0
+if (traces.length > 0) {
+  const cutoff = document.getElementById('feed-cutoff')
+  cutoff.textContent = 'Observed through ' + new Intl.DateTimeFormat('en-GB', {
+    dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC',
+  }).format(feed.observed) + ' UTC'
+  cutoff.hidden = false
+}
 const rows = document.getElementById('traces')
 const probe = document.querySelector('.measure')
 const ruler = document.getElementById('chart-ruler')
@@ -18,7 +37,7 @@ const asList = entries => entries.reduceRight((tail, head) => ({ $: 'Con', head,
 function* values(list) {
   for (let next = list; next.$ === 'Con'; next = next.tail) yield next.head
 }
-const historyRows = traces.map(trace => {
+const evidenceRows = traces.map(trace => {
   const end = millis(trace.end)
   const intervals = [
     ...trace.work.map(([a, b, name]) => ({ $: 'Interval', a: millis(a), b: millis(b), kind: 2, name })),
@@ -29,12 +48,11 @@ const historyRows = traces.map(trace => {
   return { ...trace, end, evidence, failures, totals: policy.evidence_totals(evidence),
     recordedFailures: [...values(policy.failure_points(true,end,failures))] }
 })
-const trendThreads = asList(historyRows.map((trace, position) => ({
-  $: 'TrendThread', start: trace.startUtcMs, position,
-  work: trace.totals.work, workflow: trace.totals.workflow,
+const trendHistory = feed.history
+const trendThreads = asList((trendHistory?.threads ?? []).map((thread, position) => ({
+  $: 'TrendThread', position, start: position, work: thread.work, workflow: thread.workflow,
 })))
-PlowUI.renderAgentWorkTrend([...values(policy.agent_work_trend(trendThreads))])
-const evidenceRows = [...values(policy.recent_thread_positions(trendThreads))].map(position => historyRows[position])
+PlowUI.renderAgentWorkTrend([...values(policy.agent_work_trend(trendThreads, trendHistory?.first ?? 1))])
 const frame = policy.utc_frame(asList(evidenceRows.map(trace => ({
   $: 'UtcSpan', start: trace.startUtcMs, end: trace.startUtcMs + trace.end,
 }))))
@@ -123,17 +141,16 @@ function render(trace, width, measurements, index) {
   const link = makeElement('strong', 'sample-title', trace.shortTitle)
   link.title = trace.title
   link.dataset.focusPart = 'source'
-  const subtitle = trace.subtitle.split(' · ')
-  const status = subtitle.pop()
+  const subtitle = utcDay.format(trace.startUtcMs) + ' · ' + utcClock.format(trace.startUtcMs) + ' UTC'
   const meta = makeElement('small','meta')
-  meta.append(makeElement('span','',subtitle.join(' · ')))
-  link.setAttribute('aria-label',trace.title+' · '+trace.subtitle)
+  meta.append(makeElement('span','',subtitle))
+  link.setAttribute('aria-label',trace.title+' · '+subtitle)
   header.append(link,meta)
   const rail = makeElement(details?'button':'div',details?'rail inspectable':'rail')
   if(details){
     rail.type='button'
     rail.dataset.focusPart='timeline'
-    rail.setAttribute('aria-label','Inspect '+trace.title+' · '+trace.subtitle+' · '+trace.recordedFailures.length+' recorded failures')
+    rail.setAttribute('aria-label','Inspect '+trace.title+' · '+subtitle+' · '+trace.recordedFailures.length+' recorded failures')
     rail.setAttribute('aria-expanded',String(index===openTrace))
     rail.setAttribute('aria-controls',inspector.id)
     rail.addEventListener('click',()=>{
@@ -149,8 +166,8 @@ function render(trace, width, measurements, index) {
     })
   } else {
     rail.setAttribute('role','img')
-    rail.setAttribute('aria-label','Elapsed '+elapsed(trace.end)+'. Agent work '+elapsed(trace.totals.work)+
-      '. Workflows or documented waits '+elapsed(trace.totals.workflow)+'. Unclear '+elapsed(trace.totals.unclear)+
+    rail.setAttribute('aria-label','Elapsed '+elapsed(trace.end)+'. Provider run '+elapsed(trace.totals.work)+
+      '. Admission wait '+elapsed(trace.totals.workflow)+'. Unobserved '+elapsed(trace.totals.unclear)+
       '. '+trace.recordedFailures.length+' recorded failures.')
   }
   const bar = makeElement('span','bar')

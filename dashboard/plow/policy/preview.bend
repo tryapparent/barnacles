@@ -16,10 +16,10 @@ type Layout is Data:
   Layout{paint: List<&2, Spans.Entry>, labels: List<&2, Label>}
 
 def phase_name(+kind: U32) -> String:
-  Bool.pick(String,U32.is_eq(kind,2),"Agent work",Bool.pick(String,U32.is_eq(kind,1),"Workflows & waits","Activity unclear"))
+  Bool.pick(String,U32.is_eq(kind,2),"Provider run",Bool.pick(String,U32.is_eq(kind,1),"Admission wait","Unobserved"))
 
 def short_label(+kind: U32) -> String:
-  Bool.pick(String,U32.is_eq(kind,2),"Work",Bool.pick(String,U32.is_eq(kind,1),"Wait","Unclear"))
+  Bool.pick(String,U32.is_eq(kind,2),"Run",Bool.pick(String,U32.is_eq(kind,1),"Wait","Gap"))
 
 def lookup(rows: List<&2, Measurement>, +name: String) -> Nat:
   match rows:
@@ -37,7 +37,7 @@ def first_text(+measurements: List<&2, Measurement>, +full: String, +short: Stri
 
 def available_titles(parts: List<&2, Spans.Part>) -> List<&2, String>:
   match parts:
-    case []: ["Agent work","Work","Workflows & waits","Wait","Activity unclear","Unclear"]
+    case []: ["Provider run","Run","Admission wait","Wait","Unobserved","Gap"]
     case Spans.Part{_,_,_,name,_} <> rest: name <> available_titles(rest)
 
 def bridge_labels(parts: List<&2, Spans.Entry>, +prior_kind: U32, +prior_paint: String, +scale: Nat, +width: Nat) -> List<&2, Spans.Entry>:
@@ -119,8 +119,7 @@ def gather_labels(entries: List<&2, Spans.Entry>, +scale: Nat, +width: Nat, +det
 
 def layout(+truth: List<&2, Spans.Part>, +scale: Nat, +width: Nat, +details: Bool, measurements: List<&2, Measurement>, failures: List<&2,Nat>) -> Layout:
   +display = Spans.groups(truth,details)
-  +colored = Spans.paint_gaps(Spans.colors(display,0,details),"#f2f5f6")
-  +entries = Spans.collapse(List.length(&2,Spans.Entry,colored),colored,True{},scale,width)
+  +entries = Spans.colors(display,0,details)
   +margin = Nat.div(Nat.add(Nat.mul(5n,scale),width),width)
   Layout{entries,gather_labels(label_regions(bridge_labels(entries,0,"#f2f5f6",scale,width)),scale,width,details,measurements,
     Bool.pick(List<&2,Nat>,details,List.sort(~Nat,~Spans.n_before,failures),[]),margin)}
@@ -232,8 +231,5 @@ def initial_overview() -> Summary.OverviewSelection:
 def select_overview(selection: Summary.OverviewSelection, action: Summary.OverviewAction) -> Summary.OverviewSelection:
   Summary.select_overview(selection,action)
 
-def agent_work_trend(threads: List<&2,Trend.TrendThread>) -> List<&2,Trend.TrendBatch>:
-  Trend.agent_work_trend(threads)
-
-def recent_thread_positions(threads: List<&2,Trend.TrendThread>) -> List<&2,Nat>:
-  Trend.recent_thread_positions(threads)
+def agent_work_trend(threads: List<&2,Trend.TrendThread>, first: Nat) -> List<&2,Trend.TrendBatch>:
+  Trend.agent_work_trend(threads,first)
