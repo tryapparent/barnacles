@@ -16,7 +16,7 @@ Open the [visual brand guide](brand/) for examples and downloadable wordmarks.
 
 ## Wordmark and type
 
-- Set **plow** and display headlines in **Young Serif Regular (400)**. Use the lowercase wordmark on its own with clear space of roughly one lowercase letter around it. Use Ink on Cream or Cream on Wet Earth. Transparent wordmarks are supplied in [Ink](assets/plow-ink.png) and [Cream](assets/plow-cream.png).
+- Set **plow** and display headlines in **Young Serif Regular (400)**. Use the lowercase wordmark on its own with clear space of roughly one lowercase letter around it. Use Ink on Cool Mist or Cool Mist on Wet Earth. Transparent wordmarks are supplied in [Ink](assets/plow-ink.png) and [Cool Mist](assets/plow-cool-mist.png).
 - Use **Geist Regular (400)** for body copy and **Geist Semibold (600)** for actions and short emphasis.
 - At a 1,440 px composition width, use roughly 100 px for the hero, 76 px for the second display headline, 42 px for the wordmark, and up to 23 px for copy laid over artwork. At a 375 px width, use 34 px for the hero, 25 px for the second headline, 24 px for the wordmark, and 14 px for the artwork copy.
 
@@ -26,11 +26,11 @@ Open the [visual brand guide](brand/) for examples and downloadable wordmarks.
 | --- | --- | --- |
 | Wet Earth | `#392820` | Dark supporting surfaces |
 | Ink | `#1A130D` | Text on light and accent fills |
-| Cream | `#FFF4DF` | Light surfaces and text on Wet Earth |
+| Cool Mist | `#F2F5F6` | Light surfaces and text on Wet Earth |
 | Meadow | `#6F9B53` | Primary accent and action fill |
 | Toasted Straw | `#A18054` | Warm graphic accent and supporting fill |
 
-Ink labels reach 5.68:1 on Meadow and 5.01:1 on Toasted Straw. Toasted Straw reaches 3.36:1 against Cream and 3.82:1 against Wet Earth for graphical accents. Meadow and Toasted Straw are 1.13:1 apart, so give them distinct labels or shapes wherever they carry meaning together. Harbor chart colors and component choices are open.
+Ink labels reach 5.68:1 on Meadow and 5.01:1 on Toasted Straw. Toasted Straw reaches 3.34:1 against Cool Mist and 3.82:1 against Wet Earth for graphical accents. Meadow and Toasted Straw are 1.13:1 apart, so give them distinct labels or shapes wherever they carry meaning together. Harbor chart colors and component choices are open.
 
 ## Art and composition
 
