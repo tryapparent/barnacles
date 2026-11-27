@@ -93,6 +93,37 @@ def observe_timing(state: Replay, id: String, +clock: String, operation: String,
         Replay{Map.set(&2, Bool, seen, event, True{}), files, reads,
           add_cost(costs, clock, operation, closed, U32.sub(end, start)), attempts, cohorts, status_reads, findings})
 
+def record_t3_command_envelope(state: Replay, +thread: String, +id: String, operation: String, +seconds: U32,
+  valid: Bool, deadline: Bool) -> Replay:
+  match state:
+    case Replay{+seen, +files, +reads, +costs, +attempts, +cohorts, +status_reads, +findings}:
+      +key = pair("t3-command-envelope", pair(thread, id))
+      +accept = Bool.and(valid, Bool.not(includes(seen, key)))
+      +recorded = Bool.pick(List<&2, Finding>, deadline,
+        Finding{"t3-terminal-tool-deadline", thread, id, "", seconds, 0, 0, 0} <> findings, findings)
+      Bool.pick(Replay, accept,
+        Replay{Map.set(&2, Bool, seen, key, True{}), files, reads,
+          add_cost(costs, "t3-command-envelope", operation, True{}, seconds), attempts, cohorts, status_reads, recorded},
+        Replay{seen, files, reads, costs, attempts, cohorts, status_reads, findings})
+
+def observe_t3_command_envelope(state: Replay, +thread: String, id: String, source_thread: String, visibility: String,
+  item_type: String, +status: String, operation: String, +started: U32, +completed: U32, observed: U32,
+  +elapsed_ms: U32, receipt: String, +limit: U32) -> Replay:
+  +source = Bool.and(String.eq(thread, source_thread), Bool.and(String.eq(visibility, "local"),
+    String.eq(item_type, "command_execution")))
+  +failed = String.eq(status, "failed")
+  +terminal = Bool.or(failed, Bool.or(String.eq(status, "completed"), String.eq(status, "interrupted")))
+  +seconds = U32.div(elapsed_ms, 1000)
+  +endpoints = U32.sub(completed, started)
+  +ordered = Bool.and(U32.is_gt(started, 0), Bool.and(U32.is_ge(completed, started), U32.is_ge(observed, completed)))
+  +consistent = Bool.and(U32.is_ge(endpoints, seconds), U32.is_le(endpoints, U32.inc(seconds)))
+  +valid = Bool.and(source, Bool.and(terminal, Bool.and(ordered, consistent)))
+  +bound = Bool.and(U32.is_gt(limit, 0), U32.is_le(limit, 86400))
+  +expected = U32.mul(limit, 1000)
+  +close = Bool.and(U32.is_ge(U32.add(elapsed_ms, 2000), expected), U32.is_le(elapsed_ms, U32.add(expected, 2000)))
+  +deadline = Bool.and(failed, Bool.and(String.eq(receipt, "terminal-tool-deadline"), Bool.and(bound, close)))
+  record_t3_command_envelope(state, thread, id, operation, seconds, valid, deadline)
+
 def observe_local_admission(state: Replay, +thread: String, +id: String, +wait_ms: U32, bound_ms: U32,
   +allocated: U32, capacity: U32) -> Replay:
   match state:

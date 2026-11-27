@@ -648,6 +648,10 @@ test("bottleneck replay binds verification and recovery to original receipts", (
     followingMergeCommit: "" };
   const readAfterError = { ...mergeHttp, id: "read-after-merge-error", followingRepository: mergeHttp.repository,
     followingPr: mergeHttp.pr, followingState: "OPEN" };
+  const commandDeadline = { kind: "t3-command-envelope", id: "terminal-deadline", thread: "t", sourceThread: "t",
+    visibility: "local", itemType: "command_execution", status: "failed", operation: "legacy-terminal",
+    started: 1000, completed: 1420, observed: 1421, elapsedMs: 420_018,
+    receipt: "terminal-tool-deadline", limitSeconds: 420 };
   const facts = [
     worktree, worktree,
     { ...worktree, id: "same-removal", at: 110 },
@@ -767,6 +771,17 @@ test("bottleneck replay binds verification and recovery to original receipts", (
     { ...readAfterError, id: "merge-no-commit", followingState: "MERGED" },
     { ...readAfterError, id: "merge-wrong-pr", followingPr: 43 },
     { ...readAfterError, id: "merge-wrong-repo", followingRepository: "other/repo", receipt: "gh-rest-merge-http" },
+    commandDeadline, commandDeadline,
+    { ...commandDeadline, id: "terminal-deadline-before-floor", elapsedMs: 419_970 },
+    { ...commandDeadline, id: "different-elapsed", elapsedMs: 360_000, completed: 1360 },
+    { ...commandDeadline, id: "completed-command", status: "completed", elapsedMs: 420_000 },
+    { ...commandDeadline, id: "short-read", operation: "file-read", status: "completed", elapsedMs: 178,
+      completed: 1001, observed: 1001, receipt: "", limitSeconds: 0 },
+    { ...commandDeadline, id: "inconsistent-clocks", elapsedMs: 410_000 },
+    { ...commandDeadline, id: "observed-before-completion", observed: 1419 },
+    { ...commandDeadline, id: "inherited-command", visibility: "inherited" },
+    { ...commandDeadline, id: "other-root-command", sourceThread: "other" },
+    { ...commandDeadline, id: "running-command", status: "running" },
   ];
   try {
     writeFileSync(file, facts.map(fact => JSON.stringify(fact)).join("\n") + "\n");
@@ -812,8 +827,13 @@ test("bottleneck replay binds verification and recovery to original receipts", (
       ["merge-no-commit", "pr-merge-http-server-error", 0],
       ["merge-wrong-pr", "pr-merge-http-server-error", 0],
       ["merge-wrong-repo", "pr-merge-http-server-error", 0],
+      ["terminal-deadline", "t3-terminal-tool-deadline", 420],
+      ["terminal-deadline-before-floor", "t3-terminal-tool-deadline", 419],
     ]);
     const { patterns, costs } = JSON.parse(text);
+    assert.deepEqual(costs.filter((r: { clock: string }) => r.clock === "t3-command-envelope"),
+      [{ $: "Cost", clock: "t3-command-envelope", operation: "file-read", count: 1, seconds: 0, unknown: 0 },
+        { $: "Cost", clock: "t3-command-envelope", operation: "legacy-terminal", count: 4, seconds: 1619, unknown: 0 }]);
     assert.deepEqual(costs.find((r: { clock: string }) => r.clock === "native-mac-ticket-readiness"),
       { $: "Cost", clock: "native-mac-ticket-readiness", operation: "nomac-wait", count: 2, seconds: 100, unknown: 0 });
     assert.deepEqual(costs.filter((r: { clock: string }) => r.clock === "t3-provider-recovery"),
