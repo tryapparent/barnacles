@@ -1,6 +1,6 @@
 export { admissionPolicy, buildAdmissionPolicy, loadEvidence, type AdmissionPolicy, type ChangedCodeFile, type EvidenceBatch } from "./storage/load.ts";
 export { deliveryPolicy, deliveryReport, type DeliveryPolicy, type PullRequest, type ReleaseEvidence } from "./delivery/delivery.ts";
-export { type ActionAttempt, type AttemptIdentity } from "./storage/actions.ts";
+export { openHistory, type ActionAttempt, type AttemptIdentity, type HistoryProgress, type HistoryFact } from "./storage/actions.ts";
 export {
   sourcePolicy, processTimingPolicy, saveKernelCapture, rolloutCoverage, waitReport, watchOverlaps,
   type KernelPolicy, type KernelCapture,
@@ -11,3 +11,4 @@ export { readPollMinutes, repository } from "./repository.ts";
 export { actionsWaitCapturePlan, snapshotPublisher } from "./projection/snapshot.ts";
 export { githubPollRows } from "./storage/load.ts";
 export { CodexOtelConflict, codexOtelPolicy, saveCodexOtel, type CodexOtelFact, type CodexOtelPolicy } from "./storage/load.ts";
+export { joinSession, sessionJoinPolicy, type NativeBinding, type SessionJoinPolicy } from "./storage/load.ts";

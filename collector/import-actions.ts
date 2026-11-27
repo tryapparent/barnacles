@@ -1,21 +1,175 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { actionsWaitCapturePlan, admissionPolicy, loadEvidence, sourcePolicy, type AdmissionPolicy, type SourcePolicy } from "../evidence/index.ts";
+import {
+  actionsWaitCapturePlan, admissionPolicy, loadEvidence, openHistory, sourcePolicy,
+  type AdmissionPolicy, type AttemptIdentity, type HistoryFact, type HistoryProgress, type List, type SourcePolicy,
+} from "../evidence/index.ts";
 import { buildPolicies, buildPolicy, loadPolicy } from "../tooling/bend.ts";
-import { checkRepository, clock, collectAttempt, collectWindow, githubReader, positiveInt, type ClockPolicy } from "./github/attempt.ts";
+import { checkRepository, clock, collectAttempt, collectWindow, fullSha, githubReader, positiveInt, wireCount, type ClockPolicy } from "./github/attempt.ts";
 import { pollGitHub } from "./github/delivery.ts";
+import {
+  array, bendList, bendValues, boundedFile, millis, row, SourceReadError, str, t3HistoryReader, timeParts, token,
+} from "./wire.ts";
+
+type Scope = { $: "Scope"; environment: string; project: string; repository: string };
+type Page = { $: "Page"; next: number; total: number; revision: string; more: boolean; settled: boolean };
+type Item = {
+  $: "Item"; position: number; id: string; owner: string; visibility: string; kind: string;
+  status: string; seconds: number; millis: number;
+};
+type HistoricalPolicy = {
+  valid_limit(value: number): boolean;
+  canonical_repository(value: string): string;
+  target_count(value: number): boolean;
+  pending(status: string): boolean;
+  prefer(generation: number, current: number): boolean;
+  thread_matches(thread: string, project: string, expectedThread: string, expectedProject: string): boolean;
+  same(expected: Scope, actual: Scope): boolean;
+  activity(previous: HistoryProgress, page: Page, thread: string, items: List<Item>):
+    { $: "Invalid" } | { $: "Accepted"; progress: HistoryProgress; facts: List<HistoryFact> };
+  exact_status(status: string): string;
+  HTTP_status(status: number, limited: boolean, expired: boolean, budget: boolean): string;
+  stop_reads(status: string, sessionExpired: boolean): boolean;
+};
+
+function historyTargets(input: unknown, repository: string, clockPolicy: ClockPolicy, admission: AdmissionPolicy,
+  policy: HistoricalPolicy) {
+  const manifest = row(input);
+  if (manifest.source === "github-actions") {
+    const targets = array(manifest.attempts, 50).map((value) => {
+      const identity = row(value);
+      return { repository, runId: positiveInt(identity.runId), attempt: positiveInt(identity.attempt),
+        sha: fullSha(identity.sha) } satisfies AttemptIdentity;
+    });
+    let read: ReturnType<typeof githubReader>;
+    return {
+      source: manifest.source, targets,
+      key: (target: unknown) => JSON.stringify(target),
+      async capture(target: unknown, previous: HistoryProgress) {
+        if (!process.env.BARNACLES_GITHUB_AUTH) throw new SourceReadError(401);
+        read ??= githubReader(repository, process.env, fetch, { requests: 32, milliseconds: 60_000 });
+        const attempt = await collectAttempt(target as AttemptIdentity, clockPolicy, read);
+        const status = policy.exact_status(attempt.status);
+        return { progress: { ...previous, status },
+          change: policy.pending(status) ? undefined : { attempt, admission }, advanced: false };
+      },
+    };
+  }
+  if (manifest.source !== "t3-activity") throw Error("Expected a historical manifest source");
+  const environment = token(manifest.environment);
+  const project = token(manifest.project);
+  const targets = array(manifest.threads, 50).map(token);
+  let call: ReturnType<typeof t3HistoryReader>;
+  let verified = false;
+  return {
+    source: manifest.source, targets,
+    key: (thread: unknown) => JSON.stringify({ environment, project, thread }),
+    async capture(target: unknown, previous: HistoryProgress) {
+      const thread = target as string;
+      call ??= t3HistoryReader();
+      if (!verified) {
+        const identity = await call("t3_environment_read", { environmentId: environment });
+        const binding = await call("t3_project_read", { environmentId: environment, projectId: project });
+        if (!policy.same({ $: "Scope", environment, project, repository: `github.com/${repository}` },
+          { $: "Scope", environment: str(identity.environmentId), project: str(binding.id),
+            repository: str(row(binding.repositoryIdentity ?? {}).canonicalKey) })) throw new SourceReadError(403);
+        verified = true;
+      }
+
+      const result = await call("t3_thread_read", {
+        environmentId: environment, threadId: thread, view: "activity", afterPosition: previous.position - 1,
+        limit: 25, maxCharsPerItem: 1, runLimit: 1,
+      });
+      const identity = row(result.thread);
+      if (!policy.thread_matches(str(identity.threadId), str(identity.projectId), thread, project)) throw new SourceReadError(403);
+      const revision = millis(identity.updatedAt);
+      if (typeof result.hasMore !== "boolean") throw Error("Missing T3 pagination state");
+      const page: Page = {
+        $: "Page", revision: revision ? String(revision) : "", total: wireCount(identity.itemCount),
+        next: result.nextPosition === null ? previous.position
+          : result.nextPosition === -1 ? 0 : wireCount(wireCount(result.nextPosition) + 1),
+        more: result.hasMore, settled: identity.settled === true && identity.activeRunId === null,
+      };
+      const items = array(result.items, 25).map((value): Item => {
+        const item = row(value);
+        const [seconds, milliseconds] = timeParts(millis(item.updatedAt));
+        return { $: "Item", position: wireCount(wireCount(item.position) + 1), id: token(item.itemId),
+          owner: str(item.sourceThreadId), visibility: str(item.visibility), kind: str(item.type),
+          status: str(item.status), seconds, millis: milliseconds };
+      });
+      const resultPage = policy.activity(previous, page, thread, bendList(items));
+      if (resultPage.$ === "Invalid") throw Error("Partial or changed T3 history page");
+      return { progress: resultPage.progress,
+        change: { environment, thread, facts: bendValues(resultPage.facts) }, advanced: true };
+    },
+  };
+}
+
+async function backfill(database: string, manifestPath: string, maxUnits: number, repository: string,
+  scratch: string, clockPolicy: ClockPolicy, admission: AdmissionPolicy) {
+  const policy = await loadPolicy<HistoricalPolicy>(
+    await buildPolicy(scratch, new URL("./history.bend", import.meta.url), "history.mjs"));
+  if (!policy.valid_limit(wireCount(maxUnits))) throw Error("Expected a historical work limit of 1–8");
+  const scopedRepository = policy.canonical_repository(repository);
+  if (!scopedRepository) throw Error("Expected a canonical GitHub repository");
+  const plan = historyTargets(JSON.parse(boundedFile(manifestPath, 32 * 1024).toString("utf8")),
+    scopedRepository, clockPolicy, admission, policy);
+  const targets = new Map(plan.targets.map((target) => [plan.key(target), target] as const));
+  if (!policy.target_count(targets.size)) throw Error("Expected at least one historical target");
+  const store = openHistory(database, plan.source, scopedRepository, [...targets.keys()]);
+  const deferred = new Set<string>();
+  let readUnits = 0;
+  try {
+    while (readUnits < maxUnits) {
+      let selected: ({ key: string } & ReturnType<typeof store.read>) | undefined;
+      for (const key of targets.keys()) {
+        if (deferred.has(key)) continue;
+        const state = store.read(key);
+        if (policy.pending(state.progress.status) && (!selected || policy.prefer(state.generation, selected.generation))) {
+          selected = { key, ...state };
+        }
+      }
+      if (!selected) break;
+      const { key, generation, progress } = selected;
+      readUnits++;
+      try {
+        const page = await plan.capture(targets.get(key), progress);
+        if (!store.commit(key, generation, page.progress, page.change) || !page.advanced) deferred.add(key);
+      } catch (error) {
+        if ((error as { code?: string; errcode?: number }).code === "ERR_SQLITE_ERROR" &&
+            ![1555, 2067].includes((error as { errcode: number }).errcode)) throw error;
+        const failure = error instanceof SourceReadError ? error : null;
+        const status = failure ? policy.HTTP_status(failure.status, failure.limited, failure.expired, failure.budget) : "partial";
+        store.commit(key, generation, { ...progress, status });
+        deferred.add(key);
+        if (policy.stop_reads(status, failure?.expired ?? false)) break;
+      }
+    }
+    const coverage: Record<string, number> = {};
+    for (const key of targets.keys()) {
+      const status = store.read(key).progress.status;
+      coverage[status] = (coverage[status] ?? 0) + 1;
+    }
+    console.log(JSON.stringify({ source: plan.source, units: readUnits, coverage }));
+    if (Object.keys(coverage).some(policy.pending)) process.exitCode = 2;
+  } finally {
+    store.close();
+  }
+}
 
 async function main() {
   const [directory, repository, mode, ...args] = process.argv.slice(2);
   const windowMode = mode === "--window";
   const waitMode = mode === "--from-waits";
   const pollMode = mode === "--poll";
+  const backfillMode = mode === "--backfill";
   if (!directory || !repository || !mode || args.length !== (windowMode ? 4 : waitMode ? 3 : pollMode ? 0 : 2)) {
     throw new Error([
       "Usage: node collector/import-actions.ts JOB_DIRECTORY OWNER/REPO RUN_ID ATTEMPT EXPECTED_SHA",
       "   or: node collector/import-actions.ts JOB_DIRECTORY OWNER/REPO --window FROM TO MAX_PAGES MAX_ATTEMPTS",
       "   or: node collector/import-actions.ts JOB_DIRECTORY OWNER/REPO --from-waits FROM TO MAX_ATTEMPTS",
       "   or: node collector/import-actions.ts JOB_DIRECTORY OWNER/REPO --poll",
+      "   or: node collector/import-actions.ts JOB_DIRECTORY OWNER/REPO --backfill MANIFEST MAX_UNITS",
     ].join("\n"));
   }
   const scratch = mkdtempSync(join(resolve(directory), "build-"));
@@ -27,8 +181,9 @@ async function main() {
     const admission = await loadPolicy<AdmissionPolicy>(admissionFile);
     const policy = await loadPolicy<ClockPolicy>(source);
     checkRepository(repository, policy);
-    const read = githubReader(repository);
     const database = join(resolve(directory), "evidence.sqlite");
+    if (backfillMode) return await backfill(database, args[0], positiveInt(args[1]), repository, scratch, policy, admission);
+    const read = githubReader(repository);
     if (pollMode) {
       const sources = await loadPolicy<SourcePolicy>(await buildPolicy(scratch, sourcePolicy, "sources.mjs"));
       const result = await pollGitHub(database, repository, sources, policy, admission, read);
