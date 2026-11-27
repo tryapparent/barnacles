@@ -59,4 +59,9 @@
   .trace .meta{font-size:10px}
   .trace .meta span{white-space:normal}
 }
-@media(max-width:360px){.category-tile{padding-inline:6px}}
+@media(max-width:360px){
+  .category-tile{padding-inline:6px}
+  .category-name{grid-column:1 / -1}
+  .category-icon{grid-row:2}
+  .category-metric{grid-column:1}
+}
