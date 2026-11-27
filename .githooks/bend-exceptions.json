@@ -101,5 +101,18 @@
     "public/brand/index.html",
     "public/compose.yaml",
     "public/index.html"
+  ],
+  "Plow browser presentation, compiled policy packaging, and Cloudflare deployment I/O": [
+    "dashboard/plow/assets/OFL.txt",
+    "dashboard/plow/assets/geist.woff2",
+    "dashboard/plow/build.ts",
+    "dashboard/plow/deploy.ts",
+    "dashboard/plow/smoke.mjs",
+    "dashboard/plow/view/index.html",
+    "dashboard/plow/view/summary.css",
+    "dashboard/plow/view/summary.mjs",
+    "dashboard/plow/view/timeline.css",
+    "dashboard/plow/view/timeline.mjs",
+    "dashboard/plow/worker.mjs"
   ]
 }
