@@ -137,8 +137,9 @@
 .bottlenecks table{width:100%;border-collapse:collapse;table-layout:fixed}
 .bottlenecks caption,.bottlenecks th{text-align:left}
 .bottlenecks th,.bottlenecks td{border-bottom:1px solid #d6d1ca;padding:.55rem .35rem;overflow-wrap:anywhere}
-.bottlenecks th:first-child{width:44%}
-.bottlenecks th:nth-child(2){width:30%}
+.bottlenecks th:first-child{width:42%}
+.bottlenecks th:nth-child(2){width:33%}
+.bottlenecks thead th{overflow-wrap:normal}
 .bottlenecks table + p,.bottlenecks table + table{margin-block-start:1rem}
 .analysis-thread{display:flex;align-items:center;flex-wrap:wrap;gap:.6rem;margin-block:1rem}
 .analysis-thread select{font:inherit;min-height:44px;max-width:100%;background:white;color:#38271f;border:1px solid #aa9c90;border-radius:4px;padding:.35rem .6rem}
