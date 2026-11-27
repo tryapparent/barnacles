@@ -6,6 +6,53 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
+test("PR watch replay requires the stamped revision and exact completed run", () => {
+  const directory = process.env.PLOW_TEST_DIRECTORY;
+  assert.ok(directory);
+  const job = mkdtempSync(join(directory, "pr-watch-test-"));
+  const capture = join(job, "capture.json");
+  const cli = fileURLToPath(new URL("./t3.ts", import.meta.url));
+  const at = (second: string) => `2026-01-01T12:00:${second}Z`;
+  const key = { host: "github.com", repository: "synthetic/example", number: 7, headSha: "a".repeat(40) };
+  const thread = { id: "mcp:launch:synthetic" };
+  const message = { id: "message:pr-watch:synthetic", threadId: thread.id, runId: "run:thread:mcp%3Alaunch%3Asynthetic:ordinal:2",
+    notification: { source: { kind: "monitor", pullRequest: { ...key, watchStartedAt: at("01") } } },
+    createdAt: at("02.125"), text: "Private prose never enters the receipt" };
+  const run = { id: message.runId, userMessageId: message.id, threadId: thread.id, status: "completed",
+    requestedAt: at("02.125"), startedAt: at("02.250"), completedAt: at("04") };
+  const replay = (messages: unknown[] = [message], runs: unknown[] = [run], expected = { ...key, messageId: message.id }) => {
+    writeFileSync(capture, JSON.stringify({ version: 1, expected, projection: { thread, messages, runs } }));
+    return JSON.parse(execFileSync(process.execPath, [cli, "--replay-pr-watch", job, capture],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
+  };
+
+  try {
+    const proof = replay();
+    assert.deepEqual(proof, { thread: thread.id, message: message.id, run: run.id, host: key.host,
+      repository: key.repository, number: key.number, head_sha: key.headSha,
+      watch_started_ms: Date.parse(at("01")), notification_created_ms: Date.parse(message.createdAt),
+      run_started_ms: Date.parse(run.startedAt), run_completed_ms: Date.parse(run.completedAt) });
+    assert.deepEqual(replay([message, { ...message, text: "Ignored detail" }], [run, run]), proof);
+    assert.deepEqual(replay(), proof);
+    assert.equal(replay([message], [{ ...run, userMessageId: "message:other" }]), null);
+    assert.equal(replay([message], [{ ...run, id: "run:other" }]), null);
+    assert.equal(replay([message], [{ ...run, userMessageId: undefined }]), null);
+    assert.equal(replay([message], [{ ...run, threadId: "thread:other" }]), null);
+    assert.equal(replay([{ ...message, notification: { source: { kind: "monitor" } } }]), null);
+    assert.equal(replay([{ ...message, notification: undefined }]), null);
+    assert.equal(replay([message], [{ ...run, startedAt: at("02.124") }]), null);
+    assert.equal(replay([message], [{ ...run, startedAt: "" }]), null);
+    assert.equal(replay([message], [{ ...run, status: "failed" }]), null);
+    assert.equal(replay([message], [run, { ...run, startedAt: at("02.251") }]), null);
+    assert.equal(replay([message, { ...message, createdAt: at("02.126") }]), null);
+    assert.equal(replay([message], [run], { ...key, messageId: message.id, repository: "synthetic/other" }), null);
+    assert.equal(replay([message], [run], { ...key, messageId: message.id, headSha: "b".repeat(40) }), null);
+    assert.equal(replay([message], [run], { ...key, messageId: message.id, number: 8 }), null);
+  } finally {
+    rmSync(job, { recursive: true, force: true });
+  }
+});
+
 test("changed-code CLI ranks Git paths and reports bounded and shallow coverage", () => {
   const directory = process.env.PLOW_TEST_DIRECTORY;
   assert.ok(directory, "Set PLOW_TEST_DIRECTORY to a private job directory");

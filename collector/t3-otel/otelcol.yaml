@@ -1,0 +1,84 @@
+extensions:
+  bearertokenauth/t3_ingress:
+    filename: /run/secrets/t3_ingress
+  bearertokenauth/t3_backend:
+    filename: /run/secrets/t3_backend
+  file_storage/t3:
+    directory: /queue/data
+    fsync: true
+
+receivers:
+  otlp/t3:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+        max_request_body_size: 4194304
+        auth:
+          authenticator: bearertokenauth/t3_ingress
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 128
+    spike_limit_mib: 32
+  filter/t3:
+    error_mode: propagate
+    trace_conditions:
+      - 'resource.attributes["service.name"] != "t3code-server"'
+      - 'not IsMatch(span.name, "^(orchestrationV2[.]dispatch[.](once|withReceipt|threadCreate)|server[.](startup|shutdown))$")'
+      - 'spanevent.name == "" or spanevent.name != ""'
+  transform/t3:
+    error_mode: propagate
+    trace_statements:
+      - context: resource
+        statements:
+          - set(resource.schema_url, "")
+          - keep_keys(resource.attributes, ["service.name"])
+          - set(resource.attributes["plow.t3.instance"], "${env:PLOW_T3_INSTANCE}")
+      - context: scope
+        statements:
+          - set(scope.schema_url, "")
+          - keep_keys(scope.attributes, [])
+          - set(scope.name, "plow.t3")
+          - set(scope.version, "")
+      - context: span
+        statements:
+          - set(span.trace_state, "")
+          - set(span.status.message, "")
+          - set(span.status.code, STATUS_CODE_UNSET)
+          - set(span.links, nil)
+          - keep_keys(span.attributes, ["orchestration_v2.command_id", "orchestration_v2.command_type", "orchestration_v2.thread_id"])
+          - delete_key(span.attributes, "orchestration_v2.command_id") where not IsString(span.attributes["orchestration_v2.command_id"]) or not IsMatch(span.attributes["orchestration_v2.command_id"], "^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$")
+          - delete_key(span.attributes, "orchestration_v2.thread_id") where not IsString(span.attributes["orchestration_v2.thread_id"]) or not IsMatch(span.attributes["orchestration_v2.thread_id"], "^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$")
+          - delete_key(span.attributes, "orchestration_v2.command_type") where span.attributes["orchestration_v2.command_type"] != "thread.create" and span.attributes["orchestration_v2.command_type"] != "thread.archive"
+
+exporters:
+  otlp_http/t3:
+    endpoint: http://evidence:4320
+    encoding: json
+    compression: none
+    auth:
+      authenticator: bearertokenauth/t3_backend
+    sending_queue:
+      enabled: true
+      storage: file_storage/t3
+      queue_size: 256
+      num_consumers: 1
+      wait_for_result: false
+    retry_on_failure:
+      enabled: true
+      max_interval: 30s
+      max_elapsed_time: 0s
+
+service:
+  extensions: [bearertokenauth/t3_ingress, bearertokenauth/t3_backend, file_storage/t3]
+  telemetry:
+    logs:
+      level: fatal
+    metrics:
+      level: none
+  pipelines:
+    traces/t3:
+      receivers: [otlp/t3]
+      processors: [memory_limiter, filter/t3, transform/t3]
+      exporters: [otlp_http/t3]

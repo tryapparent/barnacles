@@ -3,7 +3,7 @@ import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { buildPolicies, buildPolicy, loadPolicy } from "../tooling/bend.ts";
 import { admissionPolicy, joinSession, loadEvidence, repository, sessionJoinPolicy, sourcePolicy, type AdmissionPolicy, type NativeBinding, type SessionJoinPolicy, type Point, type SourcePolicy, type ThreadEvidence } from "../evidence/index.ts";
-import { array, bendList, millis, point, row, sha, str, timeParts, toMillis, token } from "./wire.ts";
+import { array, bendList, boundedFile, millis, point, row, sha, str, timeParts, toMillis, token } from "./wire.ts";
 import { positiveInt } from "./github/attempt.ts";
 import { inspectRollout } from "./codex/rollout.ts";
 
@@ -17,6 +17,80 @@ function t3Id(value: unknown): string {
     throw Error("Invalid T3 source identifier");
   }
   return value;
+}
+
+const watchPolicy = new URL("../evidence/analysis/pr-watch.bend", import.meta.url);
+
+function projectionId(value: unknown): string {
+  try {
+    return t3Id(value);
+  } catch {
+    return "";
+  }
+}
+
+function watchKey(value: unknown) {
+  const key = row(value ?? {});
+  const number = key.number;
+  return { $: "PrWatchKey", host: str(key.host), repository: str(key.repository),
+    number: typeof number === "number" && Number.isInteger(number) && number > 0 && number <= 0xffffffff ? number : 0,
+    sha: str(key.headSha) };
+}
+
+function watchMessage(value: unknown) {
+  const message = row(value);
+  const source = row(row(message.notification ?? {}).source ?? {});
+  return { $: "PrWatchMessage", id: projectionId(message.id), thread: projectionId(message.threadId),
+    run: projectionId(message.runId), kind: str(source.kind), key: watchKey(source.pullRequest),
+    watch_started: point(millis(row(source.pullRequest ?? {}).watchStartedAt)), created: point(millis(message.createdAt)) };
+}
+
+function watchRun(value: unknown) {
+  const run = row(value);
+  return { $: "PrWatchRun", id: projectionId(run.id), thread: projectionId(run.threadId),
+    user_message: projectionId(run.userMessageId), status: str(run.status),
+    started: point(millis(run.startedAt)), completed: point(millis(run.completedAt)) };
+}
+
+type Pickup = { $: "Pickup"; thread: string; message: string; run: string; host: string; repository: string;
+  number: number; head_sha: string; watch_started: Point; notification_created: Point; run_started: Point; run_completed: Point };
+
+async function replayPrWatch(input: unknown, scratch: string) {
+  const capture = row(input);
+  if (capture.version !== 1) throw Error("Expected PR-watch capture version 1");
+  const expected = row(capture.expected);
+  const projection = row(capture.projection);
+  const thread = projectionId(row(projection.thread).id);
+  const message = projectionId(expected.messageId);
+  if (!thread || !message) throw Error("Expected PR-watch thread and message IDs");
+  const { host, repository, number, sha } = watchKey(expected);
+  const messages = bendList(array(projection.messages, 4096).map(watchMessage));
+  const runs = bendList(array(projection.runs, 4096).map(watchRun));
+  const policy = await loadPolicy<{
+    pr_watch_pickup(thread: string, message: string, host: string, repository: string, number: number,
+      sha: string, messageRows: typeof messages, runRows: typeof runs): { $: "None" } | { $: "Some"; value: Pickup };
+  }>(await buildPolicy(scratch, watchPolicy, "pr-watch.mjs"));
+  const result = policy.pr_watch_pickup(thread, message, host, repository, number, sha, messages, runs);
+  if (result.$ === "None") return null;
+  const { $, watch_started, notification_created, run_started, run_completed, ...identity } = result.value;
+  return { ...identity, watch_started_ms: toMillis(watch_started), notification_created_ms: toMillis(notification_created),
+    run_started_ms: toMillis(run_started), run_completed_ms: toMillis(run_completed) };
+}
+
+async function replayWatchFile(directory: string, file: string) {
+  const contents = boundedFile(file, 4 * 1024 * 1024).toString("utf8");
+  let input: unknown;
+  try {
+    input = JSON.parse(contents);
+  } catch {
+    throw Error("Invalid PR-watch capture JSON");
+  }
+  const scratch = mkdtempSync(join(resolve(directory), "build-"));
+  try {
+    console.log(JSON.stringify(await replayPrWatch(input, scratch)));
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
 }
 
 export function t3Snapshot(input: unknown, rules: SourcePolicy): ThreadEvidence {
@@ -203,6 +277,11 @@ async function importLiveSession(evidence: string, scratch: string, bindingPath:
 }
 
 async function main() {
+  if (process.argv[2] === "--replay-pr-watch") {
+    const [directory, file, ...extra] = process.argv.slice(3);
+    if (!directory || !file || extra.length) throw Error("Usage: t3.ts --replay-pr-watch JOB_DIRECTORY CAPTURE_JSON");
+    return replayWatchFile(directory, file);
+  }
   const [directory, t3Database, t3Instance, threadId, codexInstance, rollout, ...extra] = process.argv.slice(2);
   const live = t3Database === "join-session";
   if (!directory || !t3Database || !t3Instance || !threadId || extra.length ||
