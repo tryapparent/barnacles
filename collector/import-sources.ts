@@ -421,6 +421,18 @@ async function replayBottlenecks(file: string, scratch: string) {
           token(value.jobsRun), token(value.cancelRun), token(value.forceRun), token(value.status), clockSecond(value.jobs),
           factText(value.normalError), clockSecond(value.forceStatus), factText(value.forceError),
           clockSecond(value.jobsObserved), clockSecond(value.cancelDenied), clockSecond(value.statusObserved), clockSecond(value.forceDenied));
+      } else if (value.kind === "actions-manual-workflow-completion") {
+        state = policy.observe_manual_workflow_completion(state, token(value.thread), id, token(value.run),
+          token(value.pendingRun), token(value.observedRun), clockSecond(value.attempt), token(value.event), sha(value.head),
+          sha(value.pendingHead), sha(value.observedHead), token(value.pendingStatus), token(value.observedStatus),
+          token(value.conclusion), token(value.observedConclusion), clockSecond(value.pendingAt), clockSecond(value.lastJobEnd),
+          clockSecond(value.providerUpdated), clockSecond(value.observedAt));
+      } else if (value.kind === "local-electron-sandbox-helper") {
+        state = policy.observe_local_electron_sandbox(state, token(value.thread), id, token(value.operation),
+          factText(value.runtime), factText(value.diagnostic), factText(value.terminal), bendBool(value.failed));
+      } else if (value.kind === "actions-job-log-escape-refusal") {
+        state = policy.observe_actions_job_log_escape_refusal(state, token(value.thread), id, token(value.operation),
+          token(value.job), token(value.responseJob), factText(value.diagnostic), bendBool(value.failed));
       } else if (value.kind === "hosted-workflow-startup-failure") {
         state = policy.observe_hosted_workflow_startup_failure(state, token(value.thread), id, token(value.status),
           token(value.conclusion), clockSecond(value.jobCount), clockSecond(value.attempt));
