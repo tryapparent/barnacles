@@ -1,11 +1,6 @@
 const feedStatus = document.getElementById('feed-status')
 const feedContent = document.getElementById('feed-content')
-if (!feed.unavailable && traces.length === 0) {
-  feedStatus.textContent = 'No measured session time has been imported yet.'
-}
-feedStatus.hidden = traces.length > 0
-feedContent.hidden = traces.length === 0
-if (traces.length > 0) {
+if (feed.observed > 0) {
   const cutoff = document.getElementById('feed-cutoff')
   cutoff.textContent = 'Observed through ' + new Intl.DateTimeFormat('en-GB', {
     dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC',
@@ -28,13 +23,15 @@ const categories = [
 const summaryInput = rows => asList(rows.map((trace, index) => ({
   $: 'SummaryTrace', index: index + 1, start: trace.startUtcMs, parts: trace.evidence,
 })))
-const timelineTraces = summaryInput(evidenceRows)
 const overviewEnd = feed.overview?.to ?? feed.observed
-const overviewStart = policy.overview_start(overviewEnd)
-const overviewRows = feed.overview ? feed.overview.traces.map(decodeEvidence) : evidenceRows
+const feedStart = feed.overview?.from ?? policy.dashboard_frame('24h', overviewEnd).start
+const overviewRows = (feed.overview?.traces ?? feed.traces).map(decodeEvidence)
 const overviewTraces = summaryInput(overviewRows)
-const overview = policy.time_summary(overviewTraces, overviewStart, overviewEnd)
-PlowUI.renderAgentWorkTrend([...values(policy.agent_work_trend(overviewTraces, overviewStart))])
+const spans = asList(overviewRows.map(trace => ({
+  $: 'UtcSpan', start: trace.startUtcMs, end: trace.startUtcMs + trace.end,
+})))
+let timelineTraces
+let overview
 let selection = policy.initial_overview()
 let previousWindow = ''
 let matches = new Map()
@@ -60,8 +57,8 @@ let previousTap = null
 navigatorTrack.addEventListener('pointerdown', event => {
   if (event.button !== 0 || gesture || event.target.closest('.mini-handle')) return
   const start = miniPosition(event)
-  const left = (visibleWindow.start - frame.start) / scale
-  const right = (visibleWindow.end - frame.start) / scale
+  const left = (visibleWindow.start - frame.start) / scale()
+  const right = (visibleWindow.end - frame.start) / scale()
   event.preventDefault()
   minimap.focus({ preventScroll:true })
   const mode = zoom > 1 && start >= left && start <= right ? 'pan' : 'brush'
@@ -73,7 +70,7 @@ navigatorTrack.addEventListener('pointermove', event => {
   const stop = miniPosition(event)
   const delta = stop - gesture.start
   if (gesture.mode === 'pan') {
-    panWindow(delta * scale / duration(), gesture.window.start)
+    panWindow(delta * scale() / duration(), gesture.window.start)
   } else {
     miniBrush.hidden = false
     miniBrush.style.left = Math.min(stop, gesture.start) * 100 + '%'
@@ -88,7 +85,7 @@ navigatorTrack.addEventListener('pointerup', event => {
     const repeat = previousTap && event.timeStamp - previousTap.time < 450 && Math.abs(event.clientX - previousTap.x) < 8
     previousTap = repeat ? null : { time: event.timeStamp, x: event.clientX }
     if (repeat) applyWindow(frame)
-    else if (gesture.mode === 'brush' && zoom > 1) panWindow(0, frame.start + scale * stop - duration() / 2)
+    else if (gesture.mode === 'brush' && zoom > 1) panWindow(0, frame.start + scale() * stop - duration() / 2)
   } else {
     previousTap = null
     if (gesture.mode === 'brush') selectWindow(Math.min(stop, gesture.start), Math.max(stop, gesture.start), distance, frame)
@@ -109,7 +106,7 @@ navigatorTrack.addEventListener('keydown', event => {
     return
   }
   const direction = event.key === 'ArrowLeft' ? -1 : 1
-  const delta = direction * Math.max(scale * .005, duration() * .1)
+  const delta = direction * Math.max(scale() * .005, duration() * .1)
   const thumb = event.target.closest('.mini-handle')?.dataset.index
   if (thumb === '0') moveBoundary(true, visibleWindow.start + delta)
   else if (thumb === '1') moveBoundary(false, visibleWindow.end + delta)
@@ -118,8 +115,8 @@ navigatorTrack.addEventListener('keydown', event => {
 
 function paintRange() {
   const { start, end } = visibleWindow
-  const first = (start - frame.start) / scale
-  const last = (end - frame.start) / scale
+  const first = (start - frame.start) / scale()
+  const last = (end - frame.start) / scale()
   miniWindow.style.left = (first * 100) + '%'
   miniWindow.style.width = (100 / zoom) + '%'
   navigatorTrack.classList.toggle('has-range', zoom > 1)
@@ -273,11 +270,43 @@ function paintThreadMatch(row, rail, index) {
   }
 }
 
-if (traces.length > 0) {
+function showRange(range) {
+  frame = policy.dashboard_frame(range, overviewEnd)
+  const complete = policy.feed_covers(range, frame, feedStart)
+  evidenceRows = complete ? [...values(policy.timeline_indices(spans, 10, frame, 0))].map((index, row) => ({
+    ...overviewRows[index], title: 'Thread ' + (row + 1),
+  })) : []
+  feedStatus.hidden = evidenceRows.length > 0
+  feedContent.hidden = !feedStatus.hidden
+  if (feed.unavailable) return
+  feedStatus.textContent = !complete ? 'Seven-day activity is temporarily unavailable. Reload to try again.'
+    : 'No measured session time in this range.'
+  closeInspector()
+  clearTooltip()
+  if (!evidenceRows.length) return
+
+  selection = policy.initial_overview()
+  previousWindow = ''
+  timelineTraces = summaryInput(evidenceRows)
+  overview = policy.time_summary(overviewTraces, frame.start, frame.end)
+  PlowUI.renderAgentWorkTrend([...values(policy.agent_work_trend(overviewTraces, range, frame.start, frame.end))])
   renderSummary()
+  minimap.querySelector('.mini-threads').replaceChildren(...evidenceRows.map((trace, index) => {
+    const mark = makeElement('span')
+    const start = Math.max(frame.start, trace.startUtcMs)
+    const end = Math.min(frame.end, trace.startUtcMs + trace.end)
+    mark.style.left = percent(start - frame.start, scale())
+    mark.style.width = percent(end - start, scale())
+    mark.style.top = 3 + index * 2.6 + 'px'
+    return mark
+  }))
+  measurementWidth = undefined
   applyWindow(frame)
-  document.fonts.ready.then(() => {
-    measurementWidth = undefined
-    applyWindow(visibleWindow, fitted)
-  })
 }
+
+document.addEventListener('plow-range-change', event => showRange(event.detail))
+showRange('24h')
+document.fonts.ready.then(() => {
+  measurementWidth = undefined
+  applyWindow(visibleWindow, fitted)
+})

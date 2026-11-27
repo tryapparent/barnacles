@@ -28,12 +28,15 @@ def point(+from: Nat, +to: Nat, score: TrendScore) -> TrendPoint:
       +mean = Nat.div(Nat.add(total,Nat.mul(measured,50n)),Nat.mul(Nat.max(1n,measured),100n))
       TrendPoint{from,to,measured,mean}
 
-def trend_points(buckets: Nat, +traces: List<&2,Summary.SummaryTrace>, +from: Nat) -> List<&2,TrendPoint>:
+def trend_points(buckets: Nat, +traces: List<&2,Summary.SummaryTrace>, +from: Nat, +end: Nat, +step: Nat) -> List<&2,TrendPoint>:
   match buckets:
     case 0n: []
     case 1n+rest:
-      +to = Nat.add(from,14400000n)
-      point(from,to,score_traces(traces,from,to,TrendScore{0n,0n})) <> trend_points(rest,traces,to)
+      +to = Nat.min(end,Nat.add(from,step))
+      point(from,to,score_traces(traces,from,to,TrendScore{0n,0n})) <>
+        trend_points(rest,traces,to,end,step)
 
-def agent_work_trend(traces: List<&2,Summary.SummaryTrace>, from: Nat) -> List<&2,TrendPoint>:
-  trend_points(6n,traces,from)
+def agent_work_trend(traces: List<&2,Summary.SummaryTrace>, range: String, +from: Nat, +to: Nat) -> List<&2,TrendPoint>:
+  +count = Bool.pick(Nat,String.eq(range,"7d"),7n,6n)
+  +step = Nat.div(Nat.add(Nat.sub(to,from),Nat.sub(count,1n)),count)
+  trend_points(count,traces,from,to,step)

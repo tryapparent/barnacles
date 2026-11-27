@@ -1,3 +1,4 @@
+import { buildPolicy, loadPolicy } from "../../tooling/bend.ts";
 import type { DatabaseSync, SQLOutputValue } from "node:sqlite";
 import type { IntervalClock } from "./intervals.ts";
 import type { List } from "../storage/sources.ts";
@@ -193,4 +194,14 @@ export function rows<T>(list: List<T>): T[] {
   const result: T[] = [];
   for (let row = list; row.$ === "Con"; row = row.tail) result.push(row.head);
   return result;
+}
+
+export async function measureOutcomeDelay(windows: List<unknown>, scratch: string, window?: { from: number; to: number }) {
+  type Report = { totals: unknown; patterns: unknown };
+  const policy = await loadPolicy<{ outcome_delays(w: List<unknown>): Report;
+    outcome_delays_in_window(w: List<unknown>, from: number, to: number): Report }>(
+    await buildPolicy(scratch, new URL("../analysis/outcome-delay.bend", import.meta.url), "outcome-delay.mjs"));
+  if (!window) return policy.outcome_delays(windows);
+  const { totals, patterns } = policy.outcome_delays_in_window(windows, window.from, window.to);
+  return { totals, patterns };
 }

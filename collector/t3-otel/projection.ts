@@ -86,7 +86,7 @@ async function joinStored(path: string, traces: string, history: string, scratch
   ]);
   const admission = await loadPolicy<AdmissionPolicy>(admissionFile);
   const policy = await loadPolicy<SessionJoinPolicy>(joinFile);
-  const window = await analysisWindow(scratch, asOf);
+  const window = await analysisWindow(scratch, asOf, "7d");
   const captures = readT3Projections(history, t3Instance, window.from);
   let bound = 0;
   let withSpans = 0;

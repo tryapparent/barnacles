@@ -1,4 +1,5 @@
 import Base
+import ./joined/range.bend as Range
 
 type Run is Data:
   Run{requested: Nat, started: Nat, completed: Nat, status: String}
@@ -79,7 +80,7 @@ def ci_observations(input: List<&2,CiPoll>, +created: Nat, +last: Nat) -> List<&
       Bool.pick(List<&2,Span>,valid,Span{Nat.sub(a,created),Nat.sub(b,created),"CI watcher observation"} <> tail,tail)
 
 type PublishedFeed is Data:
-  PublishedFeed{observed: Nat, traces: List<&2,Trace>, overview: List<&2,Trace>, as_of: Nat}
+  PublishedFeed{observed: Nat, traces: List<&2,Trace>, overview: List<&2,Trace>, from: Nat, as_of: Nat}
 
 type Projection is Data:
   Projection{remaining: Nat, observed: Nat, traces: List<&2,Trace>, overview: List<&2,Trace>}
@@ -90,12 +91,12 @@ def include_trace(clocks: Clocks, +created: Nat, +updated: Nat, +from: Nat, +to:
     case Clocks{+last,+work,wait,errors} Projection{+remaining,+observed,+traces,+overview}:
       +known = Nat.is_lt(0n,last)
       +latest = Bool.and(known,Nat.is_lt(0n,remaining))
-      +in_day = Bool.and(known,Bool.and(Nat.is_lt(created,to),Nat.is_lt(from,Nat.add(created,last))))
+      +in_week = Bool.and(known,Bool.and(Nat.is_lt(created,to),Nat.is_lt(from,Nat.add(created,last))))
       +trace : Trace = Trace{created,last,work,wait,errors,provider_detail(detail,created,work),ci_observations(ci,created,last)}
       Projection{Bool.pick(Nat,latest,Nat.sub(remaining,1n),remaining),
         Bool.pick(Nat,latest,Nat.max(observed,updated),observed),
         Bool.pick(List<&2,Trace>,latest,trace <> traces,traces),
-        Bool.pick(List<&2,Trace>,in_day,trace <> overview,overview)}
+        Bool.pick(List<&2,Trace>,in_week,trace <> overview,overview)}
 
 def collect(threads: List<&2,Thread>, +from: Nat, +to: Nat, projection: Projection) -> Projection:
   match threads:
@@ -104,11 +105,12 @@ def collect(threads: List<&2,Thread>, +from: Nat, +to: Nat, projection: Projecti
       +clocks = run_clocks(runs,created,updated,Clocks{0n,[],[],[]})
       collect(rest,from,to,include_trace(clocks,created,updated,from,to,detail,ci,projection))
 
-def publish(projection: Projection, as_of: Nat) -> PublishedFeed:
+def publish(projection: Projection, from: Nat, as_of: Nat) -> PublishedFeed:
   match projection:
     case Projection{_,observed,traces,overview}:
-      PublishedFeed{observed,List.reverse(&2,Trace,traces),List.reverse(&2,Trace,overview),as_of}
+      PublishedFeed{observed,List.reverse(&2,Trace,traces),List.reverse(&2,Trace,overview),from,as_of}
 
 def project_feed(threads: List<&2,Thread>, +as_of: Nat) -> PublishedFeed:
   +newest = List.sort(~Thread,~thread_before,threads)
-  publish(collect(newest,Nat.sub(as_of,86400000n),as_of,Projection{10n,0n,[],[]}),as_of)
+  +from = Range.start("7d",as_of)
+  publish(collect(newest,from,as_of,Projection{10n,0n,[],[]}),from,as_of)

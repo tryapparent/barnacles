@@ -17,4 +17,6 @@ export { joinSession, sessionJoinPolicy, type NativeBinding, type SessionJoinPol
 
 export const t3OtelPolicy = new URL("./storage/t3-otel.bend", import.meta.url);
 
-export { analysisWindow, backupAnalysisInput, joinedTargets, measureOutcomeDelay, publishJoinedAnalysis } from "./analysis/session-history.ts";
+export { analysisWindow, joinedTargets, publishJoinedAnalysis } from "./analysis/session-history.ts";
+export { backupAnalysisInput } from "./storage/t3/history.ts";
+export { measureOutcomeDelay } from "./projection/timing.ts";

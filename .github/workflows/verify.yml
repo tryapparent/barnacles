@@ -51,7 +51,9 @@ jobs:
           const feedFile = join(process.env.PLOW_TEST_DIRECTORY, "timeline.json");
           process.env.PLOW_MCP_FEED_FILE = feedFile;
           const db = new DatabaseSync(file);
-          db.exec("CREATE TABLE analysis_summary(id, payload); CREATE TABLE analysis_threads(id, payload)");
+          db.exec("CREATE TABLE analysis_summary(id, payload); CREATE TABLE analysis_threads(id, payload); CREATE TABLE analysis_week(id, payload)");
+          const week = { range: "7d", coverage: { active: 2 }, priorities: [] };
+          db.prepare("INSERT INTO analysis_week VALUES(1, ?)").run(JSON.stringify(week));
           db.prepare("INSERT INTO analysis_summary VALUES(1, ?)").run(JSON.stringify(summary));
           db.prepare("INSERT INTO analysis_threads VALUES(?, ?)").run(id, JSON.stringify(thread));
           db.close();
@@ -72,10 +74,12 @@ jobs:
             assert.equal((await fetch(endpoint, { method: "POST",
               headers: { ...headers, Origin: "https://example.invalid" } })).status, 403);
             assert.equal((await fetch(base + "/api/v1/bottlenecks", { headers })).status, 403);
-            const rest = await fetch(base + "/api/v1/bottlenecks", {
+            const read = range => fetch(base + "/api/v1/bottlenecks" + range, {
               headers: { "Tailscale-User-Login": process.env.PLOW_ANALYSIS_USER },
             });
-            assert.deepEqual(await rest.json(), summary);
+            assert.deepEqual(await (await read("")).json(), summary);
+            assert.deepEqual(await (await read("?range=7d")).json(), week);
+            assert.equal((await read("?range=30d")).status, 400);
             await client.connect(new StreamableHTTPClientTransport(endpoint, { requestInit: { headers } }));
             assert.deepEqual((await client.listTools()).tools.map(tool => tool.name),
               ["get_plow_bottlenecks", "get_plow_thread", "get_plow_timeline", "get_plow_charts"]);

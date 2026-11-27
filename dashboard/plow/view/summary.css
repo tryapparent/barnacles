@@ -7,7 +7,7 @@
 .time-strip{margin:4px 10px 0}
 .summary-top h2,#timeline-heading{font:400 clamp(23px,2vw,28px)/1.16 "Young Serif",Georgia,serif;letter-spacing:-.03em;margin:0}
 #summary-total{color:var(--muted);font-size:13px;font-weight:550;font-variant-numeric:tabular-nums}
-.summary-note{margin:4px 0 8px;font-size:13px;color:var(--muted)}
+.summary-note{width:fit-content;margin:4px 0 8px;padding:8px 12px;border-radius:5px;background:var(--white);font-size:13px;color:var(--muted)}
 .summary-tiles{position:relative}
 .treemap[inert]{visibility:hidden}
 .treemap{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);grid-template-rows:repeat(2,74px);gap:5px}
@@ -98,7 +98,6 @@
 }
 
 @font-face{font-family:"Source Serif 4";src:url(data:font/woff2;base64,__PLOW_SOURCE_SERIF__) format("woff2");font-weight:200 900;font-display:swap}
-.overview-period{width:fit-content;margin:0 0 8px;padding:3px 8px;border-radius:4px;background:var(--earth);color:var(--cream);font-size:13px;font-weight:600}
 .activity-overview>.summary-panel{margin-top:0}
 .agent-work-trend{position:relative;min-width:0;color:var(--ink);font:400 14px/1.35 "Source Serif 4",serif}
 .agent-work-trend .agent-work-empty{margin:12px 0 0}

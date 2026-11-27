@@ -25,7 +25,10 @@ type Priority = {
   worstMs: number | null;
 };
 
-type PrioritiesReport = { window: { to: string }; coverage: { active: number }; priorities: Priority[] };
+type TimeRange = "24h" | "7d";
+const rangeLabels: Record<TimeRange, string> = { "24h": "Last 24 hours", "7d": "Last 7 days" };
+
+type PrioritiesReport = { range?: TimeRange; window: { to: string }; coverage: { active: number }; priorities: Priority[] };
 type PrioritiesState = { report: PrioritiesReport } | { failed: true };
 
 const number = new Intl.NumberFormat();
@@ -110,28 +113,30 @@ function PriorityInspector({ priorities }: { priorities: Priority[] }) {
   </div>;
 }
 
-function Priorities({ api }: { api: string }) {
+function Priorities({ api, range }: { api: string; range: TimeRange }) {
   const [result, setResult] = useState<PrioritiesState>();
   const [attempt, retry] = useState(0);
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
     const controller = new AbortController();
-    fetch(api, { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(8000)]) })
+    const url = new URL(api);
+    if (range === "7d") url.searchParams.set("range", range);
+    fetch(url, { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(8000)]) })
       .then(async response => {
         if (!response.ok) throw Error("Priorities request failed");
         const report: PrioritiesReport = await response.json();
         if (!Array.isArray(report.priorities) || !Number.isSafeInteger(report.coverage?.active) ||
-            !Number.isFinite(Date.parse(report.window?.to))) throw Error("Invalid priorities report");
+            !Number.isFinite(Date.parse(report.window?.to)) || (range === "7d" && report.range !== range)) throw Error("Invalid priorities report");
         if (!controller.signal.aborted) setResult({ report });
       })
       .catch(() => { if (!controller.signal.aborted) setResult({ failed: true }); });
     return () => controller.abort();
-  }, [api, attempt]);
+  }, [api, range, attempt]);
   const report = result && "report" in result ? result.report : undefined;
   return <Card className="priorities" aria-labelledby="priorities-heading">
     <header className="priorities-heading">
-      <h2 id="priorities-heading" ref={heading} tabIndex={-1}>What to fix today</h2>
-      <p>Last 24 hours{report && <> · {quantity(report.coverage.active, "active thread")} ·
+      <h2 id="priorities-heading" ref={heading} tabIndex={-1}>{range === "24h" ? "What to fix today" : "What to fix this week"}</h2>
+      <p>{rangeLabels[range]}{report && <> · {quantity(report.coverage.active, "active thread")} ·
         {" Ending "}<time dateTime={report.window.to}>{time.format(new Date(report.window.to))}</time></>}</p>
     </header>
     {!result && <p className="priority-status" role="status">Loading priorities…</p>}
@@ -151,19 +156,31 @@ function Priorities({ api }: { api: string }) {
 }
 
 function Dashboard({ field, fieldTexture, analysisApi }: { field: string; fieldTexture?: string; analysisApi?: string }) {
+  const [range, setRange] = useState<TimeRange>("24h");
   return <>
     <main>
       <img className="activity-landscape" src={field} alt="" />
       <header className="activity-header">
         <div className="activity-meta">
           <p className="wordmark">plow</p>
+          <div className="time-range" role="group" aria-label="Time frame">
+            <span aria-hidden="true">Time frame</span>
+            {(["24h", "7d"] as const).map(option =>
+              <Button key={option} type="button" variant="outline" aria-label={rangeLabels[option]}
+                aria-pressed={range === option} onClick={() => {
+                  if (range === option) return;
+                  setRange(option);
+                  document.dispatchEvent(new CustomEvent("plow-range-change", { detail: option }));
+                }}>{option === "24h" ? "24h" : "7 days"}</Button>
+            )}
+          </div>
         </div>
         <h1 className="visually-hidden">Thread activity</h1>
       </header>
       <div className="board">
-        <p className="summary-note" id="feed-status">Session data is temporarily unavailable. Reload to try again.</p>
+        <p className="summary-note" id="feed-status" role="status">Session data is temporarily unavailable. Reload to try again.</p>
         <div id="feed-content" hidden>
-          <p className="overview-period" id="overview-period">Last 24 hours</p>
+          <p className="visually-hidden" id="overview-period">{rangeLabels[range]}</p>
           <div className="activity-overview"><Summary fieldTexture={fieldTexture} /><AgentWorkTrend /></div>
           <Card id="timeline-panel" aria-labelledby="timeline-heading">
             <div className="timeline-heading-row">
@@ -217,7 +234,7 @@ function Dashboard({ field, fieldTexture, analysisApi }: { field: string; fieldT
             </div>
           </Card>
         </div>
-        {analysisApi && <Priorities key={analysisApi} api={analysisApi} />}
+        {analysisApi && <Priorities key={range} api={analysisApi} range={range} />}
       </div>
     </main>
     <span className="measure" aria-hidden="true" />

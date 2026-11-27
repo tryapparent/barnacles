@@ -15,10 +15,14 @@ function fixtureRows<T>(list: FixtureList<T>) {
   return output;
 }
 
-test("daily outcome impact clips confirmed intervals and keeps shared time out of unique pattern totals", async () => {
+function testJob(name: string) {
   const parent = process.env.PLOW_TEST_DIRECTORY;
-  assert.ok(parent);
-  const job = mkdtempSync(join(parent, "daily-impact-"));
+  assert.ok(parent, "Set PLOW_TEST_DIRECTORY to a private job directory");
+  return mkdtempSync(join(parent, name));
+}
+
+test("daily outcome impact clips confirmed intervals and keeps shared time out of unique pattern totals", async () => {
+  const job = testJob("daily-impact-");
   try {
     const compiled = await buildPolicy(job, new URL("./outcome-delay.bend", import.meta.url), "daily-impact.mjs");
     type Time = { $: "Some"; value: number } | { $: "None" };
@@ -54,9 +58,7 @@ test("daily outcome impact clips confirmed intervals and keeps shared time out o
 
 
 test("timeline protects gaps, overlap precedence, and clipped failure times", async () => {
-  const parent = process.env.PLOW_TEST_DIRECTORY;
-  assert.ok(parent, "Set PLOW_TEST_DIRECTORY to a private job directory");
-  const job = mkdtempSync(join(parent, "timeline-"));
+  const job = testJob("timeline-");
   try {
     const compiled = await buildPolicy(job, new URL("./session-timeline.bend", import.meta.url), "timeline.mjs");
     const policy = await loadPolicy<{
@@ -84,10 +86,8 @@ test("timeline protects gaps, overlap precedence, and clipped failure times", as
   }
 });
 
-test("Plow feed scopes its overview independently and allows only linked measured detail", async () => {
-  const parent = process.env.PLOW_TEST_DIRECTORY;
-  assert.ok(parent);
-  const job = mkdtempSync(join(parent, "plow-feed-"));
+test("Plow feed projects weekly activity and linked timing detail", async () => {
+  const job = testJob("plow-feed-");
   try {
     const dbPath = join(job, 'projection-fixture.sqlite')
     const db = new DatabaseSync(dbPath, { enableForeignKeyConstraints: false })
@@ -116,7 +116,7 @@ test("Plow feed scopes its overview independently and allows only linked measure
       detail: [[.3,.4,'Model sampling']], ci: [[.4,.6,'CI watcher observation']] };
     assert.deepEqual(await projectPlowFeed(dbPath, job, 86401000), {
       observed: 3000,
-      overview: { to: 86401000, traces: [latestTrace] },
+      overview: { from: 0, to: 86401000, traces: [latestTrace, olderTrace] },
       traces: [latestTrace, olderTrace],
     });
     const expanded = new DatabaseSync(dbPath)
@@ -130,20 +130,17 @@ test("Plow feed scopes its overview independently and allows only linked measure
       run.run("fixture", String(i), "two", start + 600, start + 800, start + 1200, "completed")
     }
     expanded.close()
-    const extended = await projectPlowFeed(dbPath, job, 800000)
-    assert.equal(extended.traces.length, 10)
-    assert.equal(extended.overview.traces.length, 61)
-    assert.deepEqual(extended.overview.traces.at(-1), olderTrace)
+    const { traces, overview } = await projectPlowFeed(dbPath, job, 800000)
+    assert.equal(traces.length, 10)
+    assert.equal(overview.traces.length, 61)
   } finally {
     rmSync(job, { recursive: true, force: true });
   }
 });
 
 
-test("joined bottleneck replay counts exact job facts once and preserves missing clocks", async () => {
-  const parent = process.env.PLOW_TEST_DIRECTORY;
-  assert.ok(parent);
-  const job = mkdtempSync(join(parent, "joined-replay-"));
+test("joined bottlenecks deduplicate jobs and report both periods", async () => {
+  const job = testJob("joined-replay-");
   const file = join(job, "evidence.sqlite");
   try {
     const db = new DatabaseSync(file);
@@ -204,7 +201,10 @@ test("joined bottleneck replay counts exact job facts once and preserves missing
     const published = new DatabaseSync(output, { readOnly: true });
     try {
       const summary = JSON.parse(String(published.prepare("SELECT payload FROM analysis_summary").get()?.payload));
-      assert.equal(Date.parse(summary.window.to) - Date.parse(summary.window.from), 86400000);
+      const week = JSON.parse(String(published.prepare("SELECT payload FROM analysis_week").get()!.payload));
+      assert.equal(Date.parse(week.window.to) - Date.parse(week.window.from), 604800000);
+      assert.equal(week.coverage.active, 54);
+      assert.match(JSON.stringify(week.priorities), /"totalMs":2000/);
       assert.deepEqual(summary.coverage, { $: "Coverage", active: 53, withCodex: 0, withCI: 2, withBoth: 0 });
       assert.deepEqual(summary.ranking, [{ $: "Rank", rule: "ci-job-failure", threads: 2, occurrences: 1 }]);
       assert.deepEqual(summary.priorities.map((p: { totalMs: number }) => p.totalMs), [10000, 8000, 1000]);
@@ -213,8 +213,7 @@ test("joined bottleneck replay counts exact job facts once and preserves missing
       const detail = JSON.parse(String(published.prepare("SELECT payload FROM analysis_threads WHERE id=?").get(ciThread.id)?.payload));
       assert.deepEqual(detail.rules, ["ci-job-failure"]);
       assert.equal(detail.coverage.githubJobs, 3);
-      assert.notEqual(detail.id, "thread");
-      assert.ok(!JSON.stringify(detail).includes("synthetic/example"));
+      assert.doesNotMatch(JSON.stringify(detail), /"id":"thread"|synthetic\/example/);
     } finally {
       published.close();
     }

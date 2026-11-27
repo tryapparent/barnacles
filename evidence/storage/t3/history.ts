@@ -1,5 +1,5 @@
 import { chmodSync, closeSync, mkdirSync, openSync } from "node:fs";
-import { DatabaseSync } from "node:sqlite";
+import { backup, DatabaseSync } from "node:sqlite";
 import { dirname } from "node:path";
 import type { NativeBinding } from "../load.ts";
 import type { ThreadEvidence } from "../sources.ts";
@@ -14,6 +14,15 @@ export type T3HistoryCheckpoint = { frontier: number; revision: number; covered?
 export type PendingT3Command = { $: "Pending"; thread: string; id: string; status: string; checked: number };
 
 export type StoredT3Projection = { thread: ThreadEvidence; references: NativeBinding[] };
+
+export async function backupAnalysisInput(input: string, output: string) {
+  const db = new DatabaseSync(input, { readOnly: true });
+  try {
+    await backup(db, output);
+  } finally {
+    db.close();
+  }
+}
 
 export function readT3Projections(path: string, instance: string, from: number) {
   const db = new DatabaseSync(path, { readOnly: true });

@@ -1,18 +1,21 @@
 # Plow session activity
 
 [Plow session activity](https://plow.tryapparent.com/app) reads a private projection of the
-collector's T3 evidence. It displays the ten newest imported threads with at
-least one measured interval. Run time measures elapsed provider time. Admission
-time runs from request to provider start. Unknown endpoints remain unmeasured,
-and failures appear only when the source records a failed run with a measured
-end. The observation timestamp comes from the selected thread records.
-Where time went and Agent work share use the 24 hours ending at the latest
-feed projection. The time summary clips all measured thread traces to that
-window, then sums and ranks their disjoint intervals. Different threads can
-overlap on the clock. A category expands into its operation breakdown.
-Selecting an operation filters the timeline's latest ten threads on the
-timeline's own UTC range. Dragging, panning, and zooming change only that
-range and its matches. Selecting the operation again clears the filter.
+collector's T3 evidence. It displays up to ten imported threads with measured intervals in the selected time frame.
+**Time frame** switches the dashboard between the last **24h** (default) and
+**7 days**. The charts and Timeline end at the latest feed projection and
+clip intervals to the selected period. Run time measures elapsed provider
+time. Admission time runs from request to provider start. Unknown endpoints
+remain unmeasured. Failures appear when the source records a failed run with
+a measured end. The thread inspector retains the full recorded thread history.
+
+Where time went sums and ranks disjoint intervals across all measured threads
+in the period. Different threads can overlap on the clock. A category expands
+into its operation breakdown. Selecting an operation filters the Timeline’s
+up-to-ten newest threads in the visible UTC range. Dragging, panning, and
+zooming change only that viewport and its matches. Selecting the operation
+again clears the filter. Switching time frames resets the Timeline viewport
+and clears the breakdown and inspector selections.
 
 Drag across the bars to select and zoom to a range. Select a bar with the
 pointer, Enter, or Space to fit its exact start and end. Ctrl+scroll zooms
@@ -24,7 +27,7 @@ The minimap’s UI SDK Slider thumbs resize the range. Drag the middle to pan
 or drag outside the selection to select a different interval. Home or a
 double-click on the minimap resets the view. The eye button opens the guide.
 
-**Agent work share** shows six four-hour intervals. Each point averages the
+**Agent work share** uses four-hour buckets for 24h and daily buckets for 7 days. Each point averages the
 share of provider-run time among classified provider and admission time for
 threads with a measured clock in that interval. Missing measurements leave gaps.
 
@@ -67,9 +70,9 @@ queue and execution clocks describe hosted activity and alone cannot establish
 that a thread waited. Unattributed gaps remain Unobserved. Generated files
 and live data stay out of Git and build artifacts.
 
-**What to fix today** appears below Timeline when the analysis API is
-configured. The list uses the API's order for up to three priorities in
-the last 24 hours. The first priority opens automatically. Select another
+The priorities panel appears below Timeline when the analysis API is
+configured. It shows up to three priorities for the selected period and
+shows the analysis refresh cutoff. The first priority opens automatically. Select another
 priority to see its evidence, timing coverage, and suggested next step.
 A lone priority opens without a selection control. The panel keeps
 confirmed outcome delay distinct from observed admission or CI time.
@@ -90,7 +93,7 @@ The smoke check serves the built page over loopback HTTP with signed fixture
 tokens. It checks Access denial and response headers, then exercises the Timeline
 in Chrome at 1024, 1120, 1440, and 1920 pixels. It covers exact keyboard fit, range
 resizing, chart selection, grouped failure hover, filtering, stable panel
-geometry, and empty and unavailable feeds. Screenshots are optional.
+geometry, both time frames, and empty and unavailable feeds. Screenshots are optional.
 
 ## Deployment
 

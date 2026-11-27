@@ -51,12 +51,11 @@ export function AgentWorkTrend() {
   const last = data[data.length - 1];
   const paths = segmentPaths(data);
   const field = paths.filter(path => path.length > 1);
-  const clock = new Intl.DateTimeFormat("en-GB", { timeZone: "UTC", hour: "2-digit", minute: "2-digit" });
   const endpoint = new Intl.DateTimeFormat("en-GB", {
     timeZone: "UTC", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
   });
   const description = data.map(bucket =>
-    `${clock.format(bucket.from)}–${clock.format(bucket.to)} UTC: ${bucket.measured ? (bucket.basis_points / 100).toFixed(1) + "%" : "unknown"}`
+    `${endpoint.format(bucket.from)}–${endpoint.format(bucket.to)} UTC: ${bucket.measured ? (bucket.basis_points / 100).toFixed(1) + "%" : "unknown"}`
   ).join(". ");
   return <Card className="agent-work-trend" aria-labelledby={id} aria-describedby="overview-period">
     <h2 id={id}>Agent work share</h2>
@@ -82,7 +81,7 @@ export function AgentWorkTrend() {
           fill="none" stroke="#3c5930" strokeWidth="2.2" strokeLinecap="round" />)}
         <text x="51" y="134">{endpoint.format(first.from)} UTC</text>
         <text x="389" y="134" textAnchor="end">{endpoint.format(last.to)} UTC</text>
-      </svg> : <p className="agent-work-empty">No measured provider or admission time in the last 24 hours.</p>}
+      </svg> : <p className="agent-work-empty">No measured provider or admission time in this range.</p>}
       </div>
   </Card>;
 }

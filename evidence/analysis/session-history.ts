@@ -1,7 +1,7 @@
 import { closeSync, mkdtempSync, openSync, readFileSync, rmSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { backup, DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "node:sqlite";
 import { buildPolicy, loadPolicy } from "../../tooling/bend.ts";
 import { rows } from "../projection/timing.ts";
 import type { List } from "../storage/sources.ts";
@@ -27,16 +27,6 @@ const measure = (value: number | null): Measure => value === null ? { $: "None" 
 const delayInput = ({ pattern, stage, uniqueMs, medianMs, worstMs, affectedOutcomes, coverage }: ImpactPattern): Delay =>
   ({ $: "Delay", pattern, stage, elapsed: uniqueMs ?? 0, measured: coverage.sufficient, occurrences: coverage.occurrences,
     outcomes: affectedOutcomes, median: measure(medianMs), worst: measure(worstMs) });
-
-export async function measureOutcomeDelay(windows: List<unknown>, scratch: string, window?: Pick<Window, "from" | "to">) {
-  type Report = { totals: unknown; patterns: unknown };
-  const policy = await loadPolicy<{ outcome_delays(w: List<unknown>): Report;
-    outcome_delays_in_window(w: List<unknown>, from: number, to: number): Report }>(
-    await buildPolicy(scratch, new URL("./outcome-delay.bend", import.meta.url), "outcome-delay.mjs"));
-  if (!window) return policy.outcome_delays(windows);
-  const { totals, patterns } = policy.outcome_delays_in_window(windows, window.from, window.to);
-  return { totals, patterns };
-}
 
 type JoinedPolicy = {
   project(thread: string, runs: List<JoinedRun>, spans: List<JoinedSpan>, attempts: number, jobs: List<JoinedJob>): JoinedReplay;
@@ -119,13 +109,15 @@ function replayJoinedThread(policy: JoinedPolicy, thread: string, input: ReturnT
 type ThreadKey = { $: "Target"; instance: string; thread: string };
 type RunClock = { $: "RunClock"; requested: number; started: number; completed: number };
 type RankedThread = { $: "Thread"; id: string; codex: number; ci: number; observations: List<Observation> };
+type Batch = { $: "Batch"; thread: string; signals: List<Signal> };
 type DashboardPolicy = {
   select_threads(input: List<ThreadKey>): List<ThreadKey>;
-  last_day(to: number): Window;
+  report_window(range: string, to: number): Window;
   active(window: Window, created: number, runs: List<RunClock>): boolean;
   ranking(input: List<RankedThread>): List<unknown>;
   source_coverage(input: List<RankedThread>): unknown;
-  top_priorities(batches: List<{ $: "Batch"; thread: string; signals: List<Signal> }>, delays: List<Delay>): List<unknown>;
+  top_priorities(batches: List<Batch>, delays: List<Delay>): List<unknown>;
+  active_count(batches: List<Batch>): number;
   refresh_needed(stored: string, observed: string): boolean;
 };
 
@@ -134,17 +126,8 @@ async function dashboardPolicy(scratch: string) {
     await buildPolicy(scratch, new URL("./joined/dashboard.bend", import.meta.url), "joined-dashboard.mjs"));
 }
 
-export async function analysisWindow(scratch: string, now: number) {
-  return (await dashboardPolicy(scratch)).last_day(now);
-}
-
-export async function backupAnalysisInput(input: string, output: string) {
-  const db = new DatabaseSync(input, { readOnly: true });
-  try {
-    await backup(db, output);
-  } finally {
-    db.close();
-  }
+export async function analysisWindow(scratch: string, now: number, range = "24h") {
+  return (await dashboardPolicy(scratch)).report_window(range, now);
 }
 
 export async function joinedTargets(path: string, scratch: string, instance: string) {
@@ -168,7 +151,7 @@ function activeKeys(db: DatabaseSync, policy: DashboardPolicy, window: Window, s
   const keys: ThreadKey[] = [];
   for (const row of db.prepare("SELECT instance,thread_id,created_ms FROM t3_threads WHERE (? IS NULL OR instance=?) ORDER BY created_ms DESC,instance,thread_id").iterate(scope ?? null, scope ?? null)) {
     const clocks = runs.all(row.instance, row.thread_id).map((r): RunClock => ({
-      $: "RunClock", requested: Number(r.requested_ms ?? 0), started: Number(r.started_ms ?? 0), completed: Number(r.completed_ms ?? 0),
+      $: "RunClock", requested: Number(r.requested_ms), started: Number(r.started_ms), completed: Number(r.completed_ms),
     }));
     if (policy.active(window, Number(row.created_ms), historyList(clocks))) {
       keys.push({ $: "Target", instance: String(row.instance), thread: String(row.thread_id) });
@@ -181,6 +164,9 @@ type PublishedThread = {
   id: string; coverage: ReturnType<typeof replayJoinedThread>["coverage"]; costs: unknown[]; rules: string[];
 };
 
+const analysisId = (instance: string, thread: string) =>
+  createHash("sha256").update(JSON.stringify([instance, thread])).digest("hex").slice(0, 24);
+
 export async function publishJoinedAnalysis(input: string, output: string, scratch: string, asOf = Date.now(),
   readImpact?: (window: Window) => Promise<{ patterns: ImpactPattern[] }>, scope?: string) {
   const from = statSync(input, { bigint: true });
@@ -190,9 +176,10 @@ export async function publishJoinedAnalysis(input: string, output: string, scrat
   const source = new DatabaseSync(input, { readOnly: true });
   try {
     source.exec("PRAGMA busy_timeout=5000; BEGIN");
-    const window = summary.last_day(asOf);
+    const window = summary.report_window("24h", asOf);
+    const week = summary.report_window("7d", asOf);
     const outcomeImpact = await readImpact?.(window) ?? null;
-    const keys = activeKeys(source, summary, window, scope);
+    const weeklyImpact = await readImpact?.(week);
     const revision = createHash("sha256").update(readFileSync(join(scratch, "joined-bottleneck.mjs")))
       .update(readFileSync(join(scratch, "joined-dashboard.mjs"))).digest("hex");
     closeSync(openSync(output, "a", 0o600));
@@ -200,6 +187,7 @@ export async function publishJoinedAnalysis(input: string, output: string, scrat
     try {
       db.exec("PRAGMA busy_timeout=5000; BEGIN IMMEDIATE");
       db.exec(`CREATE TABLE IF NOT EXISTS analysis_summary (id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS analysis_week (id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS analysis_threads (id TEXT PRIMARY KEY, payload TEXT NOT NULL) STRICT;
         CREATE TABLE IF NOT EXISTS analysis_fingerprints (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL) STRICT;`);
       const previous = db.prepare("SELECT payload,fingerprint FROM analysis_threads JOIN analysis_fingerprints USING(id) WHERE id=?");
@@ -208,8 +196,8 @@ export async function publishJoinedAnalysis(input: string, output: string, scrat
       const store = db.prepare("INSERT OR REPLACE INTO analysis_threads VALUES (?,?)");
       const mark = db.prepare("INSERT OR REPLACE INTO analysis_fingerprints VALUES (?,?)");
       let recomputed = 0;
-      const cohort = keys.map(({ instance, thread }) => {
-        const id = createHash("sha256").update(JSON.stringify([instance, thread])).digest("hex").slice(0, 24);
+      const cohort = activeKeys(source, summary, window, scope).map(({ instance, thread }) => {
+        const id = analysisId(instance, thread);
         selected.run(id);
         const evidence = joinedInput(source, instance, thread);
         const jobs = historyList(evidence.jobs);
@@ -231,19 +219,29 @@ export async function publishJoinedAnalysis(input: string, output: string, scrat
       const projected = historyList(cohort.map(({ detail: { id, coverage }, observations }): RankedThread =>
         ({ $: "Thread", id, codex: coverage.codexSpans, ci: coverage.githubAttempts, observations })));
       const analyzedAt = new Date(asOf).toISOString();
-      const batches = historyList(cohort.map(({ detail, signals }) => ({ $: "Batch" as const, thread: detail.id, signals })));
-      const priorities = rows(summary.top_priorities(batches, historyList(outcomeImpact?.patterns.map(delayInput) ?? [])));
+      const batches = historyList(cohort.map(({ detail, signals }): Batch => ({ $: "Batch", thread: detail.id, signals })));
+      const rank = (batches: List<Batch>, patterns: ImpactPattern[] = []) =>
+        JSON.parse(JSON.stringify(rows(summary.top_priorities(batches, historyList(patterns.map(delayInput)))), (_key, value) =>
+          value?.$ === "Some" ? value.value : value?.$ === "None" ? null : value));
       const latest = {
         version: 2, analyzedAt, window: { from: new Date(window.from).toISOString(), to: analyzedAt },
         coverage: summary.source_coverage(projected),
         outcomeImpact,
-        priorities: JSON.parse(JSON.stringify(priorities, (_key, value) =>
-          value?.$ === "Some" ? value.value : value?.$ === "None" ? null : value)),
+        priorities: rank(batches, outcomeImpact?.patterns),
         ranking: rows(summary.ranking(projected)),
         threads: cohort.map(({ detail: { id, coverage } }) => ({ id, coverage })),
       };
       db.exec(`DELETE FROM analysis_threads WHERE id NOT IN (SELECT id FROM selected_analysis_threads);
         DELETE FROM analysis_fingerprints WHERE id NOT IN (SELECT id FROM selected_analysis_threads);`);
+      const weekly = historyList(activeKeys(source, summary, week, scope).map(({ instance, thread }): Batch => {
+        const id = analysisId(instance, thread);
+        const { runs, jobs } = joinedInput(source, instance, thread);
+        return { $: "Batch", thread: id, signals: policy.priority_signals(week, id, historyList(runs), historyList(jobs)) };
+      }));
+      db.prepare("INSERT OR REPLACE INTO analysis_week VALUES(1,?)").run(JSON.stringify({
+        range: "7d", window: { from: new Date(week.from).toISOString(), to: analyzedAt },
+        coverage: { active: summary.active_count(weekly) }, priorities: rank(weekly, weeklyImpact?.patterns),
+      }));
       db.prepare("INSERT OR REPLACE INTO analysis_summary VALUES(1,?)").run(JSON.stringify(latest));
       db.exec("COMMIT");
       return { analyzedThreads: cohort.length, recomputed };
