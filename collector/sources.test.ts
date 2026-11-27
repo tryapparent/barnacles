@@ -622,6 +622,17 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       lane: "desktop-linux", test: "capture-smoke", execution: "run:1:job", conclusion: "failure", at: 200 };
     const packageBuild = { kind: "package-build-result", thread: "t", id: "first-build", scope: "run:1:job:step",
       tool: "vite-production-client", digest: "manifest", assets: 55, reportedMs: 30_760, start: 200, end: 230 };
+    const modelFetch = { kind: "native-model-fetch-result", thread: "t", id: "model-download",
+      step: "Prepare locked native prerequisites before first Cargo", conclusion: "failure", exitCode: 1, status: 502,
+      revision: "0123456789012345678901234567890123456789",
+      line: "Error: Download failed for https://huggingface.co/example/model/resolve/0123456789012345678901234567890123456789/onnx/model.onnx (502)",
+      origin: "download:record/media/circle-vision/build.ts", started: 500, ended: 613 };
+    const captureAccess = { kind: "capture-access-result", thread: "t", id: "unavailable-capture",
+      operation: "apparent-inspect", failed: true, line: "Error: Capture unavailable (not_found)." };
+    const benchmarkAdmission = { kind: "benchmark-admission", thread: "t", id: "smt-subset",
+      lane: "connect-watch", conclusion: "failure", exitCode: 1, started: 700, ended: 791,
+      origin: "main:connect/enablement/benchmark/hosted.ts",
+      line: "AssertionError [ERR_ASSERTION]: No complete SMT subset qualified during replay probing" };
     const facts = [
       admission, admission,
       { ...admission, id: "superseded", annotation: "Canceling since a higher priority waiting request exists" },
@@ -719,6 +730,23 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       { ...packageBuild, id: "open-clock", start: 230, end: 0 },
       { ...packageBuild, start: 230, end: 260 },
       { ...packageBuild, id: "second-build", start: 230, end: 259 },
+      modelFetch, modelFetch,
+      { ...modelFetch, id: "different-stage", step: "Cargo test" },
+      { ...modelFetch, id: "different-origin", origin: "download:example/build.ts" },
+      { ...modelFetch, id: "mismatched-status", status: 503 },
+      { ...modelFetch, id: "mismatched-model-revision", revision: "f".repeat(40) },
+      { ...modelFetch, id: "not-server-error", status: 404, line: modelFetch.line.replace("(502)", "(404)") },
+      { ...modelFetch, id: "recovered-download", conclusion: "success" },
+      captureAccess, captureAccess,
+      { ...captureAccess, id: "unavailable-files", operation: "apparent-connect-files" },
+      { ...captureAccess, id: "unexpected-producer", operation: "apparent-connect-status" },
+      { ...captureAccess, id: "different-reply", line: "Error: Capture unavailable (forbidden)." },
+      { ...captureAccess, id: "after-success", failed: false },
+      benchmarkAdmission, benchmarkAdmission,
+      { ...benchmarkAdmission, id: "different-lane", lane: "record-start" },
+      { ...benchmarkAdmission, id: "different-entry", origin: "render:connect/enablement/benchmark/hosted.ts" },
+      { ...benchmarkAdmission, id: "different-exit", exitCode: 124 },
+      { ...benchmarkAdmission, id: "qualified-with-warning", conclusion: "success" },
       read, read, { ...read, id: "b", at: 160 }, { ...read, thread: "t2", at: 170 },
       timing, timing, { ...timing, id: "unpaired", end: 0 },
       attempt, { ...attempt, id: "changed", key: "gate:v2", start: 115, end: 120, failed: false, succeeded: true },
@@ -737,8 +765,10 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
     assert.deepEqual(result.files, [{ $: "FileTotal", path: "README.md", requests: 3, threads: 2, revisits: 1 }]);
     assert.deepEqual(result.costs.sort((a: { clock: string; operation: string }, b: { clock: string; operation: string }) =>
       a.clock.localeCompare(b.clock) || a.operation.localeCompare(b.operation)), [
+      { $: "Cost", clock: "ci-benchmark-owner-step", operation: "connect-watch", count: 1, seconds: 91, unknown: 0 },
       { $: "Cost", clock: "ci-benchmark-owner-step", operation: "record-start", count: 3, seconds: 1640, unknown: 0 },
       { $: "Cost", clock: "ci-benchmark-owner-step", operation: "record-stop", count: 1, seconds: 1300, unknown: 0 },
+      { $: "Cost", clock: "ci-native-prerequisite-step", operation: "circle-vision", count: 1, seconds: 113, unknown: 0 },
       { $: "Cost", clock: "local-build-admission", operation: "t3-build", count: 2, seconds: 123, unknown: 0 },
       { $: "Cost", clock: "runner", operation: "build", count: 1, seconds: 129, unknown: 1 },
     ]);
@@ -751,6 +781,8 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
         "ci-benchmark-calibration-pressure-rejected", "ci-benchmark-calibration-pressure-rejected",
         "ci-deployment-candidate-superseded", "ci-deployment-readback-timeout",
         "ci-test-failure-repeated", "ci-test-failure-repeated", "ci-package-build-repeated",
+        "ci-model-prerequisite-http-server-error", "capture-reference-unavailable", "capture-reference-unavailable",
+        "ci-benchmark-no-qualified-smt-subset",
         "recovered-attempt", "runner"]);
     assert.ok(!first.includes("installed tools"));
     assert.ok(!first.includes("#42:"));
@@ -763,6 +795,8 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       ["marker", "", 0, 0], ["acknowledgement", "", 0, 0], ["pressure", "", 0, 0], ["artifact-pressure", "", 0, 0],
       ["superseded-deploy", "", 0, 0], ["readback-timeout", "", 0, 0],
       ["second-test", "first-test", 0, 0], ["third-test", "second-test", 0, 0], ["second-build", "first-build", 30, 0],
+      ["model-download", "", 0, 0], ["unavailable-capture", "", 0, 0], ["unavailable-files", "", 0, 0],
+      ["smt-subset", "", 0, 0],
       ["recovered", "first", 20, 0], ["tail", "", 250, 10],
     ]);
   } finally {
