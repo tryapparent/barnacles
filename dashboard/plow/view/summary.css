@@ -66,7 +66,13 @@
 
 @font-face{font-family:"Source Serif 4";src:url(data:font/woff2;base64,__PLOW_SOURCE_SERIF__) format("woff2");font-weight:200 900;font-display:swap}
 .activity-overview{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:start;gap:clamp(16px,2.4vw,36px);margin-top:22px}
-.activity-overview>.summary-panel{margin-top:0}
+.activity-overview>.summary-panel{margin-top:0;container-type:inline-size}
+@container (max-width:550px){
+  .activity-overview .summary-top{grid-template-columns:minmax(0,1fr)}
+  .activity-overview #summary-total{text-align:start}
+  .activity-overview .treemap{grid-auto-rows:116px}
+  .activity-overview .category-metric{display:grid;gap:2px;font-size:clamp(18px,4.8cqw,24px)}
+}
 .agent-work-trend{min-width:0;color:var(--ink);font:400 14px/1.35 "Source Serif 4",serif}
 .agent-work-trend h2{margin:0 0 8px;font:400 clamp(24px,4vw,33px)/1.16 "Young Serif",Georgia,serif;letter-spacing:-.03em}
 .agent-work-trend svg{display:block;width:100%;height:auto;max-height:204px;font-size:15px}

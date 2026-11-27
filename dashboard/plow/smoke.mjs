@@ -80,6 +80,11 @@ try {
     const overview = await geometry()
     const assertStable = async state => assert.deepEqual(await geometry(), overview, `${width}px · ${state}`)
     assert.equal(await summary.locator('.category-tile').count(), 3)
+    assert.ok(await summary.locator('.category-tile').evaluateAll(tiles => tiles.every(tile => {
+      const bounds = tile.getBoundingClientRect()
+      const share = tile.querySelector('.category-share').getBoundingClientRect()
+      return share.bottom <= bounds.bottom && share.right <= bounds.right
+    })))
     assert.equal((await titles()).length, 10)
     assert.match(await total.innerText(), /43h 24m across 10 threads/)
     assert.ok(await timeline.getByRole('button', { name: 'Zoom in' }).isVisible())
