@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { projectPlowFeed } from "../read.ts";
-import { analyzeJoinedThread } from "./session-history.ts";
+import { analyzeJoinedThread, publishJoinedAnalysis } from "./session-history.ts";
 import { test } from "node:test";
 import { buildPolicy, loadPolicy } from "../../tooling/bend.ts";
 
@@ -134,6 +134,22 @@ test("joined bottleneck replay counts exact job facts once and preserves missing
     assert.deepEqual(analysis.files, []);
     assert.equal(analysis.findings.length, 1);
     assert.match(JSON.stringify(analysis.findings[0]), /"ci-job-failure"/);
+    const output = join(job, "analysis.sqlite");
+    assert.equal((await publishJoinedAnalysis(file, output, job)).recomputed, 1);
+    assert.equal((await publishJoinedAnalysis(file, output, job)).recomputed, 0);
+    const published = new DatabaseSync(output, { readOnly: true });
+    try {
+      const summary = JSON.parse(String(published.prepare("SELECT payload FROM analysis_summary").get()?.payload));
+      assert.deepEqual(summary.ranking, [{ $: "Rank", rule: "ci-job-failure", threads: 1, occurrences: 1 }]);
+      const detail = JSON.parse(String(published.prepare("SELECT payload FROM analysis_threads").get()?.payload));
+      assert.deepEqual(detail.rules, ["ci-job-failure"]);
+      assert.equal(detail.coverage.githubJobs, 3);
+      assert.notEqual(detail.id, "thread");
+      assert.ok(!JSON.stringify(detail).includes("synthetic/example"));
+    } finally {
+      published.close();
+    }
+
   } finally {
     rmSync(job, { recursive: true, force: true });
   }

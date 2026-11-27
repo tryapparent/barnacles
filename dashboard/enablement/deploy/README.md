@@ -55,3 +55,51 @@ different existing listener or a Funnel mapping. On hosts where Tailscale
 requires elevated access, set `PLOW_COLLECTOR_SERVE_SUDO=1` to apply the
 exact mapping with noninteractive sudo. Verify both routes from an
 authorized tailnet client after applying.
+
+
+## Analysis API
+
+Run the version-controlled `analysis` Compose profile from verified release
+source. Use a private environment file and the existing rootless Docker
+context. Set `PLOW_ANALYSIS_FORGE_DIR` and `PLOW_ANALYSIS_CODEX_DIR` to the
+directories holding the authorized source databases named `evidence.sqlite`.
+Set `PLOW_ANALYSIS_RECEIPTS_DIR` to a private directory of the verified
+binding envelopes described in the [collector guide](../../../collector/README.md#join-a-live-codex-session-to-t3-and-github).
+Keep those envelopes available for replay. They can carry exact CI observations for
+a subsequent poll to resolve.
+
+Set `PLOW_ANALYSIS_USER` to the authorized tailnet login. The API binds to
+a loopback host port selected by `PLOW_ANALYSIS_PORT`. The read-only API
+mount contains the named analysis volume only. The refresh container takes a
+consistent backup of the input and refreshes the bounded current scope every
+15 minutes. Bend2 replays a thread when its projected evidence or rules change.
+An interrupted refresh leaves the last committed results readable. The report marks a scope that exceeds its 50-thread limit.
+
+To resolve native Codex bindings over the network for already imported T3
+threads, supply `PLOW_ANALYSIS_T3_ORIGIN`, `PLOW_ANALYSIS_T3_INSTANCE`,
+`PLOW_ANALYSIS_CODEX_INSTANCE`, and the container path
+`PLOW_ANALYSIS_T3_TOKEN_PATH=/receipts/t3-read-token` with that private
+read credential mounted from the receipts directory. Keep it out of Git.
+Stock T3 metadata collection and exact CI receipts supply their original
+evidence independently.
+
+```sh
+docker --context rootless compose --env-file "$private_env" --profile analysis \
+  up -d --build analysis-refresh analysis-api
+```
+
+After approval for a private ingress, forward its HTTPS listener to the
+configured loopback port with Tailscale Serve. The backend requires the
+Serve-provided identity on every request and allows cross-origin reads from
+`https://plow.tryapparent.com`. Configure the approved full
+`https://…ts.net:PORT/api/v1/bottlenecks` URL as the
+`PLOW_ANALYSIS_API_URL` secret in the Plow Worker deployment environment.
+Cloudflare serves the frontend and the existing activity feed. The analysis
+API answers directly from Clanker and uses no KV copy.
+
+Verify the protected ranking endpoint and the thread detail endpoint, then
+open the Access-protected app while connected to the tailnet. Grant local
+network access if the browser prompts. A new
+configuration adds the Bottlenecks section after the timeline. The analysis
+section shows coverage and freshness, and it works independently of the
+existing activity feed.

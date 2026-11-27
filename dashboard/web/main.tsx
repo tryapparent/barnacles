@@ -1,4 +1,5 @@
 import { Popover, PopoverContent, PopoverDescription, PopoverTitle, PopoverTrigger } from "@ui-sdk/react/popover";
+import { useEffect, useState } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { Button, Card } from "./controls";
@@ -110,7 +111,76 @@ export function wireChartInput(input: ChartInput) {
   });
 }
 
-function Dashboard({ field, sessionHistory }: { field: string; sessionHistory?: string }) {
+type Coverage = { t3Runs: number; codexSpans: number; githubJobs: number };
+type Analysis = { analyzedAt: string; bounded: boolean; ranking: { rule: string; threads: number; occurrences: number }[];
+  threads: { id: string; coverage: Coverage }[] };
+type Detail = { coverage: Coverage; rules: string[]; costs: { clock: string; operation: string; seconds: number; unknown: number }[] };
+
+function Bottlenecks({ api }: { api: string }) {
+  const [data, setData] = useState<Analysis>();
+  const [thread, setThread] = useState("");
+  const [detail, setDetail] = useState<Detail>();
+  const [status, setStatus] = useState("Loading analysis…");
+  const [detailStatus, setDetailStatus] = useState("");
+  useEffect(() => {
+    const ctrl = new AbortController();
+    fetch(api, { signal: AbortSignal.any([ctrl.signal, AbortSignal.timeout(8000)]) })
+      .then(res => { if (!res.ok) throw Error(); return res.json(); })
+      .then((result: Analysis) => { setData(result); setStatus(""); })
+      .catch(() => { if (!ctrl.signal.aborted) setStatus("Analysis is unavailable. Check your private connection and reload."); });
+    return () => ctrl.abort();
+  }, [api]);
+  useEffect(() => {
+    if (!thread) return;
+    const ctrl = new AbortController();
+    fetch(`${api}/threads/${thread}`, { signal: AbortSignal.any([ctrl.signal, AbortSignal.timeout(8000)]) })
+      .then(res => { if (!res.ok) throw Error(); return res.json(); })
+      .then((result: Detail) => { setDetail(result); setDetailStatus(""); })
+      .catch(() => { if (!ctrl.signal.aborted) setDetailStatus("Thread details are unavailable."); });
+    return () => ctrl.abort();
+  }, [api, thread]);
+  const label = (rule: string) => rule.replaceAll("-", " ");
+  const count = (n: number, singular: string) => `${n} ${singular}${n === 1 ? "" : "s"}`;
+  const clockLabels: Record<string, string> = {
+    "ci-job-queue": "CI job queue",
+    "ci-job-execution": "CI job execution",
+    "codex-otel-span": "Codex span",
+    "t3-run-envelope": "T3 run",
+    "t3-run-admission": "T3 admission",
+  };
+  return <section className="bottlenecks" aria-labelledby="bottlenecks-heading">
+    <h2 id="bottlenecks-heading">Bottlenecks</h2>
+    {status && <p role="status">{status}</p>}
+    {data && <>
+      <p className="summary-note">{count(data.threads.length, "joined thread")} · Analyzed {new Date(data.analyzedAt).toLocaleString()}
+        {data.bounded && " · Recent threads only"}</p>
+      {data.ranking.length ? <table><caption>Findings ranked by affected threads</caption>
+        <thead><tr><th scope="col">Finding</th><th scope="col">Threads</th><th scope="col">Occurrences</th></tr></thead>
+        <tbody>{data.ranking.map(item => <tr key={item.rule}><th scope="row">{label(item.rule)}</th>
+          <td>{item.threads}</td><td>{item.occurrences}</td></tr>)}</tbody>
+      </table> : <p>{data.threads.length ? "No findings in the observed evidence." : "No joined threads yet."}</p>}
+      {data.threads.length > 0 && <label className="analysis-thread">Thread details
+        <select value={thread} onChange={event => {
+          setDetail(undefined);
+          setDetailStatus(event.target.value ? "Loading thread…" : "");
+          setThread(event.target.value);
+        }}><option value="">Select a thread</option>
+          {data.threads.map((item, index) => <option key={item.id} value={item.id}>Thread {index + 1}</option>)}
+        </select>
+      </label>}
+      {detailStatus && <p role="status">{detailStatus}</p>}
+      {detail && <>
+        <p>{count(detail.coverage.t3Runs, "T3 run")} · {count(detail.coverage.codexSpans, "Codex span")} · {count(detail.coverage.githubJobs, "GitHub job")}</p>
+        {detail.rules.length > 0 && <ul>{detail.rules.map((rule, index) => <li key={index}>{label(rule)}</li>)}</ul>}
+        {detail.costs.length > 0 && <ul aria-label="Measured clocks">{detail.costs.map(cost =>
+          <li key={`${cost.clock}:${cost.operation}`}>{clockLabels[cost.clock] ?? label(cost.clock)} · {cost.operation.replaceAll("_", " ")} · {cost.seconds}s
+            {cost.unknown > 0 && ` · ${cost.unknown} unknown`}</li>)}</ul>}
+      </>}
+    </>}
+  </section>;
+}
+
+function Dashboard({ field, sessionHistory, analysisApi }: { field: string; sessionHistory?: string; analysisApi?: string }) {
   return <>
     <main>
       <header className="activity-header">
@@ -179,6 +249,7 @@ function Dashboard({ field, sessionHistory }: { field: string; sessionHistory?: 
             </div>
           </Card>
         </div>
+        {analysisApi && <Bottlenecks api={analysisApi} />}
       </div>
     </main>
     <span className="measure" aria-hidden="true" />
@@ -188,9 +259,9 @@ function Dashboard({ field, sessionHistory }: { field: string; sessionHistory?: 
 export function mountDashboard() {
   const element = document.getElementById("plow-root");
   if (!element?.dataset.field) throw Error("Missing Plow dashboard assets");
-  const { field, sessionHistory } = element.dataset;
+  const { field, sessionHistory, analysisApi } = element.dataset;
   element.removeAttribute("data-field");
   element.removeAttribute("data-session-history");
   const root = createRoot(element);
-  flushSync(() => root.render(<Dashboard field={field} sessionHistory={sessionHistory} />));
+  flushSync(() => root.render(<Dashboard field={field} sessionHistory={sessionHistory} analysisApi={analysisApi} />));
 }
