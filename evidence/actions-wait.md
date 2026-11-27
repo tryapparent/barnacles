@@ -24,12 +24,13 @@ Use a private job directory. Import the permitted rollout files into its `eviden
 ```sh
 node collector/import-actions.ts "$job" "$repo" --from-waits "$from" "$to" 20
 node dashboard/prepare.ts "$job/evidence.sqlite" "$job/dashboard" "$repo" "$to"
-dashboard/run.sh "$job/dashboard"
 ```
 
 Use a 24-hour interval ending at `$to` to match the dashboard window. The capture reports the number of exact attempts missing before import and the number captured. The Bend2 plan prioritizes attempts named by the most observed envelopes and breaks ties by exact identity. The 20-attempt cap applies per invocation. Replay the same bounded command to capture remaining attempts or check completeness. Each attempt must match the repository, run, SHA, and attempt against GitHub before an atomic batch write. Missing or changing inventories abort the batch. Previously captured attempts are retained. Use the collector's exact-attempt command to refresh a previously captured attempt or diagnose an individual read failure. There are no background imports.
 
 ## Output
+
+Query these tables in `"$job/dashboard/dashboard.sqlite"`.
 
 - `actions_wait_coverage` counts source envelopes with positive overlap in the report window. `exact_wait_count` counts the subset with an exact source identity, and `matched_wait_count` counts those with an imported attempt matching all four components. `matched_attempts` and `unmatched_attempts` count distinct exact identities. `jobless_attempts` counts matched attempts with no recorded job rows. Envelopes with missing endpoints or zero overlap contribute no count to the window.
 - Durations in coverage use the union of clipped wait intervals per matched attempt. `running_ms` covers time with any measured job execution. `queue_only_ms` covers time with measured queue and no measured execution. `unknown_job_ms` covers the remaining matched wait time. The three sum to `matched_wait_ms`. Different attempts may overlap in wall time.
