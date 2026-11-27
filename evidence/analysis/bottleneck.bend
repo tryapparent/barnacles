@@ -415,6 +415,32 @@ def observe_main_reuse_refusal(state: Replay, thread: String, id: String, event:
   +changed = String.eq(line, "Verification definitions changed; fresh main suites required.")
   observe_failure(state, thread, id, "ci-reuse-verification-definitions-changed", Bool.and(context, Bool.and(producer, changed)))
 
+def observe_hosted_selector_base(state: Replay, thread: String, id: String, event: String, step: String,
+  conclusion: String, command: String, +checkout: String, selector_head: String, job_head: String,
+  +first_parent: String, second_parent: String, +base: String, ancestor: Bool, intervening: U32) -> Replay:
+  +producer = Bool.and(String.eq(event, "pull_request"), Bool.and(String.eq(conclusion, "success"),
+    Bool.and(String.eq(step, "Select through the shared consumer authority"), String.eq(command, "bun engine/tools/select.ts"))))
+  +tested_merge = Bool.and(String.eq(checkout, selector_head), String.eq(job_head, second_parent))
+  +older_base = Bool.and(Bool.not(String.eq(base, first_parent)), Bool.and(ancestor, U32.is_gt(intervening, 0)))
+  observe_failure(state, thread, id, "ci-selector-compared-older-base", Bool.and(producer, Bool.and(tested_merge, older_base)))
+
+def observe_local_exec_launch(state: Replay, +thread: String, id: String, source_thread: String,
+  visibility: String, item_type: String, status: String, truncated: Bool, line: String) -> Replay:
+  +original = Bool.and(String.eq(thread, source_thread), Bool.and(String.eq(visibility, "local"), Bool.not(truncated)))
+  +failed = Bool.and(String.eq(item_type, "command_execution"), String.eq(status, "failed"))
+  +launcher = String.eq(line, "Failed to create unified exec process: No such file or directory (os error 2)")
+  observe_failure(state, thread, id, "local-exec-launch-enoent", Bool.and(original, Bool.and(failed, launcher)))
+
+def observe_run_watch_deadline(state: Replay, thread: String, id: String, operation: String,
+  +launch_handle: U32, terminal_handle: U32, exit_status: Bool, exit_code: U32, +timeout: U32, elapsed_ms: U32) -> Replay:
+  +process = Bool.and(U32.is_gt(launch_handle, 0), U32.is_eq(launch_handle, terminal_handle))
+  +watch = Bool.and(String.eq(operation, "gh-run-watch"), exit_status)
+  +seconds = U32.div(elapsed_ms, 1000)
+  +bounds = Bool.and(U32.is_ge(timeout, 60), U32.is_ge(seconds, timeout))
+  +expired = Bool.and(bounds, Bool.and(U32.is_eq(exit_code, 124), U32.is_le(U32.sub(seconds, timeout), 15)))
+  observe_failure_with_duration(state, thread, id, "ci-local-run-observer-deadline",
+    Bool.and(process, Bool.and(watch, expired)), seconds)
+
 def observe_hermes_cache_merge(state: Replay, thread: String, id: String, step: String, conclusion: String,
   exit_code: U32, code: String, syscall: String, origin: String, restored: Bool) -> Replay:
   +failed = Bool.and(String.eq(conclusion, "failure"), U32.is_eq(exit_code, 1))
