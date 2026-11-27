@@ -7,28 +7,32 @@
 <style>
 @font-face{font-family:"Young Serif";src:url("./assets/youngserif.woff2") format("woff2");font-weight:400;font-style:normal}
 @font-face{font-family:Geist;src:url("./assets/geist.woff2") format("woff2");font-weight:400 650;font-style:normal}
-:root{--ink:#1a130d;--paper:#f4ebdd;--cream:#fff4df;--earth:#392820;--straw:#d6aa70;--storm:#60564d}
+:root{--ink:#1a130d;--mist:#f2f5f6;--earth:#392820;--meadow:#6a934f;--cream:#fff4df;--storm:#60564d}
 *{box-sizing:border-box}
-.plow{max-width:1440px;margin-inline:auto;font:400 16px/1.5 Geist,system-ui,sans-serif;color:var(--ink);font-synthesis:none}
+body{margin:0}
+.plow{font:400 16px/1.5 Geist,system-ui,sans-serif;color:var(--ink);font-synthesis:none}
 .plow h1,.plow h2,.plow p,.plow figure{margin:0}
 .scene{position:relative;container-type:inline-size;isolation:isolate;overflow:hidden;aspect-ratio:16/9}
-.scene img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:-2}
+.scene>img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:-2}
 .field{background:#c8ad8a}
 .mark{position:absolute;top:8%;left:6.4%;font:400 clamp(24px,3.5cqw,42px)/1 "Young Serif",Georgia,serif;letter-spacing:-.025em;color:var(--cream)}
+.github-stars{position:absolute;top:8%;right:6.4%;display:flex;align-items:center;min-height:44px;padding:0 6px;border-radius:4px;background:var(--ink);color:var(--mist)}
+.github-stars img{display:block;width:auto;height:24px}
+.github-stars:focus-visible{outline:3px solid var(--mist);outline-offset:2px;box-shadow:0 0 0 7px var(--ink)}
 .field .copy{position:absolute;left:6.4%;right:6.4%;top:43%}
 .plow h1,.plow h2{font-family:"Young Serif",Georgia,serif;font-weight:400;line-height:1.04;letter-spacing:-.035em;text-wrap:balance}
 .plow h1{font-size:clamp(39px,7.25cqw,100px)}
 .scene p{margin-top:.65em;font-size:clamp(14px,2.2cqw,23px);line-height:1.42;text-wrap:pretty}
 .field p{max-width:44ch}
-.cta{display:inline-flex;align-items:center;gap:10px;min-height:44px;margin-top:clamp(12px,2.2cqw,26px);padding:7px 14px;border-radius:3px;background:var(--ink);color:var(--cream);font-size:clamp(13px,1.75cqw,17px);font-weight:600;text-decoration:none}
+.cta{display:inline-flex;align-items:center;gap:10px;min-height:44px;margin-top:clamp(12px,2.2cqw,26px);padding:7px 14px;border-radius:3px;background:var(--ink);color:var(--mist);font-size:clamp(13px,1.75cqw,17px);font-weight:600;text-decoration:none}
 .cta:hover{background:var(--earth)}
-.cta:focus-visible{outline:3px solid var(--cream);outline-offset:2px;box-shadow:0 0 0 7px var(--ink)}
+.cta:focus-visible{outline:3px solid var(--mist);outline-offset:2px;box-shadow:0 0 0 7px var(--ink)}
 .blade{background:var(--earth);color:var(--cream)}
 .blade::before{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(90deg,transparent 32%,#1a130d73 42%)}
 .blade .copy{position:absolute;top:28%;left:50%;right:6.4%}
 .blade h2{font-size:clamp(28px,5.8cqw,76px)}
 .blade p{max-width:34ch}
-.delivery{display:grid;grid-template-columns:minmax(0,.65fr) minmax(0,1.35fr);background:var(--paper);color:var(--ink)}
+.delivery{display:grid;grid-template-columns:minmax(0,.65fr) minmax(0,1.35fr);background:var(--mist);color:var(--ink)}
 .hands{position:relative;overflow:hidden;min-height:290px;background:var(--earth)}
 .hands img{position:absolute;width:195%;height:100%;object-fit:cover;object-position:left center}
 .example{padding:clamp(24px,5vw,54px);min-width:0}
@@ -38,19 +42,19 @@
 .stages{display:flex;height:10px;margin:20px 0 9px;border-radius:2px;overflow:hidden;gap:2px}
 .stages span:first-child{flex:25;background:var(--storm)}
 .stages span:nth-child(2){flex:135;background:var(--earth)}
-.stages span:last-child{flex:30;background:var(--straw)}
+.stages span:last-child{flex:30;background:var(--meadow)}
 .checkpoints{margin:12px 0 0;padding:0;list-style:none}
 .checkpoints li{display:flex;justify-content:space-between;gap:12px;padding:4px 0;border-bottom:1px solid #d8c6ad;font-size:14px}
 .checkpoints time{font-variant-numeric:tabular-nums}
 .example .finding{margin-top:15px;font-size:14px;line-height:1.5;text-wrap:pretty}
 @media(max-width:600px){
  .field{aspect-ratio:auto;min-height:345px}
- .field img{object-position:78% center}
+ .field>img{object-position:78% center}
  .field .copy{position:relative;padding:135px 6.4% 50px;left:auto;right:auto;top:auto}
  .field h1{font-size:clamp(34px,8.8cqw,48px)}
  .field p{max-width:34ch}
  .blade{aspect-ratio:4/3}
- .blade img{object-position:24% center}
+ .blade>img{object-position:24% center}
  .blade .copy{left:42%;top:17%;right:5%;text-shadow:0 1px 7px var(--ink)}
  .blade h2{font-size:clamp(24px,6.8cqw,39px)}
  .blade p{font-size:14px}
@@ -65,6 +69,9 @@
  <header class="scene field">
   <img src="./assets/field.jpg" alt="A horse and plow work a single furrow beneath a wide sky and gathering clouds.">
   <div class="mark" aria-label="Plow">plow</div>
+  <a class="github-stars" href="https://github.com/tryapparent/barnacles">
+   <img src="https://img.shields.io/github/stars/tryapparent/barnacles?style=flat&amp;label=GitHub%20stars&amp;color=392820&amp;labelColor=1a130d&amp;logo=github" width="113" height="20" alt="Barnacles GitHub stars" referrerpolicy="no-referrer">
+  </a>
   <div class="copy">
    <h1>Know your ground.</h1>
    <p>See where your coding agents get stuck, from the first message to a feature in customers’ hands.</p>

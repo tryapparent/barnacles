@@ -229,14 +229,18 @@ provenance and coverage.
 Open **Session history** from Shipping review or at `/sessions`.
 The source is a frozen, privately collected thread study. Search thread titles,
 select a thread, and inspect T3, Codex tool, observed process, CI, and Git
-records on the same elapsed-time axis. Clock labels filter the record list.
-Select a record for its UTC timestamp, provenance, and zoom control. The zoomed view
+records on the same elapsed-time axis. The waterfall shows an individual row
+for each operation in start-time order. Span bars share the full row height. The chronological view fits the ruler
+to start times on the current page and shows that window within the full trace.
+An arrow marks an interval that continues past the visible window.
+Switch to Longest first to compare durations, or filter by clock and operation label. Select a row
+for its UTC timestamp, provenance, and zoom control. The zoomed view
 shows the selected window on a full-trace ruler. A slash
 marks a known start with an unknown end. Intervals can overlap. A mentioned
 run or PR is shown with that relationship in its record details.
 
-The Plow treatment uses neutral off-white for the page, Wet Earth and Cream
-for the plot, Meadow for observed intervals, and Toasted Straw for admission
+The Plow treatment uses Cool Mist for the page, Ink for the plot,
+Meadow for observed intervals, and Original Cream for admission
 and queue intervals. Lane labels and mark shapes identify the underlying
 evidence. The dashboard bundles Young Serif and Geist from the [Plow brand
 assets](../public/brand.md).

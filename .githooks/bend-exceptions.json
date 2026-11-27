@@ -24,7 +24,8 @@
     "evidence/storage/sources.sql",
     "evidence/storage/sources.ts",
     "evidence/projection/timing.ts",
-    "evidence/projection/trace.ts"
+    "evidence/projection/trace.ts",
+    "evidence/analysis/session-history.ts"
   ],
   "Grafana and Tempo provisioning, serialization, and runtime": [
     "dashboard/enablement/deploy/compose.yaml",
@@ -60,6 +61,7 @@
     "collector/github/attempt.test.ts",
     "collector/sources.test.ts",
     "dashboard/prepare.test.ts",
+    "dashboard/harbor-fixture.ts",
     "evidence/delivery/delivery.test.ts",
     "examples/demo.ts",
     "tooling/tests/directory-width.test.ts"
@@ -81,6 +83,8 @@
     "dashboard/web/visual/charts.tsx",
     "dashboard/web/visual/fleet.tsx",
     "dashboard/web/visual/scene.js",
+    "dashboard/web/visual/session-history.css",
+    "dashboard/web/visual/session-history.tsx",
     "dashboard/web/vite.config.ts"
   ],
   "Static Plow site hosting, presentation and binary assets": [
@@ -89,6 +93,7 @@
     "public/assets/geist-ofl.txt",
     "public/assets/geist.woff2",
     "public/assets/hands.jpg",
+    "public/assets/plow-cool-mist.png",
     "public/assets/plow-cream.png",
     "public/assets/plow-ink.png",
     "public/assets/youngserif-ofl.txt",

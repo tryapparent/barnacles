@@ -178,6 +178,17 @@ def matching_events(events: List<&2, HistoryEvent>, +from: Nat, +to: Nat, +query
           matching_events(tail, from, to, query, Bool.pick(List<&2, HistoryEvent>,
             Bool.and(match_label, event_in_range(head, from, to)), head <> output, output))
 
+def duration_before(a: HistoryEvent, b: HistoryEvent) -> Bool:
+  match a b:
+    case HistoryEvent{i, _, +start_a, end_a, _, _, _, _, _} HistoryEvent{j, _, +start_b, end_b, _, _, _, _, _}:
+      +x = Nat.sub(event_endpoint(end_a, start_a), start_a)
+      +y = Nat.sub(event_endpoint(end_b, start_b), start_b)
+      Bool.or(Nat.is_lt(y, x), Bool.and(Nat.is_eq(x, y),
+        Bool.or(Nat.is_lt(start_a, start_b), Bool.and(Nat.is_eq(start_a, start_b), Nat.is_le(i, j)))))
+
+def order_duration(events: List<&2, HistoryEvent>) -> List<&2, HistoryEvent>:
+  Metrics.sort_timing(~HistoryEvent, ~duration_before, events)
+
 def order_events(events: List<&2, HistoryEvent>) -> List<&2, HistoryEvent>:
   Metrics.sort_timing(~HistoryEvent, ~event_before, events)
 

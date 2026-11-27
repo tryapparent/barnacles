@@ -8,7 +8,7 @@ The installer and verification can also read a complete local bundle through the
 
 ## Policy and host interfaces
 
-- [Rules](../.githooks/policy/rules.bend) handles Git object IDs, allowable comment counts, push scope selection, and snapshot entry admission. [Paths](../.githooks/policy/paths.bend) parses the staged JSON exception registry with Bend Kit and matches approved paths. Registry keys are unique and values are arrays of path strings.
+- [Rules](../.githooks/policy/rules.bend) handles Git object IDs, allowable comment counts, push scope selection, and snapshot entry admission. [Paths](../.githooks/policy/paths.bend) parses the staged JSON exception registry with Bend Kit, matches approved paths, and applies source token coverage and allowances. The [path host](../.githooks/check-bend-paths.ts) reads the Git diff and blobs and passes tokenizer counts to Bend2. Registry keys are unique and values are arrays of path strings.
 - [Directory width](../.githooks/policy/width.bend) limits affected directories from the committed or staged tree. [Syntax](../.githooks/policy/syntax.bend) selects grammars and recognizes lexical comment cases. The [syntax host](../.githooks/comment-syntax.ts) manages the installed Tree-sitter WASM, YAML, Markdown, and HTML parser APIs and passes parser facts to Bend2.
 - The hook and snapshot hosts read raw Git records and detect index changes, materialize immutable blobs, invoke external programs, and present diagnostics. [Verification](verification.bend) selects suites, test files, and owner import permissions. [The verification host](verify.ts) builds the policy, walks directories, and runs the Node integration tests.
 
@@ -26,4 +26,4 @@ Populate the npm cache and run `npm run hooks:install` first. On Linux, run the 
 strace -f -qq -e trace=connect -e inject=connect:error=ENETUNREACH npm run test:hooks
 ```
 
-The suite exercises a successful installed commit and local push, missing and damaged compiler data, an invalid staged registry, comment multiplicity, an overwide outgoing tree, and verification of the outgoing commit while the working tree has an unstaged failing test.
+The suite exercises a successful installed commit and local push, missing and damaged compiler data, an invalid staged registry, comment multiplicity, an overwide outgoing tree, source token boundaries and inherited allowances, and verification of the outgoing commit while the working tree has an unstaged failing test.
