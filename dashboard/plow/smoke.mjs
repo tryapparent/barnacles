@@ -9,16 +9,13 @@ if (!directory) throw new Error('Pass the Plow build output directory.')
 const { default: worker } = await import(pathToFileURL(resolve(directory, 'worker.mjs')).href)
 const app = 'https://plow.tryapparent.com/app'
 const audience = 'fixture-audience'
-const t3Environment = '00000000-0000-4000-8000-000000000001'
-const t3Delegate = 'subagent:codex:' + 'a'.repeat(64)
-const t3Path = t3Environment + '/' + encodeURIComponent(t3Delegate)
 const demo = [
   {startUtcMs: 1795726800000, work: [[12960, 16920, "Release verification"]], wait: [[0, 12960, "Publish artifacts"]], end: 16920},
   {startUtcMs: 1795719600000, work: [[0, 5040, "Code changes"]], wait: [[5040, 18360, "CI checks"]], end: 20700},
   {startUtcMs: 1795712400000, work: [[0, 3240, "Code changes"], [13680, 16920, "Local testing"]], wait: [[3240, 13680, "CI checks"]], end: 16920},
   {startUtcMs: 1795705200000, work: [], wait: [[0, 12240, "CI checks"]], end: 16200},
   {startUtcMs: 1795698000000, work: [[0, 8640, "Code changes"]], wait: [[8640, 15480, "CI checks"]], end: 15480},
-  {startUtcMs: 1795694400000, work: [], wait: [[5940, 17280, "Publish artifacts"]], end: 17280, t3Path},
+  {startUtcMs: 1795694400000, work: [], wait: [[5940, 17280, "Publish artifacts"]], end: 17280},
   {startUtcMs: 1795687200000, work: [[0, 2880, "Code changes"]], wait: [[2880, 7380, "CI checks"]], end: 7380},
   {startUtcMs: 1795680000000, work: [[10440, 13320, "Local testing"]], wait: [[0, 10440, "CI checks"]], end: 13320},
   {startUtcMs: 1795676400000, work: [[0, 5400, "Local testing"]], wait: [[5400, 14760, "CI checks"]], end: 14760},
@@ -54,8 +51,7 @@ notEqual(await allowed.text(), await readFile(resolve(directory, 'index.html'), 
 
 const denied = await worker.fetch(request, linked, {})
 equal(denied.status, 403)
-const deniedBody = await denied.text()
-ok(!deniedBody.includes(history) && !deniedBody.includes(t3Path))
+ok(!(await denied.text()).includes(history))
 const invalid = await worker.fetch(request, { ...env, PLOW_SESSION_HISTORY_URL: 'https://preview.tail-fixture.ts.net/shipping' }, context)
 match(await invalid.text(), /data-session-history=""/)
 const head = await worker.fetch(new Request(app, { method: 'HEAD' }), linked, context)
@@ -251,14 +247,9 @@ try {
     const inspector = timeline.getByRole('region', { name: /Thread 6 · Recorded timeline/ })
     match(await inspector.innerText(), /Publish artifacts/)
     equal(await inspector.evaluate(element => element === document.activeElement), true)
-    const t3Action = inspector.getByRole('link', { name: 'Open in T3' })
-    equal(await t3Action.getAttribute('href'), 'https://app.t3.codes/threads/' + t3Path)
-    equal(await t3Action.getAttribute('rel'), 'noreferrer')
-    await page.keyboard.press('Tab')
-    equal(await t3Action.evaluate(element => element === document.activeElement), true)
     await assertStable('open thread inspector')
     await screenshot('details')
-    await t3Action.press('Escape')
+    await page.keyboard.press('Escape')
     equal(await inspect.getAttribute('aria-expanded'), 'false')
     equal(await inspect.evaluate(element => element === document.activeElement), true)
     await assertStable('close thread inspector with Escape')

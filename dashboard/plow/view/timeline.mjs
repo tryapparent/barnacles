@@ -102,12 +102,8 @@ function elapsed(ms) {
   return Math.floor(minutes / 60) + ':' + String(minutes % 60).padStart(2,'0') + ':' + String(seconds % 60).padStart(2,'0')
 }
 function showEvidence(trace) {
-  document.getElementById('inspector-heading').textContent = trace.shortTitle + ' · Recorded timeline'
-  const link = document.getElementById('trace-t3-link')
-  const path = trace.t3Path
-  link.hidden = !path
-  if (path) link.href = 'https://app.t3.codes/threads/' + path
-  else link.removeAttribute('href')
+  const heading = makeElement('h3','', trace.shortTitle + ' · Recorded timeline')
+  heading.id = 'inspector-heading'
   const list = makeElement('ol','evidence-list')
   list.setAttribute('aria-label', 'Recorded timeline, elapsed from first message')
   const phases = [...values(trace.evidence)].map(p=>({start:p.a,end:p.b,label:p.name}))
@@ -122,7 +118,7 @@ function showEvidence(trace) {
     summary.append(makeElement('strong','',failures.length===1?'Failure at ':'Failures at '))
     summary.append(failures.map(item=>elapsed(item.start)).join(', '))
   } else summary.textContent='No recorded failure.'
-  document.getElementById('inspector-evidence').replaceChildren(summary,list)
+  inspector.replaceChildren(heading,summary,list)
 }
 
 function closeInspector() {

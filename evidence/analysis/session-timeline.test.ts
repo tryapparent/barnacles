@@ -53,27 +53,24 @@ test("Plow feed preserves aligned history coverage and detailed trace bounds", a
   try {
     const dbPath = join(job, 'projection-fixture.sqlite')
     const db = new DatabaseSync(dbPath)
-    const environment = '00000000-0000-4000-8000-000000000001'
-    const threadId = '00000000-0000-4000-8000-000000000002'
-    const delegate = 'subagent:codex:' + 'a'.repeat(64)
     db.exec(`
       CREATE TABLE t3_threads(instance TEXT, thread_id TEXT, created_ms INTEGER, updated_ms INTEGER);
       CREATE TABLE t3_runs(instance TEXT, thread_id TEXT, run_id TEXT, requested_ms INTEGER, started_ms INTEGER,
         completed_ms INTEGER, status TEXT);
-      INSERT INTO t3_threads VALUES ('t3','${threadId}',100,1200),('t3','${delegate}',1500,3000),('t3','unknown',3200,3400);
-      INSERT INTO t3_runs VALUES ('t3','${threadId}','a',110,300,900,'failed'),('t3','${delegate}','b',2000,2400,NULL,'running'),
-        ('t3','${delegate}','c',2100,NULL,NULL,'queued'),('t3','${delegate}','d',NULL,2300,3200,'completed'),
+      INSERT INTO t3_threads VALUES ('t3','older',100,1200),('t3','latest',1500,3000),('t3','unknown',3200,3400);
+      INSERT INTO t3_runs VALUES ('t3','older','a',110,300,900,'failed'),('t3','latest','b',2000,2400,NULL,'running'),
+        ('t3','latest','c',2100,NULL,NULL,'queued'),('t3','latest','d',NULL,2300,3200,'completed'),
         ('another','latest','e',1600,1700,1800,'completed');
     `)
     db.close()
-    assert.deepEqual(await projectPlowFeed(dbPath, job, new Map([['t3', environment]])), {
+    assert.deepEqual(await projectPlowFeed(dbPath, job), {
       observed: 3000,
       history: { first: 1, threads: [
         { work: 600, workflow: 190 }, { work: 0, workflow: 400 }, { work: 0, workflow: 0 },
       ] },
       traces: [
-        { t3Path: environment + '/' + encodeURIComponent(delegate), startUtcMs: 1500, end: .9, work: [], wait: [[.5,.9,'T3 admission']], errors: [] },
-        { t3Path: environment + '/' + threadId, startUtcMs: 100, end: .8, work: [[.2,.8,'Provider run']], wait: [[.01,.2,'T3 admission']], errors: [.8] },
+        { startUtcMs: 1500, end: .9, work: [], wait: [[.5,.9,'T3 admission']], errors: [] },
+        { startUtcMs: 100, end: .8, work: [[.2,.8,'Provider run']], wait: [[.01,.2,'T3 admission']], errors: [.8] },
       ],
     })
     const expanded = new DatabaseSync(dbPath)

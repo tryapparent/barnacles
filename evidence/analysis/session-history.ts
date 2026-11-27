@@ -7,23 +7,14 @@ const historyList = <T>(values: T[]): List<T> =>
   values.reduceRight<List<T>>((tail, head) => ({ $: "Con", head, tail }), { $: "Nil" });
 
 type PlowRun = { $: "Run"; requested: number; started: number; completed: number; status: string };
-type PlowThread = { $: "Thread"; created: number; updated: number; runs: List<PlowRun>; t3_path: string };
+type PlowThread = { $: "Thread"; created: number; updated: number; runs: List<PlowRun> };
 type PlowSpan = { a: number; b: number; name: string };
-type PlowTrace = { start: number; end: number; work: List<PlowSpan>; wait: List<PlowSpan>; errors: List<number>; t3_path: string };
+type PlowTrace = { start: number; end: number; work: List<PlowSpan>; wait: List<PlowSpan>; errors: List<number> };
 type PlowHistoryTime = { work: number; workflow: number };
 type PlowPolicy = { project_feed(threads: List<PlowThread>): { observed: number; traces: List<PlowTrace>;
   history: { first: number; threads: List<PlowHistoryTime> } } };
 
-const environmentFormat = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
-const delegateFormat = /^[a-z]+:[a-z]+:[a-f0-9]{64}$/;
-
-function t3Path(instance: string, thread: string) {
-  return environmentFormat.test(instance) && (environmentFormat.test(thread) || delegateFormat.test(thread))
-    ? instance + "/" + encodeURIComponent(thread) : "";
-}
-
-export async function projectPlowFeed(path: string, scratch: string,
-  environments: ReadonlyMap<string, string> = new Map()) {
+export async function projectPlowFeed(path: string, scratch: string) {
   const module = await buildPolicy(scratch, new URL("./plow-feed.bend", import.meta.url), "plow-feed.mjs");
   const policy = await loadPolicy<PlowPolicy>(module);
   const db = new DatabaseSync(path, { readOnly: true });
@@ -34,7 +25,6 @@ export async function projectPlowFeed(path: string, scratch: string,
       WHERE instance=? AND thread_id=? ORDER BY run_id`);
     const projected = policy.project_feed(historyList(threads.map(thread => ({
       $: "Thread", created: Number(thread.created_ms), updated: Number(thread.updated_ms),
-      t3_path: t3Path(environments.get(String(thread.instance)) ?? String(thread.instance), String(thread.thread_id)),
       runs: historyList(runs.all(thread.instance, thread.thread_id).map(run => ({
         $: "Run", requested: Number(run.requested_ms), started: Number(run.started_ms),
         completed: Number(run.completed_ms), status: String(run.status),
@@ -45,7 +35,6 @@ export async function projectPlowFeed(path: string, scratch: string,
       first: projected.history.first,
       threads: rows(projected.history.threads).map(({ work, workflow }) => ({ work, workflow })),
     }, traces: rows(projected.traces).map(trace => ({
-      ...(trace.t3_path && { t3Path: trace.t3_path }),
       startUtcMs: trace.start, end: trace.end / 1000,
       work: spans(trace.work), wait: spans(trace.wait), errors: rows(trace.errors).map(at => at / 1000),
     })) };

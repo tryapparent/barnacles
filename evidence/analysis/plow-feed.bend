@@ -3,11 +3,11 @@ import Base
 type Run is Data:
   Run{requested: Nat, started: Nat, completed: Nat, status: String}
 type Thread is Data:
-  Thread{created: Nat, updated: Nat, runs: List<&2,Run>, t3_path: String}
+  Thread{created: Nat, updated: Nat, runs: List<&2,Run>}
 type Span is Data:
   Span{a: Nat, b: Nat, name: String}
 type Trace is Data:
-  Trace{start: Nat, end: Nat, work: List<&2,Span>, wait: List<&2,Span>, errors: List<&2,Nat>, t3_path: String}
+  Trace{start: Nat, end: Nat, work: List<&2,Span>, wait: List<&2,Span>, errors: List<&2,Nat>}
 type Feed is Data:
   Feed{observed: Nat, traces: List<&2,Trace>}
 type Progress is Data:
@@ -42,13 +42,13 @@ def run_clocks(runs: List<&2,Run>, +created: Nat, +updated: Nat, clocks: Clocks)
 
 def thread_before(a: Thread, b: Thread) -> Bool:
   match a b:
-    case Thread{x,_,_,_} Thread{y,_,_,_}: Nat.is_le(y,x)
+    case Thread{x,_,_} Thread{y,_,_}: Nat.is_le(y,x)
 
-def with_clocks(clocks: Clocks, +created: Nat, +updated: Nat, +remaining: Nat, feed: Feed, t3_path: String) -> Progress:
+def with_clocks(clocks: Clocks, +created: Nat, +updated: Nat, +remaining: Nat, feed: Feed) -> Progress:
   match clocks feed:
     case Clocks{+last,work,wait,errors} Feed{+observed,+traces}:
       +known = Nat.is_lt(0n,last)
-      +kept = Bool.pick(List<&2,Trace>,known,Trace{created,last,work,wait,errors,t3_path} <> traces,traces)
+      +kept = Bool.pick(List<&2,Trace>,known,Trace{created,last,work,wait,errors} <> traces,traces)
       +through = Bool.pick(Nat,known,Nat.max(observed,updated),observed)
       Progress{Bool.pick(Nat,known,Nat.sub(remaining,1n),remaining),Feed{through,kept}}
 
@@ -56,8 +56,8 @@ def collect(threads: List<&2,Thread>, progress: Progress) -> Feed:
   match threads progress:
     case [] Progress{_,feed}: feed
     case _ Progress{0n,feed}: feed
-    case Thread{+created,+updated,runs,t3_path} <> rest Progress{remaining,feed}:
-      collect(rest,with_clocks(run_clocks(runs,created,updated,Clocks{0n,[],[],[]}),created,updated,remaining,feed,t3_path))
+    case Thread{+created,+updated,runs} <> rest Progress{remaining,feed}:
+      collect(rest,with_clocks(run_clocks(runs,created,updated,Clocks{0n,[],[],[]}),created,updated,remaining,feed))
 
 def ordered_feed(feed: Feed) -> Feed:
   match feed:
@@ -109,7 +109,7 @@ def retained_history(threads: List<&2,Thread>, skip: Nat) -> List<&2,HistoryTime
   match threads skip:
     case [] _: []
     case _ <> rest 1n+left: retained_history(rest,left)
-    case Thread{+created,+updated,runs,_} <> rest 0n:
+    case Thread{+created,+updated,runs} <> rest 0n:
       recorded_history(run_clocks(runs,created,updated,Clocks{0n,[],[],[]})) <> retained_history(rest,0n)
 
 def project_history(+threads: List<&2,Thread>) -> HistoryWindow:

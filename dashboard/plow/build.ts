@@ -13,17 +13,7 @@ if (process.argv[2] === "--project-feed") {
   if (!database || !destination || extra.length) throw Error("Pass the input evidence database and a new feed file.");
   const scratch = await mkdtemp(join(tmpdir(), "apparent-dev-plow-projection-"));
   try {
-    const path = resolve(database);
-    const mapping = await readFile(path + ".t3-environments.json", "utf8").catch(error => {
-      if (error.code === "ENOENT") return "{}";
-      throw error;
-    });
-    const environments: unknown = JSON.parse(mapping);
-    if (!environments || typeof environments !== "object" || Array.isArray(environments)
-        || Object.values(environments).some(value => typeof value !== "string")) {
-      throw Error("Expected a JSON object mapping T3 source aliases to environment IDs.");
-    }
-    const feed = await projectPlowFeed(path, scratch, new Map(Object.entries(environments)));
+    const feed = await projectPlowFeed(resolve(database), scratch);
     await writeFile(destination, JSON.stringify(feed), { flag: "wx", mode: 0o600 });
   } finally {
     await rm(scratch, { recursive: true, force: true });
