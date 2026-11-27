@@ -1,9 +1,9 @@
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { buildPolicies, loadPolicy } from "../tooling/bend.ts";
-import { admissionPolicy, loadEvidence, repository, sourcePolicy, type AdmissionPolicy, type Point, type SourcePolicy, type ThreadEvidence } from "../evidence/index.ts";
-import { array, bendList, millis, point, row, str, timeParts, toMillis, token } from "./wire.ts";
+import { buildPolicies, buildPolicy, loadPolicy } from "../tooling/bend.ts";
+import { admissionPolicy, joinSession, loadEvidence, repository, sessionJoinPolicy, sourcePolicy, type AdmissionPolicy, type NativeBinding, type SessionJoinPolicy, type Point, type SourcePolicy, type ThreadEvidence } from "../evidence/index.ts";
+import { array, bendList, millis, point, row, sha, str, timeParts, toMillis, token } from "./wire.ts";
 import { positiveInt } from "./github/attempt.ts";
 import { inspectRollout } from "./codex/rollout.ts";
 
@@ -11,6 +11,13 @@ type T3Policy = SourcePolicy & {
   github_link(host: string): boolean;
   t3_run_clocks(requested: Point, started: Point, completed: Point): { started: Point; completed: Point };
 };
+
+function t3Id(value: unknown): string {
+  if (typeof value !== "string" || value.length > 512 || !/^[A-Za-z0-9](?:[A-Za-z0-9:_-]|%[0-9A-Fa-f]{2})*$/.test(value)) {
+    throw Error("Invalid T3 source identifier");
+  }
+  return value;
+}
 
 export function t3Snapshot(input: unknown, rules: SourcePolicy): ThreadEvidence {
   const policy = rules as T3Policy;
@@ -25,7 +32,7 @@ export function t3Snapshot(input: unknown, rules: SourcePolicy): ThreadEvidence 
     const run = row(value);
     const requested = millis(run.requestedAt);
     const clocks = policy.t3_run_clocks(point(requested), point(millis(run.startedAt)), point(millis(run.completedAt)));
-    return { id: token(run.runId), requested: requested || null, started: toMillis(clocks.started),
+    return { id: t3Id(run.runId), requested: requested || null, started: toMillis(clocks.started),
       completed: toMillis(clocks.completed), status: policy.thread_status(str(run.status)) };
   });
   const pullRequests = array(links.pullRequests, 100).map((value) => {
@@ -35,7 +42,7 @@ export function t3Snapshot(input: unknown, rules: SourcePolicy): ThreadEvidence 
     return { repository: repository(link.repository, policy), number: positiveInt(link.number),
       source, state: policy.link_state(str(link.state)), owning: policy.owns_pr(source) };
   });
-  return { instance: token(snapshot.instance), id: token(thread.threadId), created, updated,
+  return { instance: token(snapshot.instance), id: t3Id(thread.threadId), created, updated,
     title: policy.source_title(str(thread.title)),
     status: policy.thread_status(str(thread.status)), origin: policy.origin(str(thread.createdBy), str(thread.creationSource)),
     settled: thread.settled === true, runs, pullRequests };
@@ -115,17 +122,102 @@ export function linkedRolloutPoller(evidence: string, policy: SourcePolicy, admi
   };
 }
 
+async function fetchNativeReferences(endpoint: string, bearer: string, threadId: string): Promise<unknown[]> {
+  const origin = new URL(endpoint);
+  const local = origin.hostname === "127.0.0.1" || origin.hostname === "[::1]" || origin.hostname === "localhost";
+  if (!(origin.protocol === "https:" || local && origin.protocol === "http:") ||
+      origin.username || origin.password || origin.pathname !== "/" || origin.search || origin.hash) {
+    throw Error("Expected an HTTPS T3 origin or a loopback HTTP origin");
+  }
+  const response = await fetch(new URL("/api/auth/websocket-ticket", origin), {
+    method: "POST", headers: { Authorization: `Bearer ${bearer}` }, redirect: "error", signal: AbortSignal.timeout(5000),
+  });
+  if (!response.ok) throw Error(`T3 websocket ticket request failed (${response.status})`);
+  const { ticket } = row(await response.json());
+  if (typeof ticket !== "string" || !ticket || ticket.length > 4096) throw Error("Invalid T3 websocket ticket");
+  const address = new URL("/ws", origin);
+  address.protocol = origin.protocol === "https:" ? "wss:" : "ws:";
+  address.searchParams.set("orchestrationProtocol", "2");
+  address.searchParams.set("wsTicket", ticket);
+  const socket = new WebSocket(address);
+  try {
+    return await new Promise<unknown[]>((fulfill, reject) => {
+      function fail() { reject(Error("T3 thread projection could not be read")); }
+      socket.addEventListener("error", fail);
+      socket.addEventListener("close", fail);
+      socket.addEventListener("open", () => socket.send(JSON.stringify({
+        _tag: "Request", id: "1", tag: "orchestration.getThreadProjection", payload: { threadId }, headers: [],
+      })));
+      socket.addEventListener("message", (message) => {
+        try {
+          if (typeof message.data !== "string" || message.data.length > 8 * 1024 * 1024) return fail();
+          for (const item of [JSON.parse(message.data)].flat()) {
+            const frame = row(item);
+            if (frame._tag !== "Exit" || frame.requestId !== "1") continue;
+            const result = row(frame.exit);
+            if (result._tag !== "Success") return fail();
+            fulfill(array(row(result.value).providerThreads, 64));
+          }
+        } catch {
+          fail();
+        }
+      });
+      AbortSignal.timeout(8000).addEventListener("abort", fail, { once: true });
+    });
+  } finally {
+    socket.close();
+  }
+}
+
+async function importLiveSession(evidence: string, scratch: string, bindingPath: string, traces: string,
+  policy: SourcePolicy) {
+  const binding = statSync(bindingPath);
+  if (!binding.isFile() || binding.size > 1024 * 1024) throw Error("Expected a bounded T3 session binding");
+  const traceSource = statSync(traces, { bigint: true });
+  const destination = statSync(evidence, { bigint: true, throwIfNoEntry: false });
+  if (!traceSource.isFile() || traceSource.dev === destination?.dev && traceSource.ino === destination?.ino) {
+    throw Error("Expected a separate Codex trace database");
+  }
+  const receipt = row(JSON.parse(readFileSync(bindingPath, "utf8")));
+  const threadId = t3Id(receipt.threadId);
+  const requested = receipt.sessionId === undefined ? "" : token(receipt.sessionId);
+  const endpoint = process.env.PLOW_T3_ORIGIN;
+  const bearer = process.env.PLOW_T3_READ_TOKEN;
+  if (Boolean(endpoint) !== Boolean(bearer)) throw Error("Set both PLOW_T3_ORIGIN and PLOW_T3_READ_TOKEN");
+  const input = endpoint && bearer ? await fetchNativeReferences(endpoint, bearer, threadId) : array(receipt.references, 64);
+  const refs: NativeBinding[] = input.map((item) => {
+    const ref = row(item);
+    const native = ref.nativeThreadRef === undefined || ref.nativeThreadRef === null ? {} : row(ref.nativeThreadRef);
+    return { $: "NativeBinding", thread: t3Id(ref.appThreadId), reference: t3Id(ref.id), driver: str(ref.driver),
+      native_driver: str(native.driver), native_id: str(native.nativeId), strength: str(native.strength) };
+  });
+  const ci = receipt.ci === undefined ? undefined : row(receipt.ci);
+  const joinPolicy = await loadPolicy<SessionJoinPolicy>(await buildPolicy(scratch, sessionJoinPolicy, "session-join.mjs"));
+  const selected = joinPolicy.choose_binding(threadId, requested, bendList(refs));
+  if (selected.$ !== "Bound") throw Error(`Expected one strong T3 Codex binding (${selected.$})`);
+  return joinSession(evidence, traces, {
+    t3Instance: token(receipt.t3Instance), threadId, codexInstance: token(receipt.codexInstance),
+    sessionId: token(selected.session_id), referenceId: selected.reference_id,
+    ci: ci && { observationId: token(ci.observationId), kind: str(ci.kind), repository: repository(str(ci.repository), policy),
+      runId: positiveInt(ci.runId), attempt: positiveInt(ci.attempt), sha: sha(ci.headSha) },
+  }, joinPolicy, bendList);
+}
+
 async function main() {
   const [directory, t3Database, t3Instance, threadId, codexInstance, rollout, ...extra] = process.argv.slice(2);
-  if (!directory || !t3Database || !t3Instance || !threadId || !codexInstance || !rollout || extra.length) {
-    throw Error("Usage: t3.ts JOB_DIRECTORY T3_STATE_DB T3_INSTANCE THREAD_ID CODEX_INSTANCE ROLLOUT");
+  const live = t3Database === "join-session";
+  if (!directory || !t3Database || !t3Instance || !threadId || extra.length ||
+      (live ? codexInstance !== undefined : !codexInstance || !rollout)) {
+    throw Error("Usage: t3.ts JOB_DIRECTORY { T3_STATE_DB T3_INSTANCE THREAD_ID CODEX_INSTANCE ROLLOUT | join-session BINDING.json TRACE_DB }");
   }
   const evidence = join(resolve(directory), "evidence.sqlite");
   const scratch = mkdtempSync(join(resolve(directory), "build-"));
   try {
     const { policy, admission } = await buildSourcePolicies(scratch);
-    console.log(JSON.stringify(await importLinkedRollout(evidence, t3Database, t3Instance, threadId,
-      codexInstance, rollout, policy, admission)));
+    const result = live
+      ? await importLiveSession(evidence, scratch, t3Instance, threadId, policy)
+      : await importLinkedRollout(evidence, t3Database, t3Instance, threadId, codexInstance, rollout, policy, admission);
+    console.log(JSON.stringify(result));
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
