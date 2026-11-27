@@ -17,8 +17,8 @@ Open the [visual brand guide](brand/) for examples and downloadable wordmarks.
 ## Wordmark and type
 
 - Set **plow** and display headlines in **Young Serif Regular (400)**. Use the lowercase wordmark on its own with clear space of roughly one lowercase letter around it. Use Ink on Cool Mist or Original Cream on Wet Earth. Transparent wordmarks are supplied in [Ink](assets/plow-ink.png) and [Original Cream](assets/plow-cream.png).
-- Use **Geist Regular (400)** for body copy and **Geist Semibold (600)** for actions and short emphasis.
-- At a 1,440 px composition width, use roughly 100 px for the hero, 76 px for the second display headline, 42 px for the wordmark, and up to 23 px for copy laid over artwork. At a 375 px width, use 34 px for the hero, 25 px for the second headline, 24 px for the wordmark, and 14 px for the artwork copy.
+- Use **Young Serif Regular (400)** for main copy, including the intro at 17–23 px on the landing page. Use **Source Serif 4 Regular (400)** with optical sizing at 12–14 px for labels, timestamps, and controls.
+- At a 1,440 px composition width, use roughly 100 px for the hero, 76 px for the second display headline, 42 px for the wordmark,. At a 375 px width, use 34 px for the hero, 25 px for the second headline, 24 px for the wordmark,.
 
 ## Color
 
