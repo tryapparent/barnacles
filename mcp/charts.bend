@@ -1,4 +1,5 @@
 import Base
+import ../evidence/analysis/joined/range.bend as Range
 import ../dashboard/plow/policy/preview.bend as Dashboard
 import ../dashboard/plow/policy/spans.bend as Spans
 import ../dashboard/plow/policy/summary.bend as Summary
@@ -17,6 +18,6 @@ def summary_rows(rows: List<&2, ChartTrace>) -> List<&2, Summary.SummaryTrace>:
       Summary.SummaryTrace{index,start,Dashboard.evidence(intervals,duration)} <> summary_rows(rest)
 
 def charts(rows: List<&2, ChartTrace>, +to: Nat) -> DashboardCharts:
-  +from = Dashboard.overview_start(to)
+  +from = Range.start("24h",to)
   +traces = summary_rows(rows)
-  Charts{from,to,Dashboard.time_summary(traces,from,to),Dashboard.agent_work_trend(traces,from)}
+  Charts{from,to,Dashboard.time_summary(traces,from,to),Trend.agent_work_trend(traces,"24h",from,to)}
