@@ -12,9 +12,10 @@ import { pullRequest, releaseEvidence } from "./github/delivery.ts";
 import { inspectRollout, readRollout } from "./codex/rollout.ts";
 import { t3Snapshot } from "./t3.ts";
 
+const root = process.env.BARNACLES_TEST_DIRECTORY;
+assert.ok(root);
+
 test("compiled Bend2 source decisions through the SQLite import path", async () => {
-  const root = process.env.BARNACLES_TEST_DIRECTORY;
-  assert.ok(root);
   const job = mkdtempSync(join(root, "sources-test-"));
   try {
     const [sourceFile, admissionFile, deliveryFile] = await buildPolicies(job, [[sourcePolicy, "sources.mjs"], [admissionPolicy, "admission.mjs"], [deliveryPolicy, "delivery.mjs"]]);
@@ -301,8 +302,6 @@ test("compiled Bend2 source decisions through the SQLite import path", async () 
 });
 
 test("rollout CLI keeps fork lineage, rejects unproven input, and preserves replay", () => {
-  const root = process.env.BARNACLES_TEST_DIRECTORY;
-  assert.ok(root);
   const job = mkdtempSync(join(root, "fork-test-"));
   try {
     const input = join(job, "synthetic.jsonl");
@@ -381,8 +380,6 @@ test("rollout CLI keeps fork lineage, rejects unproven input, and preserves repl
 });
 
 test("nested wait receipts, recycled handles and exact watcher overlap through the source importer", async (t) => {
-  const root = process.env.BARNACLES_TEST_DIRECTORY;
-  assert.ok(root);
   const job = mkdtempSync(join(root, "waits-test-"));
   try {
     const rollout = join(job, "waits.jsonl");
@@ -577,10 +574,10 @@ test("nested wait receipts, recycled handles and exact watcher overlap through t
 });
 
 test("bottleneck replay binds verification and recovery to original receipts", () => {
-  const root = process.env.BARNACLES_TEST_DIRECTORY;
-  assert.ok(root);
   const job = mkdtempSync(join(root, "bottleneck-recovery-test-"));
   const file = join(job, "facts.ndjson");
+  const ownership = { thread: "t", sourceThread: "t", visibility: "local" };
+  const unknownExit = 0xffffffff;
   const worktree = { kind: "storage-worktree-removal", thread: "t", id: "worktree-first", path: "path-1",
     receipt: "quarantine-1", producer: "host-storage-maintenance", phase: "post", deleted: true, at: 100 };
   const repository = { kind: "github-pr-repository-recovery", thread: "t", id: "repository-recovery",
@@ -615,11 +612,9 @@ test("bottleneck replay binds verification and recovery to original receipts", (
   const preProvider = { kind: "t3-worktree-prepare-failure", thread: "t", id: "failed-prepare", branch: "fixture",
     path: "/fixture/worktree", line: "Could not recreate the worktree for branch 'fixture' at /fixture/worktree.",
     runStatus: "failed", providerStarted: false, requested: 100, failedAt: 103 };
-  const reengagement = { kind: "t3-turn-reengagement", thread: "t", sourceThread: "t", id: "reengagement",
-    visibility: "local", priorStatus: "completed", priorOrdinal: 4, nextOrdinal: 5, closed: 100, requested: 230,
+  const reengagement = { kind: "t3-turn-reengagement", ...ownership, id: "reengagement", priorStatus: "completed", priorOrdinal: 4, nextOrdinal: 5, closed: 100, requested: 230,
     acknowledgement: "ended-early" };
-  const ingressInterrupted = { kind: "t3-ingress-interruption", thread: "t", sourceThread: "t", id: "rejected-input",
-    visibility: "local", inputTurn: 5, receiptTurn: 5, submitted: 230, reported: 230,
+  const ingressInterrupted = { kind: "t3-ingress-interruption", ...ownership, id: "rejected-input", inputTurn: 5, receiptTurn: 5, submitted: 230, reported: 230,
     receipt: "interrupted-before-processing" };
   const legacyFetch = { kind: "capture-access-result", thread: "t", id: "legacy-capture-fetch",
     operation: "apparent-fetch", failed: true, line: "Error: Hosted API: not_found" };
@@ -630,12 +625,11 @@ test("bottleneck replay binds verification and recovery to original receipts", (
     phase: "queued", session: null, created: 100, observed: 110, deadline: 3700 };
   const macReady = { ...macQueue, id: "mac-ready", phase: "ready", session: "session",
     created: 0, observed: 160, deadline: 0 };
-  const providerRecovery = { kind: "t3-provider-lifecycle", thread: "t", sourceThread: "t", id: "stream-recovered",
-    visibility: "local", type: "error", status: "completed", title: "Provider recovered", category: "transport_error",
+  const providerRecovery = { kind: "t3-provider-lifecycle", ...ownership, id: "stream-recovered", type: "error", status: "completed", title: "Provider recovered", category: "transport_error",
     code: "responseStreamDisconnected", retryable: true, attempt: 2, maxAttempts: 5, started: 100, completed: 125 };
   const providerLimit = { ...providerRecovery, id: "usage-limit", status: "failed", title: "Usage limit reached",
     category: "usage_limit", code: "usageLimitExceeded", retryable: false, attempt: 0, maxAttempts: 0 };
-  const noReply = { kind: "t3-provider-no-reply", id: "no-reply", thread: "t", sourceThread: "t", visibility: "local",
+  const noReply = { kind: "t3-provider-no-reply", ...ownership, id: "no-reply",
     type: "assistant_message", status: "completed", author: "agent", origin: "provider", receipt: "no-reply-after-retries" };
   const emptyRollup = { kind: "t3-empty-pr-check-rollup", id: "empty-rollup", thread: "t", repository: "example/repo",
     revision: "a".repeat(40), turn: "turn-one", pr: 15, observed: 90, started: 80, checks: 0 };
@@ -648,26 +642,32 @@ test("bottleneck replay binds verification and recovery to original receipts", (
     followingMergeCommit: "" };
   const readAfterError = { ...mergeHttp, id: "read-after-merge-error", followingRepository: mergeHttp.repository,
     followingPr: mergeHttp.pr, followingState: "OPEN" };
-  const commandDeadline = { kind: "t3-command-envelope", id: "terminal-deadline", thread: "t", sourceThread: "t",
-    visibility: "local", itemType: "command_execution", status: "failed", operation: "legacy-terminal",
+  const commandDeadline = { kind: "t3-command-envelope", ...ownership, id: "terminal-deadline",
+    itemType: "command_execution", status: "failed", operation: "legacy-terminal",
     started: 1000, completed: 1420, observed: 1421, elapsedMs: 420_018,
     receipt: "terminal-tool-deadline", limitSeconds: 420 };
-  const refused = { kind: "t3-command-refusal", id: "background-wrapper", thread: "t", sourceThread: "t",
-    visibility: "local", itemType: "command_execution", status: "failed", receipt: "foreground-shell-wrapper",
-    exitCode: 0xffffffff };
+  const mcpDeadline = { ...commandDeadline, id: "mcp-deadline", itemType: "dynamic_tool", operation: "t3-thread-wait",
+    completed: 1300, observed: 1301, elapsedMs: 300_039, receipt: "mcp-tool-deadline", limitSeconds: 300 };
+  const refused = { kind: "t3-command-refusal", ...ownership, id: "background-wrapper",
+    itemType: "command_execution", status: "failed", receipt: "foreground-shell-wrapper",
+    exitCode: unknownExit };
   const refusals = [
-    ["background-wrapper", "foreground-shell-wrapper", 0xffffffff, "t3-terminal-backgrounding-refused"],
-    ["background-ampersand", "foreground-ampersand", 0xffffffff, "t3-terminal-backgrounding-refused"],
+    ["background-wrapper", "foreground-shell-wrapper", unknownExit, "t3-terminal-backgrounding-refused"],
+    ["background-ampersand", "foreground-ampersand", unknownExit, "t3-terminal-backgrounding-refused"],
     ["comment-format", "github-view-comment-format", 1, "github-view-comment-format-conflict"],
     ["git-spawn", "git-fork-resource-unavailable", 255, "git-child-process-spawn-refused"],
-    ["shell-retry", "shell-fork-retry", 0, "local-shell-fork-retry-observed", "completed"],
+    ["shell-retry", "shell-fork-retry", 0, "local-shell-fork-retry-observed"],
     ["vm-auth", "ssh-authentication-denied", 255, "ssh-authentication-refused"],
     ["nomac-lock", "nomac-queue-busy", 75, "native-mac-queue-lock-busy"],
     ["nomac-lock-legacy", "nomac-queue-busy", 2, "native-mac-queue-lock-busy"],
+    ["nomac-credit", "nomac-insufficient-credit", 2, "native-mac-credit-refused"],
     ["github-project-scope", "github-project-read-scope", 1, "github-project-read-scope-refused"],
     ["gitlab-option", "gitlab-unknown-option", 1, "gitlab-cli-option-refused"],
-    ["unknown-tool", "tool-t3-unknown-name", 0xffffffff, "t3-tool-name-unresolved", "failed", "dynamic_tool"],
-    ["delegate-output", "tool-t3-delegate-response-invalid", 0xffffffff, "t3-delegation-response-invalid", "failed", "dynamic_tool"],
+    ["gitlab-cutoff", "gitlab-pipeline-age-refused", 0, "gitlab-pipeline-age-cutoff-observed"],
+    ["unknown-tool", "tool-t3-unknown-name", unknownExit, "t3-tool-name-unresolved", "dynamic_tool"],
+    ["delegate-output", "tool-t3-delegate-response-invalid", unknownExit, "t3-delegation-response-invalid", "dynamic_tool"],
+    ["send-output", "tool-t3-send-response-invalid", unknownExit, "t3-thread-send-response-invalid", "dynamic_tool"],
+    ["direct-tool", "tool-t3-direct-invocation-required", unknownExit, "t3-tool-invocation-route-refused", "dynamic_tool"],
   ] as const;
   const auth = { ...refused, id: "vm-auth", receipt: "ssh-authentication-denied", exitCode: 255 };
   const facts = [
@@ -800,8 +800,10 @@ test("bottleneck replay binds verification and recovery to original receipts", (
     { ...commandDeadline, id: "inherited-command", visibility: "inherited" },
     { ...commandDeadline, id: "other-root-command", sourceThread: "other" },
     { ...commandDeadline, id: "running-command", status: "running" },
-    ...refusals.map(([id, receipt, exitCode, , status = "failed", itemType = "command_execution"]) =>
-      ({ ...refused, id, receipt, exitCode, status, itemType })),
+    mcpDeadline, mcpDeadline,
+    { ...mcpDeadline, id: "other-mcp-call", operation: "browser" },
+    ...refusals.map(([id, receipt, exitCode, , itemType = "command_execution"]) =>
+      ({ ...refused, id, receipt, exitCode, status: exitCode === 0 ? "completed" : "failed", itemType })),
     refused, auth,
     { ...auth, id: "vm-connect", receipt: "ssh-connection-refused" },
     { ...auth, id: "vm-file-permission", receipt: "filesystem-permission-denied" },
@@ -827,56 +829,59 @@ test("bottleneck replay binds verification and recovery to original receipts", (
     ], { encoding: "utf8" });
     const rows = JSON.parse(text).findings as { id: string; rule: string; seconds: number }[];
     assert.deepEqual(rows.map(row => [row.id, row.rule, row.seconds]), [
-      ["worktree-removed-again", "local-worktree-removal-repeated", 0],
+      ["worktree-removed-again", "local-worktree-removal-repeated"],
       ["repository-recovery", "github-pr-default-repository-recovered", 20],
-      ["transcribe-runtime", "local-rust-transcribe-runtime-missing", 0],
-      ["stale-backend", "local-model-catalog-stale-backend-revision", 0],
+      ["transcribe-runtime", "local-rust-transcribe-runtime-missing"],
+      ["stale-backend", "local-model-catalog-stale-backend-revision"],
       ["queued-gate", "ci-platform-admission-queued-status-refused", 100],
       ["same-input-rebuild", "ci-main-rebuild-same-declared-inputs", 120],
-      ["draft-tag-readback", "ci-release-tag-readback-not-found", 0],
-      ["pages-seal-refusal", "ci-pages-artifact-input-refused", 0],
-      ["copy-target", "ci-native-copy-id-target-refused", 0],
-      ["memory-pressure", "local-build-memory-gate-with-worker-slots", 0],
-      ["memory-second-observation", "local-build-memory-gate-with-worker-slots", 0],
-      ["memory-second-thread", "local-build-memory-gate-with-worker-slots", 0],
+      ["draft-tag-readback", "ci-release-tag-readback-not-found"],
+      ["pages-seal-refusal", "ci-pages-artifact-input-refused"],
+      ["copy-target", "ci-native-copy-id-target-refused"],
+      ["memory-pressure", "local-build-memory-gate-with-worker-slots"],
+      ["memory-second-observation", "local-build-memory-gate-with-worker-slots"],
+      ["memory-second-thread", "local-build-memory-gate-with-worker-slots"],
       ["failed-prepare", "t3-worktree-recreation-failed-before-provider", 3],
       ["reengagement", "t3-early-stop-acknowledged", 130],
       ["monitoring-reengagement", "t3-monitoring-stop-acknowledged", 130],
-      ["rejected-input", "t3-inbound-message-interrupted", 0],
-      ["legacy-capture-fetch", "capture-reference-unavailable", 0],
-      ["legacy-capture-inspect", "capture-reference-unavailable", 0],
-      ["implicit-pr-number", "github-pr-implicit-number-unresolved", 0],
+      ["rejected-input", "t3-inbound-message-interrupted"],
+      ["legacy-capture-fetch", "capture-reference-unavailable"],
+      ["legacy-capture-inspect", "capture-reference-unavailable"],
+      ["implicit-pr-number", "github-pr-implicit-number-unresolved"],
       ["mac-ready", "native-mac-ticket-readiness-slow", 60],
       ["stream-recovered", "t3-provider-stream-recovered", 25],
       ["overload-recovered", "t3-provider-overload-recovered", 25],
       ["unknown-max-retries", "t3-provider-stream-recovered", 25],
-      ["usage-limit", "t3-provider-usage-limit-refused", 0],
-      ["no-reply", "t3-provider-no-reply-reported", 0],
-      ["empty-rollup", "t3-pr-check-rollup-empty", 0],
+      ["usage-limit", "t3-provider-usage-limit-refused"],
+      ["no-reply", "t3-provider-no-reply-reported"],
+      ["empty-rollup", "t3-pr-check-rollup-empty"],
       ["repeated-empty", "t3-pr-check-rollup-repeated", 90],
       ["repeated-empty", "t3-pr-manual-verification-unlisted", 75],
-      ["unknown-read-start", "t3-pr-check-rollup-empty", 0],
-      ["read-spans-completion", "t3-pr-check-rollup-empty", 0],
-      ["same-second-start", "t3-pr-check-rollup-empty", 0],
-      ["merge-http", "pr-merge-http-server-error", 0],
-      ["read-after-merge-error", "pr-merge-http-error-observed-open", 0],
-      ["merged-despite-error", "pr-merge-http-error-observed-merged", 0],
-      ["merge-no-commit", "pr-merge-http-server-error", 0],
-      ["merge-wrong-pr", "pr-merge-http-server-error", 0],
-      ["merge-wrong-repo", "pr-merge-http-server-error", 0],
+      ["unknown-read-start", "t3-pr-check-rollup-empty"],
+      ["read-spans-completion", "t3-pr-check-rollup-empty"],
+      ["same-second-start", "t3-pr-check-rollup-empty"],
+      ["merge-http", "pr-merge-http-server-error"],
+      ["read-after-merge-error", "pr-merge-http-error-observed-open"],
+      ["merged-despite-error", "pr-merge-http-error-observed-merged"],
+      ["merge-no-commit", "pr-merge-http-server-error"],
+      ["merge-wrong-pr", "pr-merge-http-server-error"],
+      ["merge-wrong-repo", "pr-merge-http-server-error"],
       ["terminal-deadline", "t3-terminal-tool-deadline", 420],
       ["terminal-deadline-before-floor", "t3-terminal-tool-deadline", 419],
-      ...refusals.map(([id, , , rule]) => [id, rule, 0]),
-    ]);
+      ["mcp-deadline", "t3-mcp-tool-deadline", 300],
+      ...refusals.map(([id, , , rule]) => [id, rule]),
+    ].map(([id, rule, seconds = 0]) => [id, rule, seconds]));
     const { patterns, costs } = JSON.parse(text);
-    assert.deepEqual(costs.filter((r: { clock: string }) => r.clock === "t3-command-envelope"),
-      [{ $: "Cost", clock: "t3-command-envelope", operation: "file-read", count: 1, seconds: 0, unknown: 0 },
-        { $: "Cost", clock: "t3-command-envelope", operation: "legacy-terminal", count: 4, seconds: 1619, unknown: 0 }]);
-    assert.deepEqual(costs.find((r: { clock: string }) => r.clock === "native-mac-ticket-readiness"),
-      { $: "Cost", clock: "native-mac-ticket-readiness", operation: "nomac-wait", count: 2, seconds: 100, unknown: 0 });
-    assert.deepEqual(costs.filter((r: { clock: string }) => r.clock === "t3-provider-recovery"),
-      [{ $: "Cost", clock: "t3-provider-recovery", operation: "response-stream-disconnected", count: 2, seconds: 50, unknown: 0 },
-        { $: "Cost", clock: "t3-provider-recovery", operation: "server-overloaded", count: 1, seconds: 25, unknown: 0 }]);
+    const expectedCosts = [
+      ["t3-command-envelope", [["file-read", 1, 0], ["legacy-terminal", 4, 1619]]],
+      ["native-mac-ticket-readiness", [["nomac-wait", 2, 100]]],
+      ["t3-provider-recovery", [["response-stream-disconnected", 2, 50], ["server-overloaded", 1, 25]]],
+      ["t3-mcp-tool-envelope", [["t3-thread-wait", 1, 300]]],
+    ] as const;
+    for (const [clock, expected] of expectedCosts) {
+      assert.deepEqual(costs.filter((row: { clock: string }) => row.clock === clock),
+        expected.map(([operation, count, seconds]) => ({ $: "Cost", clock, operation, count, seconds, unknown: 0 })));
+    }
     assert.deepEqual(patterns[0], { $: "RulePattern", rule: "local-build-memory-gate-with-worker-slots",
       threads: 2, findings: 3, timed: 0, largestSeconds: 0 });
     assert.deepEqual(patterns.find((p: { rule: string }) => p.rule === "t3-worktree-recreation-failed-before-provider"),
@@ -888,8 +893,6 @@ test("bottleneck replay binds verification and recovery to original receipts", (
 });
 
 test("bottleneck replay separates clocks, distinct peers and observed recoveries", () => {
-  const root = process.env.BARNACLES_TEST_DIRECTORY;
-  assert.ok(root);
   const job = mkdtempSync(join(root, "bottleneck-test-"));
   try {
     const file = join(job, "facts.ndjson");
