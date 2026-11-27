@@ -82,6 +82,7 @@ try {
     }))
     await page.goto(app)
     await page.evaluate(() => document.fonts.ready)
+    await page.locator('.field-ready').waitFor()
     match(await page.locator('#feed-cutoff').textContent(), /Observed through .* UTC/)
     const screenshot = async name => {
       if (process.env.PLOW_SCREENSHOTS) await page.screenshot({ path: resolve(directory, `${width}-${name}.png`), fullPage: true, animations: 'disabled' })
@@ -94,7 +95,6 @@ try {
     const minimap = page.locator('#minimap')
     const range = () => minimap.getAttribute('aria-valuetext')
     const reset = () => minimap.press('Home')
-    const total = page.locator('#summary-total')
     const initial = await range()
     const workflow = summary.locator('#tiles .workflow')
     const publish = summary.getByRole('button', { name: /Publish artifacts/ })
@@ -119,7 +119,7 @@ try {
     const assertPacked = async count => deepEqual(await rowSlots(), originalSlots.slice(0, count))
     const overview = await geometry()
     const assertStable = async state => deepEqual(await geometry(), overview, `${width}px · ${state}`)
-    match(await total.innerText(), /43h 24m across 10 threads/)
+    match(await page.locator('#summary-total').innerText(), /43h 24m across 10 threads/)
     equal(await timeline.getByRole('button', { name: /Zoom in|Zoom out|Fit all/ }).count(), 0)
     const rangeStart = timeline.getByRole('slider', { name: 'Visible range start' })
     const rangeEnd = timeline.getByRole('slider', { name: 'Visible range end' })
@@ -144,7 +144,7 @@ try {
     await reset()
     await assertStable('resize either edge and reset')
     const trend = page.getByRole('region', { name: 'Agent work share' })
-    const batchData = trend.getByRole('button', { name: 'Batch data' })
+    const batchData = trend.getByRole('button', { name: 'Batch values' })
     await batchData.focus()
     await page.keyboard.press('Enter')
     equal(await batchData.getAttribute('aria-expanded'), 'true')
@@ -179,7 +179,7 @@ try {
 
     await workflow.focus()
     await page.keyboard.press('Enter')
-    equal(await summary.locator('#operation-heading').textContent(), 'Admission wait breakdown')
+    equal(await summary.getByRole('heading').textContent(), 'Admission wait')
     equal((await titles()).length, 10)
     await assertStable('open operation breakdown')
 

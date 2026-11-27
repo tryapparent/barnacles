@@ -8,8 +8,8 @@ and failures appear only when the source records a failed run with a measured
 end. The observation timestamp comes from the selected thread records.
 Time summary and Timeline share a UTC viewport. The summary clips each thread's
 disjoint evidence intervals to that viewport, then sums and ranks them across
-threads. Different threads can overlap on the clock. A category opens its
-operation breakdown below the category tiles. Selecting an operation shows
+threads. Different threads can overlap on the clock. A category expands to fill
+the summary card and shows its operation breakdown. Selecting an operation shows
 only threads with matching spans in the visible UTC range and outlines those
 spans on the same clock. Matching rows close up inside the fixed-height
 timeline viewport. Selecting the operation again clears the
@@ -42,6 +42,30 @@ into the origin-served page with the existing fonts and field artwork. The
 Batch data disclosure uses [UI SDK Collapsible](https://ui-sdk.dev/docs/react/components/collapsible)
 with the shared shadcn button.
 
+The desktop dashboard uses a single Open Field backdrop. The dashboard image
+is a generated landscape study based on Plow’s existing field painting and
+the reviewed Open Field concept. The packaged JPEG is embedded in the Worker
+alongside the existing font assets. Opaque cards keep text readable against
+the field. The Upright Rows material is a 1280 × 640 raster atlas built from
+generated oil-painted soil, foliage, and fine sand studies. The upper half
+stores soil detail, foliage relief, and a mask isolated from the painted
+foliage by channel. The lower half stores fine sand relief with mineral flecks
+for Unobserved. The browser paints the same earth under both upper parcels and
+composites the tinted foliage only on the planted land. FieldSurface reuses the
+materials in the trend and in the static grain on timeline spans.
+The trend clips the painted soil and crops at the batch curve and leaves
+gaps for unknown batches. The timeline retains Bend2 phase colors. Field colors adjust
+the summary tints, and Wind displaces only the canopy. Reduced motion pauses
+the effect and forced colors use solid surfaces. Category area follows duration,
+subject to minimum track sizes for readable, clickable tiles. The category name
+leads each tile, with the duration in smaller text. A selected parcel expands
+to fill the summary card. Its category replaces the heading and its measured
+operations fill the interior in related shades, with area proportional to
+duration subject to the same readability limits. One texture from the field
+atlas spans the entire breakdown card. Translucent operation fills tint that
+texture in place, including the selected state. The trend and timeline stay
+in place. Reduced motion opens and closes the breakdown without zooming.
+
 The pinned Bend2 compiler builds the interval, grouping, ranking, and timeline
 policies under `policy/`. The registered host paths provide HTML, embedded
 fonts, DOM and browser input adapters, build packaging, Chromium verification,
@@ -50,12 +74,6 @@ timing intervals, generic clock labels, and an observation timestamp. It
 omits thread identifiers, titles, prompt text, links, and unlinked Codex
 and GitHub records. Generated files and live data stay out of Git and build
 artifacts. When configured, the Session history link opens Plow’s private tailnet view.
-
-The summary, Agent work share, and timeline share the Upright Rows texture
-atlas. The trend clips the summary's painted soil and crop layers at the
-existing batch curve, leaving gaps for unmeasured batches. The timeline uses
-lighter relief from the same atlas. Field colors recolors both overview plots,
-and Wind animates the summary canopy. Forced colors use the plain trend curve.
 
 ## Build and verify
 

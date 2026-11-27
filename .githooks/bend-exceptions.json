@@ -90,6 +90,7 @@
   "Plow browser presentation, compiled policy packaging, and Cloudflare deployment I/O": [
     "dashboard/plow/assets/OFL.txt",
     "dashboard/plow/assets/geist.woff2",
+    "dashboard/plow/assets/open-field.jpg",
     "dashboard/plow/assets/upright-rows.png",
     "dashboard/plow/build.ts",
     "dashboard/plow/deploy.ts",

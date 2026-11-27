@@ -2,9 +2,9 @@ import { Popover, PopoverContent, PopoverDescription, PopoverTitle, PopoverTrigg
 import { useEffect, useState } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
-import { Button, Card } from "./controls";
+import { Button, Card, FieldSettings } from "./controls";
 import { AgentWorkTrend } from "./visual/agent-work-trend";
-import { FieldSettings, Summary } from "./visual/charts";
+import { Summary } from "./visual/charts";
 
 export { renderAgentWorkTrend } from "./visual/agent-work-trend";
 export { renderSummary } from "./visual/charts";
@@ -57,7 +57,7 @@ function Bottlenecks({ api }: { api: string }) {
     "t3-run-envelope": "T3 run",
     "t3-run-admission": "T3 admission",
   };
-  return <section className="bottlenecks" aria-labelledby="bottlenecks-heading">
+  return <Card className="bottlenecks" aria-labelledby="bottlenecks-heading">
     <h2 id="bottlenecks-heading">Bottlenecks</h2>
     {status && <p role="status">{status}</p>}
     {data && <>
@@ -103,14 +103,14 @@ function Bottlenecks({ api }: { api: string }) {
             {cost.unknown > 0 && ` · ${cost.unknown} unknown`}</li>)}</ul>}
       </>}
     </>}
-  </section>;
+  </Card>;
 }
 
 function Dashboard({ field, fieldTexture, sessionHistory, analysisApi }: { field: string; fieldTexture?: string; sessionHistory?: string; analysisApi?: string }) {
   return <>
     <main>
+      <img className="activity-landscape" src={field} alt="" />
       <header className="activity-header">
-        <img src={field} alt="" />
         <div className="activity-meta">
           <p className="wordmark">plow</p>
           <div className="activity-links">
@@ -118,12 +118,12 @@ function Dashboard({ field, fieldTexture, sessionHistory, analysisApi }: { field
             {fieldTexture && <FieldSettings />}
           </div>
         </div>
-        <h1>Thread activity</h1>
+        <h1 className="visually-hidden">Thread activity</h1>
       </header>
       <div className="board">
         <p className="summary-note" id="feed-status">Session data is temporarily unavailable. Reload to try again.</p>
         <div id="feed-content" hidden>
-          <div className="activity-overview"><AgentWorkTrend /><Summary fieldTexture={fieldTexture} /></div>
+          <div className="activity-overview"><Summary fieldTexture={fieldTexture} /><AgentWorkTrend /></div>
           <Card id="timeline-panel" aria-labelledby="timeline-heading">
             <div className="timeline-heading-row">
               <h2 id="timeline-heading">Timeline</h2>
@@ -188,6 +188,7 @@ export function mountDashboard() {
   if (!element?.dataset.field) throw Error("Missing Plow dashboard assets");
   const { field, fieldTexture, sessionHistory, analysisApi } = element.dataset;
   element.removeAttribute("data-field");
+  element.removeAttribute("data-field-texture");
   element.removeAttribute("data-session-history");
   const root = createRoot(element);
   flushSync(() => root.render(<Dashboard field={field} fieldTexture={fieldTexture} sessionHistory={sessionHistory} analysisApi={analysisApi} />));
