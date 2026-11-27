@@ -1,40 +1,52 @@
 name: plow-github-pilot
+x-collector: &collector
+  build:
+    context: ../..
+    dockerfile_inline: |
+      FROM node:22.23.0-bookworm-slim@sha256:d9f850096136edbc402debdd8729579a288aac64574ada0ff4db26b6ae58b0b2
+      RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/*
+      WORKDIR /app
+      COPY package.json package-lock.json ./
+      RUN npm ci --omit=dev --ignore-scripts
+      COPY tooling/bend.ts tooling/
+      RUN node --input-type=module -e 'import {prepareCompiler} from "./tooling/bend.ts"; await prepareCompiler("/app")' && chmod -R a+rX /app/compiler
+      COPY collector collector
+      COPY evidence evidence
+  user: "${PLOW_PILOT_UID:?Set the container UID for the state and credential mounts}:${PLOW_PILOT_GID:?Set the container GID for the state and credential mounts}"
+  restart: "no"
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  environment: &collector-env
+    BARNACLES_BEND_BUNDLE: /app/compiler
+    BARNACLES_GITHUB_AUTH: ${PLOW_PILOT_AUTH:-app}
+    BARNACLES_GITHUB_APP_ID: ${PLOW_PILOT_APP_ID:-}
+    BARNACLES_GITHUB_INSTALLATION_ID: ${PLOW_PILOT_INSTALLATION_ID:-}
+    BARNACLES_GITHUB_CREDENTIAL_FILE: /run/plow-credential
+  tmpfs: [/tmp]
+  volumes:
+    - type: bind
+      source: ${PLOW_PILOT_STATE_DIR:?Set the private state directory}
+      target: /state
+      bind: {create_host_path: false}
+    - type: bind
+      source: ${PLOW_PILOT_CREDENTIAL_FILE:?Set the private credential file}
+      target: /run/plow-credential
+      read_only: true
+      bind: {create_host_path: false}
 services:
   github-pilot:
+    <<: *collector
     profiles: [github-pilot]
-    build:
-      context: ../..
-      dockerfile_inline: |
-        FROM node:22.23.0-bookworm-slim@sha256:d9f850096136edbc402debdd8729579a288aac64574ada0ff4db26b6ae58b0b2
-        RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/*
-        WORKDIR /app
-        COPY package.json package-lock.json ./
-        RUN npm ci --omit=dev --ignore-scripts
-        COPY tooling/bend.ts tooling/
-        RUN node --input-type=module -e 'import {prepareCompiler} from "./tooling/bend.ts"; await prepareCompiler("/app")' && chmod -R a+rX /app/compiler
-        COPY collector collector
-        COPY evidence evidence
     entrypoint: [/bin/sh, -c, 'umask 077 && exec node collector/import-actions.ts /state tryapparent/apparent "$$@"', github-pilot]
     command: [--poll]
-    user: "${PLOW_PILOT_UID:?Set the container UID for the state and credential mounts}:${PLOW_PILOT_GID:?Set the container GID for the state and credential mounts}"
-    restart: "no"
-    read_only: true
-    cap_drop: [ALL]
-    security_opt: [no-new-privileges:true]
+  historical-backfill:
+    <<: *collector
+    profiles: [history]
+    cpu_shares: 128
+    entrypoint: [/bin/sh, -c, 'umask 077 && exec node collector/import-actions.ts /state tryapparent/apparent --backfill /state/history.json "$$@"', historical-backfill]
+    command: ["1"]
     environment:
-      BARNACLES_BEND_BUNDLE: /app/compiler
-      BARNACLES_GITHUB_AUTH: ${PLOW_PILOT_AUTH:-app}
-      BARNACLES_GITHUB_APP_ID: ${PLOW_PILOT_APP_ID:-}
-      BARNACLES_GITHUB_INSTALLATION_ID: ${PLOW_PILOT_INSTALLATION_ID:-}
-      BARNACLES_GITHUB_CREDENTIAL_FILE: /run/plow-credential
-    tmpfs: [/tmp]
-    volumes:
-      - type: bind
-        source: ${PLOW_PILOT_STATE_DIR:?Set the private state directory}
-        target: /state
-        bind: {create_host_path: false}
-      - type: bind
-        source: ${PLOW_PILOT_CREDENTIAL_FILE:?Set the private credential file}
-        target: /run/plow-credential
-        read_only: true
-        bind: {create_host_path: false}
+      <<: *collector-env
+      PLOW_T3_HISTORY_MCP_URL: ${PLOW_T3_HISTORY_MCP_URL:-}
+      PLOW_T3_HISTORY_CREDENTIAL_FILE: /run/plow-credential

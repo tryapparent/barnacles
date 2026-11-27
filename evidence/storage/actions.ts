@@ -97,3 +97,90 @@ function replaceAttempt(db: DatabaseSync, attempt: ActionAttempt, policy: Admiss
     }
   }
 }
+
+export type HistoryProgress = {
+  $: "Progress"; position: number; total: number; revision: string; status: string;
+};
+
+export type HistoryFact = {
+  $: "Fact"; position: number; id: string; kind: string; status: string; seconds: number; millis: number;
+};
+
+
+export function openHistory(path: string, source: string, repository: string, targets: string[]) {
+  closeSync(openSync(path, "a", 0o600));
+  const db = new DatabaseSync(path);
+
+  function transaction<T>(write: () => T): T {
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const result = write();
+      db.exec("COMMIT");
+      return result;
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  try {
+    db.exec("PRAGMA busy_timeout = 1000");
+    transaction(() => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS history_progress (
+          source TEXT NOT NULL, repository TEXT NOT NULL, target TEXT NOT NULL,
+          generation INTEGER NOT NULL, position INTEGER NOT NULL, total INTEGER NOT NULL,
+          revision TEXT NOT NULL, status TEXT NOT NULL,
+          PRIMARY KEY (source, repository, target)
+        ) STRICT;
+        CREATE TABLE IF NOT EXISTS history_t3_activity (
+          environment TEXT NOT NULL, thread TEXT NOT NULL, position INTEGER NOT NULL,
+          item TEXT NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL, updated_at_ms INTEGER,
+          PRIMARY KEY (environment, thread, position, item),
+          UNIQUE (environment, thread, position), UNIQUE (environment, thread, item)
+        ) STRICT;
+      `);
+      const seed = db.prepare("INSERT OR IGNORE INTO history_progress VALUES (?, ?, ?, 0, 0, 0, '', 'pending')");
+      for (const target of targets) seed.run(source, repository, target);
+    });
+  } catch (error) {
+    db.close();
+    throw error;
+  }
+
+  const read = db.prepare("SELECT generation, position, total, revision, status FROM history_progress WHERE source=? AND repository=? AND target=?");
+  const update = db.prepare(`
+    UPDATE history_progress SET generation=generation+1, position=?, total=?, revision=?, status=?
+    WHERE source=? AND repository=? AND target=? AND generation=?
+  `);
+  return {
+    read(target: string) {
+      const row = read.get(source, repository, target)!;
+      return {
+        generation: Number(row.generation),
+        progress: { $: "Progress", position: Number(row.position), total: Number(row.total),
+          revision: String(row.revision), status: String(row.status) } satisfies HistoryProgress,
+      };
+    },
+    commit(target: string, generation: number, progress: HistoryProgress,
+      change?: { attempt: ActionAttempt; admission: AdmissionPolicy } | {
+        environment: string; thread: string; facts: Iterable<HistoryFact>;
+      }) {
+      return transaction(() => {
+        const { position, total, revision, status } = progress;
+        if (!update.run(position, total, revision, status, source, repository, target, generation).changes) return false;
+        if (change && "attempt" in change) {
+          db.exec(schema);
+          replaceAttempt(db, change.attempt, change.admission);
+        }
+        if (change && "facts" in change) {
+          const insert = db.prepare("INSERT INTO history_t3_activity VALUES (?, ?, ?, ?, ?, ?, ?)");
+          for (const fact of change.facts) insert.run(change.environment, change.thread, fact.position - 1,
+            fact.id, fact.kind, fact.status, fact.seconds ? fact.seconds * 1000 + fact.millis : null);
+        }
+        return true;
+      });
+    },
+    close: () => db.close(),
+  };
+}
