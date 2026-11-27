@@ -137,7 +137,7 @@ POSTs including MCP setup and scope checks, within 45 seconds of API access.
 T3 intentionally ignores recent run snapshots, whose list is bounded and
 does not follow the activity cursor.
 
-For a host-only invocation, point `BARNACLES_GITHUB_CREDENTIAL_FILE` or
+For a host-only invocation, point `PLOW_GITHUB_CREDENTIAL_FILE` or
 `PLOW_T3_HISTORY_CREDENTIAL_FILE` to the chosen credential file and use
 
 ```sh
