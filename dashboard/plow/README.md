@@ -27,15 +27,14 @@ historical batches.
 React renders the dashboard shell and operation summary with the shared
 [shadcn controls](../web/controls.tsx). The timeline renderer handles the
 custom UTC geometry, scrolling, and brush interaction. Vite bundles the UI
-into the Worker-served page with the existing fonts and field artwork. The
+into the origin-served page with the existing fonts and field artwork. The
 Batch data disclosure uses [UI SDK Collapsible](https://ui-sdk.dev/docs/react/components/collapsible)
 with the shared shadcn button.
 
 The pinned Bend2 compiler builds the interval, grouping, ranking, and timeline
 policies under `policy/`. The registered host paths provide HTML, embedded
 fonts, DOM and browser input adapters, build packaging, Chromium verification,
-and the JavaScript Worker module and Cloudflare API calls that those runtimes
-require. The projection reuses the collector database and publishes only
+the Node HTTP adapter, and the Docker Compose and Cloudflare API wiring those runtimes require. The projection reuses the collector database and publishes only
 timing intervals, generic clock labels, and an observation timestamp. It
 omits thread identifiers, titles, prompt text, links, and unlinked Codex
 and GitHub records. Generated files and live data stay out of Git and build
@@ -53,62 +52,94 @@ node dashboard/plow/build.ts "$plow_build_dir"
 PLOW_SCREENSHOTS=1 node dashboard/plow/smoke.mjs "$plow_build_dir"
 ```
 
-The smoke check runs the built Worker with a simulated Access session, verifies
-denial with an absent or mismatched audience, and exercises the exact HTML and
-response policy through Chrome at 320, 390, 640, 728, 1120, 1440, and 1920 pixels.
-It checks the projector, feed availability, compact thread filtering, and
-stable page regions during keyboard operation, zoom, pan, and inspection.
-Screenshots are optional.
+The smoke check serves the built page over loopback HTTP with signed fixture
+tokens. It checks Access denial, response headers, and Chrome at 320, 390,
+640, 728, 1120, 1440, and 1920 pixels. It exercises compact thread filtering
+and stable page regions during keyboard operation, zoom, pan, and inspection.
+It also checks the empty and unavailable feed states. Screenshots are optional.
 
 ## Deployment
 
-The GitHub Verify workflow builds and tests the preview on pull requests and
-pushes to main. The production job takes the tested Worker artifact from the
-same run after all verification jobs pass. It uses the main-only
-`plow-production` GitHub environment. A single deployment runs at a time and
-a run whose commit is no longer at the tip of main skips activation.
+The dashboard runs as the `plow-dashboard` service in the root Compose file.
+It binds to Clanker's loopback on port 3033 by default and mounts only the built
+page module, its JWT verification dependency, and a private projected feed.
+The feed is generated from the existing evidence SQLite database through
+Bend2. Projection runs read-only and atomically replaces the last usable feed
+after verification. The origin checks the Cloudflare Access JWT signature,
+issuer, audience, and expiry before returning dashboard content.
 
-Configure the environment with `PLOW_CLOUDFLARE_ACCOUNT_ID`,
-`PLOW_ACCESS_AUDIENCE`, and `PLOW_SESSION_NAMESPACE_ID` variables and a `PLOW_WORKER_TOKEN` secret with Individual
-Workers Editor access scoped to the existing `plow-private-preview` Worker.
-The deployed module checks the Cloudflare Access context for that audience.
-After verifying the live Plow Session history route, set the optional
-`PLOW_SESSION_HISTORY_URL` environment secret to its full private HTTPS URL.
-The Worker includes the link in authorized pages with that setting.
-Cloudflare Access policies, host routes, and alternate URL settings stay in
-Cloudflare. The workflow checks that alternate URLs are disabled and signed-out
-requests go to Access before and after activation. The workflow summary ties
-the Git commit to the active Worker version and deployment ID. A failed
-post-deployment check restores the prior version if its replacement is still
-active. A real Google sign-in is checked separately with the authorized account.
+The user timer builds the dashboard from the same attested main revision
+activated by the [collector release](../enablement/deploy/README.md). Both
+use the collector's deployment lock. Compose starts the dashboard only
+after a feed exists and checks it before recording the active revision.
+If a replacement fails its Compose health check, the launcher restores the
+previous dashboard release. The timer refreshes the feed every 15 minutes
+and applies a new release when the collector's current revision changes.
 
-## Publish the feed
+Set these inputs in `~/.config/plow-frontend/compose.env`, mode 0600.
 
-Create a dedicated Workers KV namespace on the account that owns the deployed
-Worker. Set `PLOW_SESSION_NAMESPACE_ID` to its ID and publish the first feed
-before activating the Worker. The namespace needs no public host or route.
-The Worker reads one versioned key after accepting the existing Access
-audience and serves the result with `Cache-Control: private, no-store`.
+| Input | Purpose |
+| --- | --- |
+| `PLOW_ACCESS_TEAM` | Existing Cloudflare Access team name |
+| `PLOW_ACCESS_AUDIENCE` | Audience tag of the existing Plow Access application |
+| `PLOW_EVIDENCE_DATABASE` | Absolute evidence SQLite path |
+| `PLOW_BEND_BUNDLE` | Absolute path of the verified installed Bend2 compiler bundle |
+| `PLOW_FRONTEND_STATE` | Private application state directory for the built release and projected timeline |
+| `PLOW_FRONTEND_PORT` | Optional loopback port, defaults to 3033 |
+| `PLOW_SESSION_HISTORY_URL` | Optional private HTTPS URL ending in `/sessions` |
 
-Run both commands on the collection host. Point the publisher at the SQLite
-database populated by the collector. It opens one read transaction and never
-writes to the database. Pass a path to a temporary credential file through
-`PLOW_KV_TOKEN_FILE` and supply `CLOUDFLARE_ACCOUNT_ID` and
-`PLOW_SESSION_NAMESPACE_ID` in the publisher environment.
+Install the generated units from the verified source in the existing collector
+release layout. Run these commands as the Clanker deployment user.
 
 ```sh
-job=$(mktemp -d /tmp/apparent-dev-plow-feed-XXXXXX)
-node dashboard/plow/build.ts --project-feed "$evidence" "$job/feed.json"
-node dashboard/plow/deploy.ts --publish-feed "$job/feed.json"
+plow_source="$HOME/.local/share/barnacles/harbor/current/source"
+plow_units="$HOME/.config/systemd/user"
+for unit in service timer; do
+  node "$plow_source/dashboard/plow/deploy.ts" --unit "$unit" > "$plow_units/plow-frontend.$unit"
+done
+systemctl --user daemon-reload
+systemctl --user start plow-frontend.service
+systemctl --user enable --now plow-frontend.timer
+curl -fsS -o /dev/null http://127.0.0.1:3033/_health
 ```
 
-Run this pair from one fifteen-minute timer on the collection host, with the
-second command conditional on the first succeeding. Remove the temporary
-directory on exit. A repeat checks the existing value and skips an identical
-write. Keep the publisher and the Worker namespace in the same account. If a
-projection or upload fails, the last successful feed remains available with
-its original observation timestamp. The feed caps compact history at five complete batches plus nine pending
-threads. The publisher and Worker allow up to 132 KiB, including 4 KiB of
-headroom for history.
-The publication timer reads imported
-evidence and does not collect new T3 records.
+For an isolated candidate, build the page into a private job directory and
+set `PLOW_FRONTEND_ASSETS` to the build directory and `PLOW_FRONTEND_FEED`
+to a directory containing `timeline.json`. Set `PLOW_RELEASE` to the candidate
+SHA, the same Access variables as above, and an unused loopback port. Run
+`docker compose -p plow-dashboard-candidate up -d --wait plow-dashboard` from
+the candidate source. Check `/_health` for 204 and an unauthenticated request
+to `/app` for 403. A repeat should converge on the same container.
+
+### Cloudflare ingress
+
+Cloudflare keeps the existing DNS record, HTTPS, and Access application.
+The checked-in ingress command verifies that Access covers `/app` and
+`/app/*`. It moves exactly `/app` and `/app/` to the Docker origin in the
+existing Plow Tunnel and requires Access validation on the Tunnel. Other
+paths continue to the public site on 3032. The command verifies the new
+route by reading it back, removes the superseded Worker route, and verifies
+the signed-out redirects and public routes. It restores the legacy routing
+if the cutover fails.
+
+Set `PLOW_CF_ACCOUNT`, `PLOW_CF_ZONE`, `PLOW_CF_TUNNEL`, and
+`PLOW_CF_ACCESS_APP` to the existing resource IDs. Inject a credential file
+through `PLOW_CF_TOKEN_FILE`. It needs permission to read the Access
+application, edit the Plow Tunnel configuration, and manage the zone's Worker
+route. Supply the same Access and origin settings as the Compose service.
+
+```sh
+node dashboard/plow/deploy.ts --ingress status
+node dashboard/plow/deploy.ts --ingress apply
+```
+
+To verify authenticated ingress during cutover, also set
+`PLOW_CF_SMOKE_ACCESS=1` and `PLOW_RELEASE` to the active dashboard revision.
+With Access policy and service token write permission, the command creates
+a 10-minute service token scoped to this application, checks both paths for
+the expected `X-Plow-Revision`, and revokes the token and temporary policy.
+The normal sign-in policy is kept. Once verified, disable the retired
+`plow-session-feed.timer`. For rollback, re-enable the legacy feed timer,
+refresh the old KV feed, and run
+`node dashboard/plow/deploy.ts --ingress rollback`. The rollback uses the
+retained Worker and restores its former route.

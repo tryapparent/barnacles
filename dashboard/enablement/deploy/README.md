@@ -1,7 +1,7 @@
 # Plow deployment
 
-The [Worker guide](../../plow/README.md#deployment) documents the verified
-Cloudflare Worker release and private feed publisher.
+The [dashboard guide](../../plow/README.md#deployment) documents the
+Clanker Compose release, projected timeline feed, and Cloudflare ingress.
 
 After verification passes on main, the collector release job publishes an
 attested source archive and its exact revision. The collector runs with
@@ -31,7 +31,7 @@ launcher as `collector-deploy.previous.sh`. Reapplying the same configuration
 does not restart the history process.
 
 Keep the release targeted by `history` in place. Its `snapshot` directory
-holds the private Session history study. The poller and feed publisher
+holds the private Session history study. The poller and dashboard feed refresh
 continue to use the existing persistent evidence database. The collector
 timer still uses `PLOW_COLLECTOR_REPOSITORY` and the existing access settings;
 its previous compiler environment name remains accepted for compatibility.
@@ -44,7 +44,7 @@ trace intake from a release containing the durable receiver.
 ## Session history
 
 Verify the existing private `/sessions` page and `/api/v1/sessions` through
-the configured private URL. The Plow Worker uses that URL for its Session
+the configured private URL. The Plow dashboard uses that URL for its Session
 history link. Confirm the configured endpoint before retiring its serving
 process. With authorization to restore the existing route, set
 `PLOW_COLLECTOR_HISTORY_HOST` to the serving unit's configured private host

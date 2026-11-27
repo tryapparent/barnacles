@@ -1,13 +1,12 @@
-import { deepEqual, equal, match, notEqual, ok } from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { deepEqual, equal, match, ok } from 'node:assert/strict'
+import { once } from 'node:events'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { generateKeyPair, jwtVerify, SignJWT } from 'jose'
 import { chromium } from 'playwright'
 
 const directory = process.argv[2]
-if (!directory) throw new Error('Pass the Plow build output directory.')
-const { default: worker } = await import(pathToFileURL(resolve(directory, 'worker.mjs')).href)
-const app = 'https://plow.tryapparent.com/app'
+const { accessVerifier, createDashboardServer, sessionHistoryUrl } = await import(pathToFileURL(resolve(directory, 'worker.mjs')).href)
 const audience = 'fixture-audience'
 const demo = [
   {startUtcMs: 1795726800000, work: [[12960, 16920, "Release verification"]], wait: [[0, 12960, "Publish artifacts"]], end: 16920},
@@ -29,38 +28,48 @@ const feed = { observed: 1795730400000, traces: demo.map(trace => ({ ...trace, e
   history: { first: 11, threads: fixtureTimes } }
 let storedFeed = JSON.stringify(feed)
 let reads = 0
-const env = { PLOW_ACCESS_AUDIENCE: audience, PLOW_SESSION_FEED: { get: async key => {
-  equal(key, 'session-timeline-v1')
-  reads++
-  return storedFeed
-} } }
 const history = 'https://preview.tail-fixture.ts.net:19531/sessions'
-const linked = { ...env, PLOW_SESSION_HISTORY_URL: history }
-const context = { access: { aud: audience } }
-const request = new Request(app)
-equal((await worker.fetch(request, env, {})).status, 403)
-equal((await worker.fetch(request, {}, context)).status, 403)
-equal((await worker.fetch(request, env, { access: { aud: 'another-app' } })).status, 403)
-equal((await worker.fetch(new Request('https://preview.workers.dev/app'), env, context)).status, 404)
-equal((await worker.fetch(new Request(app, { method: 'POST' }), env, context)).status, 405)
-equal(reads, 0)
-const allowed = await worker.fetch(request, env, context)
-equal(allowed.status, 200)
-equal(allowed.headers.get('Cache-Control'), 'private, no-store')
-notEqual(await allowed.text(), await readFile(resolve(directory, 'index.html'), 'utf8'))
-
-const denied = await worker.fetch(request, linked, {})
-equal(denied.status, 403)
-ok(!(await denied.text()).includes(history))
-const invalid = await worker.fetch(request, { ...env, PLOW_SESSION_HISTORY_URL: 'https://preview.tail-fixture.ts.net/shipping' }, context)
-match(await invalid.text(), /data-session-history=""/)
-const head = await worker.fetch(new Request(app, { method: 'HEAD' }), linked, context)
-equal(head.status, 200)
-equal(await head.text(), '')
-
-
-const browser = await chromium.launch({ channel: 'chrome' })
+const issuer = 'https://fixture.cloudflareaccess.com'
+const { privateKey, publicKey } = await generateKeyPair('RS256')
+const sign = (aud, iss = issuer, exp = '5m') => new SignJWT({})
+  .setProtectedHeader({ alg: 'RS256' }).setAudience(aud).setIssuer(iss).setExpirationTime(exp).sign(privateKey)
+const token = await sign(audience)
+const origin = createDashboardServer({
+  getFeed: async () => {
+    reads++
+    return storedFeed
+  },
+  verifyToken: accessVerifier(jwtVerify, publicKey, issuer, audience),
+  history,
+  revision: 'a'.repeat(40),
+})
+origin.listen(0, '127.0.0.1')
+await once(origin, 'listening')
+const base = `http://127.0.0.1:${origin.address().port}`
+const app = base + '/app'
+let browser
+const request = (assertion, path = '/app', method = 'GET') => fetch(base + path, {
+  method,
+  headers: assertion ? { 'Cf-Access-Jwt-Assertion': assertion } : {},
+})
 try {
+  equal((await request()).status, 403)
+  equal((await request('invalid')).status, 403)
+  equal((await request(await sign('another-app'))).status, 403)
+  equal((await request(await sign(audience, 'https://other.cloudflareaccess.com'))).status, 403)
+  equal((await request(await sign(audience, issuer, '-1m'))).status, 403)
+  equal((await request(token, '/app/other')).status, 404)
+  equal((await request(token, '/app', 'POST')).status, 405)
+  equal(reads, 0)
+  equal((await fetch(base + '/_health')).status, 204)
+  const allowed = await request(token)
+  equal(allowed.status, 200)
+  equal(allowed.headers.get('Cache-Control'), 'private, no-store')
+  equal(allowed.headers.get('X-Plow-Revision'), 'a'.repeat(40))
+  match(await allowed.text(), /1795730400000/)
+  equal(sessionHistoryUrl('https://test.ts.net'), undefined)
+  equal(await (await request(token, '/app/', 'HEAD')).text(), '')
+  browser = await chromium.launch({ channel: 'chrome' })
   for (const width of [320, 390, 640, 728, 1120, 1440, 1920]) {
     const page = await browser.newPage({ viewport: { width, height: 900 } })
     const errors = []
@@ -68,10 +77,9 @@ try {
     page.on('console', message => {
       if (message.type() === 'error' && !message.text().includes('503')) errors.push(message.text())
     })
-    await page.route(app, async route => {
-      const response = await worker.fetch(new Request(route.request().url()), linked, context)
-      await route.fulfill({ status: response.status, headers: Object.fromEntries(response.headers), body: await response.text() })
-    })
+    await page.route(app, route => route.continue({
+      headers: { ...route.request().headers(), 'Cf-Access-Jwt-Assertion': token },
+    }))
     await page.goto(app)
     await page.evaluate(() => document.fonts.ready)
     const board = await page.locator('.board').boundingBox()
@@ -297,7 +305,8 @@ try {
     await page.close()
   }
 } finally {
-  await browser.close()
+  origin.close()
+  await browser?.close()
 }
 
-console.log('Plow Worker access guard, timeline filtering, and stable layout passed at 320, 390, 640, 728, 1120, 1440 and 1920 pixels.')
+console.log('Plow origin and Chromium smoke checks passed.')

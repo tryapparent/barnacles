@@ -1,157 +1,289 @@
+import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { appendFile, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { setTimeout } from "node:timers/promises";
-import { maxFeedLength, sessionHistoryUrl } from "./worker.mjs";
+import { isDeepStrictEqual } from "node:util";
+import { fileURLToPath } from "node:url";
+import { feedPayload, sessionHistoryUrl } from "./worker.mjs";
 
-const account = process.env.CLOUDFLARE_ACCOUNT_ID;
-const namespace = process.env.PLOW_SESSION_NAMESPACE_ID;
+const source = fileURLToPath(new URL("../../", import.meta.url));
+const collector = "%h/.local/share/barnacles/harbor";
+const hostname = "plow.tryapparent.com";
 
-if (process.argv[2] === "--publish-feed") {
-  const [path, ...extra] = process.argv.slice(3);
-  const credential = process.env.PLOW_KV_TOKEN_FILE;
-  if (!account || !/^[a-f0-9]{32}$/.test(account) || !namespace ||
-      !/^[a-f0-9]{32}$/.test(namespace) || !credential || !path || extra.length) {
-    throw Error("Set the Plow account, KV namespace and token file, then pass a projected feed file.");
-  }
-  const payload = await readFile(path);
-  if (!payload.length || payload.length > maxFeedLength) throw Error("Invalid Plow session feed size.");
-  const token = (await readFile(credential, "utf8")).trim();
-  if (!token) throw Error("The Plow KV credential file is empty.");
-  const key = `https://api.cloudflare.com/client/v4/accounts/${account}/storage/kv/namespaces/${namespace}/values/session-timeline-v1`;
-  const authorization = { Authorization: `Bearer ${token}` };
-  const current = await fetch(key, { headers: authorization, signal: AbortSignal.timeout(30_000) });
-  if (current.ok) {
-    if (payload.equals(Buffer.from(await current.arrayBuffer()))) {
-      console.log("The Plow session feed is current.");
-      process.exit(0);
+function required(name: string) {
+  const value = process.env[name];
+  if (!value) throw Error(`Set ${name}.`);
+  return value;
+}
+
+function accessConfig() {
+  const team = required("PLOW_ACCESS_TEAM");
+  const audience = required("PLOW_ACCESS_AUDIENCE");
+  if (!/^[a-z0-9-]+$/.test(team) || !/^[a-f0-9]{64}$/.test(audience)) throw Error("Invalid Plow Access settings.");
+  return { team, audience };
+}
+
+function originPort() {
+  const port = process.env.PLOW_FRONTEND_PORT || "3033";
+  if (!/^\d{1,5}$/.test(port) || +port < 1024 || +port > 65535) throw Error("Invalid Plow frontend port.");
+  return port;
+}
+
+function node(args: string[]) {
+  execFileSync(process.execPath, args, { cwd: source, stdio: "inherit", timeout: 150_000 });
+}
+
+type Release = { source: string; revision: string; assets: string };
+
+function compose(release: Release, feed: string) {
+  execFileSync("docker", ["compose", "-p", "plow-dashboard", "-f", join(release.source, "compose.yaml"),
+    "up", "-d", "--wait", "--wait-timeout", "25", "plow-dashboard"], {
+    stdio: "inherit", timeout: 60_000,
+    env: { ...process.env, PLOW_RELEASE: release.revision, PLOW_FRONTEND_ASSETS: release.assets, PLOW_FRONTEND_FEED: feed },
+  });
+}
+
+async function sync() {
+  accessConfig();
+  originPort();
+  const history = process.env.PLOW_SESSION_HISTORY_URL;
+  if (history && !sessionHistoryUrl(history)) throw Error("Expected a private HTTPS Plow /sessions URL.");
+  const database = resolve(required("PLOW_EVIDENCE_DATABASE"));
+  const state = resolve(required("PLOW_FRONTEND_STATE"));
+  const revision = (await readFile(join(source, "..", "revision"), "utf8")).trim();
+  if (!/^[a-f0-9]{40}$/.test(revision)) throw Error("Expected a verified collector release revision.");
+  const feed = join(state, "feed");
+  const active = join(state, "active.json");
+  const assets = join(state, revision);
+  await mkdir(state, { recursive: true, mode: 0o700 });
+  await mkdir(feed, { recursive: true, mode: 0o700 });
+  const previous: Release | undefined = await readFile(active, "utf8").then(JSON.parse, error => {
+    if (error.code !== "ENOENT") throw error;
+  });
+  const scratch = await mkdtemp(join(tmpdir(), "apparent-dev-plow-frontend-"));
+  try {
+    const projection = join(scratch, "timeline.json");
+    node(["dashboard/plow/build.ts", "--project-feed", database, projection]);
+    const candidateFeed = join(state, "timeline.next");
+    const raw = await readFile(projection, "utf8");
+    feedPayload(raw);
+    await writeFile(candidateFeed, raw, { mode: 0o600 });
+    await rename(candidateFeed, join(feed, "timeline.json"));
+    const built = await readFile(join(assets, "worker.mjs")).then(() => true, error => {
+      if (error.code !== "ENOENT") throw error;
+      return false;
+    });
+    if (!built) {
+      const candidateAssets = await mkdtemp(join(state, "build-"));
+      try {
+        node(["dashboard/plow/build.ts", candidateAssets]);
+        await rename(candidateAssets, assets);
+      } finally {
+        await rm(candidateAssets, { recursive: true, force: true });
+      }
     }
-  } else if (current.status !== 404) {
-    throw Error(`Reading the Plow session feed failed with HTTP ${current.status}.`);
-  }
-  const response = await fetch(key, {
-    method: "PUT", body: payload, headers: { ...authorization, "Content-Type": "application/json" },
-    signal: AbortSignal.timeout(30_000),
-  });
-  const result = await response.json() as { success: boolean };
-  if (!response.ok || !result.success) throw Error(`Publishing the Plow session feed failed with HTTP ${response.status}.`);
-  console.log("Published the Plow session feed.");
-  process.exit(0);
-}
-
-const token = process.env.PLOW_WORKER_TOKEN;
-const audience = process.env.PLOW_ACCESS_AUDIENCE;
-const sha = process.env.GITHUB_SHA;
-const workerPath = process.argv[2];
-const configuredHistory = process.env.PLOW_SESSION_HISTORY_URL;
-const history = sessionHistoryUrl(configuredHistory);
-if (configuredHistory && !history) throw new Error("Expected a private HTTPS Plow /sessions URL.");
-if (!account || !/^[a-f0-9]{32}$/.test(account) || !token || !audience ||
-    !/^[a-f0-9]{64}$/.test(audience) || !namespace || !/^[a-f0-9]{32}$/.test(namespace) || !sha || !/^[a-f0-9]{40}$/.test(sha) || !workerPath) {
-  throw new Error("Missing Plow deployment configuration.");
-}
-
-const worker = `https://api.cloudflare.com/client/v4/accounts/${account}/workers/scripts/plow-private-preview`;
-const deployedUrl = "https://plow.tryapparent.com/app";
-
-async function cloudflare<T>(endpoint: string, body?: FormData | object): Promise<T> {
-  const headers = new Headers({ Authorization: `Bearer ${token}` });
-  if (body && !(body instanceof FormData)) headers.set("Content-Type", "application/json");
-  const response = await fetch(worker + endpoint, {
-    method: body ? "POST" : "GET",
-    headers,
-    body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(40_000),
-  });
-  const payload = await response.json() as { success: boolean; result: T; errors?: { code: number }[] };
-  if (!response.ok || !payload.success) {
-    throw new Error(`Cloudflare ${endpoint} failed with HTTP ${response.status} (codes ${payload.errors?.map(error => error.code).join(",") ?? "none"}).`);
-  }
-  return payload.result;
-}
-
-function latestMain(): boolean {
-  const head = execFileSync("git", ["ls-remote", "--exit-code", "origin", "refs/heads/main"], {
-    encoding: "utf8", timeout: 30_000,
-  }).trim().split(/\s+/)[0];
-  if (!/^[a-f0-9]{40}$/.test(head)) throw new Error("Could not resolve the current main commit.");
-  if (sha === head) return true;
-  console.log(`Skipping ${sha} because main is now ${head}.`);
-  return false;
-}
-
-async function verifyIngress() {
-  const subdomain = await cloudflare<{ enabled: boolean; previews_enabled: boolean }>("/subdomain");
-  if (subdomain.enabled !== false || subdomain.previews_enabled !== false) {
-    throw new Error("Expected both Cloudflare Worker alternate URLs to be disabled.");
-  }
-  for (const path of ["", "/"]) {
-    const response = await fetch(deployedUrl + path, { redirect: "manual", signal: AbortSignal.timeout(15_000) });
-    const redirect = new URL(response.headers.get("Location") ?? deployedUrl);
-    if (response.status !== 302 || redirect.origin !== "https://tryapparent.cloudflareaccess.com" ||
-        redirect.pathname !== "/cdn-cgi/access/login/plow.tryapparent.com") {
-      throw new Error(`Expected signed-out Plow route /app${path} to redirect to Cloudflare Access.`);
-    }
-  }
-}
-
-type Deployment = { id: string; versions: { version_id: string; percentage: number }[] };
-
-async function activeVersion(): Promise<Deployment> {
-  const { deployments } = await cloudflare<{ deployments: Deployment[] }>("/deployments");
-  const current = deployments[0];
-  if (current?.versions.length !== 1 || current.versions[0].percentage !== 100) {
-    throw new Error("Expected a single active Plow Worker version.");
-  }
-  return current;
-}
-
-function activate(id: string) {
-  return cloudflare<Deployment>("/deployments", {
-    strategy: "percentage",
-    versions: [{ version_id: id, percentage: 100 }],
-  });
-}
-
-if (!latestMain()) process.exit(0);
-await verifyIngress();
-const prior = await activeVersion();
-const bundle = new FormData();
-bundle.set("metadata", new Blob([JSON.stringify({
-  main_module: "worker.mjs",
-  compatibility_date: "2026-11-27",
-  bindings: [
-    { type: "plain_text", name: "PLOW_ACCESS_AUDIENCE", text: audience },
-    { type: "kv_namespace", name: "PLOW_SESSION_FEED", namespace_id: namespace },
-    ...(history ? [{ type: "secret_text", name: "PLOW_SESSION_HISTORY_URL", text: history }] : []),
-  ],
-  annotations: { "workers/tag": sha, "workers/message": `Plow main ${sha}` },
-})], { type: "application/json" }));
-bundle.set("worker.mjs", new Blob([await readFile(workerPath)], {
-  type: "application/javascript+module",
-}), "worker.mjs");
-const { id: version } = await cloudflare<{ id: string }>("/versions", bundle);
-if (!latestMain()) process.exit(0);
-
-const deployment = await activate(version);
-try {
-  for (let attempt = 1; ; attempt += 1) {
+    const next = { source, revision, assets };
     try {
-      if ((await activeVersion()).versions[0].version_id !== version) throw new Error("Version not active yet.");
-      await verifyIngress();
-      break;
+      compose(next, feed);
     } catch (error) {
-      if (attempt === 4) throw error;
-      await setTimeout(3000);
+      if (previous) compose(previous, feed);
+      throw error;
     }
+    const receipt = join(state, "active.next");
+    await writeFile(receipt, JSON.stringify(next), { mode: 0o600 });
+    await rename(receipt, active);
+    if (previous?.assets && previous.assets !== assets) await rm(previous.assets, { recursive: true, force: true });
+    console.log(`Plow dashboard is healthy at revision ${revision}.`);
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
   }
-} catch (error) {
-  if ((await activeVersion()).versions[0].version_id === version) {
-    await activate(prior.versions[0].version_id);
-    console.error(`Restored prior Worker version ${prior.versions[0].version_id}.`);
-  }
-  throw error;
 }
 
-const result = `Plow deployed ${sha} as Cloudflare Worker version ${version} (deployment ${deployment.id}).`;
-console.log(result);
-if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, result + "\n");
+function unit(name: string) {
+  if (name === "service") return `[Unit]
+Description=Refresh and deploy the verified Plow dashboard
+
+[Service]
+Type=oneshot
+EnvironmentFile=%h/.config/plow-frontend/compose.env
+ExecStart=/usr/bin/flock -n -E 0 ${collector}/deploy.lock /usr/bin/node ${collector}/current/source/dashboard/plow/deploy.ts --sync
+TimeoutStartSec=390
+UMask=0077
+`;
+  if (name === "timer") return `[Unit]
+Description=Refresh the Plow dashboard every fifteen minutes
+
+[Timer]
+OnStartupSec=1min
+OnUnitInactiveSec=15min
+
+[Install]
+WantedBy=timers.target
+`;
+  throw Error("Expected service or timer.");
+}
+
+type Route = { id: string; pattern: string; script: string | null; request_limit_fail_open: boolean };
+type Rule = { hostname?: string; service: string; path?: string; originRequest?: object };
+type TunnelConfig = { ingress: Rule[]; "warp-routing": { enabled: boolean } };
+
+async function ingress(action: string) {
+  if (!["status", "apply", "rollback"].includes(action)) throw Error("Expected status, apply, or rollback.");
+  const { team, audience } = accessConfig();
+  const account = required("PLOW_CF_ACCOUNT");
+  const zone = required("PLOW_CF_ZONE");
+  const tunnel = required("PLOW_CF_TUNNEL");
+  const application = required("PLOW_CF_ACCESS_APP");
+  if (![account, zone].every(id => /^[a-f0-9]{32}$/.test(id)) ||
+      ![tunnel, application].every(id => /^[a-f0-9-]{36}$/.test(id))) throw Error("Invalid Cloudflare resource IDs.");
+  const token = (await readFile(required("PLOW_CF_TOKEN_FILE"), "utf8")).trim();
+
+  async function api<T>(path: string, method = "GET", body?: object): Promise<T> {
+    const result = await fetch(`https://api.cloudflare.com/client/v4/${path}`, {
+      method,
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: body && JSON.stringify(body),
+      signal: AbortSignal.timeout(20_000),
+    });
+    const payload = await result.json() as { success: boolean; result: T; errors?: { code: number }[] };
+    if (!result.ok || !payload.success) {
+      throw Error(`Cloudflare ${method} ${path} failed with HTTP ${result.status} (${payload.errors?.map(error => error.code).join(",")}).`);
+    }
+    return payload.result;
+  }
+
+  const accountPath = `accounts/${account}`;
+  try {
+    await api(`${accountPath}/tokens/verify`);
+  } catch {
+    await api("user/tokens/verify");
+  }
+  const { aud, type, self_hosted_domains: domains } = await api<{ aud: string; type: string; self_hosted_domains: string[] }>(
+    `${accountPath}/access/apps/${application}`);
+  if (aud !== audience || type !== "self_hosted" || !domains.includes(hostname + "/app") || !domains.includes(hostname + "/app/*")) {
+    throw Error("The existing Access application must protect both Plow dashboard paths.");
+  }
+  const routesPath = `zones/${zone}/workers/routes`;
+  const routeBody = { pattern: hostname + "/app*", script: "plow-private-preview", request_limit_fail_open: false };
+  const configuration = `${accountPath}/cfd_tunnel/${tunnel}/configurations`;
+  const { config } = await api<{ config: TunnelConfig }>(configuration);
+  const route = (await api<Route[]>(routesPath)).find(item => item.pattern === routeBody.pattern);
+  if (route && (route.script !== routeBody.script || route.request_limit_fail_open !== false)) {
+    throw Error("Unexpected existing Worker route for the Plow dashboard.");
+  }
+
+  const publicRule = { service: "http://127.0.0.1:3032", hostname };
+  const fallback = { service: "http_status:404" };
+  const dashboardRule = {
+    service: `http://127.0.0.1:${originPort()}`, hostname, path: "^/app/?$",
+    originRequest: { access: { required: true, teamName: team, audTag: [audience] } },
+  };
+  const legacy = [publicRule, fallback];
+  const desired = [dashboardRule, ...legacy];
+  const alreadyRouted = isDeepStrictEqual(config.ingress, desired);
+  if (!alreadyRouted && !isDeepStrictEqual(config.ingress, legacy)) {
+    throw Error("The Plow Tunnel has unexpected rules. Inspect them before changing routing.");
+  }
+
+  async function setRules(rules: Rule[]) {
+    await api(configuration, "PUT", { config: { ...config, ingress: rules } });
+    const updated = await api<{ config: TunnelConfig }>(configuration);
+    if (!isDeepStrictEqual(updated.config.ingress, rules)) throw Error("Tunnel rules failed readback.");
+  }
+  async function verifyPublic() {
+    for (const path of ["/app", "/app/", "/", "/brand/"]) {
+      const response = await fetch(`https://${hostname}${path}`, { redirect: "manual", signal: AbortSignal.timeout(8_000) });
+      if (path.startsWith("/app")) {
+        const redirect = new URL(response.headers.get("Location") ?? `https://${hostname}`);
+        if (response.status !== 302 || redirect.origin !== `https://${team}.cloudflareaccess.com` ||
+            redirect.pathname !== `/cdn-cgi/access/login/${hostname}`) throw Error(`Expected Cloudflare Access on ${path}.`);
+      } else if (response.status !== 200) {
+        throw Error(`Plow public path ${path} returned ${response.status}.`);
+      }
+      await response.body?.cancel();
+    }
+  }
+  async function verifyAuthenticated() {
+    const revision = required("PLOW_RELEASE");
+    if (!/^[a-f0-9]{40}$/.test(revision)) throw Error("Expected the dashboard release to verify.");
+    const tokens = `${accountPath}/access/service_tokens`;
+    const policies = `${accountPath}/access/apps/${application}/policies`;
+    const name = `Plow cutover smoke ${randomUUID()}`;
+    const credential = await api<{ id: string; client_id: string; client_secret: string }>(tokens, "POST", { name, duration: "10m" });
+    let policy: { id: string } | undefined;
+    try {
+      const current = await api<{ precedence: number }[]>(policies);
+      const precedence = Math.max(0, ...current.map(item => item.precedence)) + 1;
+      policy = await api(policies, "POST", {
+        name, precedence, decision: "non_identity",
+        include: [{ service_token: { token_id: credential.id } }],
+      });
+      for (const path of ["/app", "/app/"]) {
+        for (let attempt = 1; ; attempt++) {
+          const response = await fetch(`https://${hostname}${path}`, {
+            method: "HEAD", redirect: "manual", signal: AbortSignal.timeout(8_000),
+            headers: { "CF-Access-Client-Id": credential.client_id, "CF-Access-Client-Secret": credential.client_secret },
+          });
+          if (response.status === 200 && response.headers.get("X-Plow-Revision") === revision) break;
+          if (attempt === 5) throw Error(`Authenticated route ${path} returned HTTP ${response.status} or the wrong release.`);
+          await setTimeout(4000);
+        }
+      }
+    } finally {
+      try {
+        await api(`${tokens}/${credential.id}`, "DELETE");
+      } finally {
+        if (policy) await api(`${policies}/${policy.id}`, "DELETE");
+      }
+    }
+    console.log("Authenticated both app paths through Cloudflare and verified the Clanker revision.");
+  }
+  async function restore() {
+    if (!(await api<Route[]>(routesPath)).some(item => item.pattern === routeBody.pattern)) {
+      await api(routesPath, "POST", routeBody);
+    }
+    await setRules(legacy);
+    await verifyPublic();
+  }
+  if (action === "status") {
+    await verifyPublic();
+    console.log(`Plow Tunnel dashboard route: ${alreadyRouted ? "configured" : "absent"}. Worker route: ${route ? "present" : "absent"}.`);
+    return;
+  }
+  if (action === "rollback") {
+    await restore();
+    console.log("Restored the Plow Worker route.");
+    return;
+  }
+
+  const origin = `http://127.0.0.1:${originPort()}`;
+  const probe = await fetch(origin + "/_health", { signal: AbortSignal.timeout(5_000) });
+  const denied = await fetch(origin + "/app", { signal: AbortSignal.timeout(5_000) });
+  await denied.body?.cancel();
+  if (probe.status !== 204 || denied.status !== 403) throw Error("Expected a healthy, Access-protected dashboard origin.");
+  await verifyPublic();
+  try {
+    if (!alreadyRouted || route) {
+      if (!alreadyRouted) await setRules(desired);
+      if (route) {
+        await setTimeout(5000);
+        await api(`${routesPath}/${route.id}`, "DELETE");
+      }
+    }
+    if (process.env.PLOW_CF_SMOKE_ACCESS === "1") await verifyAuthenticated();
+    await verifyPublic();
+    if ((await api<Route[]>(routesPath)).some(item => item.pattern === routeBody.pattern)) throw Error("Worker route still active.");
+  } catch (error) {
+    if (route) await restore();
+    throw error;
+  }
+  console.log("Plow dashboard routing points to Clanker and Cloudflare Access protects both app paths.");
+}
+
+const [, , command, arg] = process.argv;
+if (command === "--sync") await sync();
+else if (command === "--unit") process.stdout.write(unit(arg));
+else if (command === "--ingress") await ingress(arg);
+else throw Error("Use --sync, --unit service|timer, or --ingress status|apply|rollback.");

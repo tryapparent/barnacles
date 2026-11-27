@@ -30,13 +30,19 @@ jobs:
       - run: npm exec -- tsc -p dashboard/web/tsconfig.json
       - run: mkdir -p "$RUNNER_TEMP/plow" && node dashboard/plow/build.ts "$RUNNER_TEMP/plow"
       - run: node dashboard/plow/smoke.mjs "$RUNNER_TEMP/plow"
-      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: plow-worker
-          path: ${{ runner.temp }}/plow/worker.mjs
-          if-no-files-found: error
-          retention-days: 3
+      - run: |
+          export PLOW_FRONTEND_ASSETS="$RUNNER_TEMP/plow"
+          export PLOW_FRONTEND_FEED="$RUNNER_TEMP/plow-feed"
+          export PLOW_RELEASE="$GITHUB_SHA"
+          mkdir -m 700 "$PLOW_FRONTEND_FEED"
+          printf '%s\n' '{"observed":0,"traces":[]}' > "$PLOW_FRONTEND_FEED/timeline.json"
+          trap 'docker compose -p plow-dashboard-check down' EXIT
+          docker compose -p plow-dashboard-check up -d --wait plow-dashboard
+          test "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:3033/_health)" = 204
+          test "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:3033/app)" = 403
+        env:
+          PLOW_ACCESS_TEAM: fixture
+          PLOW_ACCESS_AUDIENCE: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   collector-release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository_id == '1473191494'
     needs: [verify, plow]
@@ -63,30 +69,3 @@ jobs:
           name: plow-collector-${{ github.sha }}
           path: ${{ runner.temp }}/plow-collector.tar.gz
           if-no-files-found: error
-  deploy-plow:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository_id == '1473191494'
-    needs: [verify, plow]
-    runs-on: ubuntu-latest
-    timeout-minutes: 6
-    environment:
-      name: plow-production
-      url: https://plow.tryapparent.com/app
-    concurrency:
-      group: plow-production
-      queue: max
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: '22'
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: plow-worker
-          path: ${{ runner.temp }}/plow
-      - run: node dashboard/plow/deploy.ts "$RUNNER_TEMP/plow/worker.mjs"
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ vars.PLOW_CLOUDFLARE_ACCOUNT_ID }}
-          PLOW_ACCESS_AUDIENCE: ${{ vars.PLOW_ACCESS_AUDIENCE }}
-          PLOW_SESSION_NAMESPACE_ID: ${{ vars.PLOW_SESSION_NAMESPACE_ID }}
-          PLOW_WORKER_TOKEN: ${{ secrets.PLOW_WORKER_TOKEN }}
-          PLOW_SESSION_HISTORY_URL: ${{ secrets.PLOW_SESSION_HISTORY_URL }}
