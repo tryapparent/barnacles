@@ -149,6 +149,8 @@ type ReplayPolicy = {
     execution: string, conclusion: string, at: number): unknown;
   observe_hosted_test_fanout(state: unknown, thread: string, id: string, scope: string, lane: string, revision: string,
     failure: string, conclusion: string, at: number): unknown;
+  observe_verification_poll(state: unknown, thread: string, id: string, turn: string, invocation: string,
+    status: string, at: number): unknown;
   observe_package_build(state: unknown, thread: string, id: string, scope: string, tool: string, digest: string,
     assets: number, reportedMs: number, start: number, end: number): unknown;
   observe_peer(state: unknown, thread: string, id: string, clock: string, cohort: string, revision: string,
@@ -162,11 +164,17 @@ type ReplayPolicy = {
     noticeStamp: string, requestedStamp: string): unknown;
   observe_forge_response(state: unknown, thread: string, id: string, operation: string, status: number,
     failed: boolean, identified: boolean): unknown;
+  observe_actions_rate_limit(state: unknown, thread: string, id: string, operation: string, status: number,
+    line: string, failed: boolean): unknown;
   observe_job_rerun(state: unknown, thread: string, id: string, job: string, line: string, failed: boolean): unknown;
   observe_local_admission(state: unknown, thread: string, id: string, waitMs: number, boundMs: number,
     allocated: number, capacity: number): unknown;
   observe_hosted_apt(state: unknown, thread: string, id: string, conclusion: string, exitCode: number,
     httpStatus: number, archive: string, summary: string): unknown;
+  observe_apt_mirror_probe(state: unknown, thread: string, id: string, step: string, conclusion: string,
+    exitCode: number, mirrorA: string, mirrorB: string, line: string, started: number, ended: number): unknown;
+  observe_vm_result(state: unknown, thread: string, id: string, stage: string, failureType: string, exitCode: number,
+    driverExit: number, scenarioStarted: boolean, command: string, line: string, required: string, elapsedMs: number): unknown;
   observe_native_model_fetch(state: unknown, thread: string, id: string, step: string, conclusion: string,
     exitCode: number, status: number, revision: string, line: string, origin: string, started: number, ended: number): unknown;
   observe_toolchain_fetch(state: unknown, thread: string, id: string, step: string, conclusion: string,
@@ -240,6 +248,9 @@ async function replayBottlenecks(file: string, scratch: string) {
       } else if (value.kind === "hosted-test-fanout") {
         state = policy.observe_hosted_test_fanout(state, token(value.thread), id, token(value.scope), token(value.lane),
           sha(value.revision), token(value.failure), token(value.conclusion), clockSecond(value.at));
+      } else if (value.kind === "local-verification-poll") {
+        state = policy.observe_verification_poll(state, token(value.thread), id, token(value.turn), token(value.invocation),
+          token(value.state), clockSecond(value.at));
       } else if (value.kind === "package-build-result") {
         state = policy.observe_package_build(state, token(value.thread), id, token(value.scope), token(value.tool),
           token(value.digest), clockSecond(value.assets), clockSecond(value.reportedMs), clockSecond(value.start),
@@ -260,6 +271,9 @@ async function replayBottlenecks(file: string, scratch: string) {
       } else if (value.kind === "forge-response") {
         state = policy.observe_forge_response(state, token(value.thread), id, token(value.operation),
           clockSecond(value.status), bendBool(value.failed), bendBool(value.identified));
+      } else if (value.kind === "actions-rate-limit") {
+        state = policy.observe_actions_rate_limit(state, token(value.thread), id, token(value.operation),
+          clockSecond(value.status), factText(value.line), bendBool(value.failed));
       } else if (value.kind === "job-rerun-response") {
         state = policy.observe_job_rerun(state, token(value.thread), id, token(value.job),
           factText(value.line), bendBool(value.failed));
@@ -269,6 +283,14 @@ async function replayBottlenecks(file: string, scratch: string) {
       } else if (value.kind === "hosted-apt-result") {
         state = policy.observe_hosted_apt(state, token(value.thread), id, token(value.conclusion),
           clockSecond(value.exitCode), clockSecond(value.httpStatus), factText(value.archive), factText(value.summary));
+      } else if (value.kind === "apt-mirror-probe") {
+        state = policy.observe_apt_mirror_probe(state, token(value.thread), id, factText(value.step), token(value.conclusion),
+          clockSecond(value.exitCode), factText(value.mirrorA), factText(value.mirrorB), factText(value.line),
+          clockSecond(value.started), clockSecond(value.ended));
+      } else if (value.kind === "vm-driver-result") {
+        state = policy.observe_vm_result(state, token(value.thread), id, token(value.stage), token(value.failureType),
+          clockSecond(value.exitCode), clockSecond(value.driverExit), bendBool(value.scenarioStarted), token(value.command),
+          factText(value.line), token(value.required), clockSecond(value.elapsedMs));
       } else if (value.kind === "native-model-fetch-result") {
         state = policy.observe_native_model_fetch(state, token(value.thread), id, factText(value.step), token(value.conclusion),
           clockSecond(value.exitCode), clockSecond(value.status), sha(value.revision), factText(value.line), factText(value.origin),
