@@ -7,3 +7,7 @@
 [Delivery report policy](../delivery/report.bend) retains the first qualifying release per channel, ordered by publication time, verification time, observation identity and dispatch time. It keeps channels in first-observed order and emits an unreleased row if none qualify. Legacy reads fetch the release, its identified asset check and its sibling checks. Bend2 requires exactly one check and a matching asset for a legacy proof. It also derives owners and elapsed times and preserves unknown clocks.
 
 Run `npm run verify -- evidence` to compile both policies and exercise SQLite with synthetic replays, rejection cases and legacy release rows.
+
+## Live Codex traces
+
+The [Codex OTLP boundary](../../collector/codex/README.md) uses [its own admission policy](codex-otel.bend). It preserves nanosecond timestamps as canonical decimal strings and treats a span as an immutable observation identified by the configured instance, trace ID and span ID. Parent IDs may reference spans not yet observed. Event rows retain the selected event time and optional provider-reported duration. Exact repeats reuse the existing row. A conflict rolls back every write in the request. Rollout facts and live telemetry keep their own provenance.
