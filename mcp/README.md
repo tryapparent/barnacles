@@ -9,8 +9,8 @@ through Cloudflare Access when the client prompts.
 | --- | --- | --- |
 | `get_plow_bottlenecks` | Empty object | Latest 24-hour analysis, including its window, timestamp, coverage, priorities, and thread IDs. |
 | `get_plow_thread` | `threadId` from the summary | The selected thread's costs, findings, and source coverage. |
-| `get_plow_timeline` | Empty object | Anonymous dashboard timeline rows, UTC starts, and failures. Elapsed values use seconds. |
-| `get_plow_charts` | Empty object | Where time went and six Agent work share buckets. Times use milliseconds and shares use basis points. |
+| `get_plow_timeline` | Optional `range` (`24h` or `7d`) | Anonymous dashboard timeline rows, UTC starts, and failures. Elapsed values use seconds. |
+| `get_plow_charts` | Optional `range` (`24h` or `7d`) | Where time went and Agent work share for the selected time frame. Times use milliseconds and shares use basis points. |
 
 The [Bend2 tool definitions](tools.bend) compile at startup. The existing
 [analysis API host](../dashboard/prepare.ts) handles Streamable HTTP, checks the
@@ -20,7 +20,9 @@ out between calls. The API reports missing threads and unavailable analysis as
 tool errors.
 
 The activity tools read the same atomically refreshed feed as the dashboard.
-Charts reuse its Bend2 summary and trend functions and its overview cutoff.
+Both tools default to 24 hours and use the dashboard's Bend2 frame, row
+selection, and chart calculations. A seven-day request returns an error if
+the feed does not cover the full time frame.
 Each call reads the latest snapshot. Check the returned observation time to
 detect a refresh between calls.
 

@@ -20,5 +20,5 @@ def tools() -> List<&2, PlowTool>:
     "Read the dashboard activity timeline with UTC starts, elapsed seconds, anonymous thread intervals, and recorded failures. Report the observation time.",
     Timeline{}} <>
   McpTool{"get_plow_charts",
-    "Read the dashboard's last 24 hours of Where time went and Agent work share. Chart durations use milliseconds and trend share uses basis points.",
+    "Read the dashboard's Where time went and Agent work share for 24 hours or seven days. Chart durations use milliseconds and trend share uses basis points.",
     Charts{}} <> []

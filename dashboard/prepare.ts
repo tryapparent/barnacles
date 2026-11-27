@@ -88,7 +88,7 @@ function readAnalysis(file: string, thread?: string, weekly = false): string | u
 type Tool = { name: string; description: string; input: { $: "Bottlenecks" | "Thread" | "Timeline" | "Charts" } };
 type ToolList = { $: "Con"; head: Tool; tail: ToolList } | { $: "Nil" };
 
-type Charts = { charts(rows: unknown, end: number): object };
+type Charts = { activity(...args: unknown[]): unknown; charts(...args: unknown[]): object };
 
 async function analysisMcp(file: string) {
   const { PLOW_MCP_ACCESS_TEAM: team, PLOW_MCP_ACCESS_AUDIENCE: audience } = process.env;
@@ -125,21 +125,23 @@ async function analysisMcp(file: string) {
     for (let list = tools; list.$ === "Con"; list = list.tail) {
       const { name, description, input } = list.head;
       const kind = input.$;
+      const activity = kind === "Charts" || kind === "Timeline";
       server.registerTool(name, {
-        description, inputSchema: kind === "Thread" ? { threadId: z.string().regex(threadId) } : {},
+        description, inputSchema: kind === "Thread" ? { threadId: z.string().regex(threadId) }
+          : activity ? { range: z.enum(["24h", "7d"]).optional() } : {},
         annotations: { readOnlyHint: true, openWorldHint: false },
       }, args => {
         const id = "threadId" in args ? args.threadId : undefined;
         try {
-          const payload = kind === "Charts" || kind === "Timeline"
-            ? dashboardData(readFileSync(feedFile, "utf8"), kind, charts)
+          const payload = activity
+            ? dashboardData(readFileSync(feedFile, "utf8"), kind, charts, "range" in args ? args.range ?? "24h" : "24h")
             : readAnalysis(file, id);
           if (payload) {
             return { content: [{ type: "text", text: payload }], structuredContent: JSON.parse(payload) };
           }
           if (id) return { isError: true, content: [{ type: "text", text: "Thread is absent from the current analysis." }] };
         } catch {}
-        const message = kind === "Charts" || kind === "Timeline" ? "Dashboard activity is unavailable." : "Plow analysis is unavailable.";
+        const message = activity ? "Dashboard activity is unavailable." : "Plow analysis is unavailable.";
         return { isError: true, content: [{ type: "text", text: message }] };
       });
     }
