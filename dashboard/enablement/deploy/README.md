@@ -90,6 +90,19 @@ The API publishes only aggregated impact and coverage. Delay is unknown when
 the ledger is absent or insufficient. An interrupted refresh leaves the last
 committed results readable.
 
+The summary API includes at most three `priorities`. Bend2 ranks patterns
+with unique confirmed outcome delay first, by attributed milliseconds and
+measured outcomes. Observed diagnostics fill any remaining slots. They are
+ranked by distinct threads affected, then distinct events. A T3 admission
+diagnostic measures the observed request-to-start intervals clipped to the
+window. A CI diagnostic groups exactly linked failed or timed-out jobs by
+repository, workflow ID and retained job label. Each job contributes once
+across threads, with execution time accounted for only when its clocks are
+available. These diagnostics do not estimate outcome delay. Each priority
+includes a next step, its ranking basis, affected counts and timing coverage.
+The list can be empty with insufficient evidence. The existing analysis
+summary and thread detail continue to be available for existing clients.
+
 To resolve native Codex bindings over the network for already imported T3
 threads, supply `PLOW_ANALYSIS_T3_ORIGIN`, `PLOW_ANALYSIS_T3_INSTANCE`,
 `PLOW_ANALYSIS_CODEX_INSTANCE`, and the container path

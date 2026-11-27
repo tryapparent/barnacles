@@ -197,13 +197,18 @@ test("joined bottleneck replay counts exact job facts once and preserves missing
     const output = join(job, "analysis.sqlite");
     const cutoff = 1700000012000;
     assert.equal((await publishJoinedAnalysis(file, output, job, cutoff)).recomputed, 53);
-    assert.equal((await publishJoinedAnalysis(file, output, job, cutoff)).recomputed, 0);
+    const delay = { pattern: "review", uniqueMs: 10000, medianMs: 10000, worstMs: 10000,
+      stage: "merge", affectedOutcomes: 1, coverage: { sufficient: 1, occurrences: 2 } };
+    assert.equal((await publishJoinedAnalysis(file, output, job, cutoff, async () =>
+      ({ patterns: [delay] }))).recomputed, 0);
     const published = new DatabaseSync(output, { readOnly: true });
     try {
       const summary = JSON.parse(String(published.prepare("SELECT payload FROM analysis_summary").get()?.payload));
       assert.equal(Date.parse(summary.window.to) - Date.parse(summary.window.from), 86400000);
       assert.deepEqual(summary.coverage, { $: "Coverage", active: 53, withCodex: 0, withCI: 2, withBoth: 0 });
       assert.deepEqual(summary.ranking, [{ $: "Rank", rule: "ci-job-failure", threads: 2, occurrences: 1 }]);
+      assert.deepEqual(summary.priorities.map((p: { totalMs: number }) => p.totalMs), [10000, 8000, 1000]);
+      assert.equal(summary.priorities[1].occurrences, 1);
       const ciThread = summary.threads.find((thread: { coverage: { githubJobs: number } }) => thread.coverage.githubJobs);
       const detail = JSON.parse(String(published.prepare("SELECT payload FROM analysis_threads WHERE id=?").get(ciThread.id)?.payload));
       assert.deepEqual(detail.rules, ["ci-job-failure"]);
@@ -218,6 +223,7 @@ test("joined bottleneck replay counts exact job facts once and preserves missing
     try {
       const summary = JSON.parse(String(expired.prepare("SELECT payload FROM analysis_summary").get()?.payload));
       assert.deepEqual(summary.ranking, []);
+      assert.deepEqual(summary.priorities, []);
       assert.equal(expired.prepare("SELECT count(*) AS n FROM analysis_threads").get()?.n, 1);
     } finally {
       expired.close();
