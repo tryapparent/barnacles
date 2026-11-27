@@ -16,6 +16,17 @@ timeline viewport. Selecting the operation again clears the
 filter. Changing the time range updates the matches while preserving the
 selected operation.
 
+Drag across the bars to select and zoom to a range. Select a bar with the
+pointer, Enter, or Space to fit its exact start and end. Ctrl+scroll zooms
+around the pointer and Ctrl+↑/↓ zooms in steps. Drag the UTC ruler or use
+horizontal scrolling to pan. Hover over a phase or red marker to see its
+recorded activity or exact failure times. Use Inspect for the recorded
+thread details.
+
+The minimap’s UI SDK Slider thumbs resize the range. Drag the middle to pan
+or drag outside the selection to select a different interval. Home or a
+double-click on the minimap resets the view. The eye button opens the guide.
+
 **Agent work share** averages each measured thread’s provider-run time divided
 by its classified provider-run plus admission-wait time. Bend2 groups threads
 in creation order into batches of ten. It keeps up to five complete batches

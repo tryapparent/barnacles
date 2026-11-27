@@ -26,11 +26,8 @@ const grid = document.getElementById('timeline-grid')
 const inspector = document.getElementById('thread-inspector')
 const minimap = document.getElementById('minimap')
 const miniWindow = minimap.querySelector('.mini-window')
-const miniBrush = minimap.querySelector('.mini-brush')
-const zoomIn = document.getElementById('zoom-in')
-const zoomOut = document.getElementById('zoom-out')
-const fitAll = document.getElementById('zoom-fit')
-const modeReadout = document.getElementById('zoom-mode')
+const navigatorTrack = minimap.parentElement
+const rangeControls = navigatorTrack.querySelector('.mini-handles')
 const millis = seconds => Math.round(seconds * 1000)
 const percent = (value, end) => (value / end * 100).toFixed(5) + '%'
 const asList = entries => entries.reduceRight((tail, head) => ({ $: 'Con', head, tail }), { $: 'Nil' })
@@ -82,7 +79,8 @@ let measuredWidth = 0
 let openTrace = -1
 let zoom = 1
 let baseWidth = 0
-const maximumZoom = 128
+let visibleWindow = frame
+const minimumDuration = Math.max(1, Math.ceil(scale / 128))
 
 function makeElement(tag, className, text) {
   const element = document.createElement(tag)
@@ -118,7 +116,11 @@ function showEvidence(trace) {
     summary.append(makeElement('strong','',failures.length===1?'Failure at ':'Failures at '))
     summary.append(failures.map(item=>elapsed(item.start)).join(', '))
   } else summary.textContent='No recorded failure.'
-  inspector.replaceChildren(heading,summary,list)
+  const close = makeElement('button', 'inspect-close', '×')
+  close.type = 'button'
+  close.setAttribute('aria-label', 'Close thread inspector')
+  close.addEventListener('click', dismissInspector)
+  inspector.replaceChildren(heading, close, summary, list)
 }
 
 function closeInspector() {
@@ -127,11 +129,14 @@ function closeInspector() {
   inspector.hidden = true
 }
 
-inspector.addEventListener('keydown', event => {
-  if (event.key !== 'Escape') return
+function dismissInspector() {
   const trigger = rows.querySelector('.inspectable[aria-expanded="true"]')
   closeInspector()
-  trigger?.focus()
+  trigger?.focus({ preventScroll:true })
+}
+
+inspector.addEventListener('keydown', event => {
+  if (event.key === 'Escape') dismissInspector()
 })
 
 function render(trace, width, measurements, index) {
@@ -146,34 +151,33 @@ function render(trace, width, measurements, index) {
   meta.append(makeElement('span','',subtitle))
   link.setAttribute('aria-label',trace.title+' · '+subtitle)
   header.append(link,meta)
-  const rail = makeElement(details?'button':'div',details?'rail inspectable':'rail')
-  if(details){
-    rail.type='button'
-    rail.dataset.focusPart='timeline'
-    rail.setAttribute('aria-label','Inspect '+trace.title+' · '+subtitle+' · '+trace.recordedFailures.length+' recorded failures')
-    rail.setAttribute('aria-expanded',String(index===openTrace))
-    rail.setAttribute('aria-controls',inspector.id)
-    rail.addEventListener('click',()=>{
-      const opening = openTrace !== index
-      closeInspector()
-      if (!opening) return
-      openTrace = index
-      rail.setAttribute('aria-expanded','true')
-      showEvidence(trace)
-      inspector.hidden = false
-      inspector.scrollTop = 0
-      inspector.focus()
-    })
-  } else {
-    rail.setAttribute('role','img')
-    rail.setAttribute('aria-label','Elapsed '+elapsed(trace.end)+'. Provider run '+elapsed(trace.totals.work)+
-      '. Admission wait '+elapsed(trace.totals.workflow)+'. Unobserved '+elapsed(trace.totals.unclear)+
-      '. '+trace.recordedFailures.length+' recorded failures.')
-  }
+  const inspect = makeElement('button', 'inspectable', 'Inspect')
+  inspect.type = 'button'
+  inspect.dataset.focusPart = 'timeline'
+  inspect.setAttribute('aria-label', 'Inspect ' + trace.title + ' · ' + subtitle + ' · ' + trace.recordedFailures.length + ' recorded failures')
+  inspect.setAttribute('aria-expanded', String(index === openTrace))
+  inspect.setAttribute('aria-controls', inspector.id)
+  inspect.addEventListener('click', () => {
+    const opening = openTrace !== index
+    closeInspector()
+    if (!opening) return
+    openTrace = index
+    inspect.setAttribute('aria-expanded', 'true')
+    showEvidence(trace)
+    inspector.hidden = false
+    inspector.scrollTop = 0
+    inspector.focus({ preventScroll:true })
+  })
+  header.append(inspect)
+  const rail = makeElement('div', 'rail')
+  rail.dataset.description = 'Elapsed ' + elapsed(trace.end) + '. Provider run ' + elapsed(trace.totals.work) +
+    '. Admission wait ' + elapsed(trace.totals.workflow) + '. Unobserved ' + elapsed(trace.totals.unclear) +
+    '. ' + trace.recordedFailures.length + ' recorded failures.'
   const bar = makeElement('span','bar')
   bar.style.setProperty('--length', percent(trace.end, scale))
   bar.style.left = percent(policy.utc_offset(frame,trace.startUtcMs),scale)
-  const stops = [...values(plan.paint)].map(slice => slice.paint + ' ' + percent(slice.a, trace.end) + ' ' + percent(slice.b, trace.end))
+  const paint = [...values(plan.paint)]
+  const stops = paint.map(slice => slice.paint + ' ' + percent(slice.a, trace.end) + ' ' + percent(slice.b, trace.end))
   bar.style.background = 'linear-gradient(to right,' + stops.join(',') + ')'
   for (const label of values(plan.labels)) {
     const box = makeElement('span', 'label')
@@ -187,11 +191,16 @@ function render(trace, width, measurements, index) {
   }
   for (const time of values(policy.failure_points(details, trace.end, trace.failures))) {
     const marker = makeElement('i', 'marker')
-    marker.title = 'Recorded failure'
     marker.style.setProperty('--at', percent(time, trace.end))
     bar.append(marker)
   }
-  rail.append(bar)
+  bar.setAttribute('aria-hidden', 'true')
+  const action = makeElement('span', 'fit-target')
+  const clipStart = Math.max(visibleWindow.start, trace.startUtcMs)
+  const clipEnd = Math.min(visibleWindow.end, trace.startUtcMs + trace.end)
+  action.style.left = percent(clipStart - frame.start, scale)
+  action.style.width = percent(Math.max(0, clipEnd - clipStart), scale)
+  rail.append(bar, action)
   row.dataset.traceIndex = index
   row.append(header, rail)
   paintThreadMatch(row, rail, index)
@@ -206,103 +215,102 @@ function draw() {
   const row = active?.closest('.trace')
   const part = active?.dataset.focusPart
   rows.replaceChildren(...evidenceRows.map((trace,index)=>render(trace,measuredWidth,measurements,index)))
+  PlowUI.renderTimelineControls(evidenceRows.map((trace, index) => ({
+    host: rows.children[index].querySelector('.fit-target'),
+    label: 'Fit ' + trace.title + '. ' + rows.children[index].querySelector('.rail').dataset.description,
+    fit: () => applyWindow(policy.view_window(frame, trace.startUtcMs, trace.end, 1), true),
+    visible: policy.window_overlap(visibleWindow, trace.startUtcMs, trace.startUtcMs + trace.end),
+  })), {
+    host: rangeControls, max: scale,
+    value: [visibleWindow.start - frame.start, visibleWindow.end - frame.start],
+    format: value => utc(frame.start + value) + ' UTC',
+    resize: (index, value) => moveBoundary(index === 0, frame.start + value),
+  })
   if (row && part) rows.querySelector('[data-trace-index="'+row.dataset.traceIndex+'"] [data-focus-part="'+part+'"]')?.focus({preventScroll:true})
 }
-function bounds(value, low, high) {
-  return Math.min(high, Math.max(low, value))
+function chartPlot() {
+  return { left: ruler.getBoundingClientRect().left + viewport.scrollLeft, width: baseWidth }
 }
 function paintWindow() {
-  const timelineWidth = baseWidth * zoom
-  if (!settingZoom && viewport.scrollLeft !== appliedScroll) rangeCenter = (viewport.scrollLeft / timelineWidth) + .5 / zoom
-  paintRange()
-  const end = viewport.getBoundingClientRect().left + viewport.clientWidth
-  const start = end - baseWidth
-  const visible = [...axis.children,...rows.querySelectorAll('.label span')].map(element=>{
+  const { left, width } = chartPlot()
+  for (const element of [...axis.children, ...rows.querySelectorAll('.label span')]) {
     const box = element.getBoundingClientRect()
-    return [element,box.left >= start-1 && box.right <= end+1]
-  })
-  for (const [element,show] of visible) element.style.visibility=show?'visible':'hidden'
+    element.style.visibility = box.left >= left - 1 && box.right <= left + width + 1 ? 'visible' : 'hidden'
+  }
 }
-function applyZoom(nextZoom, center) {
-  zoom = bounds(nextZoom,1,maximumZoom)
-  rangeCenter = bounds(center ?? rangeCenter,.5/zoom,1-.5/zoom)
-  const visible = Math.round(scale / zoom)
-  details = policy.detail_zoom(visible)
-  if (!details && openTrace !== -1) closeInspector()
-  modeReadout.textContent = durationLabel(visible) + ' visible' + ' · ' + (details ? 'Details' : 'Overview')
-  zoomOut.disabled = zoom === 1
-  fitAll.disabled = zoom === 1
-  zoomIn.disabled = zoom === maximumZoom
-  const heading = viewport.querySelector('.table-head')
-  const columns = getComputedStyle(heading)
-  const frozen = parseFloat(columns.gridTemplateColumns) + parseFloat(columns.columnGap)
-  const width = Math.floor(viewport.clientWidth - frozen)
-  if (width <= 0) return
+function duration() {
+  return visibleWindow.end - visibleWindow.start
+}
+let fitted = false
+function applyWindow(next, focused = false) {
+  if (!traces.length) return
+  visibleWindow = next
+  const heading = getComputedStyle(viewport.querySelector('.table-head'))
+  const frozen = parseFloat(heading.gridTemplateColumns) + parseFloat(heading.columnGap)
   viewportWidth = viewport.clientWidth
-  baseWidth = width
+  baseWidth = Math.floor(viewportWidth - frozen)
+  if (baseWidth <= 0) return
+  zoom = scale / duration()
+  fitted = focused
+  details = policy.trace_details(duration(), fitted)
   grid.style.setProperty('--timeline-width', (baseWidth * zoom) + 'px')
-  viewport.scrollLeft = (rangeCenter - .5/zoom) * baseWidth * zoom
-  appliedScroll = viewport.scrollLeft
-  settingZoom = true
-  drawTicks(visible)
+  viewport.scrollLeft = (next.start - frame.start) * baseWidth / duration()
+  clearTooltip()
+  drawTicks(duration())
   draw()
+  paintRange()
   paintWindow()
-  settingZoom = false
 }
-zoomIn.addEventListener('click',()=>applyZoom(zoom * 2))
-zoomOut.addEventListener('click',()=>applyZoom(zoom / 2))
-fitAll.addEventListener('click',resetRange)
-viewport.addEventListener('scroll',paintWindow,{passive:true})
+function panWindow(fraction, start = visibleWindow.start) {
+  applyWindow(policy.view_window(frame, Math.max(0, Math.round(start + fraction * duration())), duration(), 1))
+}
+function zoomWindow(factor, anchor) {
+  const length = duration()
+  const next = policy.view_window(frame, frame.start, Math.round(length * factor), Math.min(minimumDuration, length))
+  const nextLength = next.end - next.start
+  const start = Math.max(0, Math.round(visibleWindow.start + (length - nextLength) * anchor))
+  applyWindow(policy.view_window(frame, start, nextLength, 1))
+}
+function selectWindow(first, last, distance, bounds) {
+  if (!policy.brush_ready(Math.round(distance))) return
+  const span = bounds.end - bounds.start
+  const start = Math.round(bounds.start + span * first)
+  applyWindow(policy.view_window(frame, start, Math.round(span * (last - first)), Math.min(minimumDuration, span)))
+}
+function moveBoundary(startEdge, position) {
+  applyWindow(policy.move_edge(frame, visibleWindow, Math.max(0, Math.round(position)), minimumDuration, startEdge))
+}
 
-function miniPosition(event) {
-  const box = minimap.getBoundingClientRect()
-  return bounds((event.clientX - box.left) / box.width,0,1)
+PlowUI.wireChartInput({
+  viewport, ruler, rows, plot: chartPlot, start: () => visibleWindow.start,
+  select: (first, last, distance) => selectWindow(first, last, distance, visibleWindow),
+  pan: panWindow, zoom: zoomWindow, reset: () => applyWindow(frame),
+  hover: hoverBar, dismissTip: clearTooltip,
+})
+let lastTip = ''
+const exactClock = new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'UTC', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+})
+function clearTooltip() {
+  lastTip = ''
+  PlowUI.hideTimelineTooltip()
 }
-let brushStart = null
-minimap.addEventListener('pointerdown',event=>{
-  if(event.button!==0)return
-  brushStart = miniPosition(event)
-  miniBrush.hidden = false
-  miniBrush.style.left = brushStart*100 + '%'
-  miniBrush.style.width = '0%'
-  minimap.setPointerCapture(event.pointerId)
-})
-minimap.addEventListener('pointermove',event=>{
-  if(brushStart===null)return
-  const stop = miniPosition(event)
-  miniBrush.style.left = Math.min(stop,brushStart)*100 + '%'
-  miniBrush.style.width = Math.abs(stop-brushStart)*100 + '%'
-})
-minimap.addEventListener('pointerup',event=>{
-  if(brushStart===null)return
-  const stop = miniPosition(event)
-  const distance = Math.abs(stop-brushStart)
-  if(distance * minimap.clientWidth >= 5) applyZoom(1 / distance,(stop+brushStart)/2)
-  else if(zoom>1) applyZoom(zoom,stop)
-  brushStart=null
-  miniBrush.hidden=true
-})
-minimap.addEventListener('pointercancel',()=>{brushStart=null;miniBrush.hidden=true})
-let pan = null
-ruler.addEventListener('pointerdown',event=>{
-  if(event.button!==0||zoom===1)return
-  pan={start:event.clientX,scroll:viewport.scrollLeft}
-  ruler.classList.add('panning')
-  ruler.setPointerCapture(event.pointerId)
-})
-ruler.addEventListener('pointermove',event=>{
-  if(pan)viewport.scrollLeft=pan.scroll+pan.start-event.clientX
-})
-function stopPanning(){
-  pan=null
-  ruler.classList.remove('panning')
+function hoverBar(target, event) {
+  const trace = evidenceRows[Number(target.closest('.trace').dataset.traceIndex)]
+  const { left } = chartPlot()
+  const at = Math.max(0, Math.round(visibleWindow.start + (event.clientX - left) / baseWidth * duration() - trace.startUtcMs))
+  const failures = details ? [...values(policy.hover_failures(asList(trace.recordedFailures), at, Math.ceil(4 * duration() / baseWidth)))] : []
+  const label = failures.length ? failures.length + (failures.length === 1 ? ' recorded failure' : ' recorded failures')
+    : policy.hover_phase(trace.evidence, at)
+  if (!label) return clearTooltip()
+  const times = failures.map(time => exactClock.format(trace.startUtcMs + time) + ' UTC')
+  const key = [trace.startUtcMs, label, ...times].join('/')
+  if (key === lastTip) return
+  lastTip = key
+  PlowUI.showTimelineTooltip(event.clientX, event.clientY, { label, times })
 }
-ruler.addEventListener('pointerup',stopPanning)
-ruler.addEventListener('pointercancel',stopPanning)
 
-let viewportWidth=0
-new ResizeObserver(()=>{
-  if(viewportWidth===viewport.clientWidth)return
-  viewportWidth=viewport.clientWidth
-  applyZoom(zoom)
+let viewportWidth = 0
+new ResizeObserver(() => {
+  if (viewportWidth !== viewport.clientWidth) applyWindow(visibleWindow, fitted)
 }).observe(viewport)

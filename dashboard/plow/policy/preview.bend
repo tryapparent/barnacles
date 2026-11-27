@@ -187,6 +187,41 @@ def utc_offset(bounds: UtcSpan, start: Nat) -> Nat:
   match bounds:
     case UtcSpan{a,_}: Nat.sub(start,a)
 
+def view_window(frame: UtcSpan, +start: Nat, +duration: Nat, minimum: Nat) -> UtcSpan:
+  match frame:
+    case UtcSpan{+a,+b}:
+      +length = clamp(duration,minimum,Nat.sub(b,a))
+      +first = clamp(start,a,Nat.sub(b,length))
+      UtcSpan{first,Nat.add(first,length)}
+
+def move_edge(frame: UtcSpan, current: UtcSpan, +position: Nat, minimum: Nat, start_edge: Bool) -> UtcSpan:
+  match frame current:
+    case UtcSpan{a,b} UtcSpan{+x,+y}:
+      +limit = clamp(minimum,1n,Nat.sub(y,x))
+      Bool.pick(UtcSpan,start_edge,UtcSpan{clamp(position,a,Nat.sub(y,limit)),y},
+        UtcSpan{x,clamp(position,Nat.add(x,limit),b)})
+
+def brush_ready(pixels: Nat) -> Bool:
+  Nat.is_le(8n,pixels)
+
+def window_overlap(range: UtcSpan, +start: Nat, +end: Nat) -> Bool:
+  match range:
+    case UtcSpan{a,b}: Bool.and(Nat.is_lt(start,end),Bool.and(Nat.is_lt(start,b),Nat.is_lt(a,end)))
+
+def hover_phase(parts: List<&2, Spans.Part>, +at: Nat) -> String:
+  match parts:
+    case []: ""
+    case Spans.Part{+start,+end,_,name,_} <> tail:
+      Bool.pick(String,Bool.and(Nat.is_le(start,at),Nat.is_lt(at,end)),name,hover_phase(tail,at))
+
+def hover_failures(times: List<&2,Nat>, +at: Nat, +radius: Nat) -> List<&2,Nat>:
+  match times:
+    case []: []
+    case +time <> tail:
+      +near = Bool.and(Nat.is_le(time,Nat.add(at,radius)),Nat.is_le(at,Nat.add(time,radius)))
+      +rest = hover_failures(tail,at,radius)
+      Bool.pick(List<&2,Nat>,near,time <> rest,rest)
+
 def utc_axis(bounds: UtcSpan) -> List<&2,Nat>:
   match bounds:
     case UtcSpan{+a,+b}:
@@ -194,6 +229,9 @@ def utc_axis(bounds: UtcSpan) -> List<&2,Nat>:
 
 def detail_zoom(visible_millis: Nat) -> Bool:
   Nat.is_le(visible_millis,21600000n)
+
+def trace_details(visible_millis: Nat, focused: Bool) -> Bool:
+  Bool.or(detail_zoom(visible_millis),focused)
 
 def chart_step(+visible_millis: Nat) -> Nat:
   Bool.pick(Nat,Nat.is_le(visible_millis,3600000n),300000n,
