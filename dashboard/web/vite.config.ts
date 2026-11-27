@@ -9,7 +9,7 @@ export default defineConfig({
   plugins: [react(), {
     name: "harbor-bend",
     async load(id) {
-      if (!["/duration.bend", "/changed-code.bend", "/session-history.bend"].some((suffix) => id.endsWith(suffix))) return;
+      if (!["/duration.bend", "/changed-code.bend", "/session-history.bend", "/session-timeline.bend"].some((suffix) => id.endsWith(suffix))) return;
       this.addWatchFile(id);
       const directory = await mkdtemp(join(process.env.BARNACLES_TEST_DIRECTORY ?? "/tmp", "apparent-dev-harbor-bend-"));
       try {

@@ -227,7 +227,27 @@ provenance and coverage.
 ## Session history
 
 Open **Session history** from Shipping review or at `/sessions`.
-The source is a frozen, privately collected thread study. Search thread titles,
+**Timeline** opens the ten newest threads on one UTC axis. Scroll vertically
+without changing the time range. Drag across the chart or minimap to zoom,
+drag the UTC ruler to pan, or select a bar to fit its observed window.
+Ctrl+scroll zooms around the pointer. Ctrl+↑ and Ctrl+↓ zoom in steps. Escape
+fits all ten threads. Hover over a slice or failure mark to see its label.
+
+The Timeline tab uses the existing session collection and detail endpoints.
+Bend2 combines completed tool envelopes, admission waits, and GitHub job
+queue/execution intervals. Where tool activity overlaps a workflow, the bar
+shows tool activity. The waterfall keeps both records. Gaps stay unclear.
+Failure marks use explicit failed outcomes at known, unclipped end times.
+They describe observed failures, not independent incidents or delay attribution.
+
+The React view uses local [shadcn Tabs](https://ui.shadcn.com/docs/components/radix/tabs),
+[Tooltip](https://ui.shadcn.com/docs/components/radix/tooltip), and Button,
+styled with the Harbor theme. The React adapter supplies DOM layout and
+browser gestures. The pinned Bend2 build owns evidence projection and
+time-window, slice, and failure-group decisions.
+
+**Trace waterfall** and existing `/sessions?session=ID` links retain the
+individual trace view. The source is a frozen, privately collected thread study. Search thread titles,
 select a thread, and inspect T3, Codex tool, observed process, CI, and Git
 records on the same elapsed-time axis. The waterfall shows an individual row
 for each operation in start-time order. Span bars share the full row height. The chronological view fits the ruler
@@ -242,7 +262,7 @@ run or PR is shown with that relationship in its record details.
 The Plow treatment uses Cool Mist for the page, Ink for the plot,
 Meadow for observed intervals, and Original Cream for admission
 and queue intervals. Lane labels and mark shapes identify the underlying
-evidence. The dashboard bundles Young Serif and Geist from the [Plow brand
+evidence. The dashboard bundles Young Serif from the [Plow brand
 assets](../public/brand.md).
 
 ### Load a private study

@@ -1,12 +1,10 @@
-import { useMemo, useRef, useState, type ReactNode } from "react";
-import { changeValues, countLabel, dayLabel, sessionEventList, sessionPolicy, useEvidence, utcLabel,
+import { lazy, Suspense, useMemo, useRef, useState, type ReactNode } from "react";
+import { changeValues, countLabel, dayLabel, sessionPath, sessionEventList, sessionPolicy, useEvidence, utcLabel,
   type HistoryEntry, type HistoryEvent, type HistoryLane, type HistoryTrace } from "../api";
 import { Button, NativeSelect } from "../controls";
 import "./session-history.css";
 
-function sessionPath(id: string) {
-  return "/sessions?session=" + encodeURIComponent(id);
-}
+const SessionViews = lazy(() => import("./session-timeline").then(({ SessionViews }) => ({ default: SessionViews })));
 
 const traceElapsed = (value: number) => sessionPolicy.trace_elapsed(Math.max(0, Math.round(value)));
 const traceEnd = (event: HistoryEvent) => event.end.$ === "Some" ? event.end.value : null;
@@ -241,7 +239,9 @@ export function SessionHistoryPage() {
       {result.state === "error" && <div className="trace-message" role="alert"><p>{result.message}</p>
         <Button variant="outline" onClick={retry}>Retry session history</Button></div>}
       {result.state === "ready" && (result.data.study && result.data.sessions.length
-        ? <SessionStudy sessions={result.data.sessions} study={result.data.study} />
+        ? <Suspense fallback={<p role="status">Loading session views…</p>}>
+          <SessionViews sessions={result.data.sessions} waterfall={<SessionStudy sessions={result.data.sessions} study={result.data.study} />} />
+        </Suspense>
         : <div className="trace-message"><h2>{result.data.study ? "No threads in this study" : "No session study loaded"}</h2>
           <p>Load a private waterfall export into the Harbor snapshot to view session history.</p></div>)}
     </div>

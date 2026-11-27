@@ -153,8 +153,58 @@ type SessionPolicy = {
 
 const sessionModules = import.meta.glob<SessionPolicy>("../../evidence/analysis/session-history.bend", { eager: true, import: "default" });
 export const sessionPolicy = sessionModules["../../evidence/analysis/session-history.bend"];
-export function sessionEventList(events: HistoryEvent[]) {
-  return events.reduceRight<ChangeList<HistoryEvent>>((tail, head) => ({ $: "Con", head, tail }), { $: "Nil" });
+export function sessionEventList<T>(events: T[]) {
+  return events.reduceRight<ChangeList<T>>((tail, head) => ({ $: "Con", head, tail }), { $: "Nil" });
+}
+
+export const sessionPath = (id: string) => "/sessions?session=" + encodeURIComponent(id);
+export type UtcRange = { $: "UtcSpan"; start: number; end: number };
+export const utcRange = (start: number, end: number): UtcRange => ({ $: "UtcSpan", start, end });
+
+type TimelinePhase = { a: number; b: number; kind: number; name: string };
+type TimelineFailure = { at: number; label: string; state: string; index: number };
+type TimelineSlice = Omit<TimelinePhase, "kind"> & { paint: string; ink: string; inline: string };
+export type TimelineEvidence = { phases: ChangeList<TimelinePhase>; failures: ChangeList<TimelineFailure> };
+export type TimelinePolicy = {
+  recent_sessions(entries: ChangeList<HistoryEntry>): ChangeList<HistoryEntry>;
+  timeline_projection(events: ChangeList<HistoryEvent>, duration: number): TimelineEvidence;
+  exact_utc_frame(spans: ChangeList<UtcRange>, fallback: UtcRange): UtcRange;
+  chart_ticks(range: UtcRange, scale: number, width: number): ChangeList<number>;
+  chart_window(bounds: UtcRange, start: number, duration: number): UtcRange;
+  window_duration(duration: number, full: number): number;
+  brush_window(bounds: UtcRange, a: number, b: number, prior: number): UtcRange;
+  ready_brush(width: number): boolean;
+  chart_details(duration: number, focused: boolean): boolean;
+  visible_row(start: number, end: number, lower: number, upper: number): boolean;
+  draw_slices(phases: TimelineEvidence["phases"], from: number, to: number, width: number, details: boolean, scale: number): ChangeList<TimelineSlice>;
+  draw_failures(failures: TimelineEvidence["failures"], from: number, to: number, width: number, scale: number, details: boolean):
+    ChangeList<{ at: number; failures: ChangeList<TimelineFailure> }>;
+};
+export type TimelineRow = { entry: HistoryEntry; evidence: TimelineEvidence | null };
+
+export function useTimelineRows(sessions: HistoryEntry[], policy: TimelinePolicy) {
+  const [attempt, setAttempt] = useState(0);
+  const [rows, setRows] = useState<TimelineRow[] | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    const entries = changeValues(policy.recent_sessions(sessionEventList(sessions)));
+    Promise.all(entries.map(async (entry): Promise<TimelineRow> => {
+      try {
+        const { trace } = await fetchEvidence<{ trace: HistoryTrace }>(
+          `/api/v1/sessions?session=${encodeURIComponent(entry.thread.id)}`, controller.signal);
+        const events = sessionEventList(trace.lanes.flatMap((lane) => lane.events));
+        return { entry: trace.entry, evidence: policy.timeline_projection(events, trace.entry.end) };
+      } catch {
+        return { entry, evidence: null };
+      }
+    })).then((data) => { if (!controller.signal.aborted) setRows(data); });
+    return () => controller.abort();
+  }, [policy, sessions, attempt]);
+  function retry() {
+    setRows(null);
+    setAttempt((current) => current + 1);
+  }
+  return { rows, retry };
 }
 
 type Request<T> = { state: "loading" } | { state: "ready"; data: T } | { state: "error"; message: string };
