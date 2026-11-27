@@ -591,6 +591,13 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       status: 500, failed: true, identified: true };
     const rerun = { kind: "job-rerun-response", thread: "t", id: "rerun", job: "123456789012",
       line: "job 123456789012 cannot be rerun", failed: true };
+    const localAdmission = { kind: "local-build-admission", thread: "t", id: "local-admission", waitMs: 64_130,
+      boundMs: 90_000, allocated: 1, capacity: 10 };
+    const apt = { kind: "hosted-apt-result", thread: "t", id: "apt-step", conclusion: "failure", exitCode: 100,
+      httpStatus: 404, archive: "/ubuntu/pool/example/staged_1.deb",
+      summary: "E: Unable to fetch some archives, maybe run apt-get update or try with --fix-missing?" };
+    const width = { ...diagnostic, id: "width",
+      line: "pre-commit: staged candidate exceeds the directory-width limit:" };
     const facts = [
       admission, admission,
       { ...admission, id: "superseded", annotation: "Canceling since a higher priority waiting request exists" },
@@ -626,6 +633,19 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       { ...rerun, id: "wrong-job", job: "123456789013" },
       { ...rerun, id: "rerun-succeeded", failed: false },
       { ...rerun, id: "unrelated-failure", line: "failed to connect to GitHub" },
+      localAdmission, localAdmission,
+      { ...localAdmission, id: "quick-admission", waitMs: 59_999 },
+      { ...localAdmission, id: "unallocated", allocated: 0 },
+      { ...localAdmission, id: "too-many-workers", allocated: 11 },
+      { ...localAdmission, id: "impossible-duration", boundMs: 1000 },
+      apt, apt,
+      { ...apt, id: "not-deb", archive: "/ubuntu/dists/InRelease" },
+      { ...apt, id: "relative-path", archive: "ubuntu/pool/example/staged_1.deb" },
+      { ...apt, id: "gateway-error", httpStatus: 503 },
+      { ...apt, id: "other-exit", exitCode: 1 },
+      { ...apt, id: "recovered-apt", conclusion: "success" },
+      { ...apt, id: "unrelated-summary", summary: "E: Invalid signature" },
+      width, width, { ...width, id: "width-copy", failed: false },
       read, read, { ...read, id: "b", at: 160 }, { ...read, thread: "t2", at: 170 },
       timing, timing, { ...timing, id: "unpaired", end: 0 },
       attempt, { ...attempt, id: "changed", key: "gate:v2", start: 115, end: 120, failed: false, succeeded: true },
@@ -642,17 +662,22 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
     assert.equal(replay(facts), first);
     const result = JSON.parse(first);
     assert.deepEqual(result.files, [{ $: "FileTotal", path: "README.md", requests: 3, threads: 2, revisits: 1 }]);
-    assert.deepEqual(result.costs, [{ $: "Cost", clock: "runner", operation: "build", count: 1, seconds: 129, unknown: 1 }]);
+    assert.deepEqual(result.costs, [
+      { $: "Cost", clock: "local-build-admission", operation: "t3-build", count: 2, seconds: 123, unknown: 0 },
+      { $: "Cost", clock: "runner", operation: "build", count: 1, seconds: 129, unknown: 1 },
+    ]);
     assert.deepEqual(result.findings.map(({ rule }: { rule: string }) => rule),
       ["ci-hosted-admission-failure", "ci-job-failure", "ci-job-timeout", "staged-verification-prerequisite",
         "pr-merge-conflict-observed", "pr-merge-conflict-observed", "pr-create-http-server-error",
-        "ci-job-rerun-rejected", "recovered-attempt", "runner"]);
+        "ci-job-rerun-rejected", "local-build-admission-slow", "ci-apt-package-not-found", "staged-directory-width",
+        "recovered-attempt", "runner"]);
     assert.ok(!first.includes("installed tools"));
     assert.ok(!first.includes("#42:"));
     assert.deepEqual(result.findings.map(({ id, previous, seconds, median }: Record<string, unknown>) =>
       [id, previous, seconds, median]), [
       ["run:7:job", "", 0, 0], ["run:2:job", "", 0, 0], ["run:4:job", "", 0, 0], ["checker", "", 0, 0],
       ["notice-1", "", 0, 0], ["notice-2", "", 0, 0], ["request", "", 0, 0], ["rerun", "", 0, 0],
+      ["local-admission", "", 64, 0], ["apt-step", "", 0, 0], ["width", "", 0, 0],
       ["recovered", "first", 20, 0], ["tail", "", 250, 10],
     ]);
   } finally {
