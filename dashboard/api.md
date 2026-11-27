@@ -161,16 +161,18 @@ as its own interval after publication.
 `deliveries.maxMeasuredMillis` is the longest sum of observed consecutive
 intervals across the selected delivery rows, independent of pagination.
 
-The delivery timeline places every PR on one linear UTC axis.
+The delivery timeline displays the first ten PRs in review order, newest start
+first, on a linear UTC axis fitted to their observed milestones.
 `deliveries.timeline` gives the earliest and latest observed milestone across
 all matching rows, including milestones before the filter start for those rows.
-The bounds stay fixed across pages. Older snapshots use the review window.
+These API bounds stay fixed across pages.
 Each row shows the merge date or “No merge recorded” and any other latest
 milestone. Colored bars connect measured consecutive clocks. A dot marks a
 milestone without a positive interval. PRs from the same release can share a
 publication-to-access-check interval at the same position on the axis.
-Selecting a ship scrolls to its delivery row and opens the milestone waterfall
-there. The link keeps the PR number and cutoff so it can be opened directly.
+Selecting a ship opens its milestone waterfall. A PR outside the ten appears in
+a separate detail section. The link keeps the PR number and cutoff so it can
+be opened directly.
 Waterfalls use a linear UTC scale.
 
 Delivery rows use the imported title of the verified owning T3 thread when its start is visible at the cutoff. Otherwise they use the imported GitHub PR title. These are the latest imported labels. Records without either title show “Pull request title unavailable”. The PR evidence endpoint returns the same nullable title. Keep title-bearing snapshots and API responses private. Reprepare after reimporting titled evidence. The next GitHub poll can backfill previously imported PRs in its 30-PR window. Older PRs can be replayed with the GitHub delivery importer.

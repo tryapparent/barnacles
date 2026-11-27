@@ -330,7 +330,7 @@ h2, figcaption { font-size: 17px; line-height: 1.24; }
 }
 
 .delivery {
-  --thread-label: clamp(175px, 37%, 400px);
+  --thread-label: clamp(170px, 29%, 340px);
   --thread-gap: 12px;
   border-block-start: 1px solid var(--rule);
   padding: 22px 24px 24px;
@@ -467,6 +467,9 @@ h2, figcaption { font-size: 17px; line-height: 1.24; }
 }
 
 .delivery-note { max-inline-size: 72ch; }
+.delivery-scope { margin-block-end: 8px; }
+.selected-delivery { margin-block-start: 20px; }
+.selected-delivery h3 { font-size: 15px; font-weight: 400; scroll-margin-block-start: 16px; }
 .delivery-axis {
   align-items: end;
   margin-block: 16px 0;
@@ -524,7 +527,7 @@ h2, figcaption { font-size: 17px; line-height: 1.24; }
   position: absolute;
   inset-block-start: 50%;
   translate: 0 -50%;
-  block-size: 20px;
+  block-size: 24px;
   overflow: hidden;
   container-type: inline-size;
   background: var(--stage);
@@ -563,9 +566,6 @@ h2, figcaption { font-size: 17px; line-height: 1.24; }
   .stage-segment > span { font-size: 13px; }
 }
 
-.delivery-tail { min-height: 2px; }
-.delivery-tail button { margin-block-start: 8px; }
-.scroll-keyboard:not(:focus) { position: absolute; clip-path: inset(50%); width: 1px; height: 1px; overflow: hidden; }
 .thread[open] { background: #060f19; }
 .thread > .waterfall, .thread > .detail-links { margin-inline: min(3vw, 22px); }
 .thread > .detail-links { padding-block-end: 8px; }
@@ -793,7 +793,7 @@ button.operation-tile:is(:hover, :focus-visible) {
   font-size: 13px;
   color: var(--quiet);
 }
-.gauge[data-direction="unknown"] .readout { color: var(--quiet); font-size: clamp(24px,6vw,31px); top: 35%; translate: none; }
+.cycle-unavailable { margin-block: 18px 4px; font-size: 16px; }
 .gauge[data-direction="steady"] .readout { color: var(--ink); }
 
 .table-scroll { width: 100%; overflow-x: auto; margin-block: 8px; }
