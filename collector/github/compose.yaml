@@ -18,11 +18,11 @@ x-collector: &collector
   cap_drop: [ALL]
   security_opt: [no-new-privileges:true]
   environment: &collector-env
-    BARNACLES_BEND_BUNDLE: /app/compiler
-    BARNACLES_GITHUB_AUTH: ${PLOW_PILOT_AUTH:-app}
-    BARNACLES_GITHUB_APP_ID: ${PLOW_PILOT_APP_ID:-}
-    BARNACLES_GITHUB_INSTALLATION_ID: ${PLOW_PILOT_INSTALLATION_ID:-}
-    BARNACLES_GITHUB_CREDENTIAL_FILE: /run/plow-credential
+    PLOW_BEND_BUNDLE: /app/compiler
+    PLOW_GITHUB_AUTH: ${PLOW_PILOT_AUTH:-app}
+    PLOW_GITHUB_APP_ID: ${PLOW_PILOT_APP_ID:-}
+    PLOW_GITHUB_INSTALLATION_ID: ${PLOW_PILOT_INSTALLATION_ID:-}
+    PLOW_GITHUB_CREDENTIAL_FILE: /run/plow-credential
   tmpfs: [/tmp]
   volumes:
     - type: bind

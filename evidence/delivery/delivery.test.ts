@@ -10,7 +10,7 @@ import type { RolloutEvidence, ThreadEvidence } from "../storage/sources.ts";
 import { deliveryPolicy, deliveryReport, type DeliveryPolicy, type PullRequest, type ReleaseEvidence } from "./delivery.ts";
 
 test("the report keeps each release proof bound to its own observation across replay and replacement", async () => {
-  const parent = process.env.BARNACLES_TEST_DIRECTORY;
+  const parent = process.env.PLOW_TEST_DIRECTORY;
   assert.ok(parent);
   const job = mkdtempSync(join(parent, "release-proof-"));
   const path = join(job, "evidence.sqlite");
@@ -93,7 +93,7 @@ test("the report keeps each release proof bound to its own observation across re
 });
 
 test("equal revisions replay and rejected revisions leave their stored evidence intact", async () => {
-  const parent = process.env.BARNACLES_TEST_DIRECTORY;
+  const parent = process.env.PLOW_TEST_DIRECTORY;
   assert.ok(parent);
   const job = mkdtempSync(join(parent, "write-admission-"));
   const path = join(job, "evidence.sqlite");
@@ -163,7 +163,7 @@ test("equal revisions replay and rejected revisions leave their stored evidence 
 });
 
 test("historical page evidence and its cursor commit together", () => {
-  const parent = process.env.BARNACLES_TEST_DIRECTORY;
+  const parent = process.env.PLOW_TEST_DIRECTORY;
   assert.ok(parent);
   const job = mkdtempSync(join(parent, "history-commit-"));
   const path = join(job, "evidence.sqlite");

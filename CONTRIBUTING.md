@@ -1,4 +1,4 @@
-# Contributing to Barnacles
+# Contributing to Plow
 
 Read [AGENTS.md](AGENTS.md) for ownership, data boundaries, and verification. Work on a topic branch and keep changes scoped to one reviewable outcome. Put source details and verification commands beside the code they cover.
 

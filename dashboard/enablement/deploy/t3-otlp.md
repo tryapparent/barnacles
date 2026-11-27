@@ -9,10 +9,9 @@ from the same revision. Use the existing [collector release provenance
 checks](README.md#collector-delivery-from-github-actions). Keep the release
 directory private and preserve the attested archive's file modes during
 extraction so the unprivileged receiver can read the sources copied into its
-image. The version of `dashboard/run.sh` that stages the release must use
-`tar --same-permissions`. Check the installed launcher used by the deployment
-service. If a release was staged by an older launcher, extract the verified
-archive again into a private release directory with its file modes preserved.
+image. The release extraction command must use `tar --same-permissions`. If a
+release was staged with different permissions, extract the verified archive
+again into a private release directory with its file modes preserved.
 
 The Compose project `plow-t3-otel` owns the intake lifecycle. On Clanker the
 enabled rootless `docker.service` and user lingering provide startup at boot.

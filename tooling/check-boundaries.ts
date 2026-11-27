@@ -12,7 +12,6 @@ type VerificationPolicy = {
   owner_grammar(extension: string): string;
   allowed_import(owner: string, path: string, callee: string, expression: string, value: string,
     target: string, targetOwner: string): boolean;
-  builds_harbor(scopes: BendList): boolean;
   select_suites(scopes: BendList): Suites;
   is_test(path: string): boolean;
 };
@@ -90,8 +89,8 @@ export async function checkBoundaries(policy: VerificationPolicy): Promise<boole
 }
 
 if (import.meta.main) {
-  const parent = process.env.BARNACLES_TEST_DIRECTORY;
-  const job = mkdtempSync(parent ? join(parent, "boundaries-") : "/tmp/apparent-dev-barnacles-boundaries-");
+  const parent = process.env.PLOW_TEST_DIRECTORY;
+  const job = mkdtempSync(parent ? join(parent, "boundaries-") : "/tmp/apparent-dev-plow-boundaries-");
   try {
     if (!await checkBoundaries(await loadVerification(job))) process.exitCode = 1;
   } finally {

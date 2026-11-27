@@ -46,7 +46,7 @@ function historyTargets(input: unknown, repository: string, clockPolicy: ClockPo
       source: manifest.source, targets,
       key: (target: unknown) => JSON.stringify(target),
       async capture(target: unknown, previous: HistoryProgress) {
-        if (!process.env.BARNACLES_GITHUB_AUTH) throw new SourceReadError(401);
+        if (!process.env.PLOW_GITHUB_AUTH) throw new SourceReadError(401);
         read ??= githubReader(repository, process.env, fetch, { requests: 32, milliseconds: 60_000 });
         const attempt = await collectAttempt(target as AttemptIdentity, clockPolicy, read);
         const status = policy.exact_status(attempt.status);

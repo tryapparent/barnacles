@@ -124,7 +124,7 @@ bundle.set("metadata", new Blob([JSON.stringify({
     { type: "kv_namespace", name: "PLOW_SESSION_FEED", namespace_id: namespace },
     ...(history ? [{ type: "secret_text", name: "PLOW_SESSION_HISTORY_URL", text: history }] : []),
   ],
-  annotations: { "workers/tag": sha, "workers/message": `Barnacles main ${sha}` },
+  annotations: { "workers/tag": sha, "workers/message": `Plow main ${sha}` },
 })], { type: "application/json" }));
 bundle.set("worker.mjs", new Blob([await readFile(workerPath)], {
   type: "application/javascript+module",

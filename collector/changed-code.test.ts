@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
 test("PR watch replay requires the stamped revision and exact completed run", () => {
-  const directory = process.env.BARNACLES_TEST_DIRECTORY;
+  const directory = process.env.PLOW_TEST_DIRECTORY;
   assert.ok(directory);
   const job = mkdtempSync(join(directory, "pr-watch-test-"));
   const capture = join(job, "capture.json");
@@ -54,8 +54,8 @@ test("PR watch replay requires the stamped revision and exact completed run", ()
 });
 
 test("changed-code CLI ranks Git paths and reports bounded and shallow coverage", () => {
-  const directory = process.env.BARNACLES_TEST_DIRECTORY;
-  assert.ok(directory, "Set BARNACLES_TEST_DIRECTORY to a private job directory");
+  const directory = process.env.PLOW_TEST_DIRECTORY;
+  assert.ok(directory, "Set PLOW_TEST_DIRECTORY to a private job directory");
   const job = mkdtempSync(join(directory, "changed-code-test-"));
   const repository = join(job, "repo");
   const shallow = join(job, "shallow-é");

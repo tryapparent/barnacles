@@ -16,6 +16,11 @@ timeline viewport. Selecting the operation again clears the
 filter. Changing the time range updates the matches while preserving the
 selected operation.
 
+React renders the dashboard shell and time summary with the shared
+[shadcn controls](../web/controls.tsx). The timeline renderer handles UTC
+geometry, scrolling, and brush interaction. Vite packages the UI into the
+Worker-served page.
+
 The pinned Bend2 compiler builds the interval, grouping, ranking, and timeline
 policies under `policy/`. The registered host paths provide HTML, embedded
 fonts, DOM and browser input adapters, build packaging, Chromium verification,
@@ -24,8 +29,7 @@ require. The projection reuses the collector database and publishes only
 timing intervals, generic clock labels, and an observation timestamp. It
 omits thread identifiers, titles, prompt text, links, and unlinked Codex
 and GitHub records. Generated files and live data stay out of Git and build
-artifacts. Harbor keeps its separate session study.
-When configured, the Session history link opens Plow’s private tailnet view.
+artifacts. When configured, the Session history link opens Plow’s private tailnet view.
 
 ## Build and verify
 
@@ -34,6 +38,7 @@ Run from the repository root with Node 22.18 or later and Chrome installed.
 ```sh
 npm ci --ignore-scripts
 plow_build_dir=$(mktemp -d /tmp/apparent-dev-plow-build-XXXXXX)
+npm exec -- tsc -p dashboard/web/tsconfig.json
 node dashboard/plow/build.ts "$plow_build_dir"
 PLOW_SCREENSHOTS=1 node dashboard/plow/smoke.mjs "$plow_build_dir"
 ```

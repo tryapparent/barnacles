@@ -8,7 +8,7 @@ export {
   type RolloutAdmission, type RolloutImport, type RolloutEvidence, type ShellCommand, type SourcePolicy, type ThreadEvidence, type ToolInvocation,
 } from "./storage/sources.ts";
 export { readPollMinutes, repository } from "./repository.ts";
-export { actionsWaitCapturePlan, harborSnapshotPublisher } from "./projection/snapshot.ts";
+export { actionsWaitCapturePlan, snapshotPublisher } from "./projection/snapshot.ts";
 export { githubPollRows } from "./storage/load.ts";
 export { CodexOtelConflict, codexOtelPolicy, saveCodexOtel, type CodexOtelFact, type CodexOtelPolicy } from "./storage/load.ts";
 export { T3OtelConflict, openT3Otel, type T3OtelSpan, type T3OtelPolicy } from "./storage/load.ts";

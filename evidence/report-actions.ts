@@ -7,7 +7,7 @@ import { collectTiming, rows, seconds, type TimingPolicy } from "./projection/ti
 async function main() {
   const [file, name, ...extra] = process.argv.slice(2);
   if (!file || !name || extra.length) throw Error("Usage: node evidence/report-actions.ts EVIDENCE_SQLITE OWNER/REPO");
-  const scratch = mkdtempSync("/tmp/apparent-dev-barnacles-actions-report-");
+  const scratch = mkdtempSync("/tmp/apparent-dev-plow-actions-report-");
   let db: DatabaseSync | undefined;
   try {
     const module = await buildPolicy(scratch, new URL("./projection/metrics.bend", import.meta.url), "metrics.mjs");

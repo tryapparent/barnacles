@@ -1,5 +1,4 @@
-import { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { readFileSync } from "node:fs";
 
 export type RepositoryPolicy = { repository_name(value: string): string };
 
@@ -23,18 +22,4 @@ export function readPollMinutes(path: string) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return 15;
     throw error;
   }
-}
-
-export function savePollMinutes(path: string, text: string) {
-  const minutes = pollMinutes(text);
-  if (minutes === null) return null;
-  const staging = mkdtempSync(join(dirname(path), ".poll-settings-"));
-  try {
-    const pending = join(staging, "minutes");
-    writeFileSync(pending, minutes + "\n", { mode: 0o600 });
-    renameSync(pending, path);
-  } finally {
-    rmSync(staging, { recursive: true, force: true });
-  }
-  return minutes;
 }

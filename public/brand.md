@@ -30,7 +30,7 @@ Open the [visual brand guide](brand/) for examples and downloadable wordmarks.
 | Meadow | `#6A934F` | Primary accent and action fill |
 | Original Cream | `#FFF4DF` | Warm text and accents on Wet Earth |
 
-Ink labels reach 5.16:1 on Meadow. Meadow reaches 3.56:1 on White, 3.26:1 on Original Cream, and 3.94:1 on Wet Earth for graphical accents. Original Cream reaches 12.85:1 on Wet Earth and 1.09:1 on White. Use Ink or Wet Earth where a meaningful edge needs contrast on a light surface. Harbor chart component choices are open.
+Ink labels reach 5.16:1 on Meadow. Meadow reaches 3.56:1 on White, 3.26:1 on Original Cream, and 3.94:1 on Wet Earth for graphical accents. Original Cream reaches 12.85:1 on Wet Earth and 1.09:1 on White. Use Ink or Wet Earth where a meaningful edge needs contrast on a light surface. Plow chart component choices are open.
 
 ## Art and composition
 

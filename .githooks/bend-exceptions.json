@@ -38,7 +38,7 @@
     "evidence/projection/trace.ts",
     "evidence/analysis/session-history.ts"
   ],
-  "Dashboard snapshot I/O, Harbor runtime, and Compose wiring": [
+  "Dashboard snapshot I/O and Compose wiring": [
     "dashboard/prepare.ts",
     "dashboard/run.sh",
     "compose.yaml"
@@ -67,34 +67,10 @@
     "collector/github/attempt.test.ts",
     "collector/sources.test.ts",
     "dashboard/prepare.test.ts",
-    "dashboard/harbor-fixture.ts",
     "evidence/analysis/session-timeline.test.ts",
     "evidence/delivery/delivery.test.ts",
     "examples/demo.ts",
     "tooling/tests/directory-width.test.ts"
-  ],
-  "React, shadcn and Canvas presentation requested for the harbor web client": [
-    "dashboard/web/api.ts",
-    "dashboard/web/assets/DITHERCN-LICENSE",
-    "dashboard/web/assets/GeistPixel-Square.woff2",
-    "dashboard/web/assets/OFL.txt",
-    "dashboard/web/assets/SHADCN-LICENSE",
-    "dashboard/web/assets/tide-worn-oak.webp",
-    "dashboard/web/assets/town.webp",
-    "dashboard/web/assets/yard.webp",
-    "dashboard/web/controls.tsx",
-    "dashboard/web/index.html",
-    "dashboard/web/main.tsx",
-    "dashboard/web/style.css",
-    "dashboard/web/tsconfig.json",
-    "dashboard/web/visual/charts.tsx",
-    "dashboard/web/visual/fleet.tsx",
-    "dashboard/web/visual/scene.js",
-    "dashboard/web/visual/session-history.css",
-    "dashboard/web/visual/session-history.tsx",
-    "dashboard/web/visual/session-timeline.css",
-    "dashboard/web/visual/session-timeline.tsx",
-    "dashboard/web/vite.config.ts"
   ],
   "Static Plow site hosting, presentation and binary assets": [
     "public/assets/blade.jpg",
@@ -123,5 +99,13 @@
     "dashboard/plow/view/timeline.css",
     "dashboard/plow/view/timeline.mjs",
     "dashboard/plow/worker.mjs"
+  ],
+  "React, shadcn and Vite presentation for the Plow browser app": [
+    "dashboard/web/assets/SHADCN-LICENSE",
+    "dashboard/web/controls.tsx",
+    "dashboard/web/main.tsx",
+    "dashboard/web/tsconfig.json",
+    "dashboard/web/visual/charts.tsx",
+    "dashboard/web/vite.config.ts"
   ]
 }

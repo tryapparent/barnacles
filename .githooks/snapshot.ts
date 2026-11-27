@@ -27,12 +27,12 @@ function optionalGit(...args: string[]) {
 }
 
 function verifySnapshot(rules: HookRules, head: string, scopes: string[], bundle: string) {
-  const scratch = mkdtempSync("/tmp/apparent-dev-barnacles-push-");
+  const scratch = mkdtempSync("/tmp/apparent-dev-plow-push-");
   try {
     const source = join(scratch, "source");
     mkdirSync(source);
     snapshot(rules, head, source);
-    const env = { ...process.env, BARNACLES_TEST_DIRECTORY: scratch, BARNACLES_BEND_BUNDLE: bundle };
+    const env = { ...process.env, PLOW_TEST_DIRECTORY: scratch, PLOW_BEND_BUNDLE: bundle };
     for (const name of gitText("rev-parse", "--local-env-vars").split("\n")) delete env[name];
     delete env.NODE_TEST_CONTEXT;
     const options = { cwd: source, env, stdio: "inherit" as const };

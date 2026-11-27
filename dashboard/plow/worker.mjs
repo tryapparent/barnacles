@@ -28,7 +28,7 @@ export default {
       return new Response(null, { status: 405, headers: { Allow: 'GET, HEAD' } })
     }
     const destination = sessionHistoryUrl(env.PLOW_SESSION_HISTORY_URL)
-    const content = destination ? html.replace('id="session-history-link" hidden', `id="session-history-link" href="${destination}"`) : html
+    const content = destination ? html.replace('data-session-history=""', `data-session-history="${destination}"`) : html
     try {
       const raw = await env.PLOW_SESSION_FEED?.get('session-timeline-v1')
       if (!raw || raw.length > maxFeedLength) throw Error('Feed unavailable')

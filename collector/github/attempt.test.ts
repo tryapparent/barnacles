@@ -12,7 +12,7 @@ import { buildPolicy, loadPolicy } from "../../tooling/bend.ts";
 import { collectAttempt, collectWindow, githubReader, type ClockPolicy, type GitHubReader } from "./attempt.ts";
 import { pollGitHub } from "./delivery.ts";
 
-const jobRoot = process.env.BARNACLES_TEST_DIRECTORY;
+const jobRoot = process.env.PLOW_TEST_DIRECTORY;
 assert.ok(jobRoot);
 
 test("Bend2 clocks reach SQLite through the exact-attempt importer", async () => {
@@ -94,8 +94,8 @@ test("Bend2 clocks reach SQLite through the exact-attempt importer", async () =>
     writeFileSync(key, privateKey.export({ type: "pkcs8", format: "pem" }));
     const authRoutes: string[] = [];
     const appRead = githubReader(identity.repository, {
-      BARNACLES_GITHUB_AUTH: "app", BARNACLES_GITHUB_CREDENTIAL_FILE: key,
-      BARNACLES_GITHUB_APP_ID: "1", BARNACLES_GITHUB_INSTALLATION_ID: "2",
+      PLOW_GITHUB_AUTH: "app", PLOW_GITHUB_CREDENTIAL_FILE: key,
+      PLOW_GITHUB_APP_ID: "1", PLOW_GITHUB_INSTALLATION_ID: "2",
     }, async (input, init) => {
       const url = new URL(String(input));
       const headers = new Headers(init?.headers);
@@ -281,8 +281,8 @@ if (url.searchParams.has("created")) {
 });
 
 test("polling captures changing attempts and excludes unverifiable releases", async () => {
-  const parent = process.env.BARNACLES_TEST_DIRECTORY;
-  assert.ok(parent, "Set BARNACLES_TEST_DIRECTORY to a private job directory");
+  const parent = process.env.PLOW_TEST_DIRECTORY;
+  assert.ok(parent, "Set PLOW_TEST_DIRECTORY to a private job directory");
   const directory = mkdtempSync(join(parent, "poll-github-"));
   const repo = "synthetic/example";
   const root = `repos/${repo}`;

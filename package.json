@@ -1,5 +1,5 @@
 {
-  "name": "barnacles",
+  "name": "plow",
   "private": true,
   "engines": {
     "node": ">=22.18"
@@ -8,8 +8,7 @@
     "hooks:install": "node tooling/bend.ts --install-hooks",
     "test:hooks": "node tooling/verify.ts hooks",
     "verify": "node tooling/verify.ts",
-    "demo": "node examples/demo.ts",
-    "build:harbor": "tsc -p dashboard/web/tsconfig.json && vite build dashboard/web"
+    "demo": "node examples/demo.ts"
   },
   "devDependencies": {
     "@repomix/tree-sitter-wasms": "0.1.17",
@@ -34,11 +33,7 @@
     "@octokit/auth-app": "8.3.1",
     "@octokit/core": "7.0.8",
     "@radix-ui/react-slot": "1.5.0",
-    "@radix-ui/react-tabs": "1.2.1",
-    "@radix-ui/react-tooltip": "1.4.1",
     "class-variance-authority": "0.7.1",
-    "clsx": "2.1.1",
-    "lucide-react": "1.81.0",
     "react": "19.3.1",
     "react-dom": "19.3.1"
   }

@@ -1,64 +1,31 @@
-# Dashboard deployment
+# Plow deployment
 
-<a name="harbor-on-clanker"></a>
+The [Worker guide](../../plow/README.md#deployment) documents the verified
+Cloudflare Worker release and private feed publisher.
 
-## Plow on Clanker
+After verification passes on main, the collector release job publishes an
+attested source archive and its exact revision. The collector runs with
+host-local configuration and publishes a derived SQLite snapshot. See the
+[collector guide](../../../collector/README.md#poll-github) for the command.
 
-Clanker runs Plow and its evidence poller as enabled systemd user services. The
-existing Tailscale Serve route is the permanent private Plow URL. To find it,
-read the loopback port from the service's `ExecStart` and match it to its proxy
-target in Serve. Keep the private URL in host configuration.
+## Collector delivery from GitHub Actions
 
-```sh
-systemctl --user show barnacles-harbor.service -p WorkingDirectory -p ExecStart
-tailscale serve status
-```
+The source-only archive requires a collector deployment entry point that
+prepares and verifies a snapshot without starting a shipping dashboard.
+Before switching a deployment that uses a bundled frontend, verify that
+the poller and the session feed publisher can read the same persistent
+evidence database and that the configured Session history link still has
+a serving endpoint. The existing deployment and its release directory can
+serve those consumers during the transition.
 
-### Collector delivery from GitHub Actions
+## T3 OTLP intake
 
-After verification passes on main, the `collector-release` job publishes a
-build-attested archive of the tracked source and built frontend. The
-Clanker deploy command requires an attestation from the expected GitHub-hosted
-workflow, source ref, and exact current main commit.
+Use the [Clanker T3 OTLP runbook](t3-otlp.md) to apply and verify authenticated
+trace intake from a release containing the durable receiver.
 
-Run `dashboard/run.sh collector-deploy` with these host-local environment
-variables. The systemd user deployment service runs the same command from an
-installed copy of the launcher.
+## Session history
 
-| Variable | Value |
-| --- | --- |
-| `PLOW_COLLECTOR_ROOT` | Existing release root containing `current`, `polling`, and `releases` |
-| `PLOW_COLLECTOR_PORT` | Existing dashboard loopback port |
-| `PLOW_COLLECTOR_REPOSITORY` | Repository the collector reads |
-| `PLOW_COLLECTOR_PROXY_USER` | Existing dashboard proxy login |
-| `BARNACLES_BEND_BUNDLE` | Same verified local compiler bundle used by the poller |
-
-The command serializes with the existing deployment lock. It prepares a
-candidate snapshot from a local SQLite backup, checks the dashboard and API
-over loopback, then switches `current` and waits for a fresh snapshot from the
-running collector. Failed activation restores the previous release. Keep
-collector schema changes compatible with that rollback window because both
-releases use the same persistent evidence database. The optional T3–Codex
-configuration stays in the poller service's local environment.
-
-Run the deployment service on demand for the first release. After verifying
-the result, enable its timer for subsequent releases. The timer checks for
-code updates separately from the collector's 15-minute data refresh.
-
-### T3 OTLP intake
-
-Use the [Clanker T3 OTLP runbook](t3-otlp.md) to apply and verify the
-authenticated trace stack from a release that includes the durable receiver.
-
-### Session history
-
-Load the approved private [session study](../../api.md#session-history) into
-the active release's snapshot under the deployment lock. Resolve the
-`current` symlink while holding the lock so the study lands in the release
-serving requests. The collector deploy command copies the study into the next
-release, and the data poller refreshes the shipping snapshot independently.
-
-Verify `/sessions`, its frontend asset and `/api/v1/sessions` through the
-authorized tailnet URL. Once the API returns the expected study, follow the
-[Plow preview deployment](../../plow/README.md#deployment) to configure the
-Session history link.
+Verify the existing private `/sessions` page and `/api/v1/sessions` through
+the configured private URL. The Plow Worker uses that URL for its Session
+history link. Confirm the configured endpoint before retiring its serving
+process.

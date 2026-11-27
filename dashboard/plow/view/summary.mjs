@@ -83,81 +83,50 @@ function selectOperation(name) {
   next.focus({ preventScroll:true })
 }
 
-collapse.addEventListener('click', () => selectCategory(categories.find(category => category.kind === selection.category)))
-operationPanel.addEventListener('keydown', event => {
-  if (event.key === 'Escape' && selection.operation) {
-    event.preventDefault()
-    selectOperation(selection.operation)
-  }
-})
-
 function renderSummary(windowStart, windowEnd) {
   const focused = document.activeElement
   const result = policy.time_summary(summaryTraces, windowStart, windowEnd)
   const groups = new Map([...values(result.categories)].map(group => [group.kind, group]))
   const activeCategory = categories.find(category => category.kind === selection.category)
   const group = groups.get(selection.category)
-  document.getElementById('summary-total').textContent = result.duration
-    ? durationLabel(result.duration) + ' across ' + threadCount(result.threads)
-    : ''
-  document.getElementById('summary-note').textContent = result.duration
-    ? 'Time is summed across threads in the visible UTC range.'
-    : 'No recorded time in this range. Try zooming out.'
-  tiles.replaceChildren(...categories.map(category => makeCategoryTile(category, groups.get(category.kind), result.duration)))
+  const operations = group ? [...values(group.operations)].map(operation => ({
+    key: operation.name,
+    name: operationLabel(operation.name),
+    metric: durationLabel(operation.duration) + ' · ' + shareLabel.format(operation.duration / group.duration),
+    active: operation.name === selection.operation,
+    select: () => selectOperation(operation.name),
+  })) : []
+  const emptyOperations = operations.length === 0
+  const selected = selection.operation
+  if (selected && !operations.some(operation => operation.key === selected)) {
+    operations.push({ key: selected, name: 'Clear ' + operationLabel(selected), select: () => selectOperation(selected) })
+  }
 
-  operationPanel.hidden = !activeCategory
-  const operations = group ? [...values(group.operations)] : []
-  document.getElementById('operation-empty').hidden = operations.length > 0
-  if (activeCategory) {
-    document.getElementById('operation-heading').textContent = activeCategory.name + ' breakdown'
-  }
-  operationTiles.replaceChildren(...operations.map(operation => makeOperationTile(operation, group.duration)))
-  if (selection.operation && !operationButton(selection.operation)) {
-    const clear = makeElement('button', 'operation-tile', 'Clear ' + operationLabel(selection.operation))
-    clear.type = 'button'
-    clear.dataset.operation = selection.operation
-    clear.addEventListener('click', () => selectOperation(selection.operation))
-    operationTiles.append(clear)
-  }
+  PlowUI.renderSummary({
+    total: result.duration ? durationLabel(result.duration) + ' across ' + threadCount(result.threads) : '',
+    note: result.duration ? 'Time is summed across threads in the visible UTC range.' : 'No recorded time in this range. Try zooming out.',
+    categories: categories.map(category => {
+      const group = groups.get(category.kind)
+      return {
+        ...category,
+        duration: group ? durationLabel(group.duration) : '0m',
+        share: shareLabel.format(group ? group.duration / result.duration : 0),
+        expanded: category.kind === selection.category,
+        select: () => selectCategory(category),
+      }
+    }),
+    breakdown: activeCategory && activeCategory.name + ' breakdown',
+    operations,
+    emptyOperations,
+    close: () => selectCategory(activeCategory),
+    clearOperation: selected ? () => selectOperation(selected) : undefined,
+  })
 
   if (focused.dataset.kind !== undefined) categoryButton(focused.dataset.kind)?.focus({ preventScroll:true })
   if (focused.dataset.operation !== undefined) {
     const next = operationButton(focused.dataset.operation) ?? operationTiles.firstElementChild ?? collapse
     if (!operationPanel.hidden) next.focus({ preventScroll:true })
   }
-}
-
-function makeCategoryTile(category, group, total) {
-  const button = makeElement('button', 'category-tile ' + category.style)
-  button.type = 'button'
-  button.dataset.kind = category.kind
-  const expanded = category.kind === selection.category
-  button.setAttribute('aria-expanded', String(expanded))
-  button.setAttribute('aria-controls', 'operation-panel')
-  const metric = makeElement('span', 'category-metric', group ? durationLabel(group.duration) : '0m')
-  const share = group ? group.duration / total : 0
-  metric.append(makeElement('span', 'category-share', shareLabel.format(share)))
-  const icon = makeElement('span', 'category-icon', expanded ? '−' : '+')
-  icon.setAttribute('aria-hidden', 'true')
-  button.append(makeElement('span', 'category-name', category.name), metric, icon)
-  button.addEventListener('click', () => selectCategory(category))
-  return button
-}
-
-function makeOperationTile(operation, total) {
-  const button = makeElement('button', 'operation-tile')
-  button.type = 'button'
-  button.dataset.operation = operation.name
-  button.setAttribute('aria-pressed', String(operation.name === selection.operation))
-  const name = operationLabel(operation.name)
-  const label = makeElement('span', 'operation-name', name)
-  const check = makeElement('span', 'selected-indicator', '✓')
-  check.setAttribute('aria-hidden', 'true')
-  label.append(check)
-  button.append(label, makeElement('span', 'operation-metric',
-    durationLabel(operation.duration) + ' · ' + shareLabel.format(operation.duration / total)))
-  button.addEventListener('click', () => selectOperation(operation.name))
-  return button
 }
 
 function paintFilter(start, end) {

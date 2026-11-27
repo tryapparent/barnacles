@@ -15,12 +15,12 @@ Codex JSONL     T3 snapshots     GitHub APIs
                       |
           Evidence reports and snapshots
                       |
-            Plow + API or CLI
+            CLI and local snapshots
 ```
 
 - [Collector](collector/README.md) documents source boundaries and code to adapt from Apparent.
 - [Evidence](evidence/README.md) defines record identities, release attribution, and metrics.
-- [Plow](dashboard/api.md) documents the shipping dashboard and the shared read-only API.
+- The [Plow dashboard](https://plow.tryapparent.com/app) shows thread activity and time summaries from collected session evidence. See the [dashboard guide](dashboard/plow/README.md) to build and test it.
 
 ## Try it locally
 
@@ -32,20 +32,21 @@ npm run demo
 npm run verify
 ```
 
-Build and serve the Harbor website using a private output directory.
+Build the React and shadcn dashboard served by the Cloudflare Worker.
 
 ```sh
-job=$(dirname "$snapshot")
-npm run build:harbor -- --outDir "$job/harbor"
-node dashboard/prepare.ts --serve "$snapshot" 3031 "$job/harbor"
+plow_build_dir=$(mktemp -d /tmp/apparent-dev-plow-build-XXXXXX)
+npm exec -- tsc -p dashboard/web/tsconfig.json
+node dashboard/plow/build.ts "$plow_build_dir"
+node dashboard/plow/smoke.mjs "$plow_build_dir"
 ```
 
-Open [Harbor Shipping review](http://127.0.0.1:3031/).
+The smoke command serves the built dashboard with synthetic evidence.
 
 The [Actions import](collector/README.md#run-the-actions-import) and the [T3, Codex, and GitHub delivery imports](collector/README.md#import-t3-codex-and-github-delivery) write local SQLite evidence. Use the delivery report to inspect verified releases and thread-to-release coverage.
 
-The [legacy dashboard notes](dashboard/README.md) document the Grafana and Tempo preview for reference.
+The [dashboard guide](dashboard/README.md) links to the current app, local snapshot contracts, and the historical preview.
 
 [Changed Code Analysis](collector/README.md#changed-code-analysis) ranks files by how often commits touched them. Use it to find frequently edited files worth investigating for maintenance bottlenecks.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md). Barnacles is licensed under [MIT](LICENSE).
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md). Plow is licensed under [MIT](LICENSE).

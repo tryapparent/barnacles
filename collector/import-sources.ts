@@ -3,7 +3,7 @@ import { createInterface } from "node:readline";
 import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
-  deliveryPolicy, deliveryReport, harborSnapshotPublisher, loadEvidence, readPollMinutes, repository,
+  deliveryPolicy, deliveryReport, snapshotPublisher, loadEvidence, readPollMinutes, repository,
   processTimingPolicy, rolloutCoverage, saveKernelCapture, waitReport, watchOverlaps, type AdmissionPolicy, type DeliveryPolicy, type KernelPolicy, type List, type SourcePolicy,
 } from "../evidence/index.ts";
 import { buildPolicy, loadPolicy } from "../tooling/bend.ts";
@@ -14,10 +14,11 @@ import { bendBool, bendValues, clockSecond, factText, kernelCapture, kernelInteg
 import { buildSourcePolicies, linkedRolloutPoller, t3Snapshot } from "./t3.ts";
 
 async function poll(db: string, scratch: string, repo: string, snapshot: string, policy: SourcePolicy, admission: AdmissionPolicy, once: boolean) {
-  const settings = process.env.BARNACLES_POLL_SETTINGS;
-  if (!settings) throw Error("Set BARNACLES_POLL_SETTINGS to the shared polling settings file");
+  const configured = process.env.PLOW_POLL_SETTINGS;
+  if (!configured) throw Error("Set PLOW_POLL_SETTINGS");
+  const settings = resolve(configured);
   const linked = linkedRolloutPoller(db, policy, admission);
-  const publish = harborSnapshotPublisher(resolve(snapshot), repo, scratch);
+  const publish = snapshotPublisher(resolve(snapshot), repo, scratch);
   let minutes = readPollMinutes(settings);
   const clocks = await loadPolicy<ClockPolicy>(
     await buildPolicy(scratch, new URL("./github/clocks.bend", import.meta.url), "clocks.mjs"));
@@ -65,7 +66,7 @@ async function main() {
     (command === "rollout" && first && second && !fourth) ||
     (command === "github" && first && second && !fourth) ||
     (command === "poll-github" && first && second && (!third || third === "--once") && !fourth)
-  )) throw Error("Usage: import-sources.ts JOB_DIRECTORY { t3 SNAPSHOT | rollout INSTANCE FILE [SOURCE_ID] | github OWNER/REPO PR [TAG] | poll-github OWNER/REPO HARBOR_SNAPSHOT [--once] | process BINDING EVENTS DIAGNOSTICS | process-probe PARENT_PID WORK_DIRECTORY | report | rollout-coverage | waits [SESSION [CALL]] | watch-overlaps OWNER/REPO RUN SHA ATTEMPT | bottlenecks FACTS.ndjson [--patterns] | outcome-delays EVIDENCE.json }");
+  )) throw Error("Usage: import-sources.ts JOB_DIRECTORY { t3 SNAPSHOT | rollout INSTANCE FILE [SOURCE_ID] | github OWNER/REPO PR [TAG] | poll-github OWNER/REPO SNAPSHOT [--once] | process BINDING EVENTS DIAGNOSTICS | process-probe PARENT_PID WORK_DIRECTORY | report | rollout-coverage | waits [SESSION [CALL]] | watch-overlaps OWNER/REPO RUN SHA ATTEMPT | bottlenecks FACTS.ndjson [--patterns] | outcome-delays EVIDENCE.json }");
 
   const db = join(resolve(directory), "evidence.sqlite");
   if (command === "waits") {

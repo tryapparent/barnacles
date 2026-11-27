@@ -47,7 +47,7 @@ services:
         COPY evidence evidence
     entrypoint: [/bin/sh, -c, 'umask 077 && exec node collector/codex/otel.ts --t3 /evidence/data "$$PLOW_T3_INSTANCE"']
     environment:
-      BARNACLES_BEND_BUNDLE: /app/compiler
+      PLOW_BEND_BUNDLE: /app/compiler
       TMPDIR: /tmp
       PLOW_T3_EVIDENCE_HOST: 0.0.0.0
       PLOW_T3_INSTANCE: ${PLOW_T3_INSTANCE:?Set the trusted T3 instance identifier}

@@ -34,11 +34,11 @@ test("lexical comment parsers distinguish comments from literals", async () => {
 });
 
 test("real Git commits check the staged tree and enforce comment multiplicity", () => {
-  const job = process.env.BARNACLES_TEST_DIRECTORY;
-  assert.ok(job, "Set BARNACLES_TEST_DIRECTORY to a private job directory");
+  const job = process.env.PLOW_TEST_DIRECTORY;
+  assert.ok(job, "Set PLOW_TEST_DIRECTORY to a private job directory");
   const cwd = mkdtempSync(join(job, "hook-test-"));
   const env = { ...process.env };
-  delete env.BARNACLES_BEND_BUNDLE;
+  delete env.PLOW_BEND_BUNDLE;
   const git = (...args: string[]) => spawnSync("git", args, { cwd, env, encoding: "utf8" });
   const pass = (...args: string[]) => {
     const result = git(...args);
@@ -74,7 +74,7 @@ test("real Git commits check the staged tree and enforce comment multiplicity", 
     pass("add", "a.ts");
     reject(/Cannot read pinned Bend2 compiler file/);
     install();
-    const store = join(cwd, ".git", "barnacles-bend");
+    const store = join(cwd, ".git", "plow-bend");
     const [bundle] = readdirSync(store, { withFileTypes: true }).filter((entry) => entry.isDirectory());
     writeFileSync(join(store, bundle.name, "main.ts"), "damaged compiler fixture");
     reject(/Bend2 integrity check failed for main.ts/);

@@ -27,6 +27,7 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci --ignore-scripts
+      - run: npm exec -- tsc -p dashboard/web/tsconfig.json
       - run: mkdir -p "$RUNNER_TEMP/plow" && node dashboard/plow/build.ts "$RUNNER_TEMP/plow"
       - run: node dashboard/plow/smoke.mjs "$RUNNER_TEMP/plow"
       - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -47,17 +48,12 @@ jobs:
       attestations: write
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: '22'
-      - run: npm ci --ignore-scripts
       - run: |
           stage="$RUNNER_TEMP/collector"
           mkdir -p "$stage/source"
           git archive "$GITHUB_SHA" | tar -x -C "$stage/source"
-          npm run build:harbor -- --outDir "$stage/web"
           printf '%s\n' "$GITHUB_SHA" > "$stage/revision"
-          tar -C "$stage" -czf "$RUNNER_TEMP/plow-collector.tar.gz" revision source web
+          tar -C "$stage" -czf "$RUNNER_TEMP/plow-collector.tar.gz" revision source
         shell: bash
       - uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a
         with:

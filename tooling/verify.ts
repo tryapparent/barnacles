@@ -6,12 +6,12 @@ import { prepareCompiler } from "./bend.ts";
 import { checkBoundaries, loadVerification, suiteDirectories, verificationInput } from "./check-boundaries.ts";
 
 const cwd = fileURLToPath(new URL("../", import.meta.url));
-const parent = process.env.BARNACLES_TEST_DIRECTORY;
-const job = mkdtempSync(parent ? join(parent, "verify-") : "/tmp/apparent-dev-barnacles-verify-");
+const parent = process.env.PLOW_TEST_DIRECTORY;
+const job = mkdtempSync(parent ? join(parent, "verify-") : "/tmp/apparent-dev-plow-verify-");
 try {
   const bundle = await prepareCompiler(job);
-  process.env.BARNACLES_BEND_BUNDLE = bundle;
-  const env = { ...process.env, BARNACLES_TEST_DIRECTORY: job };
+  process.env.PLOW_BEND_BUNDLE = bundle;
+  const env = { ...process.env, PLOW_TEST_DIRECTORY: job };
   delete env.NODE_TEST_CONTEXT;
   const policy = await loadVerification(job);
   const requested = verificationInput(process.argv.slice(2));
@@ -25,11 +25,6 @@ try {
         .map((file) => join(directory, file)).sort();
     });
     if (!tests.length) throw Error("No tests found for the selected scopes");
-    if (policy.builds_harbor(requested)) {
-      const harbor = join(job, "harbor");
-      execFileSync("npm", ["run", "build:harbor", "--", "--outDir", harbor], { cwd, env, stdio: "inherit" });
-      Object.assign(env, { BARNACLES_WEB_BUILD: harbor });
-    }
     execFileSync(process.execPath, ["--test", ...tests], { cwd, env, stdio: "inherit" });
   }
 } catch (error) {

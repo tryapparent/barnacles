@@ -14,7 +14,7 @@ type Fixture = {
 };
 
 function withRepository(run: (fixture: Fixture) => void) {
-  const parent = process.env.BARNACLES_TEST_DIRECTORY;
+  const parent = process.env.PLOW_TEST_DIRECTORY;
   assert.ok(parent);
   const cwd = mkdtempSync(join(parent, "directory-width-"));
   const git = (...args: string[]) => {
