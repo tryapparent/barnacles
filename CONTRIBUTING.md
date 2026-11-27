@@ -31,6 +31,10 @@ The Bend2 path check reads the exception registry from the staged tree. New impl
 
 The check covers Bend2, JS and TS, shell, SQLite, YAML, JSON and JSONC, CSS, HTML and its supported embedded code, Markdown HTML comments, Git patterns, and several other common source formats. It treats recognized shebangs as executable syntax and ignores comment-like text in strings, regexes, and documentation examples. Plain text, license text, and recognized media files carry no code comment syntax. Unsupported changed formats and parse errors require a supported parser.
 
+The source token check adapts [Apparent's source budget](https://github.com/tryapparent/apparent/blob/a5aed58a3277df859066251c11ddc827a6aa2cf1/shared/enablement/dependency-policy/guards/budgets.ts). It counts the entire staged file with `o200k_base` from pinned `js-tiktoken` 1.0.21. The limit is 4,000 tokens per file. An existing oversized file can stay the same size or shrink. An exact rename with identical content and Git mode carries that allowance. Copies and renames with edits use the 4,000-token limit. Pre-push applies the same rule from the integration base to the outgoing commit.
+
+The cap covers Bend2, JS and TS variants, Rust, Python, Swift, shell, CSS, HTML, C-family and Metal source, files beginning with a shebang, and unrecognized `.lock` and `.lockb` files. The directory exclusions are shared with the directory-width check. Recognized dependency lockfiles are exempt by exact basename. Source in tests and fixtures counts.
+
 Run the focused tests with `npm run test:hooks`. The hook adapts Apparent's staged snapshot and comment comparison approach. The [donor MIT notice](LICENSE) covers adapted code.
 
 ## Push hook

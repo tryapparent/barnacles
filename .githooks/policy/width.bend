@@ -25,12 +25,8 @@ type Counts is Data:
 type Violation is Data:
   Overwide{directory: String, files: U32, directories: U32, limit: U32}
 
-def excluded(part: String) -> Bool:
-  List.contains(~String, ~String.eq,
-    [".git", "target", "node_modules", "vendor", "third_party", "third-party", "__pycache__"], part)
-
 def first_party(parts: List<&2, String>) -> Bool:
-  Bool.not(List.any(~&2, ~String, ~excluded, parts))
+  Bool.not(List.any(~&2, ~String, ~Rules.excluded_component, parts))
 
 def first_party_path(path: String) -> Bool:
   first_party(String.split(path, '/'))

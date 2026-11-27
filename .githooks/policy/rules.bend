@@ -14,6 +14,10 @@ def valid_tree_pair(+from: String, +to: String) -> Bool:
   Bool.or(Bool.and(String.is_empty(from), String.is_empty(to)),
     Bool.and(valid_object_id(from), valid_object_id(to)))
 
+def excluded_component(part: String) -> Bool:
+  List.contains(~String, ~String.eq,
+    [".git", "target", "node_modules", "vendor", "third_party", "third-party", "__pycache__"], part)
+
 def comment_action(+before: String, +after: String, old_oid: String, new_oid: String, old_path: String,
   path: String, status: String) -> String:
   +old_file = String.starts_with(before, "100")
