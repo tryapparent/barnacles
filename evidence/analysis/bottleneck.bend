@@ -317,6 +317,24 @@ def observe_failure_with_duration(state: Replay, +thread: String, +id: String, +
 def observe_failure(state: Replay, thread: String, id: String, label: String, failed: Bool) -> Replay:
   observe_failure_with_duration(state, thread, id, label, failed, 0)
 
+def t3_command_refusal_label(+status: String, +receipt: String, +code: U32) -> String:
+  +failed = String.eq(status, "failed")
+  +background_receipt = Bool.or(String.eq(receipt, "foreground-shell-wrapper"), String.eq(receipt, "foreground-ampersand"))
+  +background_refusal = Bool.and(failed, Bool.and(background_receipt, U32.is_eq(code, 4294967295)))
+  +comment_conflict = Bool.and(failed, Bool.and(String.eq(receipt, "github-view-comment-format"), U32.is_eq(code, 1)))
+  +git_spawn = Bool.and(failed, Bool.and(String.eq(receipt, "git-fork-resource-unavailable"), U32.is_eq(code, 255)))
+  +shell_retry = Bool.and(String.eq(status, "completed"), Bool.and(String.eq(receipt, "shell-fork-retry"), U32.is_eq(code, 0)))
+  Bool.pick(String, background_refusal, "t3-terminal-backgrounding-refused",
+    Bool.pick(String, comment_conflict, "github-view-comment-format-conflict",
+      Bool.pick(String, git_spawn, "git-child-process-spawn-refused",
+        Bool.pick(String, shell_retry, "local-shell-fork-retry-observed", ""))))
+
+def observe_t3_command_refusal(state: Replay, +thread: String, id: String, source_thread: String, visibility: String,
+  item_type: String, status: String, receipt: String, code: U32) -> Replay:
+  +local = Bool.and(String.eq(thread, source_thread), Bool.and(String.eq(visibility, "local"), String.eq(item_type, "command_execution")))
+  +label = t3_command_refusal_label(status, receipt, code)
+  observe_failure(state, thread, id, label, Bool.and(local, Bool.not(String.is_empty(label))))
+
 def observe_staged_source_budget(state: Replay, thread: String, id: String, operation: String, phase: String,
   unit: String, path: String, actual: U32, +allowance: U32, failed: Bool) -> Replay:
   +guard = Bool.and(String.eq(operation, "git-commit"), String.eq(phase, "budgets/style"))

@@ -652,6 +652,9 @@ test("bottleneck replay binds verification and recovery to original receipts", (
     visibility: "local", itemType: "command_execution", status: "failed", operation: "legacy-terminal",
     started: 1000, completed: 1420, observed: 1421, elapsedMs: 420_018,
     receipt: "terminal-tool-deadline", limitSeconds: 420 };
+  const refused = { kind: "t3-command-refusal", id: "background-wrapper", thread: "t", sourceThread: "t",
+    visibility: "local", itemType: "command_execution", status: "failed", receipt: "foreground-shell-wrapper",
+    exitCode: 0xffffffff };
   const facts = [
     worktree, worktree,
     { ...worktree, id: "same-removal", at: 110 },
@@ -782,6 +785,18 @@ test("bottleneck replay binds verification and recovery to original receipts", (
     { ...commandDeadline, id: "inherited-command", visibility: "inherited" },
     { ...commandDeadline, id: "other-root-command", sourceThread: "other" },
     { ...commandDeadline, id: "running-command", status: "running" },
+    refused, refused,
+    { ...refused, id: "background-ampersand", receipt: "foreground-ampersand" },
+    { ...refused, id: "comment-format", receipt: "github-view-comment-format", exitCode: 1 },
+    { ...refused, id: "git-spawn", receipt: "git-fork-resource-unavailable", exitCode: 255 },
+    { ...refused, id: "shell-retry", receipt: "shell-fork-retry", status: "completed", exitCode: 0 },
+    { ...refused, id: "launched-background", exitCode: 1 },
+    { ...refused, id: "unknown-github-exit", receipt: "github-view-comment-format" },
+    { ...refused, id: "wrong-git-exit", receipt: "git-fork-resource-unavailable", exitCode: 128 },
+    { ...refused, id: "failed-shell-retry", receipt: "shell-fork-retry", exitCode: 0 },
+    { ...refused, id: "inherited-refusal", visibility: "inherited" },
+    { ...refused, id: "other-thread-refusal", sourceThread: "other" },
+    { ...refused, id: "copied-refusal", itemType: "assistant_message" },
   ];
   try {
     writeFileSync(file, facts.map(fact => JSON.stringify(fact)).join("\n") + "\n");
@@ -829,6 +844,11 @@ test("bottleneck replay binds verification and recovery to original receipts", (
       ["merge-wrong-repo", "pr-merge-http-server-error", 0],
       ["terminal-deadline", "t3-terminal-tool-deadline", 420],
       ["terminal-deadline-before-floor", "t3-terminal-tool-deadline", 419],
+      ["background-wrapper", "t3-terminal-backgrounding-refused", 0],
+      ["background-ampersand", "t3-terminal-backgrounding-refused", 0],
+      ["comment-format", "github-view-comment-format-conflict", 0],
+      ["git-spawn", "git-child-process-spawn-refused", 0],
+      ["shell-retry", "local-shell-fork-retry-observed", 0],
     ]);
     const { patterns, costs } = JSON.parse(text);
     assert.deepEqual(costs.filter((r: { clock: string }) => r.clock === "t3-command-envelope"),
