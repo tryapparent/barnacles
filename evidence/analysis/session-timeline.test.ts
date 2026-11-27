@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { projectPlowFeed } from "../read.ts";
+import { analyzeJoinedThread } from "./session-history.ts";
 import { test } from "node:test";
 import { buildPolicy, loadPolicy } from "../../tooling/bend.ts";
 
@@ -89,6 +90,50 @@ test("Plow feed preserves aligned history coverage and detailed trace bounds", a
     assert.equal(extended.history.first, 11)
     assert.equal(extended.history.threads.length, 53)
     assert.deepEqual(extended.history.threads.slice(0, 2), [{ work: 0, workflow: 0 }, { work: 900, workflow: 200 }])
+  } finally {
+    rmSync(job, { recursive: true, force: true });
+  }
+});
+
+
+test("joined bottleneck replay counts exact job facts once and preserves missing clocks", async () => {
+  const parent = process.env.PLOW_TEST_DIRECTORY;
+  assert.ok(parent);
+  const job = mkdtempSync(join(parent, "joined-replay-"));
+  const file = join(job, "evidence.sqlite");
+  try {
+    const db = new DatabaseSync(file);
+    try {
+      db.exec(readFileSync(new URL("../storage/sources.sql", import.meta.url), "utf8"));
+      db.exec(readFileSync(new URL("../storage/actions.sql", import.meta.url), "utf8"));
+      db.exec(`
+        INSERT INTO t3_threads VALUES ('fixture','thread',1700000000000,1700000003000,'completed','manual_t3',0,1);
+        INSERT INTO t3_runs VALUES ('fixture','thread','run',1700000000000,1700000001000,NULL,'running');
+        INSERT INTO t3_ci_observations VALUES ('fixture','thread','query','query','synthetic/example',40,2,'revision');
+        INSERT INTO t3_ci_observations VALUES ('fixture','thread','watch','watch','synthetic/example',40,2,'revision');
+        INSERT INTO t3_ci_observations VALUES ('fixture','thread','unverified','query','synthetic/example',40,1,'revision');
+        INSERT INTO t3_ci_links VALUES ('fixture','thread','query'), ('fixture','thread','watch');
+        INSERT INTO action_attempts VALUES ('synthetic/example',40,2,'revision',1,'completed','failure',1700000000,1700000001,1700000010,1700000011,3);
+        INSERT INTO action_jobs VALUES
+          ('synthetic/example',40,2,61,'Test','completed','failure',1700000000,0,1700000002,1700000002,1700000010),
+          ('synthetic/example',40,2,62,'Test','completed','failure',1700000000,1,1700000001,1700000001,1700000100),
+          ('synthetic/example',40,2,63,'Test','queued','',1700000000,0,NULL,NULL,NULL);
+      `);
+    } finally {
+      db.close();
+    }
+    const analysis = await analyzeJoinedThread(file, job, "fixture", "thread");
+    assert.deepEqual(analysis.coverage, { t3Runs: 1, codexSpans: 0, githubAttempts: 1, githubJobs: 3, carriedGitHubJobs: 1 });
+    const sorted = (values: unknown[]) => values.map((value) => JSON.stringify(value)).sort();
+    assert.deepEqual(sorted(analysis.costs), sorted([
+      { $: "Cost", clock: "ci-job-queue", operation: "Test", count: 1, seconds: 2, unknown: 1 },
+      { $: "Cost", clock: "t3-run-admission", operation: "provider run", count: 1, seconds: 1, unknown: 0 },
+      { $: "Cost", clock: "ci-job-execution", operation: "Test", count: 1, seconds: 8, unknown: 1 },
+      { $: "Cost", clock: "t3-run-envelope", operation: "provider run", count: 0, seconds: 0, unknown: 1 },
+    ]));
+    assert.deepEqual(analysis.files, []);
+    assert.equal(analysis.findings.length, 1);
+    assert.match(JSON.stringify(analysis.findings[0]), /"ci-job-failure"/);
   } finally {
     rmSync(job, { recursive: true, force: true });
   }

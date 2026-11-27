@@ -287,6 +287,28 @@ supply a CI observation. Visit
 coverage behavior. This is a one-session command. The poller and dashboard
 have separate refresh and projection paths.
 
+### Analyze one joined thread
+
+Run the historical study rules against one T3 thread in a private joined
+SQLite database.
+
+```sh
+node evidence/analysis/session-history.ts --joined-bottlenecks \
+  "$job" "$job/evidence.sqlite" T3_INSTANCE THREAD_ID
+```
+
+Bend2 projects verified Codex span links, T3 run clocks, and the jobs from
+exact linked GitHub attempts into the same timing and job-outcome rules used
+by the historical replay. The command reads the database without modifying
+it. It reports separate coverage counts and the usual costs, findings, and
+pattern totals. Missing clock endpoints contribute unknown timing entries.
+Carried-forward jobs are counted in coverage and excluded from this attempt's
+timing and findings. Multiple observations of the same attempt contribute one
+set of jobs. The analysis uses the study's whole-second clocks. Codex span
+clocks may overlap, and summed hosted job times measure work across jobs.
+Neither establishes agent wait. File and outcome-delay rules still need
+their original tool and dependency receipts.
+
 ### Codex rollout
 
 Set `rollout` to one permitted retained JSONL file by exact session or workspace evidence. Install the pinned syntax parsers with `npm ci --ignore-scripts` before importing. The reader uses the size observed at open, rejects files over 128 MiB, and retains complete LF-delimited UTF-8 JSON records of at most 8 MiB each. It records oversized lines and trailing bytes without LF separately. A short read rejects the snapshot. Call and reasoning line numbers are one-based physical lines in the original file.
