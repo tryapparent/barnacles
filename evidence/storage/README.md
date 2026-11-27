@@ -11,3 +11,27 @@ Run `npm run verify -- evidence` to compile both policies and exercise SQLite wi
 ## Live Codex traces
 
 The [Codex OTLP boundary](../../collector/codex/README.md) uses [its own admission policy](codex-otel.bend). It preserves nanosecond timestamps as canonical decimal strings and treats a span as an immutable observation identified by the configured instance, trace ID and span ID. Parent IDs may reference spans not yet observed. Event rows retain the selected event time and optional provider-reported duration. Exact repeats reuse the existing row. A conflict rolls back every write in the request. Rollout facts and live telemetry keep their own provenance.
+
+
+## Live session links
+
+`t3_live_codex_links` associates a scoped native session with its T3 thread
+and retains the provider reference ID. `t3_live_codex_span_links` records the
+exact span coordinates selected by Bend2. The join copies only those
+normalized spans and events from the read-only trace database, preserving
+their clocks and fingerprints. An explicit conversation ID on the span or
+one of its events establishes membership. Conflicting conversation IDs leave
+the span out. Other spans can still arrive or remain unbound.
+
+`t3_ci_observations` retains explicit query or watch receipts. A row in
+`t3_ci_links` confirms that the imported repository, run, attempt, and tested
+SHA match the receipt. GitHub jobs and attempts are stored once even when
+many threads reference them. The receipt alone supplies no clock for result
+delivery, agent pickup, or a blocked milestone.
+
+Run the [one-session join](../../collector/README.md#join-a-live-codex-session-to-t3-and-github)
+again after missing evidence arrives. Identical replays preserve one row per
+identity. A conflicting replay of an existing span fingerprint or observation
+ID aborts the destination transaction. A missing attempt or mismatched SHA
+leaves the observation available with no verified link. The command reports
+the accepted and conflicting span counts and the CI link status.
