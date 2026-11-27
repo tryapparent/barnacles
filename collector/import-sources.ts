@@ -54,7 +54,7 @@ async function main() {
   if (!directory || extra.length || !(
     ((command === "report" || command === "rollout-coverage") && !first) ||
     (command === "waits" && !third) ||
-    (command === "bottlenecks" && first && !second) ||
+    (command === "bottlenecks" && first && (!second || second === "--patterns") && !third) ||
     (command === "watch-overlaps" && first && second && third && fourth) ||
     (command === "process" && first && second && third && !fourth) ||
     (command === "process-probe" && first && second && !third) ||
@@ -62,7 +62,7 @@ async function main() {
     (command === "rollout" && first && second && !fourth) ||
     (command === "github" && first && second && !fourth) ||
     (command === "poll-github" && first && second && (!third || third === "--once") && !fourth)
-  )) throw Error("Usage: import-sources.ts JOB_DIRECTORY { t3 SNAPSHOT | rollout INSTANCE FILE [SOURCE_ID] | github OWNER/REPO PR [TAG] | poll-github OWNER/REPO HARBOR_SNAPSHOT [--once] | process BINDING EVENTS DIAGNOSTICS | process-probe PARENT_PID WORK_DIRECTORY | report | rollout-coverage | waits [SESSION [CALL]] | watch-overlaps OWNER/REPO RUN SHA ATTEMPT | bottlenecks FACTS.ndjson }");
+  )) throw Error("Usage: import-sources.ts JOB_DIRECTORY { t3 SNAPSHOT | rollout INSTANCE FILE [SOURCE_ID] | github OWNER/REPO PR [TAG] | poll-github OWNER/REPO HARBOR_SNAPSHOT [--once] | process BINDING EVENTS DIAGNOSTICS | process-probe PARENT_PID WORK_DIRECTORY | report | rollout-coverage | waits [SESSION [CALL]] | watch-overlaps OWNER/REPO RUN SHA ATTEMPT | bottlenecks FACTS.ndjson [--patterns] }");
 
   const db = join(resolve(directory), "evidence.sqlite");
   if (command === "waits") {
@@ -72,7 +72,7 @@ async function main() {
   const scratch = mkdtempSync(join(resolve(directory), "build-"));
   try {
     if (command === "bottlenecks") {
-      console.log(JSON.stringify(await replayBottlenecks(first, scratch), null, 2));
+      console.log(JSON.stringify(await replayBottlenecks(first, scratch, second === "--patterns"), null, 2));
       return;
     }
     if (command === "process" || command === "process-probe") {
@@ -289,9 +289,14 @@ type ReplayPolicy = {
     producer: string, phase: string, deleted: boolean, at: number): unknown;
   observe_transcribe_runtime_missing(state: unknown, thread: string, id: string, operation: string, origin: string,
     line: string, failed: boolean): unknown;
+  observe_worktree_prepare_failure(state: unknown, thread: string, id: string, branch: string, path: string,
+    line: string, runStatus: string, providerStarted: boolean, requested: number, failedAt: number): unknown;
+  observe_local_build_memory_gate(state: unknown, thread: string, id: string, cause: string,
+    available: number, capacity: number, minimum: number): unknown;
   replay_files(state: unknown): List<Record<string, unknown>>;
   replay_costs(state: unknown): List<Record<string, unknown>>;
   replay_findings(state: unknown): List<Record<string, unknown>>;
+  replay_patterns(state: unknown): List<Record<string, unknown>>;
 };
 
 function clockSecond(value: unknown): number {
@@ -313,7 +318,7 @@ function bendBool(value: unknown): boolean {
   return value;
 }
 
-async function replayBottlenecks(file: string, scratch: string) {
+async function replayBottlenecks(file: string, scratch: string, patterns: boolean) {
   const info = statSync(file);
   if (!info.isFile() || info.size > 512 * 1024 * 1024) throw Error("Expected a bounded bottleneck fact stream");
   const compiled = await buildPolicy(scratch, new URL("../evidence/analysis/bottleneck.bend", import.meta.url), "bottleneck.mjs");
@@ -476,6 +481,13 @@ async function replayBottlenecks(file: string, scratch: string) {
       } else if (value.kind === "storage-worktree-removal") {
         state = policy.observe_storage_worktree_removal(state, token(value.thread), id, token(value.path), token(value.receipt),
           token(value.producer), token(value.phase), bendBool(value.deleted), clockSecond(value.at));
+      } else if (value.kind === "t3-worktree-prepare-failure") {
+        state = policy.observe_worktree_prepare_failure(state, token(value.thread), id, factText(value.branch),
+          factText(value.path), factText(value.line), token(value.runStatus), bendBool(value.providerStarted),
+          clockSecond(value.requested), clockSecond(value.failedAt));
+      } else if (value.kind === "local-build-memory-gate") {
+        state = policy.observe_local_build_memory_gate(state, token(value.thread), id, token(value.cause),
+          clockSecond(value.available), clockSecond(value.capacity), clockSecond(value.minimum));
       } else if (value.kind === "github-pr-repository-recovery") {
         state = policy.observe_pr_repository_recovery(state, token(value.thread), id, factText(value.createdRepository),
           factText(value.closedRepository), factText(value.repairedRepository), clockSecond(value.createdPr),
@@ -584,7 +596,8 @@ async function replayBottlenecks(file: string, scratch: string) {
   }
   return { version: 1, files: Array.from(bendValues(policy.replay_files(state))),
     costs: Array.from(bendValues(policy.replay_costs(state))),
-    findings: Array.from(bendValues(policy.replay_findings(state))) };
+    findings: Array.from(bendValues(policy.replay_findings(state))),
+    ...(patterns ? { patterns: Array.from(bendValues(policy.replay_patterns(state))) } : {}) };
 }
 
 main().catch((error: Error) => {

@@ -249,6 +249,8 @@ Use a private job directory and a frozen NDJSON stream of projected facts.
 node collector/import-sources.ts "$job" bottlenecks "$job/facts.ndjson"
 ```
 
+Pass `--patterns` to also rank rules by distinct affected thread count, then finding count. The result lists records with a positive observed duration and the largest duration for each rule. Each rule retains its original clock semantics. Counts describe the supplied evidence and can include several observations of one underlying incident.
+
 Each line is an object with an opaque `id` and one of these shapes:
 
 | Kind | Other fields | Observation |
@@ -306,6 +308,8 @@ Each line is an object with an opaque `id` and one of these shapes:
 | `local-electron-sandbox-helper` | `thread`, `operation`, `runtime`, `diagnostic`, `terminal`, `failed` | Bind the failed local Electron launch to its output. The Chromium helper diagnostic and the Electron SIGTRAP must name the same runtime used by the launch. |
 | `actions-job-log-escape-refusal` | `thread`, `operation`, `job`, `responseJob`, `diagnostic`, `failed` | Bind the exact GitHub CLI terminal-escape refusal to the failed hosted job-log request and its job identity. This records a log read failure. |
 | `storage-worktree-removal` | `thread`, `path`, `receipt`, `producer`, `phase`, `deleted`, `at` | One original post-deletion receipt from host storage maintenance. Use an opaque path and a distinct quarantine identity. Replay in timestamp order and retain each verified repeat for the same checkout. The source supplies no time spent recovering. |
+| `t3-worktree-prepare-failure` | `thread`, `branch`, `path`, `line`, `runStatus`, `providerStarted`, `requested`, `failedAt` | Bind the original T3 workspace recreation error to the exact failed run and declared branch and path. Supply the run request and failure clocks with evidence that provider execution did not start. The measured interval ends at the failure receipt. |
+| `local-build-memory-gate` | `thread`, `cause`, `available`, `capacity`, `minimum` | Supply one exact local runner launch and its original `cgroup-memory` denial receipt. A finding requires available worker slots sufficient for the requested minimum. The receipt identifies the observed gate. Use the separate admission duration kind for a measured wait. |
 | `github-pr-repository-recovery` | `thread`, `createdRepository`, `closedRepository`, `repairedRepository`, `createdPr`, `closedPr`, `repairedPr`, `title`, `repairedTitle`, `implicit`, `created`, `closed`, `repaired` | Bind a literal PR create request with an implicit target, its actual returned PR, an exact closure receipt, and a matching-title replacement created with an explicit repository. Record the observed recovery interval when the sequence fits within ten minutes. |
 | `rust-transcribe-runtime-missing` | `thread`, `operation`, `origin`, `line`, `failed` | Bind the original Cargo failure or its owned redirected log to the build-script panic reading the transcription runtime. The finding locates the prerequisite failure before tests. Cached metadata provenance requires separate evidence. |
 | `model-backend-revision-refusal` | `thread`, `endpoint`, `status`, `running`, `checkout`, `line` | Bind the original Hermes Desktop model-options HTTP response to the two revision IDs in its stale backend diagnostic. The finding identifies refusal to load that checkout's model options. |

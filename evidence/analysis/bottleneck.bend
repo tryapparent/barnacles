@@ -9,6 +9,12 @@ type Cost is Data:
 type Finding is Data:
   Finding{rule: String, thread: String, id: String, previous: String, seconds: U32, median: U32, p90: U32, peers: U32}
 
+type RulePattern is Data:
+  RulePattern{rule: String, threads: U32, findings: U32, timed: U32, largestSeconds: U32}
+
+type RulePatterns is Data:
+  RulePatterns{threads: Map<&2, Bool>, totals: Map<&2, RulePattern>}
+
 type Attempt is Data:
   Attempt{id: String, started: U32, ended: U32, failed: Bool}
 
@@ -387,6 +393,21 @@ def observe_storage_worktree_removal(state: Replay, thread: String, id: String, 
   producer: String, phase: String, deleted: Bool, +at: U32) -> Replay:
   +source = Bool.and(String.eq(producer, "host-storage-maintenance"), String.eq(phase, "post"))
   observe_repeat(state, thread, id, "local-worktree-removal-repeated", path, receipt, at, at, 0, Bool.and(source, deleted))
+
+def observe_worktree_prepare_failure(state: Replay, thread: String, id: String, branch: String, path: String,
+  line: String, run_status: String, provider_started: Bool, +requested: U32, +failed_at: U32) -> Replay:
+  +expected = String.append("Could not recreate the worktree for branch '", String.append(branch,
+    String.append("' at ", String.append(path, "."))))
+  +before_provider = Bool.and(String.eq(run_status, "failed"), Bool.not(provider_started))
+  +known = Bool.and(U32.is_gt(requested, 0), U32.is_ge(failed_at, requested))
+  observe_failure_with_duration(state, thread, id, "t3-worktree-recreation-failed-before-provider",
+    Bool.and(before_provider, Bool.and(known, String.eq(line, expected))), U32.sub(failed_at, requested))
+
+def observe_local_build_memory_gate(state: Replay, thread: String, id: String, cause: String,
+  +available: U32, capacity: U32, +minimum: U32) -> Replay:
+  +slots = Bool.and(U32.is_gt(minimum, 0), Bool.and(U32.is_ge(available, minimum), U32.is_ge(capacity, available)))
+  observe_failure(state, thread, id, "local-build-memory-gate-with-worker-slots",
+    Bool.and(String.eq(cause, "cgroup-memory"), slots))
 
 def observe_pr_repository_recovery(state: Replay, thread: String, id: String, +created_repo: String,
   closed_repo: String, repaired_repo: String, +created_pr: U32, closed_pr: U32, repaired_pr: U32,
@@ -939,3 +960,38 @@ def replay_costs(state: Replay) -> List<&2, Cost>:
 def replay_findings(state: Replay) -> List<&2, Finding>:
   match state:
     case Replay{_, _, _, _, _, _, _, findings}: List.reverse(&2, Finding, findings)
+
+def update_pattern(+pattern: RulePattern, +new_thread: Bool, +seconds: U32) -> RulePattern:
+  match pattern:
+    case RulePattern{rule, threads, count, timed, +largest}:
+      RulePattern{rule, U32.add(threads, Bool.pick(U32, new_thread, 1, 0)), U32.inc(count),
+        U32.add(timed, Bool.pick(U32, U32.is_gt(seconds, 0), 1, 0)),
+        Bool.pick(U32, U32.is_gt(seconds, largest), seconds, largest)}
+
+def accumulate_pattern(state: RulePatterns, finding: Finding) -> RulePatterns:
+  match state finding:
+    case RulePatterns{+threads, +totals} Finding{+rule, +thread, _, _, seconds, _, _, _}:
+      +key = pair(rule, thread)
+      +identified = Bool.not(String.is_empty(thread))
+      +fresh = Bool.and(identified, Bool.not(includes(threads, key)))
+      +prior = found(~RulePattern, Map.get(RulePattern, RulePattern{rule, 0, 0, 0, 0}, totals, rule))
+      Bool.pick(RulePatterns, identified, RulePatterns{Map.set(&2, Bool, threads, key, True{}),
+        Map.set(&2, RulePattern, totals, rule, update_pattern(prior, fresh, seconds))}, RulePatterns{threads, totals})
+
+def collect_rule_patterns(findings: List<&2, Finding>, state: RulePatterns) -> RulePatterns:
+  match findings:
+    case []: state
+    case finding <> rest: collect_rule_patterns(rest, accumulate_pattern(state, finding))
+
+def higher_prevalence(first: RulePattern, second: RulePattern) -> Bool:
+  match first second:
+    case RulePattern{_, +first_threads, first_count, _, _} RulePattern{_, +second_threads, second_count, _, _}:
+      Bool.or(U32.is_gt(first_threads, second_threads),
+        Bool.and(U32.is_eq(first_threads, second_threads), U32.is_gt(first_count, second_count)))
+
+def ranked_patterns(state: RulePatterns) -> List<&2, RulePattern>:
+  match state:
+    case RulePatterns{_, totals}: List.sort(~RulePattern, ~higher_prevalence, Map.values(&2, RulePattern, totals))
+
+def replay_patterns(state: Replay) -> List<&2, RulePattern>:
+  ranked_patterns(collect_rule_patterns(replay_findings(state), RulePatterns{Map.new(&2, Bool), Map.new(&2, RulePattern)}))

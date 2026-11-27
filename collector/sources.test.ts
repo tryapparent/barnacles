@@ -610,6 +610,11 @@ test("bottleneck replay binds verification and recovery to original receipts", (
     step: "Native GPUI Copy capture ID against the same installed App", conclusion: "failure",
     fixture: "capture/desktop/scripts/native/copy-capture-id.swift", command: "swiftc", exitCode: 1,
     failure: "Native Copy ID fixture failed: The observed input point does not hit the exact owned app" };
+  const memory = { kind: "local-build-memory-gate", thread: "t", id: "memory-pressure",
+    cause: "cgroup-memory", available: 4, capacity: 10, minimum: 3 };
+  const preProvider = { kind: "t3-worktree-prepare-failure", thread: "t", id: "failed-prepare", branch: "fixture",
+    path: "/fixture/worktree", line: "Could not recreate the worktree for branch 'fixture' at /fixture/worktree.",
+    runStatus: "failed", providerStarted: false, requested: 100, failedAt: 103 };
   const facts = [
     worktree, worktree,
     { ...worktree, id: "same-removal", at: 110 },
@@ -642,11 +647,21 @@ test("bottleneck replay binds verification and recovery to original receipts", (
     copyTarget, copyTarget,
     { ...copyTarget, id: "different-native-error", failure: "Native Copy ID fixture failed: setup not ready" },
     { ...copyTarget, id: "positive-target-check", conclusion: "success", exitCode: 0 },
+    memory, memory,
+    { ...memory, id: "memory-second-observation" },
+    { ...memory, id: "memory-second-thread", thread: "t2" },
+    { ...memory, id: "too-few-slots", available: 2 },
+    { ...memory, id: "invalid-capacity", available: 11 },
+    { ...memory, id: "combined-gates", cause: "worker-slots" },
+    preProvider, preProvider,
+    { ...preProvider, id: "provider-already-started", providerStarted: true },
+    { ...preProvider, id: "wrong-worktree", path: "/fixture/other" },
+    { ...preProvider, id: "unordered-worktree", failedAt: 99 },
   ];
   try {
     writeFileSync(file, facts.map(fact => JSON.stringify(fact)).join("\n") + "\n");
     const text = execFileSync(process.execPath, [
-      fileURLToPath(new URL("./import-sources.ts", import.meta.url)), job, "bottlenecks", file,
+      fileURLToPath(new URL("./import-sources.ts", import.meta.url)), job, "bottlenecks", file, "--patterns",
     ], { encoding: "utf8" });
     const rows = JSON.parse(text).findings as { id: string; rule: string; seconds: number }[];
     assert.deepEqual(rows.map(row => [row.id, row.rule, row.seconds]), [
@@ -659,7 +674,17 @@ test("bottleneck replay binds verification and recovery to original receipts", (
       ["draft-tag-readback", "ci-release-tag-readback-not-found", 0],
       ["pages-seal-refusal", "ci-pages-artifact-input-refused", 0],
       ["copy-target", "ci-native-copy-id-target-refused", 0],
+      ["memory-pressure", "local-build-memory-gate-with-worker-slots", 0],
+      ["memory-second-observation", "local-build-memory-gate-with-worker-slots", 0],
+      ["memory-second-thread", "local-build-memory-gate-with-worker-slots", 0],
+      ["failed-prepare", "t3-worktree-recreation-failed-before-provider", 3],
     ]);
+    const patterns = JSON.parse(text).patterns;
+    assert.deepEqual(patterns[0], { $: "RulePattern", rule: "local-build-memory-gate-with-worker-slots",
+      threads: 2, findings: 3, timed: 0, largestSeconds: 0 });
+    assert.deepEqual(patterns.find((p: { rule: string }) => p.rule === "t3-worktree-recreation-failed-before-provider"),
+      { $: "RulePattern", rule: "t3-worktree-recreation-failed-before-provider",
+        threads: 1, findings: 1, timed: 1, largestSeconds: 3 });
   } finally {
     rmSync(job, { recursive: true, force: true });
   }
