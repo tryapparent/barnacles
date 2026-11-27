@@ -203,6 +203,13 @@ type ReplayPolicy = {
     comparedVersion: string, started: number, ended: number): unknown;
   observe_job_result(state: unknown, thread: string, id: string, conclusion: string): unknown;
   observe_diagnostic(state: unknown, thread: string, id: string, line: string, failed: boolean): unknown;
+  observe_hosted_selector_base(state: unknown, thread: string, id: string, event: string, step: string,
+    conclusion: string, command: string, checkout: string, selectorHead: string, jobHead: string,
+    firstParent: string, secondParent: string, base: string, ancestor: boolean, intervening: number): unknown;
+  observe_local_exec_launch(state: unknown, thread: string, id: string, sourceThread: string, visibility: string,
+    itemType: string, status: string, truncated: boolean, line: string): unknown;
+  observe_run_watch_deadline(state: unknown, thread: string, id: string, operation: string, launchHandle: number,
+    terminalHandle: number, exitStatus: boolean, exitCode: number, timeout: number, elapsedMs: number): unknown;
   replay_files(state: unknown): List<Record<string, unknown>>;
   replay_costs(state: unknown): List<Record<string, unknown>>;
   replay_findings(state: unknown): List<Record<string, unknown>>;
@@ -309,6 +316,18 @@ async function replayBottlenecks(file: string, scratch: string) {
       } else if (value.kind === "main-verification-reuse") {
         state = policy.observe_main_reuse_refusal(state, token(value.thread), id, token(value.event),
           factText(value.step), token(value.conclusion), factText(value.line));
+      } else if (value.kind === "hosted-selector-base") {
+        state = policy.observe_hosted_selector_base(state, token(value.thread), id, token(value.event),
+          factText(value.step), token(value.conclusion), factText(value.command), sha(value.checkout),
+          sha(value.selectorHead), sha(value.jobHead), sha(value.firstParent), sha(value.secondParent),
+          sha(value.base), bendBool(value.ancestor), clockSecond(value.intervening));
+      } else if (value.kind === "local-exec-launch") {
+        state = policy.observe_local_exec_launch(state, token(value.thread), id, token(value.sourceThread),
+          token(value.visibility), token(value.itemType), token(value.status), bendBool(value.truncated), factText(value.line));
+      } else if (value.kind === "run-watch-deadline") {
+        state = policy.observe_run_watch_deadline(state, token(value.thread), id, token(value.operation),
+          clockSecond(value.launchHandle), clockSecond(value.terminalHandle), bendBool(value.exitStatus),
+          clockSecond(value.exitCode), clockSecond(value.timeout), clockSecond(value.elapsedMs));
       } else if (value.kind === "hermes-validator-cache-copy") {
         state = policy.observe_hermes_cache_merge(state, token(value.thread), id, factText(value.step),
           token(value.conclusion), clockSecond(value.exitCode), token(value.code), token(value.syscall),

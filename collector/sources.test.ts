@@ -724,6 +724,15 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       beforeRepository: "example/app", beforePr: 51, beforeRevision: "a".repeat(40),
       afterRepository: "example/app", afterPr: 51, afterRevision: "a".repeat(40),
       timeoutSeconds: 2700, exitCode: 0, elapsedMs: 1_423_730 };
+    const selectorBase = { kind: "hosted-selector-base", thread: "t", id: "old-base", event: "pull_request",
+      step: "Select through the shared consumer authority", conclusion: "success", command: "bun engine/tools/select.ts",
+      checkout: "a".repeat(40), selectorHead: "a".repeat(40), jobHead: "b".repeat(40), firstParent: "c".repeat(40),
+      secondParent: "b".repeat(40), base: "d".repeat(40), ancestor: true, intervening: 2 };
+    const execLaunch = { kind: "local-exec-launch", thread: "t", id: "exec-launch", sourceThread: "t",
+      visibility: "local", itemType: "command_execution", status: "failed", truncated: false,
+      line: "Failed to create unified exec process: No such file or directory (os error 2)" };
+    const runWatch = { kind: "run-watch-deadline", thread: "t", id: "run-watch-expired", operation: "gh-run-watch",
+      launchHandle: 42, terminalHandle: 42, exitStatus: true, exitCode: 124, timeout: 1800, elapsedMs: 1_802_000 };
     const facts = [
       admission, admission,
       { ...admission, id: "superseded", annotation: "Canceling since a higher priority waiting request exists" },
@@ -941,6 +950,28 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       { ...prObserver, id: "observer-other-repo", afterRepository: "example/other" },
       { ...prObserver, id: "observer-timeout", exitCode: 124 },
       { ...prObserver, id: "observer-quick-check", elapsedMs: 59_999 },
+      selectorBase, selectorBase,
+      { ...selectorBase, id: "matching-base", base: selectorBase.firstParent },
+      { ...selectorBase, id: "different-head", selectorHead: "e".repeat(40) },
+      { ...selectorBase, id: "different-pr", secondParent: "e".repeat(40) },
+      { ...selectorBase, id: "unrelated-base", ancestor: false },
+      { ...selectorBase, id: "empty-range", intervening: 0 },
+      { ...selectorBase, id: "different-event", event: "push" },
+      { ...selectorBase, id: "failed-selection", conclusion: "failure" },
+      { ...selectorBase, id: "different-selector", command: "bun fake/select.ts" },
+      execLaunch, execLaunch,
+      { ...execLaunch, id: "another-thread", sourceThread: "u" },
+      { ...execLaunch, id: "inherited-launch", visibility: "inherited" },
+      { ...execLaunch, id: "successful-launch", status: "completed" },
+      { ...execLaunch, id: "bad-launch-sample", truncated: true },
+      { ...execLaunch, id: "different-error", line: "script.sh: No such file or directory" },
+      { ...execLaunch, id: "agent-prose", itemType: "assistant_message" },
+      runWatch, runWatch,
+      { ...runWatch, id: "wrong-observer-handle", terminalHandle: 43 },
+      { ...runWatch, id: "failed-hosted-run", exitCode: 1 },
+      { ...runWatch, id: "user-stopped-watcher", exitCode: 143 },
+      { ...runWatch, id: "too-early-to-be-deadline", elapsedMs: 1_799_999 },
+      { ...runWatch, id: "late-receipt", elapsedMs: 1_816_000 },
       read, read, { ...read, id: "b", at: 160 }, { ...read, thread: "t2", at: 170 },
       timing, timing, { ...timing, id: "unpaired", end: 0 },
       attempt, { ...attempt, id: "changed", key: "gate:v2", start: 115, end: 120, failed: false, succeeded: true },
@@ -999,7 +1030,8 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
         "local-push-worktree-changed-during-verification", "local-desktop-dependency-lock-unavailable",
         "local-native-media-prerequisite-unavailable", "staged-embedded-html-unsupported",
         "ci-connect-synthetic-approval-expired", "ci-apt-install-before-job-deadline", "ci-apt-step-cancelled-at-job-deadline",
-        "local-push-issue-trailer-refused", "ci-pr-check-observer-exact-head",
+        "local-push-issue-trailer-refused", "ci-pr-check-observer-exact-head", "ci-selector-compared-older-base",
+        "local-exec-launch-enoent", "ci-local-run-observer-deadline",
         "recovered-attempt", "runner"]);
     assert.ok(!first.includes("installed tools"));
     assert.ok(!first.includes("#42:"));
@@ -1026,7 +1058,8 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       ["actor-cancelled", "", 0, 0], ["selector-refused", "", 0, 0], ["dirty-worktree", "", 0, 0],
       ["locked-install", "", 0, 0], ["native-media", "", 0, 0], ["embedded-html", "", 0, 0],
       ["fixture-expiry", "", 0, 0], ["apt-media", "", 1443, 0], ["apt-disk", "", 25, 0],
-      ["issue-trailer", "", 0, 0], ["pr-head-observer", "", 1423, 0],
+      ["issue-trailer", "", 0, 0], ["pr-head-observer", "", 1423, 0], ["old-base", "", 0, 0],
+      ["exec-launch", "", 0, 0], ["run-watch-expired", "", 1802, 0],
       ["recovered", "first", 20, 0], ["tail", "", 250, 10],
     ]);
   } finally {
