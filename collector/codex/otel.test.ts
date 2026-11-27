@@ -8,7 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-const testParent = process.env.BARNACLES_TEST_DIRECTORY;
+const testParent = process.env.PLOW_TEST_DIRECTORY;
 const backendToken = "synthetic-backend-secret-at-least-32-characters";
 const trace = "0a".repeat(16);
 const turn = "00000000-0000-4000-8000-000000000001";

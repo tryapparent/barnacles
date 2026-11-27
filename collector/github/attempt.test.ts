@@ -94,8 +94,8 @@ test("Bend2 clocks reach SQLite through the exact-attempt importer", async () =>
     writeFileSync(key, privateKey.export({ type: "pkcs8", format: "pem" }));
     const authRoutes: string[] = [];
     const appRead = githubReader(identity.repository, {
-      BARNACLES_GITHUB_AUTH: "app", BARNACLES_GITHUB_CREDENTIAL_FILE: key,
-      BARNACLES_GITHUB_APP_ID: "1", BARNACLES_GITHUB_INSTALLATION_ID: "2",
+      PLOW_GITHUB_AUTH: "app", PLOW_GITHUB_CREDENTIAL_FILE: key,
+      PLOW_GITHUB_APP_ID: "1", PLOW_GITHUB_INSTALLATION_ID: "2",
     }, async (input, init) => {
       const url = new URL(String(input));
       const headers = new Headers(init?.headers);
