@@ -229,6 +229,17 @@ type ReplayPolicy = {
     writer: string, method: string, endpoint: string, revision: string, status: number, reason: string, exitCode: number): unknown;
   observe_hosted_macos_probe(state: unknown, thread: string, id: string, step: string, conclusion: string,
     fixture: string, command: string, failure: string, exitCode: number): unknown;
+  observe_verification_fixture_comparison(state: unknown, thread: string, id: string, beforeCommand: string,
+    afterCommand: string, beforeCases: number, afterCases: number, beforeWorkers: number, afterWorkers: number,
+    beforeMs: number, afterMs: number, beforeObserved: number, afterObserved: number, beforePassed: boolean, afterPassed: boolean): unknown;
+  observe_rust_config_ancestry(state: unknown, thread: string, id: string, operation: string, origin: string,
+    diagnostic: string, failure: string, failed: boolean): unknown;
+  observe_electron_display(state: unknown, thread: string, id: string, operation: string, origin: string,
+    line: string, terminal: string, failed: boolean): unknown;
+  observe_hosted_same_head_supersession(state: unknown, thread: string, id: string, pr: number,
+    previousRun: string, nextRun: string, previousWorkflow: string, nextWorkflow: string,
+    previousHead: string, nextHead: string, previousJob: string, nextJob: string, previousConclusion: string,
+    annotation: string, assigned: boolean, previousStarted: number, previousEnded: number, nextCreated: number): unknown;
   replay_files(state: unknown): List<Record<string, unknown>>;
   replay_costs(state: unknown): List<Record<string, unknown>>;
   replay_findings(state: unknown): List<Record<string, unknown>>;
@@ -379,6 +390,23 @@ async function replayBottlenecks(file: string, scratch: string) {
       } else if (value.kind === "hosted-macos-automation-probe") {
         state = policy.observe_hosted_macos_probe(state, token(value.thread), id, factText(value.step),
           token(value.conclusion), factText(value.fixture), token(value.command), token(value.failure), clockSecond(value.exitCode));
+      } else if (value.kind === "local-fixture-comparison") {
+        state = policy.observe_verification_fixture_comparison(state, token(value.thread), id, factText(value.beforeCommand),
+          factText(value.afterCommand), clockSecond(value.beforeCases), clockSecond(value.afterCases),
+          clockSecond(value.beforeWorkers), clockSecond(value.afterWorkers), clockSecond(value.beforeMs), clockSecond(value.afterMs),
+          clockSecond(value.beforeObserved), clockSecond(value.afterObserved), bendBool(value.beforePassed), bendBool(value.afterPassed));
+      } else if (value.kind === "rust-config-ancestry-refusal") {
+        state = policy.observe_rust_config_ancestry(state, token(value.thread), id, token(value.operation), token(value.origin),
+          factText(value.diagnostic), token(value.failure), bendBool(value.failed));
+      } else if (value.kind === "electron-display-unavailable") {
+        state = policy.observe_electron_display(state, token(value.thread), id, token(value.operation), token(value.origin),
+          factText(value.line), factText(value.terminal), bendBool(value.failed));
+      } else if (value.kind === "hosted-same-head-supersession") {
+        state = policy.observe_hosted_same_head_supersession(state, token(value.thread), id, clockSecond(value.pr),
+          token(value.previousRun), token(value.nextRun), token(value.previousWorkflow), token(value.nextWorkflow),
+          sha(value.previousHead), sha(value.nextHead), factText(value.previousJob), factText(value.nextJob), token(value.previousConclusion),
+          factText(value.annotation), bendBool(value.assigned), clockSecond(value.previousStarted), clockSecond(value.previousEnded),
+          clockSecond(value.nextCreated));
       } else if (value.kind === "hermes-validator-cache-copy") {
         state = policy.observe_hermes_cache_merge(state, token(value.thread), id, factText(value.step),
           token(value.conclusion), clockSecond(value.exitCode), token(value.code), token(value.syscall),
