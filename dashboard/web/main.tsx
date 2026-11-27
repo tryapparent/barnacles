@@ -1,5 +1,5 @@
 import { Popover, PopoverContent, PopoverDescription, PopoverTitle, PopoverTrigger } from "@ui-sdk/react/popover";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { Button, Card } from "./controls";
@@ -11,98 +11,142 @@ export { renderSummary } from "./visual/charts";
 
 export { hideTimelineTooltip, renderTimelineControls, showTimelineTooltip, wireChartInput } from "./controls";
 
-type Coverage = { t3Runs: number; codexSpans: number; githubJobs: number };
-type DelayCoverage = { sufficient: number; occurrences: number };
-type OutcomeImpact = { totals: { coverage: DelayCoverage; affectedOutcomes: number; confirmedMs: number | null; sharedMs: number | null };
-  patterns: { pattern: string; stage: string; affectedOutcomes: number; uniqueMs: number | null }[] };
-type Analysis = { analyzedAt: string; bounded?: boolean; window?: { from: string; to: string };
-  coverage?: { active: number; withCodex: number; withCI: number; withBoth: number };
-  outcomeImpact?: OutcomeImpact | null;
-  ranking: { rule: string; threads: number; occurrences: number }[];
-  threads: { id: string; coverage: Coverage }[] };
-type Detail = { coverage: Coverage; rules: string[]; costs: { clock: string; operation: string; seconds: number; unknown: number }[] };
+type Priority = {
+  kind: "confirmed-delay" | "t3-admission" | "ci-job";
+  target: string;
+  stage: string;
+  nextStep: string;
+  occurrences: number;
+  affectedThreads: number | null;
+  affectedOutcomes: number | null;
+  measured: number;
+  totalMs: number | null;
+  medianMs: number | null;
+  worstMs: number | null;
+};
 
-function Bottlenecks({ api }: { api: string }) {
-  const [data, setData] = useState<Analysis>();
-  const [thread, setThread] = useState("");
-  const [detail, setDetail] = useState<Detail>();
-  const [status, setStatus] = useState("Loading analysis…");
-  const [detailStatus, setDetailStatus] = useState("");
-  useEffect(() => {
-    const ctrl = new AbortController();
-    fetch(api, { signal: AbortSignal.any([ctrl.signal, AbortSignal.timeout(8000)]) })
-      .then(res => { if (!res.ok) throw Error(); return res.json(); })
-      .then((result: Analysis) => { setData(result); setStatus(""); })
-      .catch(() => { if (!ctrl.signal.aborted) setStatus("Analysis is unavailable. Check your private connection and reload."); });
-    return () => ctrl.abort();
-  }, [api]);
-  useEffect(() => {
-    if (!thread) return;
-    const ctrl = new AbortController();
-    fetch(`${api}/threads/${thread}`, { signal: AbortSignal.any([ctrl.signal, AbortSignal.timeout(8000)]) })
-      .then(res => { if (!res.ok) throw Error(); return res.json(); })
-      .then((result: Detail) => { setDetail(result); setDetailStatus(""); })
-      .catch(() => { if (!ctrl.signal.aborted) setDetailStatus("Thread details are unavailable."); });
-    return () => ctrl.abort();
-  }, [api, thread]);
-  const label = (rule: string) => rule.replaceAll("-", " ");
-  const count = (n: number, singular: string) => `${n} ${singular}${n === 1 ? "" : "s"}`;
-  const duration = (ms: number | null) => ms === null ? "Unknown"
-    : `${(ms / 1000).toLocaleString(undefined, { maximumFractionDigits: 3 })} s`;
-  const impact = data?.outcomeImpact;
-  const clockLabels: Record<string, string> = {
-    "ci-job-queue": "CI job queue",
-    "ci-job-execution": "CI job execution",
-    "codex-otel-span": "Codex span",
-    "t3-run-envelope": "T3 run",
-    "t3-run-admission": "T3 admission",
+type PrioritiesReport = { window: { to: string }; coverage: { active: number }; priorities: Priority[] };
+type PrioritiesState = { report: PrioritiesReport } | { failed: true };
+
+const number = new Intl.NumberFormat();
+const time = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
+const quantity = (value: number, unit: string) => `${number.format(value)} ${unit}${value === 1 ? "" : "s"}`;
+
+function duration(ms: number | null) {
+  if (ms === null) return "Unknown";
+  if (ms < 1000) return `${number.format(ms)}\u00a0ms`;
+  const seconds = Math.round(ms / 1000);
+  const hours = Math.floor(seconds / 3600), minutes = Math.floor(seconds / 60) % 60;
+  if (hours) return minutes ? `${hours}\u00a0h ${minutes}\u00a0min` : `${hours}\u00a0h`;
+  if (minutes) return seconds % 60 ? `${minutes}\u00a0min ${seconds % 60}\u00a0s` : `${minutes}\u00a0min`;
+  return `${seconds}\u00a0s`;
+}
+
+const readable = (value: string) => value.replaceAll("-", " ").replace(/^./u, letter => letter.toUpperCase());
+
+function priorityLabels(item: Priority) {
+  if (item.kind === "confirmed-delay") return {
+    title: readable(item.target), context: readable(item.stage), clock: "Confirmed outcome delay", count: "Outcomes affected",
+    reach: item.affectedOutcomes, unit: "outcome", event: "delay observation", longest: "Longest outcome delay",
   };
-  return <Card className="bottlenecks" aria-labelledby="bottlenecks-heading">
-    <h2 id="bottlenecks-heading">Bottlenecks</h2>
-    {status && <p role="status">{status}</p>}
-    {data && <>
-      <p className="summary-note">{data.window && "Last 24 hours · "}{count(data.threads.length, data.window ? "active thread" : "joined thread")}
-        {data.window ? <br /> : " · "}{data.window ? "Window ending " : "Analyzed "}
-        <time dateTime={data.window?.to ?? data.analyzedAt}>
-          {new Date(data.window?.to ?? data.analyzedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</time>
-        {data.bounded && " · Recent threads only"}</p>
-      {data.coverage && <p className="summary-note">Threads with links · Codex {data.coverage.withCodex} · CI {data.coverage.withCI}</p>}
-      {data.window && (impact && impact.totals.coverage.occurrences > 0 ? <>
-        <p>Confirmed outcome delay · {duration(impact.totals.confirmedMs)} over {count(impact.totals.affectedOutcomes, "outcome")}
-          {impact.totals.sharedMs ? ` · ${duration(impact.totals.sharedMs)} shared` : ""}</p>
-        <p className="summary-note">{impact.totals.coverage.sufficient} of {impact.totals.coverage.occurrences} delay observations had sufficient evidence.</p>
-        {impact.patterns.length > 0 && <table><caption>Outcome delay by pattern</caption>
-          <thead><tr><th scope="col">Pattern</th><th scope="col">Outcomes</th><th scope="col">Unique delay</th></tr></thead>
-          <tbody>{impact.patterns.map(item => <tr key={`${item.stage}/${item.pattern}`}><th scope="row">
-            {label(item.pattern)} · {label(item.stage)}</th><td>{item.affectedOutcomes}</td><td>{duration(item.uniqueMs)}</td></tr>)}</tbody>
-        </table>}
-      </> : <p className="summary-note">Confirmed outcome delay is unknown for this window.</p>)}
-      {data.ranking.length ? <table><caption>Findings ranked by affected threads</caption>
-        <thead><tr><th scope="col">Finding</th><th scope="col">Threads</th><th scope="col">Events</th></tr></thead>
-        <tbody>{data.ranking.map(item => <tr key={item.rule}><th scope="row">{label(item.rule)}</th>
-          <td>{item.threads}</td><td>{item.occurrences}</td></tr>)}</tbody>
-      </table> : <p>{data.window
-        ? data.threads.length ? "No linked CI failures or timeouts were observed." : "No captured T3 activity in this window."
-        : data.threads.length ? "No findings in the observed evidence." : "No joined threads yet."}</p>}
-      {data.threads.length > 0 && <label className="analysis-thread">Thread details
-        <select value={thread} onChange={event => {
-          setDetail(undefined);
-          setDetailStatus(event.target.value ? "Loading thread…" : "");
-          setThread(event.target.value);
-        }}><option value="">Select a thread</option>
-          {data.threads.map((item, index) => <option key={item.id} value={item.id}>Thread {index + 1}</option>)}
-        </select>
-      </label>}
-      {detailStatus && <p role="status">{detailStatus}</p>}
-      {detail && <>
-        <p>{count(detail.coverage.t3Runs, "T3 run")} · {count(detail.coverage.codexSpans, "Codex span")} · {count(detail.coverage.githubJobs, "GitHub job")}</p>
-        {detail.rules.length > 0 && <ul>{detail.rules.map((rule, index) => <li key={index}>{label(rule)}</li>)}</ul>}
-        {detail.costs.length > 0 && data.window && <p className="summary-note">Full thread timings</p>}
-        {detail.costs.length > 0 && <ul aria-label="Measured clocks">{detail.costs.map(cost =>
-          <li key={`${cost.clock}:${cost.operation}`}>{clockLabels[cost.clock] ?? label(cost.clock)} · {cost.operation.replaceAll("_", " ")} · {cost.seconds}s
-            {cost.unknown > 0 && ` · ${cost.unknown} unknown`}</li>)}</ul>}
-      </>}
-    </>}
+  if (item.kind === "t3-admission") return {
+    title: "T3 admission waits", context: "", clock: "Observed request-to-start time", count: "Threads affected",
+    reach: item.affectedThreads, unit: "thread", event: "wait", longest: "Longest wait",
+  };
+  const job = item.target.split(" · ").slice(2).join(" · ");
+  return {
+    title: job ? `CI failures · ${job}` : "CI failures", context: item.target, clock: "Observed CI execution time",
+    count: "Threads affected", reach: item.affectedThreads, unit: "thread", event: "failed or timed-out job", longest: "Longest execution",
+  };
+}
+
+function PriorityInspector({ priorities }: { priorities: Priority[] }) {
+  const [selected, select] = useState(0);
+  return <div className="priority-split">
+    <ol className="priority-rail" aria-label="Ranked priorities">
+      {priorities.map((item, index) => {
+        const label = priorityLabels(item);
+        const active = index === selected;
+        const summary = item.kind === "confirmed-delay" ? `${duration(item.totalMs)} confirmed`
+          : quantity(item.occurrences, label.event);
+        const contents = <>
+          <span aria-hidden="true" className="priority-rank">{index + 1}</span>
+          <span className="priority-option-copy">
+            <strong id={`priority-title-${index}`}>{label.title}</strong>
+            <span id={`priority-summary-${index}`}>{summary}
+              {label.reach !== null && ` · ${quantity(label.reach, label.unit)}`}</span>
+            <span className="priority-option-step">{item.nextStep}</span>
+          </span>
+        </>;
+        return <li key={`${item.kind}/${item.target}/${item.stage}`}>
+          {priorities.length === 1 ? <div className="priority-option" data-current>{contents}</div>
+            : <Button type="button" className="priority-option" variant="outline" aria-pressed={active}
+                aria-controls={`priority-detail-${index}`} aria-labelledby={`priority-title-${index}`}
+                aria-describedby={`priority-summary-${index}`} onClick={() => select(index)}>
+                {contents}
+              </Button>}
+        </li>;
+      })}
+    </ol>
+    <div className="priority-inspector" aria-live="polite">
+      {priorities.map((item, index) => {
+        const label = priorityLabels(item);
+        return <section className="priority-details" id={`priority-detail-${index}`} aria-hidden={index !== selected}
+            aria-labelledby={`priority-heading-${index}`} key={`${item.kind}/${item.target}/${item.stage}`}>
+          <h3 id={`priority-heading-${index}`}>{label.title}</h3>
+          {label.context && <p className="priority-context">{label.context}</p>}
+          <dl className="priority-metrics">
+            <div><dt>{label.clock}</dt><dd>{duration(item.totalMs)}</dd></div>
+            <div><dt>{label.count}</dt><dd>{label.reach === null ? "Unknown" : number.format(label.reach)}</dd></div>
+          </dl>
+          <p className="priority-coverage">Timing available for {number.format(item.measured)} of {quantity(item.occurrences, label.event)}
+            {item.medianMs !== null && ` · Median per outcome ${duration(item.medianMs)}`}
+            {item.worstMs !== null && ` · ${label.longest} ${duration(item.worstMs)}`}</p>
+          <h4>Next step</h4>
+          <p className="priority-next">{item.nextStep}</p>
+        </section>;
+      })}
+    </div>
+  </div>;
+}
+
+function Priorities({ api }: { api: string }) {
+  const [result, setResult] = useState<PrioritiesState>();
+  const [attempt, retry] = useState(0);
+  const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch(api, { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(8000)]) })
+      .then(async response => {
+        if (!response.ok) throw Error("Priorities request failed");
+        const report: PrioritiesReport = await response.json();
+        if (!Array.isArray(report.priorities) || !Number.isSafeInteger(report.coverage?.active) ||
+            !Number.isFinite(Date.parse(report.window?.to))) throw Error("Invalid priorities report");
+        if (!controller.signal.aborted) setResult({ report });
+      })
+      .catch(() => { if (!controller.signal.aborted) setResult({ failed: true }); });
+    return () => controller.abort();
+  }, [api, attempt]);
+  const report = result && "report" in result ? result.report : undefined;
+  return <Card className="priorities" aria-labelledby="priorities-heading">
+    <header className="priorities-heading">
+      <h2 id="priorities-heading" ref={heading} tabIndex={-1}>What to fix today</h2>
+      <p>Last 24 hours{report && <> · {quantity(report.coverage.active, "active thread")} ·
+        {" Ending "}<time dateTime={report.window.to}>{time.format(new Date(report.window.to))}</time></>}</p>
+    </header>
+    {!result && <p className="priority-status" role="status">Loading priorities…</p>}
+    {result && "failed" in result && <div className="priority-status">
+      <p role="status">Couldn’t load priorities. Check your private connection and try again.</p>
+      <Button type="button" variant="outline" onClick={() => {
+        heading.current?.focus();
+        setResult(undefined);
+        retry(value => value + 1);
+      }}>Try again</Button>
+    </div>}
+    {report && (report.priorities.length > 0 ? <PriorityInspector priorities={report.priorities} />
+      : <p className="priority-status">{report.coverage.active
+        ? "No priorities in the captured evidence for this window."
+        : "No thread activity was captured in this window."}</p>)}
   </Card>;
 }
 
@@ -173,7 +217,7 @@ function Dashboard({ field, fieldTexture, analysisApi }: { field: string; fieldT
             </div>
           </Card>
         </div>
-        {analysisApi && <Bottlenecks api={analysisApi} />}
+        {analysisApi && <Priorities key={analysisApi} api={analysisApi} />}
       </div>
     </main>
     <span className="measure" aria-hidden="true" />
