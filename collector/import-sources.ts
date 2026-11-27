@@ -175,6 +175,9 @@ type ReplayPolicy = {
     exitCode: number, mirrorA: string, mirrorB: string, line: string, started: number, ended: number): unknown;
   observe_vm_result(state: unknown, thread: string, id: string, stage: string, failureType: string, exitCode: number,
     driverExit: number, scenarioStarted: boolean, command: string, line: string, required: string, elapsedMs: number): unknown;
+  observe_workflow_gate(state: unknown, thread: string, id: string, job: string, prerequisite: string,
+    attemptStarted: number, earliestJobStarted: number, previousCompleted: number, gateCompleted: number,
+    dependentStarted: number): unknown;
   observe_native_model_fetch(state: unknown, thread: string, id: string, step: string, conclusion: string,
     exitCode: number, status: number, revision: string, line: string, origin: string, started: number, ended: number): unknown;
   observe_toolchain_fetch(state: unknown, thread: string, id: string, step: string, conclusion: string,
@@ -195,6 +198,9 @@ type ReplayPolicy = {
     exitCode: number, line: string, origin: string, started: number, ended: number): unknown;
   observe_hosted_deploy(state: unknown, thread: string, id: string, service: string, conclusion: string,
     exitCode: number, line: string, phaseLine: string, accepted: boolean): unknown;
+  observe_connect_deployment(state: unknown, thread: string, id: string, conclusion: string, exitCode: number,
+    revision: string, receiptRevision: string, phase: string, line: string, origin: string, previousVersion: string,
+    comparedVersion: string, started: number, ended: number): unknown;
   observe_job_result(state: unknown, thread: string, id: string, conclusion: string): unknown;
   observe_diagnostic(state: unknown, thread: string, id: string, line: string, failed: boolean): unknown;
   replay_files(state: unknown): List<Record<string, unknown>>;
@@ -291,6 +297,10 @@ async function replayBottlenecks(file: string, scratch: string) {
         state = policy.observe_vm_result(state, token(value.thread), id, token(value.stage), token(value.failureType),
           clockSecond(value.exitCode), clockSecond(value.driverExit), bendBool(value.scenarioStarted), token(value.command),
           factText(value.line), token(value.required), clockSecond(value.elapsedMs));
+      } else if (value.kind === "workflow-status-gate") {
+        state = policy.observe_workflow_gate(state, token(value.thread), id, token(value.dependentJob),
+          token(value.prerequisite), clockSecond(value.attemptStarted), clockSecond(value.earliestJobStarted),
+          clockSecond(value.previousCompleted), clockSecond(value.gateCompleted), clockSecond(value.dependentStarted));
       } else if (value.kind === "native-model-fetch-result") {
         state = policy.observe_native_model_fetch(state, token(value.thread), id, factText(value.step), token(value.conclusion),
           clockSecond(value.exitCode), clockSecond(value.status), sha(value.revision), factText(value.line), factText(value.origin),
@@ -326,6 +336,11 @@ async function replayBottlenecks(file: string, scratch: string) {
       } else if (value.kind === "hosted-deploy-result") {
         state = policy.observe_hosted_deploy(state, token(value.thread), id, token(value.service),
           token(value.conclusion), clockSecond(value.exitCode), factText(value.line), factText(value.phaseLine), bendBool(value.accepted));
+      } else if (value.kind === "connect-deployment-receipt") {
+        state = policy.observe_connect_deployment(state, token(value.thread), id, token(value.conclusion),
+          clockSecond(value.exitCode), sha(value.revision), sha(value.receiptRevision), token(value.phase),
+          factText(value.line), factText(value.origin), value.previousVersion == null ? "" : token(value.previousVersion),
+          value.comparedVersion == null ? "" : token(value.comparedVersion), clockSecond(value.started), clockSecond(value.ended));
       } else if (value.kind === "job-result") {
         state = policy.observe_job_result(state, token(value.thread), id, token(value.conclusion));
       } else if (value.kind === "diagnostic") {

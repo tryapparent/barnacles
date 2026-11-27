@@ -345,10 +345,17 @@ def observe_socket_preflight(state: Replay, thread: String, id: String, +require
   +exceeded = Bool.and(U32.is_gt(limit, 0), U32.is_gt(required, limit))
   observe_failure(state, thread, id, "local-verification-socket-path-limit", Bool.and(boundary, Bool.and(matches, exceeded)))
 
+def capture_access_label(+line: String, +lookup: Bool, fetch: Bool) -> String:
+  +unavailable = Bool.and(lookup, String.starts_with(line, "Error: Capture unavailable (not_found)."))
+  +pending = Bool.and(fetch, String.eq(line, "Error: Capture is still pending; retry fetch later"))
+  +unsafe = Bool.and(lookup, String.eq(line, "Error: Unsafe shared or unowned directory tree; run apparent connect alternatives for local inspection and authorized transfer options"))
+  Bool.pick(String, unavailable, "capture-reference-unavailable",
+    Bool.pick(String, pending, "capture-upload-pending", Bool.pick(String, unsafe, "capture-directory-unsafe", "")))
+
 def observe_capture_access(state: Replay, thread: String, id: String, +operation: String, line: String, failed: Bool) -> Replay:
   +lookup = Bool.or(String.eq(operation, "apparent-inspect"), String.eq(operation, "apparent-connect-files"))
-  +unavailable = String.starts_with(String.trim(line), "Error: Capture unavailable (not_found).")
-  observe_failure(state, thread, id, "capture-reference-unavailable", Bool.and(failed, Bool.and(lookup, unavailable)))
+  +fetch = String.eq(operation, "apparent-fetch")
+  observe_failure(state, thread, id, capture_access_label(String.trim(line), lookup, fetch), failed)
 
 def publication_label(+publisher: String, +line: String, +status: U32) -> String:
   +onboarding = Bool.and(String.eq(publisher, "onboarding-release"), Bool.and(U32.is_eq(status, 0),
@@ -372,6 +379,19 @@ def observe_failed_step(+state: Replay, thread: String, +id: String, clock: Stri
   Bool.pick(Replay, valid,
     observe_failure(observe_timing(state, id, clock, operation, start, end), thread, id, label, True{}),
     state)
+
+def observe_workflow_gate(+state: Replay, thread: String, +id: String, +job: String, +prerequisite: String,
+  +attempt_started: U32, +earliest_job: U32, +previous: U32, +gate: U32, started: U32) -> Replay:
+  +original = Bool.and(U32.is_gt(attempt_started, 0), Bool.and(U32.is_ge(earliest_job, attempt_started),
+    U32.is_ge(previous, earliest_job)))
+  +seconds = U32.sub(gate, previous)
+  +ordered = Bool.and(U32.is_ge(gate, previous), Bool.and(U32.is_ge(started, gate), U32.is_ge(seconds, 60)))
+  +distinct = Bool.not(String.eq(job, prerequisite))
+  +operation = String.append(job, String.append(" needs ", prerequisite))
+  +valid = Bool.and(original, Bool.and(ordered, distinct))
+  Bool.pick(Replay, valid,
+    observe_failure_with_duration(observe_timing(state, id, "ci-workflow-status-gate", operation, previous, gate),
+      thread, id, "ci-workflow-status-gate", True{}, seconds), state)
 
 def observe_apt_mirror_probe(state: Replay, thread: String, id: String, step: String, conclusion: String, exit_code: U32,
   +mirror_a: String, +mirror_b: String, line: String, start: U32, end: U32) -> Replay:
@@ -475,6 +495,29 @@ def observe_hosted_deploy(state: Replay, thread: String, id: String, service: St
   exit_code: U32, line: String, phase_line: String, accepted: Bool) -> Replay:
   +failed = Bool.and(String.eq(conclusion, "failure"), U32.is_eq(exit_code, 1))
   observe_failure(state, thread, id, deployment_label(service, String.trim(line), String.trim(phase_line), accepted), failed)
+
+def connect_deployment_label(+phase: String, +line: String, +origin: String, +previous: String, compared: String) -> String:
+  +activation = Bool.and(String.eq(phase, "active-unverified"),
+    Bool.and(String.eq(line, "AssertionError [ERR_ASSERTION]: Another publisher owns the active deployment"),
+      String.eq(origin, "verifyActivationHistory:connect/tooling/hosting/scripts/profile.ts")))
+  +matches = Bool.and(Bool.not(String.is_empty(previous)), String.eq(previous, compared))
+  +preflight = Bool.and(String.eq(phase, "preflight"), Bool.and(matches,
+    Bool.and(String.eq(line, "AssertionError [ERR_ASSERTION]: Expected \"actual\" to be strictly unequal to:"),
+      String.eq(origin, "candidate-not-equal-previous:connect/tooling/hosting/scripts/deploy.ts"))))
+  Bool.pick(String, activation, "ci-connect-activation-ownership-conflict",
+    Bool.pick(String, preflight, "ci-connect-candidate-already-active", ""))
+
+def observe_connect_deployment(+state: Replay, thread: String, +id: String, conclusion: String, exit_code: U32,
+  revision: String, receipt_revision: String, +phase: String, line: String, origin: String, previous: String,
+  compared: String, +start: U32, +end: U32) -> Replay:
+  +failed = Bool.and(String.eq(conclusion, "failure"), U32.is_eq(exit_code, 1))
+  +label = connect_deployment_label(phase, line, origin, previous, compared)
+  +valid = Bool.and(failed, Bool.and(String.eq(revision, receipt_revision), Bool.not(String.is_empty(label))))
+  +closed = Bool.and(U32.is_gt(start, 0), U32.is_ge(end, start))
+  +seconds = Bool.pick(U32, closed, U32.sub(end, start), 0)
+  Bool.pick(Replay, valid,
+    observe_failure_with_duration(observe_timing(state, id, "ci-connect-delivery-owner-step", phase, start, end),
+      thread, id, label, True{}, seconds), state)
 
 def replay_files(state: Replay) -> List<&2, FileTotal>:
   match state:
