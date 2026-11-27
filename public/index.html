@@ -7,7 +7,7 @@
 <style>
 @font-face{font-family:"Young Serif";src:url("./assets/youngserif.woff2") format("woff2");font-weight:400;font-style:normal}
 @font-face{font-family:"Source Serif 4";src:url("./assets/source-serif-4.woff2") format("woff2");font-weight:400;font-style:normal}
-:root{--ink:#1a130d;--mist:#f2f5f6;--earth:#392820;--meadow:#6a934f;--cream:#fff4df;--storm:#60564d}
+:root{--ink:#1a130d;--mist:#f2f5f6;--earth:#392820;--meadow:#6a934f;--cream:#fff4df}
 *{box-sizing:border-box}
 body{margin:0}
 .plow{font:400 16px/1.5 "Young Serif",Georgia,serif;color:var(--ink);font-synthesis:none}
@@ -15,7 +15,7 @@ body{margin:0}
 .plow h1,.plow h2,.plow p,.plow figure{margin:0}
 .scene{position:relative;container-type:inline-size;isolation:isolate;overflow:hidden;aspect-ratio:16/9}
 .scene>img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:-2}
-.field{background:#c8ad8a}
+.field{background:linear-gradient(var(--earth) 16%,var(--cream) 29%)}
 .mark{position:absolute;top:8%;left:6.4%;font:400 clamp(24px,3.5cqw,42px)/1 "Young Serif",Georgia,serif;letter-spacing:-.025em;color:var(--cream)}
 .github-stars{position:absolute;top:8%;right:6.4%;display:flex;align-items:center;min-height:44px;padding:0 6px;border-radius:4px;background:var(--ink);color:var(--mist)}
 .github-stars img{display:block;width:auto;height:24px}
@@ -25,12 +25,12 @@ body{margin:0}
 .plow h1{font-size:clamp(39px,7.25cqw,100px)}
 .scene p{margin-top:.65em;font-size:clamp(17px,2.2cqw,23px);line-height:1.42;text-wrap:pretty}
 .field p{max-width:44ch}
-.example :is(.context,.duration,.checkpoints,.finding){font-family:var(--small)}
-.cta{display:inline-flex;align-items:center;gap:10px;min-height:44px;margin-top:clamp(12px,2.2cqw,26px);padding:7px 14px;border-radius:3px;background:var(--ink);color:var(--mist);font-family:var(--small);font-size:14px;font-weight:400;text-decoration:none}
-.cta:hover{background:var(--earth)}
+.example :is(.context,.duration,.checkpoints){font-family:var(--small);font-optical-sizing:auto}
+.cta{display:inline-flex;align-items:center;gap:10px;min-height:44px;margin-top:clamp(12px,2.2cqw,26px);padding:7px 14px;border:1px solid var(--ink);border-radius:3px;background:var(--meadow);color:var(--ink);font-family:var(--small);font-optical-sizing:auto;font-size:14px;font-weight:400;text-decoration:none}
+.cta:hover{text-decoration:underline;text-underline-offset:.2em}
 .cta:focus-visible{outline:3px solid var(--mist);outline-offset:2px;box-shadow:0 0 0 7px var(--ink)}
 .blade{background:var(--earth);color:var(--cream)}
-.blade::before{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(90deg,transparent 32%,#1a130d73 42%)}
+.blade::before{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(90deg,transparent 32%,color-mix(in srgb,var(--ink) 45%,transparent) 42%)}
 .blade .copy{position:absolute;top:28%;left:50%;right:6.4%}
 .blade h2{font-size:clamp(28px,5.8cqw,76px)}
 .blade p{max-width:34ch}
@@ -38,28 +38,30 @@ body{margin:0}
 .hands{position:relative;overflow:hidden;min-height:290px;background:var(--earth)}
 .hands img{position:absolute;width:195%;height:100%;object-fit:cover;object-position:left center}
 .example{padding:clamp(24px,5vw,54px);min-width:0}
-.example .context{font-size:13px;color:var(--storm);margin-bottom:5px}
+.example .context{font-size:13px;color:var(--earth);margin-bottom:5px}
 .example h2{font-size:clamp(30px,5vw,54px)}
-.example .duration{margin-top:8px;color:var(--storm);font-size:14px}
-.stages{display:flex;height:10px;margin:20px 0 9px;border-radius:2px;overflow:hidden;gap:2px}
-.stages span:first-child{flex:25;background:var(--storm)}
-.stages span:nth-child(2){flex:135;background:var(--earth)}
-.stages span:last-child{flex:30;background:var(--meadow)}
-.checkpoints{margin:12px 0 0;padding:0;list-style:none}
-.checkpoints li{display:flex;justify-content:space-between;gap:12px;padding:4px 0;border-bottom:1px solid #d8c6ad;font-size:14px}
+.example .duration{margin-top:8px;color:var(--earth);font-size:14px}
+.checkpoints{--delivery-minutes:190;display:grid;gap:12px;max-width:38rem;margin:20px 0 0;padding:0;list-style:none;font-size:14px}
+.checkpoint{display:flex;justify-content:space-between;gap:12px}
 .checkpoints time{font-variant-numeric:tabular-nums}
-.example .finding{margin-top:15px;font-size:14px;line-height:1.5;text-wrap:pretty}
+.checkpoints .stage{margin-top:2px;color:var(--earth);font-size:13px}
+.stage-bar{display:block;width:calc(var(--minutes) / var(--delivery-minutes) * 100%);height:9px;margin-top:4px;border-radius:2px;background:var(--earth)}
+.stage-bar.longest{background:var(--meadow)}
+.example .finding{max-width:52ch;margin-top:15px;text-wrap:pretty}
+@media(forced-colors:active){
+ .stage-bar,.stage-bar.longest{forced-color-adjust:none;background:CanvasText}
+}
 @media(max-width:600px){
  .field{aspect-ratio:auto;min-height:345px}
  .field>img{object-position:78% center}
- .field .copy{position:relative;padding:135px 6.4% 50px;left:auto;right:auto;top:auto}
+ .field::before{content:"";position:absolute;inset:0;z-index:-1;background:radial-gradient(ellipse 140px 86px at 6.4% 40px,color-mix(in srgb,var(--earth) 82%,transparent) 20%,transparent)}
+ .field .copy{position:relative;padding:154px 6.4% 35px;left:auto;right:auto;top:auto}
  .field h1{font-size:clamp(34px,8.8cqw,48px)}
  .field p{max-width:34ch}
- .blade{aspect-ratio:4/3}
+ .blade{aspect-ratio:auto}
  .blade>img{object-position:24% center}
- .blade .copy{left:42%;top:17%;right:5%;text-shadow:0 1px 7px var(--ink)}
+ .blade .copy{position:relative;inset:auto;min-height:75cqw;padding:12.75cqw 5% 20px 42%;text-shadow:0 1px 7px var(--ink)}
  .blade h2{font-size:clamp(24px,6.8cqw,39px)}
- .blade p{font-family:var(--small);font-size:14px}
  .delivery{grid-template-columns:1fr}
  .hands{aspect-ratio:2/1;min-height:0}
  .hands img{width:195%;height:100%;object-position:left 46%}
@@ -69,7 +71,7 @@ body{margin:0}
 <body>
 <main class="plow">
  <header class="scene field">
-  <img src="./assets/field.jpg" alt="A horse and plow work a single furrow beneath a wide sky and gathering clouds.">
+  <img src="./assets/field.jpg" alt="">
   <div class="mark" aria-label="Plow">plow</div>
   <a class="github-stars" href="https://github.com/tryapparent/barnacles">
    <img src="https://img.shields.io/github/stars/tryapparent/barnacles?style=flat&amp;label=GitHub%20stars&amp;color=392820&amp;labelColor=1a130d&amp;logo=github" width="113" height="20" alt="Barnacles GitHub stars" referrerpolicy="no-referrer">
@@ -81,7 +83,7 @@ body{margin:0}
   </div>
  </header>
  <section class="scene blade" aria-labelledby="ground">
-  <img src="./assets/blade.jpg" alt="An iron plow blade turns dark soil and exposes the roots beneath it.">
+  <img src="./assets/blade.jpg" alt="">
   <div class="copy">
    <h2 id="ground">Good code starts with good ground.</h2>
    <p>The codebase, checks, and tools shape what agents can do.</p>
@@ -89,21 +91,32 @@ body{margin:0}
  </section>
  <section class="delivery" id="delivery" aria-labelledby="example-title">
   <figure class="hands">
-   <img src="./assets/hands.jpg" alt="A worker rests their hands on the worn wooden handle of a plow.">
+   <img src="./assets/hands.jpg" alt="">
   </figure>
   <div class="example">
    <p class="context">Illustrative delivery</p>
    <h2 id="example-title">A feature reaches customers.</h2>
    <p class="duration">3 hours 10 minutes from thread start to release</p>
-   <div class="stages" role="img" aria-label="25 minutes to open the pull request, 2 hours 15 minutes from opening to merge, and 30 minutes from merge to release."><span></span><span></span><span></span></div>
-   <ol class="checkpoints" aria-label="Delivery milestones">
-    <li>Thread started <time datetime="09:00">09:00</time></li>
-    <li>Pull request opened <time datetime="09:25">09:25</time></li>
-    <li>Merged <time datetime="11:40">11:40</time></li>
-    <li>Release published <time datetime="12:10">12:10</time></li>
-    <li>Access verified <time datetime="12:12">12:12</time></li>
+   <ol class="checkpoints" role="list" aria-label="Delivery milestones and stage durations">
+    <li><div class="checkpoint">Thread started <time datetime="09:00">09:00</time></div></li>
+    <li>
+     <div class="checkpoint">Pull request opened <time datetime="09:25">09:25</time></div>
+     <p class="stage">25 min from thread start</p>
+     <span class="stage-bar" style="--minutes:25" aria-hidden="true"></span>
+    </li>
+    <li>
+     <div class="checkpoint">Pull request merged <time datetime="11:40">11:40</time></div>
+     <p class="stage">2 hr 15 min from opening</p>
+     <span class="stage-bar longest" style="--minutes:135" aria-hidden="true"></span>
+    </li>
+    <li>
+     <div class="checkpoint">Release published <time datetime="12:10">12:10</time></div>
+     <p class="stage">30 min from merge</p>
+     <span class="stage-bar" style="--minutes:30" aria-hidden="true"></span>
+    </li>
+    <li><div class="checkpoint">Access verified <time datetime="12:12">12:12</time></div></li>
    </ol>
-   <p class="finding"><strong>Look here first:</strong> the pull request spent 2 hours 15 minutes between opening and merge.</p>
+   <p class="finding">Look here first. The pull request spent 2 hours 15 minutes between opening and merge.</p>
   </div>
  </section>
 </main>
