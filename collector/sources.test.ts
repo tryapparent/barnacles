@@ -685,6 +685,21 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
     const cacheConflict = { kind: "hermes-validator-cache-copy", thread: "t", id: "cache-copy",
       step: "Install supported Hermes validator", conclusion: "failure", exitCode: 1, code: "EEXIST", syscall: "cp",
       origin: "installCandidate:hermes/enablement/ci/validator-job.ts", restored: true };
+    const actorCancellation = { ...admission, id: "actor-cancelled", annotation: "The run was canceled by @example." };
+    const boundary = { kind: "local-verification-boundary", thread: "t", id: "selector-refused", operation: "git-push",
+      boundary: "local-test-selector", failed: true, terminal: "pre-push: verification failed; push rejected",
+      line: "Error: Conservative engine coverage is outside the automatic workflow filters; update the consumer inventory before admission" };
+    const dirty = "pre-push: working tree changed during verification; push rejected";
+    const expiry = { kind: "hosted-client-approval-fixture", thread: "t", id: "fixture-expiry",
+      step: "Independent Connect client build and tests", conclusion: "failure",
+      test: "test_support::encrypted_tests::encrypted_settings_future_capture_restart_retry_and_disconnect",
+      line: "called `Result::unwrap()` on an `Err` value: Expired",
+      origin: "login_with_approval:connect/client/src/test_support/encrypted_tests.rs" };
+    const aptDeadline = { kind: "hosted-apt-job-deadline", thread: "t", id: "apt-media", package: "ffmpeg",
+      step: "Install recipient media fixture dependency", jobConclusion: "cancelled", stepConclusion: "success",
+      deadlineSeconds: 1500, attemptStarted: 90, jobStarted: 100, jobEnded: 1613, started: 144, ended: 1587 };
+    const aptDeadlineDisk = { ...aptDeadline, id: "apt-disk", package: "qemu-utils",
+      step: "Install disk-image contract dependency (no KVM required)", stepConclusion: "cancelled", started: 1587, ended: 1612 };
     const facts = [
       admission, admission,
       { ...admission, id: "superseded", annotation: "Canceling since a higher priority waiting request exists" },
@@ -875,6 +890,25 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       { ...cacheConflict, id: "no-restore", restored: false },
       { ...cacheConflict, id: "other-copy-step", step: "Snapshot downloaded PyPI wheels only" },
       { ...cacheConflict, id: "permission-copy", code: "EACCES" },
+      actorCancellation, actorCancellation,
+      { ...actorCancellation, id: "assigned-cancelled", assigned: true },
+      { ...actorCancellation, id: "empty-actor", annotation: "The run was canceled by @." },
+      boundary, boundary,
+      { ...boundary, id: "dirty-worktree", boundary: "worktree-fingerprint", line: dirty, terminal: dirty },
+      { ...boundary, id: "locked-install", boundary: "desktop-dependencies", line: "Desktop dependency operation locked or unavailable" },
+      { ...boundary, id: "native-media", boundary: "local-rust-test",
+        line: "Packaged Record media/Engine unavailable; prepare native prerequisites or reinstall the complete app" },
+      { ...boundary, id: "embedded-html", operation: "git-commit", boundary: "staged-comment-policy",
+        line: "embedded HTML code requires a dedicated parser; unsupported changed file", terminal: "Pre-commit affected checks: 0ms" },
+      { ...boundary, id: "unrelated-terminal", terminal: "command exited with code 1" },
+      { ...boundary, id: "reported-only", failed: false },
+      expiry, expiry,
+      { ...expiry, id: "other-expiry", origin: "read_capture:connect/client/src/test_support/encrypted_tests.rs" },
+      aptDeadline, aptDeadline, aptDeadlineDisk,
+      { ...aptDeadlineDisk, id: "new-attempt-carried-job", attemptStarted: 1500 },
+      { ...aptDeadline, id: "no-annotated-deadline", deadlineSeconds: 0 },
+      { ...aptDeadlineDisk, id: "after-job-end", ended: 1614 },
+      { ...aptDeadline, id: "other-setup", step: "Install OCR preprocessing dependency" },
       read, read, { ...read, id: "b", at: 160 }, { ...read, thread: "t2", at: 170 },
       timing, timing, { ...timing, id: "unpaired", end: 0 },
       attempt, { ...attempt, id: "changed", key: "gate:v2", start: 115, end: 120, failed: false, succeeded: true },
@@ -893,6 +927,8 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
     assert.deepEqual(result.files, [{ $: "FileTotal", path: "README.md", requests: 3, threads: 2, revisits: 1 }]);
     assert.deepEqual(result.costs.sort((a: { clock: string; operation: string }, b: { clock: string; operation: string }) =>
       a.clock.localeCompare(b.clock) || a.operation.localeCompare(b.operation)), [
+      { $: "Cost", clock: "ci-apt-dependency-step", operation: "ffmpeg", count: 1, seconds: 1443, unknown: 0 },
+      { $: "Cost", clock: "ci-apt-dependency-step", operation: "qemu-utils", count: 1, seconds: 25, unknown: 0 },
       { $: "Cost", clock: "ci-apt-mirror-probe", operation: "ubuntu", count: 1, seconds: 11, unknown: 0 },
       { $: "Cost", clock: "ci-benchmark-owner-step", operation: "connect-watch", count: 1, seconds: 91, unknown: 0 },
       { $: "Cost", clock: "ci-benchmark-owner-step", operation: "record-start", count: 3, seconds: 1640, unknown: 0 },
@@ -927,6 +963,10 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
         "capture-upload-pending", "capture-directory-unsafe",
         "ci-workflow-status-gate", "local-push-timing-flag-fixture-mismatch",
         "ci-reuse-verification-definitions-changed", "ci-hermes-validator-cache-copy-conflict",
+        "ci-hosted-explicit-cancellation-unassigned", "local-push-selection-guard-refused",
+        "local-push-worktree-changed-during-verification", "local-desktop-dependency-lock-unavailable",
+        "local-native-media-prerequisite-unavailable", "staged-embedded-html-unsupported",
+        "ci-connect-synthetic-approval-expired", "ci-apt-install-before-job-deadline", "ci-apt-step-cancelled-at-job-deadline",
         "recovered-attempt", "runner"]);
     assert.ok(!first.includes("installed tools"));
     assert.ok(!first.includes("#42:"));
@@ -950,6 +990,9 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       ["upload-pending", "", 0, 0], ["shared-dir", "", 0, 0],
       ["connect-portable-gate", "", 120, 0], ["fixture-timing", "", 68, 0],
       ["reuse-refusal", "", 0, 0], ["cache-copy", "", 0, 0],
+      ["actor-cancelled", "", 0, 0], ["selector-refused", "", 0, 0], ["dirty-worktree", "", 0, 0],
+      ["locked-install", "", 0, 0], ["native-media", "", 0, 0], ["embedded-html", "", 0, 0],
+      ["fixture-expiry", "", 0, 0], ["apt-media", "", 1443, 0], ["apt-disk", "", 25, 0],
       ["recovered", "first", 20, 0], ["tail", "", 250, 10],
     ]);
   } finally {

@@ -265,8 +265,13 @@ def observe_hosted_admission(state: Replay, thread: String, id: String, conclusi
   steps: U32, annotation: String) -> Replay:
   +cancelled = String.eq(conclusion, "cancelled")
   +unallocated = Bool.and(Bool.not(assigned), U32.is_eq(steps, 0))
-  +reason = String.eq(String.trim(annotation), "The job was not acquired by Runner of type hosted even after multiple attempts")
-  observe_failure(state, thread, id, "ci-hosted-admission-failure", Bool.and(cancelled, Bool.and(unallocated, reason)))
+  +note = String.trim(annotation)
+  +unacquired = String.eq(note, "The job was not acquired by Runner of type hosted even after multiple attempts")
+  +explicit = Bool.and(String.starts_with(note, "The run was canceled by @"),
+    Bool.and(String.ends_with(note, "."), Bool.not(String.eq(note, "The run was canceled by @."))))
+  +label = Bool.pick(String, unacquired, "ci-hosted-admission-failure",
+    Bool.pick(String, explicit, "ci-hosted-explicit-cancellation-unassigned", ""))
+  observe_failure(state, thread, id, label, Bool.and(cancelled, unallocated))
 
 def pr_notice_reason(pr: U32, +message: String) -> String:
   +prefix = String.append("#", String.append(Nat.show(U32.to_nat(pr)), ": "))
@@ -417,6 +422,57 @@ def observe_hermes_cache_merge(state: Replay, thread: String, id: String, step: 
     String.eq(origin, "installCandidate:hermes/enablement/ci/validator-job.ts"))
   +copy = Bool.and(restored, Bool.and(String.eq(code, "EEXIST"), String.eq(syscall, "cp")))
   observe_failure(state, thread, id, "ci-hermes-validator-cache-copy-conflict", Bool.and(failed, Bool.and(producer, copy)))
+
+def local_verification_boundary_label(+boundary: String, +line: String, +terminal: String) -> String:
+  +changed = Bool.and(String.eq(boundary, "worktree-fingerprint"),
+    Bool.and(String.eq(line, terminal), String.eq(terminal, "pre-push: working tree changed during verification; push rejected")))
+  +push_failed = String.eq(terminal, "pre-push: verification failed; push rejected")
+  +routing = Bool.and(String.eq(boundary, "local-test-selector"), String.eq(line,
+    "Error: Conservative engine coverage is outside the automatic workflow filters; update the consumer inventory before admission"))
+  +lock = Bool.and(String.eq(boundary, "desktop-dependencies"),
+    String.eq(line, "Desktop dependency operation locked or unavailable"))
+  +runtime = Bool.and(String.eq(boundary, "local-rust-test"), String.eq(line,
+    "Packaged Record media/Engine unavailable; prepare native prerequisites or reinstall the complete app"))
+  +push = Bool.pick(String, push_failed, Bool.pick(String, routing, "local-push-selection-guard-refused",
+    Bool.pick(String, lock, "local-desktop-dependency-lock-unavailable",
+      Bool.pick(String, runtime, "local-native-media-prerequisite-unavailable", ""))), "")
+  Bool.pick(String, changed, "local-push-worktree-changed-during-verification", push)
+
+def observe_local_verify_boundary(state: Replay, thread: String, id: String, +operation: String, +boundary: String,
+  +line: String, +terminal: String, failed: Bool) -> Replay:
+  +push = String.eq(operation, "git-push")
+  +commit = Bool.and(String.eq(operation, "git-commit"), String.eq(boundary, "staged-comment-policy"))
+  +embedded = Bool.and(String.eq(line, "embedded HTML code requires a dedicated parser; unsupported changed file"),
+    String.starts_with(terminal, "Pre-commit affected checks: "))
+  +label = Bool.pick(String, push, local_verification_boundary_label(boundary, line, terminal),
+    Bool.pick(String, Bool.and(commit, embedded), "staged-embedded-html-unsupported", ""))
+  observe_failure(state, thread, id, label, failed)
+
+def observe_hosted_approval_fixture(state: Replay, thread: String, id: String, step: String, conclusion: String,
+  test: String, line: String, origin: String) -> Replay:
+  +suite = Bool.and(String.eq(step, "Independent Connect client build and tests"), String.eq(conclusion, "failure"))
+  +matched = Bool.and(String.eq(test, "test_support::encrypted_tests::encrypted_settings_future_capture_restart_retry_and_disconnect"),
+    String.eq(origin, "login_with_approval:connect/client/src/test_support/encrypted_tests.rs"))
+  +expired = String.eq(line, "called `Result::unwrap()` on an `Err` value: Expired")
+  observe_failure(state, thread, id, "ci-connect-synthetic-approval-expired", Bool.and(suite, Bool.and(matched, expired)))
+
+def observe_apt_job_deadline(+state: Replay, thread: String, +id: String, +step: String, +package: String,
+  job_conclusion: String, +step_conclusion: String, +budget: U32, +attempt: U32, +job_start: U32, +job_end: U32,
+  +start: U32, +end: U32) -> Replay:
+  +media = Bool.and(String.eq(step, "Install recipient media fixture dependency"), String.eq(package, "ffmpeg"))
+  +disk = Bool.and(String.eq(step, "Install disk-image contract dependency (no KVM required)"), String.eq(package, "qemu-utils"))
+  +timeout = Bool.and(U32.is_gt(budget, 0), Bool.and(String.eq(job_conclusion, "cancelled"),
+    U32.is_ge(U32.sub(job_end, job_start), budget)))
+  +ordered = Bool.and(U32.is_gt(attempt, 0), Bool.and(U32.is_ge(job_start, attempt),
+    Bool.and(U32.is_ge(start, job_start), Bool.and(U32.is_ge(job_end, end), U32.is_gt(end, start)))))
+  +cancelled = String.eq(step_conclusion, "cancelled")
+  +success = String.eq(step_conclusion, "success")
+  +seconds = U32.sub(end, start)
+  +valid = Bool.and(Bool.or(media, disk), Bool.and(timeout, Bool.and(ordered, Bool.or(cancelled, success))))
+  +label = Bool.pick(String, cancelled, "ci-apt-step-cancelled-at-job-deadline", "ci-apt-install-before-job-deadline")
+  Bool.pick(Replay, valid,
+    observe_failure_with_duration(observe_timing(state, id, "ci-apt-dependency-step", package, start, end),
+      thread, id, label, Bool.or(cancelled, U32.is_ge(seconds, 60)), seconds), state)
 
 def observe_apt_mirror_probe(state: Replay, thread: String, id: String, step: String, conclusion: String, exit_code: U32,
   +mirror_a: String, +mirror_b: String, line: String, start: U32, end: U32) -> Replay:
