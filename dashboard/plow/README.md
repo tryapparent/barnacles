@@ -9,10 +9,21 @@ only threads with matching spans in the visible UTC range and outlines those
 spans on the same clock. Selecting it again clears the filter. Changing the
 time range updates the matches while preserving the selected operation.
 
+**Agent work share** groups threads in creation order into complete batches of
+ten. Every measured thread contributes its own agent-work time divided by
+agent-work plus workflow-or-wait time. Bend2 averages those shares and preserves
+batches without measurements as gaps. Batch data shows the exact display share
+and coverage. The timeline and time tiles use the ten newest threads. Timeline
+filters leave the historical batches intact. The bundled
+ten-thread sample supplies one batch. A multi-batch trend depends on a feed with
+more thread history.
+
 React renders the dashboard shell and operation summary with the shared
 [shadcn controls](../web/controls.tsx). The timeline renderer handles the
 custom UTC geometry, scrolling, and brush interaction. Vite bundles the UI
-into the Worker-served page with the existing fonts and field artwork.
+into the Worker-served page with the existing fonts and field artwork. The
+Batch data disclosure uses [UI SDK Collapsible](https://ui-sdk.dev/docs/react/components/collapsible)
+with the shared shadcn button.
 
 The pinned Bend2 compiler builds the interval, grouping, ranking, and timeline
 policies under `policy/`. The registered host paths provide HTML, embedded

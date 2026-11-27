@@ -17,7 +17,7 @@ const asList = entries => entries.reduceRight((tail, head) => ({ $: 'Con', head,
 function* values(list) {
   for (let next = list; next.$ === 'Con'; next = next.tail) yield next.head
 }
-const evidenceRows = traces.map(trace => {
+const historyRows = traces.map(trace => {
   const end = millis(trace.end)
   const intervals = [
     ...trace.work.map(([a, b, name]) => ({ $: 'Interval', a: millis(a), b: millis(b), kind: 2, name })),
@@ -28,6 +28,12 @@ const evidenceRows = traces.map(trace => {
   return { ...trace, end, evidence, failures, totals: policy.evidence_totals(evidence),
     recordedFailures: [...values(policy.failure_points(true,end,failures))] }
 })
+const trendThreads = asList(historyRows.map((trace, position) => ({
+  $: 'TrendThread', start: trace.startUtcMs, position,
+  work: trace.totals.work, workflow: trace.totals.workflow,
+})))
+PlowUI.renderAgentWorkTrend([...values(policy.agent_work_trend(trendThreads))])
+const evidenceRows = [...values(policy.recent_thread_positions(trendThreads))].map(position => historyRows[position])
 const frame = policy.utc_frame(asList(evidenceRows.map(trace => ({
   $: 'UtcSpan', start: trace.startUtcMs, end: trace.startUtcMs + trace.end,
 }))))

@@ -66,6 +66,18 @@ try {
     assert.match(await total.innerText(), /43h 24m across 10 threads/)
     assert.ok(await timeline.getByRole('button', { name: 'Zoom in' }).isVisible())
     assert.equal(await fit.isDisabled(), true)
+    const trend = page.getByRole('region', { name: 'Agent work share' })
+    assert.equal(await trend.locator('svg').getByText('Threads 1–10').isVisible(), true)
+    const batchData = trend.getByRole('button', { name: 'Batch data' })
+    assert.equal(await batchData.getAttribute('data-slot'), 'collapsible-trigger')
+    assert.equal(await batchData.getAttribute('data-variant'), 'outline')
+    await batchData.focus()
+    await page.keyboard.press('Enter')
+    assert.equal(await batchData.getAttribute('aria-expanded'), 'true')
+    assert.equal(await batchData.evaluate(element => element.matches(':focus-visible')), true)
+    assert.match(await trend.getByRole('table').innerText(), /10 of 10/)
+    await page.keyboard.press('Space')
+    assert.equal(await batchData.getAttribute('aria-expanded'), 'false')
     await screenshot('overview')
 
     await workflow.focus()
@@ -131,6 +143,30 @@ try {
     assert.deepEqual(errors, [])
     await page.close()
   }
+  const history = await browser.newPage({ viewport: { width: 320, height: 900 } })
+  const older = Array.from({ length: 20 }, (_, index) => ({
+    shortTitle: `Historical thread ${index + 1}`, title: `Historical thread ${index + 1}`,
+    startUtcMs: 1791000000000 + index * 3600000, subtitle: 'Sample',
+    work: index === 0 ? [[0, 10, 'Code changes']] : [],
+    wait: index === 1 ? [[0, 10000, 'CI checks']] : [],
+    end: index === 1 ? 10000 : 10, errors: [],
+  }))
+  const pageSource = await readFile(resolve(directory, 'index.html'), 'utf8')
+  await history.route(app, route => route.fulfill({
+    headers: Object.fromEntries(allowed.headers),
+    body: pageSource.replace(/(<script type="application\/json" id="trace-data">)([^<]+)/,
+      (_, tag, data) => tag + JSON.stringify([...JSON.parse(data), ...older.reverse()])),
+  }))
+  await history.goto(app)
+  const historyTrend = history.getByRole('region', { name: 'Agent work share' })
+  assert.equal(await historyTrend.getByText('Threads 21–30').isVisible(), true)
+  assert.equal(await history.locator('#traces .trace').count(), 10)
+  await historyTrend.getByRole('button', { name: 'Batch data' }).click()
+  const historyTable = historyTrend.getByRole('table')
+  assert.match(await historyTable.getByRole('row').nth(1).innerText(), /50\.0%\s+2 of 10/)
+  assert.match(await historyTable.getByRole('row').nth(2).innerText(), /Unknown\s+0 of 10/)
+  assert.equal(await historyTrend.locator('svg path[stroke-width="2"]').count(), 2)
+  await history.close()
 } finally {
   await browser.close()
 }

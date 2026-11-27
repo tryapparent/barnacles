@@ -22,7 +22,7 @@ const script = [policy, browser.output[0].code, "PlowUI.mountDashboard();",
 const timelineStyles = (await source("view/timeline.css"))
   .replace("__PLOW_YOUNG_SERIF__", await base64("../../public/assets/youngserif.woff2"))
   .replace("__PLOW_GEIST__", await base64("assets/geist.woff2"));
-const summaryStyles = await source("view/summary.css");
+const summaryStyles = (await source("view/summary.css")).replace("__PLOW_SOURCE_SERIF__", await base64("../../public/assets/source-serif-4.woff2"));
 const page = (await source("view/index.html"))
   .replace("__PLOW_FIELD__", await base64("../../public/assets/field.jpg"))
   .replace('<style id="timeline-css"></style>', () => `<style>\n${timelineStyles}</style>`)

@@ -1,4 +1,5 @@
 import Base
+import ./trend.bend as Trend
 import ./spans.bend as Spans
 import ./summary.bend as Summary
 
@@ -230,3 +231,9 @@ def initial_overview() -> Summary.OverviewSelection:
 
 def select_overview(selection: Summary.OverviewSelection, action: Summary.OverviewAction) -> Summary.OverviewSelection:
   Summary.select_overview(selection,action)
+
+def agent_work_trend(threads: List<&2,Trend.TrendThread>) -> List<&2,Trend.TrendBatch>:
+  Trend.agent_work_trend(threads)
+
+def recent_thread_positions(threads: List<&2,Trend.TrendThread>) -> List<&2,Nat>:
+  Trend.recent_thread_positions(threads)

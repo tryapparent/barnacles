@@ -1,8 +1,10 @@
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { Badge, Button } from "./controls";
+import { AgentWorkTrend } from "./visual/agent-work-trend";
 import { Summary } from "./visual/charts";
 
+export { renderAgentWorkTrend } from "./visual/agent-work-trend";
 export { renderSummary } from "./visual/charts";
 
 function Dashboard({ field }: { field: string }) {
@@ -17,7 +19,7 @@ function Dashboard({ field }: { field: string }) {
         <h1>Thread activity</h1>
       </header>
       <div className="board">
-        <Summary />
+        <div className="activity-overview"><AgentWorkTrend /><Summary /></div>
         <section id="timeline-panel" aria-labelledby="timeline-heading">
           <div className="timeline-heading-row">
             <div><h2 id="timeline-heading">Timeline</h2><p id="timeline-selection" role="status" /></div>
