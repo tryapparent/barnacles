@@ -46,4 +46,10 @@ trace intake from a release containing the durable receiver.
 Verify the existing private `/sessions` page and `/api/v1/sessions` through
 the configured private URL. The Plow Worker uses that URL for its Session
 history link. Confirm the configured endpoint before retiring its serving
-process.
+process. With authorization to restore the existing route, set
+`PLOW_COLLECTOR_HISTORY_HOST` to the serving unit's configured private host
+and port, then run `dashboard/run.sh collector-history-ingress` using the
+same collector port and proxy identity as the cutover. The command targets
+only that node's exact tailnet hostname and HTTPS port. It refuses a
+different existing listener or a Funnel mapping. Verify both routes from
+an authorized tailnet client after applying.
