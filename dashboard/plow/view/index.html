@@ -19,33 +19,36 @@
 </header>
 <div class="board">
 
+<section class="summary-panel" id="summary-panel" aria-labelledby="summary-heading">
+  <div class="summary-top">
+    <h2 id="summary-heading">Where time went</h2>
+    <p id="summary-total"></p>
+  </div>
+  <p id="summary-note" class="summary-note"></p>
+  <div id="tiles" class="treemap"></div>
+  <section id="operation-panel" hidden aria-labelledby="operation-heading">
+    <div class="operation-heading"><h3 id="operation-heading"></h3><button type="button" id="collapse">Close breakdown <span aria-hidden="true">×</span></button></div>
+    <div id="operation-tiles" role="group" aria-label="Operations"></div>
+    <p id="operation-empty" class="summary-note" hidden>No operations in this range. Try zooming out.</p>
+  </section>
+</section>
+<section id="timeline-panel" aria-labelledby="timeline-heading">
+<div class="timeline-heading-row">
+<div><h2 id="timeline-heading">Timeline</h2><p id="timeline-selection" role="status"></p></div>
 <div class="controls zoom-tools" role="group" aria-label="Zoom time range">
   <button type="button" id="zoom-out" aria-label="Zoom out" title="Zoom out">−</button>
   <button type="button" id="zoom-in" aria-label="Zoom in" title="Zoom in">+</button>
   <button type="button" id="zoom-fit">Fit all</button>
   <output id="zoom-mode" aria-live="polite"></output>
 </div>
-<div class="navigator"><div id="minimap" class="minimap" tabindex="0" role="slider" aria-label="Position of visible time range" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50"><div class="mini-threads"></div><div class="mini-window"></div><div class="mini-brush" hidden></div></div><p class="navigation-hint">Drag to select a range. Use the arrow keys to pan when zoomed in.</p></div>
+</div>
+<div class="navigator"><div id="minimap" class="minimap" tabindex="0" role="slider" aria-label="Position of visible time range" aria-description="Use the left and right arrow keys to pan when zoomed in." aria-valuemin="0" aria-valuemax="100" aria-valuenow="50"><div class="mini-threads"></div><div class="mini-window"></div><div class="mini-brush" hidden></div></div></div>
 <p class="utc-window" id="utc-window" aria-live="polite"></p>
-<section class="summary-panel" id="summary-panel" aria-labelledby="summary-heading">
-  <div class="summary-top">
-    <div><button type="button" class="back" id="all-categories" hidden>← All categories</button><h2 id="summary-heading" tabindex="-1">Where time went</h2></div>
-    <p id="summary-total"></p>
-  </div>
-  <p id="summary-note" class="summary-note"></p>
-  <div id="tiles" class="treemap"></div>
-  <section id="occurrences" hidden aria-labelledby="occurrence-heading">
-    <h3 id="occurrence-heading">Matching spans</h3>
-    <div id="span-list"></div>
-  </section>
-</section>
-<section id="timeline-panel" aria-labelledby="timeline-heading">
-<h2 id="timeline-heading">Timeline</h2>
-<p id="timeline-selection" class="summary-note" hidden></p>
 <ul class="chart-key" aria-label="Chart key"><li><i class="work-key"></i>Agent work</li><li><i class="wait-key"></i>Workflows or waits</li><li><i class="unclear-key"></i>Unclear (blended)</li><li id="failure-key" hidden><i class="failure-key"></i>Failure</li></ul>
 <div class="timeline-viewport" id="timeline-viewport" tabindex="0" role="region" aria-label="Scrollable UTC timelines"><div class="timeline-grid" id="timeline-grid"><div class="table-head"><span class="pinned-heading">Thread</span><span id="chart-ruler" class="chart-ruler" aria-label="Timeline axis in UTC"><span class="utc-meta">UTC</span><span id="scale-caption" class="utc-scale"></span></span></div>
 <ol class="rows" id="traces" aria-label="Sample thread timelines"></ol></div></div>
-<details class="reading-help"><summary>How to read the chart</summary><p>The rows share a UTC clock. Scroll up and down through threads, and horizontally to pan when zoomed in. You can also drag the UTC axis. Details appear at six hours or less. Each evidence list shows elapsed time from that thread’s first message. Brown can include time when a workflow ran alongside other work. Unclear intervals blend with nearby colors. A blended interval can look like the workflow around it. Very short slices merge at this zoom level. X1 also uses reviewed phase boundaries. The other nine rows use captured timestamps.</p></details>
+<p id="timeline-empty" class="summary-note" hidden>No matching threads in this range. Zoom out or deselect the operation.</p>
+<details class="reading-help"><summary>How to read the chart</summary><p>The rows share a UTC clock. Scroll up and down through threads, and horizontally to pan when zoomed in. Drag the minimap to select a range, or use its arrow keys to pan when zoomed in. You can also drag the UTC axis. Details appear at six hours or less. Each evidence list shows elapsed time from that thread’s first message. Brown can include time when a workflow ran alongside other work. Unclear intervals blend with nearby colors. A blended interval can look like the workflow around it. Very short slices merge at this zoom level. X1 also uses reviewed phase boundaries. The other nine rows use captured timestamps.</p></details>
 </section>
 </div></main>
 <span class="measure" aria-hidden="true"></span>
