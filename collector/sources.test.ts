@@ -645,6 +645,21 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       origin: "check_temp_environment:enablement/verification.py" };
     const fanout = { kind: "hosted-test-fanout", thread: "t", id: "fanout-first", scope: "pr-42",
       lane: "lane-one", revision: "f".repeat(40), failure: "assertion", conclusion: "failure", at: 200 };
+    const aptMirror = { kind: "apt-mirror-probe", thread: "t", id: "mirror-probe",
+      step: "Run ./.github/actions/ubuntu-apt", conclusion: "failure", exitCode: 1,
+      mirrorA: "mirror-a.example", mirrorB: "mirror-b.example", started: 100, ended: 111,
+      line: "No tested Ubuntu mirror completed the bounded APT manifest/index probe" };
+    const pagesAuth = { ...readback, id: "pages-auth", accepted: false, line: "Error: Cloudflare API HTTP 401",
+      phaseLine: "at async currentMain (file:///test/public/enablement/cd/publish-pages.ts:149:19)" };
+    const quota = { kind: "actions-rate-limit", thread: "t", id: "job-read-quota", operation: "actions-job-read",
+      status: 403, failed: true, line: "gh: API rate limit exceeded (HTTP 403)" };
+    const poll = { kind: "local-verification-poll", thread: "t", id: "poll-1", turn: "turn",
+      invocation: "verification-unit", state: "active", at: 200 };
+    const vmBoot = { kind: "vm-driver-result", thread: "t", id: "vm-boot", stage: "boot",
+      failureType: "TimeoutError", exitCode: 1, driverExit: 255, scenarioStarted: false, command: "ssh",
+      line: "guest user desktop did not become ready within 150s", required: "none", elapsedMs: 150_520 };
+    const vmReady = { ...vmBoot, id: "vm-ready", stage: "readiness", failureType: "CalledProcessError",
+      driverExit: 69, line: "missing required guest command: compositor", required: "compositor", elapsedMs: 0 };
     const facts = [
       admission, admission,
       { ...admission, id: "superseded", annotation: "Canceling since a higher priority waiting request exists" },
@@ -782,6 +797,29 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       { ...fanout, id: "unrelated-pr", lane: "lane-two", scope: "pr-43", at: 207 },
       { ...fanout, id: "successful-lane", lane: "lane-two", conclusion: "success", at: 208 },
       { ...fanout, id: "fanout-second", lane: "lane-two", at: 210 },
+      aptMirror, aptMirror,
+      { ...aptMirror, id: "same-mirror", mirrorB: aptMirror.mirrorA },
+      { ...aptMirror, id: "regular-apt", step: "Install Ubuntu packages" },
+      { ...aptMirror, id: "fallback-worked", conclusion: "success" },
+      pagesAuth, pagesAuth,
+      { ...pagesAuth, id: "later-auth", accepted: true },
+      { ...pagesAuth, id: "elsewhere-auth", phaseLine: readback.phaseLine },
+      quota, quota,
+      { ...quota, id: "watch-quota", operation: "actions-run-watch", line: "failed to get run: HTTP 403: API rate limit exceeded" },
+      { ...quota, id: "forbidden", line: "gh: Resource not accessible (HTTP 403)" },
+      { ...quota, id: "other-operation", operation: "github-pr-create" },
+      { ...quota, id: "successful-read", failed: false },
+      poll, poll,
+      { ...poll, id: "other-turn", turn: "new-turn", at: 210 },
+      { ...poll, id: "other-process", invocation: "different-unit", at: 210 },
+      { ...poll, id: "past-poll", at: 190 },
+      { ...poll, id: "poll-2", at: 211 },
+      { ...poll, id: "terminal-state", state: "inactive", at: 220 },
+      { ...poll, id: "later-terminal-state", state: "inactive", at: 230 },
+      vmBoot, vmBoot, vmReady,
+      { ...vmBoot, id: "scenario-failure", scenarioStarted: true },
+      { ...vmBoot, id: "other-vm", command: "qemu" },
+      { ...vmReady, id: "different-missing-command", required: "ffmpeg" },
       read, read, { ...read, id: "b", at: 160 }, { ...read, thread: "t2", at: 170 },
       timing, timing, { ...timing, id: "unpaired", end: 0 },
       attempt, { ...attempt, id: "changed", key: "gate:v2", start: 115, end: 120, failed: false, succeeded: true },
@@ -800,6 +838,7 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
     assert.deepEqual(result.files, [{ $: "FileTotal", path: "README.md", requests: 3, threads: 2, revisits: 1 }]);
     assert.deepEqual(result.costs.sort((a: { clock: string; operation: string }, b: { clock: string; operation: string }) =>
       a.clock.localeCompare(b.clock) || a.operation.localeCompare(b.operation)), [
+      { $: "Cost", clock: "ci-apt-mirror-probe", operation: "ubuntu", count: 1, seconds: 11, unknown: 0 },
       { $: "Cost", clock: "ci-benchmark-owner-step", operation: "connect-watch", count: 1, seconds: 91, unknown: 0 },
       { $: "Cost", clock: "ci-benchmark-owner-step", operation: "record-start", count: 3, seconds: 1640, unknown: 0 },
       { $: "Cost", clock: "ci-benchmark-owner-step", operation: "record-stop", count: 1, seconds: 1300, unknown: 0 },
@@ -822,6 +861,9 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
         "ci-benchmark-no-qualified-smt-subset",
         "t3-pr-watch-parked", "ci-toolchain-prerequisite-http-server-error",
         "local-verification-socket-path-limit", "ci-test-failure-cross-lane",
+        "ci-apt-mirror-probe-exhausted", "ci-pages-preflight-unauthorized", "ci-observer-rate-limited",
+        "ci-observer-rate-limited", "local-verification-state-repolled", "local-vm-ssh-boot-timeout",
+        "local-vm-missing-guest-command",
         "recovered-attempt", "runner"]);
     assert.ok(!first.includes("installed tools"));
     assert.ok(!first.includes("#42:"));
@@ -838,6 +880,9 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       ["smt-subset", "", 0, 0],
       ["wake", "watch-start", 80, 0], ["bend-source", "", 0, 0], ["socket-limit", "", 0, 0],
       ["fanout-second", "fanout-first", 0, 0],
+      ["mirror-probe", "", 0, 0], ["pages-auth", "", 0, 0], ["job-read-quota", "", 0, 0],
+      ["watch-quota", "", 0, 0], ["poll-2", "poll-1", 0, 0], ["vm-boot", "", 150, 0],
+      ["vm-ready", "", 0, 0],
       ["recovered", "first", 20, 0], ["tail", "", 250, 10],
     ]);
   } finally {

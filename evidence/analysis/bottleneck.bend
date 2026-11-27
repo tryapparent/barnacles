@@ -154,6 +154,12 @@ def observe_hosted_test_fanout(state: Replay, thread: String, id: String, scope:
   observe_repeat(state, thread, id, "ci-test-failure-cross-lane", pair(scope, pair(revision, failure)), lane,
     at, at, 0, String.eq(conclusion, "failure"))
 
+def observe_verification_poll(state: Replay, thread: String, +id: String, turn: String, invocation: String,
+  +status: String, +at: U32) -> Replay:
+  +in_progress = Bool.or(String.eq(status, "active"), String.eq(status, "activating"))
+  observe_repeat(state, thread, id, "local-verification-state-repolled", pair(turn, pair(invocation, status)),
+    id, at, at, 0, in_progress)
+
 def observe_package_build(state: Replay, thread: String, +id: String, scope: String, +tool: String,
   digest: String, +assets: U32, reported_ms: U32, +start: U32, +end: U32) -> Replay:
   +seconds = U32.div(reported_ms, 1000)
@@ -233,15 +239,19 @@ def diagnostic_label(+line: String) -> String:
   Bool.pick(String, directory_width, "staged-directory-width",
     Bool.pick(String, Bool.or(missing_checker, missing_typescript), "staged-verification-prerequisite", ""))
 
-def observe_failure(state: Replay, +thread: String, +id: String, +label: String, failed: Bool) -> Replay:
+def observe_failure_with_duration(state: Replay, +thread: String, +id: String, +label: String,
+  failed: Bool, seconds: U32) -> Replay:
   match state:
     case Replay{+seen, +files, +reads, +costs, +attempts, +cohorts, +findings}:
       +event = pair("failure", pair(thread, pair(label, id)))
       +valid = Bool.and(failed, Bool.and(Bool.not(String.is_empty(label)), Bool.not(includes(seen, event))))
       Bool.pick(Replay, valid,
         Replay{Map.set(&2, Bool, seen, event, True{}), files, reads, costs, attempts, cohorts,
-          Finding{label, thread, id, "", 0, 0, 0, 0} <> findings},
+          Finding{label, thread, id, "", seconds, 0, 0, 0} <> findings},
         Replay{seen, files, reads, costs, attempts, cohorts, findings})
+
+def observe_failure(state: Replay, thread: String, id: String, label: String, failed: Bool) -> Replay:
+  observe_failure_with_duration(state, thread, id, label, failed, 0)
 
 def observe_diagnostic(state: Replay, thread: String, id: String, line: String, failed: Bool) -> Replay:
   observe_failure(state, thread, id, diagnostic_label(String.trim(line)), failed)
@@ -302,6 +312,13 @@ def observe_forge_response(state: Replay, thread: String, id: String, operation:
   +valid = Bool.and(Bool.and(create, server_error), Bool.and(failed, identified))
   observe_failure(state, thread, id, "pr-create-http-server-error", valid)
 
+def observe_actions_rate_limit(state: Replay, thread: String, id: String, +operation: String, status: U32, +line: String,
+  failed: Bool) -> Replay:
+  +read = Bool.and(String.eq(operation, "actions-job-read"), String.eq(line, "gh: API rate limit exceeded (HTTP 403)"))
+  +watch = Bool.and(String.eq(operation, "actions-run-watch"), String.eq(line, "failed to get run: HTTP 403: API rate limit exceeded"))
+  +valid = Bool.and(failed, Bool.and(U32.is_eq(status, 403), Bool.or(read, watch)))
+  observe_failure(state, thread, id, "ci-observer-rate-limited", valid)
+
 def observe_job_rerun(state: Replay, thread: String, id: String, job: String, line: String, failed: Bool) -> Replay:
   +rejected = String.eq(String.trim(line), String.append("job ", String.append(job, " cannot be rerun")))
   observe_failure(state, thread, id, "ci-job-rerun-rejected", Bool.and(failed, rejected))
@@ -355,6 +372,28 @@ def observe_failed_step(+state: Replay, thread: String, +id: String, clock: Stri
   Bool.pick(Replay, valid,
     observe_failure(observe_timing(state, id, clock, operation, start, end), thread, id, label, True{}),
     state)
+
+def observe_apt_mirror_probe(state: Replay, thread: String, id: String, step: String, conclusion: String, exit_code: U32,
+  +mirror_a: String, +mirror_b: String, line: String, start: U32, end: U32) -> Replay:
+  +failed = Bool.and(String.eq(conclusion, "failure"), U32.is_eq(exit_code, 1))
+  +owner = String.eq(step, "Run ./.github/actions/ubuntu-apt")
+  +distinct = Bool.and(Bool.not(String.eq(mirror_a, mirror_b)),
+    Bool.not(Bool.or(String.is_empty(mirror_a), String.is_empty(mirror_b))))
+  +exhausted = String.eq(line, "No tested Ubuntu mirror completed the bounded APT manifest/index probe")
+  +valid = Bool.and(failed, Bool.and(owner, Bool.and(distinct, exhausted)))
+  observe_failed_step(state, thread, id, "ci-apt-mirror-probe", "ubuntu", "ci-apt-mirror-probe-exhausted",
+    valid, start, end)
+
+def observe_vm_result(state: Replay, thread: String, id: String, +stage: String, +failure_type: String, exit_code: U32,
+  +driver_exit: U32, scenario_started: Bool, command: String, +line: String, required: String, elapsed_ms: U32) -> Replay:
+  +early = Bool.and(Bool.not(scenario_started), Bool.and(U32.is_eq(exit_code, 1), String.eq(command, "ssh")))
+  +boot_timeout = Bool.and(String.eq(stage, "boot"), Bool.and(String.eq(failure_type, "TimeoutError"),
+    Bool.and(U32.is_eq(driver_exit, 255), String.starts_with(line, "guest user desktop did not become ready within "))))
+  +readiness = Bool.and(String.eq(stage, "readiness"), Bool.and(String.eq(failure_type, "CalledProcessError"),
+    Bool.and(U32.is_eq(driver_exit, 69), String.eq(line, String.append("missing required guest command: ", required)))))
+  +label = Bool.pick(String, boot_timeout, "local-vm-ssh-boot-timeout",
+    Bool.pick(String, readiness, "local-vm-missing-guest-command", ""))
+  observe_failure_with_duration(state, thread, id, label, early, U32.div(elapsed_ms, 1000))
 
 def observe_native_model_fetch(state: Replay, thread: String, id: String, step: String, conclusion: String,
   exit_code: U32, +status: U32, revision: String, +line: String, origin: String, start: U32, end: U32) -> Replay:
@@ -413,10 +452,12 @@ def observe_benchmark_pressure(state: Replay, thread: String, id: String, +lane:
   observe_failed_step(state, thread, id, "ci-benchmark-owner-step", lane,
     "ci-benchmark-calibration-pressure-rejected", valid, start, end)
 
-def deployment_label(+service: String, +line: String, +phase_line: String, accepted: Bool) -> String:
+def deployment_label(+service: String, +line: String, +phase_line: String, +accepted: Bool) -> String:
   +admission_frame = Bool.and(String.starts_with(phase_line, "at admission (file:"),
     String.contains(phase_line, "/connect/tooling/hosting/scripts/deploy.ts:"))
   +readback_frame = Bool.and(String.starts_with(phase_line, "at async verifyReady (file:"),
+    String.contains(phase_line, "/public/enablement/cd/publish-pages.ts:"))
+  +current_main_frame = Bool.and(String.starts_with(phase_line, "at async currentMain (file:"),
     String.contains(phase_line, "/public/enablement/cd/publish-pages.ts:"))
   +superseded = Bool.and(String.eq(service, "connect-worker"),
     Bool.and(String.eq(line, "AssertionError [ERR_ASSERTION]: Candidate superseded by affected main changes"),
@@ -424,8 +465,11 @@ def deployment_label(+service: String, +line: String, +phase_line: String, accep
   +timeout = Bool.and(String.eq(service, "public-pages"), Bool.and(accepted,
     Bool.and(String.eq(line, "DOMException [TimeoutError]: The operation was aborted due to timeout"),
       readback_frame)))
+  +auth = Bool.and(String.eq(service, "public-pages"), Bool.and(Bool.not(accepted),
+    Bool.and(String.eq(line, "Error: Cloudflare API HTTP 401"), current_main_frame)))
   Bool.pick(String, superseded, "ci-deployment-candidate-superseded",
-    Bool.pick(String, timeout, "ci-deployment-readback-timeout", ""))
+    Bool.pick(String, timeout, "ci-deployment-readback-timeout",
+      Bool.pick(String, auth, "ci-pages-preflight-unauthorized", "")))
 
 def observe_hosted_deploy(state: Replay, thread: String, id: String, service: String, conclusion: String,
   exit_code: U32, line: String, phase_line: String, accepted: Bool) -> Replay:
