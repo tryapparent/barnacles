@@ -12,8 +12,6 @@ type Entry is Data:
 type Decision is Data:
   Decision{kind: U32, name: String}
 
-type Pick is Data:
-  Pick{at: Nat, span: Nat}
 
 def n_before(a: Nat, b: Nat) -> Bool:
   Nat.is_lt(a, b)
@@ -32,7 +30,7 @@ def covered(input: List<&2, Interval>, +a: Nat, +b: Nat, best: Decision) -> Deci
       +same = U32.is_eq(kind,k)
       +update = Bool.and(active,Bool.or(higher,same))
       +generic = Bool.and(same,Bool.not(String.eq(name,n)))
-      +label = Bool.pick(String,generic,Bool.pick(String,U32.is_eq(kind,2),"Agent work","Workflows & waits"),name)
+      +label = Bool.pick(String,generic,Bool.pick(String,U32.is_eq(kind,2),"Provider run","Admission wait"),name)
       covered(rest,a,b,Bool.pick(Decision,update,Decision{kind,label},Decision{k,n}))
 
 def add_part(skip: Bool, decision: Decision, a: Nat, b: Nat, index: Nat, rest: List<&2,Part>) -> List<&2,Part>:
@@ -43,7 +41,7 @@ def add_part(skip: Bool, decision: Decision, a: Nat, b: Nat, index: Nat, rest: L
 def split(points: List<&2, Nat>, +input: List<&2, Interval>, +index: Nat) -> List<&2, Part>:
   match points:
     case +a <> +b <> tail:
-      add_part(Nat.is_eq(a,b),covered(input,a,b,Decision{0,"Activity unclear"}),a,b,index,
+      add_part(Nat.is_eq(a,b),covered(input,a,b,Decision{0,"Unobserved"}),a,b,index,
         split(b <> tail,input,Nat.add(index,1n)))
     case _: []
 
@@ -65,7 +63,7 @@ def evidence(+input: List<&2, Interval>, duration: Nat) -> List<&2, Part>:
   groups(split(List.sort(~Nat,~n_before,boundaries(input,duration)),input,0n),True{})
 
 def base(+kind: U32) -> String:
-  Bool.pick(String,U32.is_eq(kind,2),"#6a934f",Bool.pick(String,U32.is_eq(kind,1),"#392820","#ffffff"))
+  Bool.pick(String,U32.is_eq(kind,2),"#6a934f",Bool.pick(String,U32.is_eq(kind,1),"#392820","#a19a92"))
 
 def variant(kind: U32, index: Nat) -> String:
   +first = Nat.is_eq(Nat.mod(index,2n),0n)
@@ -90,62 +88,5 @@ def colors(parts: List<&2, Part>, +prior: U32, +details: Bool) -> List<&2, Entry
       +fill = Bool.pick(String,shade,variant(kind,index),base(kind))
       Entry{a,b,kind,name,fill} <> colors(rest,kind,details)
 
-def real_color(parts: List<&2, Entry>) -> String:
-  match parts:
-    case []: base(0)
-    case Entry{_,_,+kind,_,+paint} <> rest:
-      Bool.pick(String,U32.is_eq(kind,0),real_color(rest),paint)
-
 def mix(+left: String, +right: String) -> String:
   Bool.pick(String,String.eq(left,right),left,String.concat(["color-mix(in srgb,",left," 50%,",right,")"]))
-
-def paint_gaps(parts: List<&2, Entry>, +left: String) -> List<&2, Entry>:
-  match parts:
-    case []: []
-    case Entry{+a,+b,+kind,+name,+paint} <> +rest:
-      +gap = U32.is_eq(kind,0)
-      +fill = Bool.pick(String,gap,mix(left,real_color(rest)),paint)
-      Entry{a,b,kind,name,fill} <> paint_gaps(rest,Bool.pick(String,gap,left,paint))
-
-def smallest(parts: List<&2, Entry>, +index: Nat, best: Pick) -> Pick:
-  match parts best:
-    case [] Pick{+at,+span}: Pick{at,span}
-    case Entry{+a,+b,_,_,_} <> rest Pick{+at,+span}:
-      +width = Nat.sub(b,a)
-      smallest(rest,Nat.add(index,1n),Bool.pick(Pick,Nat.is_lt(width,span),Pick{index,width},Pick{at,span}))
-
-def choose_left(left: Entry, right: Entry, +kind: U32) -> Bool:
-  match left right:
-    case Entry{+a,+b,+k,_,_} Entry{+x,+y,+j,_,_}:
-      +l = U32.is_eq(k,kind)
-      +r = U32.is_eq(j,kind)
-      Bool.pick(Bool,Bool.and(l,Bool.not(r)),True{},
-        Bool.and(Bool.not(Bool.and(r,Bool.not(l))),Nat.is_le(Nat.sub(y,x),Nat.sub(b,a))))
-
-def merge_at(parts: List<&2, Entry>, index: Nat) -> List<&2, Entry>:
-  match parts index:
-    case Entry{+a,_,_,_,_} <> Entry{_,+b,+k,+n,+c} <> rest 0n: Entry{a,b,k,n,c} <> rest
-    case Entry{+a,+b,+k,+n,+c} <> Entry{+x,+y,+j,+m,+d} <> [] 1n: [Entry{a,y,k,n,c}]
-    case Entry{+a,+b,+k,+n,+c} <> Entry{+x,+y,+j,+m,+d} <> Entry{+u,+v,+q,+z,+f} <> +rest 1n:
-      Bool.pick(List<&2,Entry>,choose_left(Entry{a,b,k,n,c},Entry{u,v,q,z,f},j),
-        Entry{a,y,k,n,c} <> Entry{u,v,q,z,f} <> rest,
-        Entry{a,b,k,n,c} <> Entry{x,v,q,z,f} <> rest)
-    case first <> rest 1n+later: first <> merge_at(rest,later)
-    case other _: other
-
-def needs_merge(pick: Pick, scale: Nat, width: Nat) -> Bool:
-  match pick:
-    case Pick{_,span}: Nat.is_lt(Nat.mul(span,width),Nat.mul(12n,scale))
-
-def merge_index(pick: Pick) -> Nat:
-  match pick:
-    case Pick{at,_}: at
-
-def collapse(fuel: Nat, +parts: List<&2, Entry>, go: Bool, +scale: Nat, +width: Nat) -> List<&2, Entry>:
-  match fuel go:
-    case 0n _: parts
-    case 1n+remaining False{}: parts
-    case 1n+remaining True{}:
-      +pick = smallest(parts,0n,Pick{0n,scale})
-      +narrow = needs_merge(pick,scale,width)
-      collapse(remaining,Bool.pick(List<&2,Entry>,narrow,merge_at(parts,merge_index(pick)),parts),narrow,scale,width)

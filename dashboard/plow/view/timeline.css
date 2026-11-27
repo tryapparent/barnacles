@@ -20,7 +20,7 @@ h1,p,ol{margin:0}.wordmark,h1{font-family:"Young Serif",Georgia,serif;font-weigh
   z-index:-1;
   background:linear-gradient(90deg,rgb(26 19 13 / .94),rgb(26 19 13 / .84) 22rem,transparent max(75%,28rem));
 }
-.activity-meta{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.activity-meta{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px}
 .prototype{border-radius:4px;padding:4px 8px;background:var(--earth);font-size:12px;white-space:nowrap}
 .activity-links{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:0 6px}
 #session-history-link{display:inline-flex;align-items:center;min-height:44px;padding:0 7px;border-radius:4px;background:var(--earth);color:var(--cream);font-size:14px;font-weight:650;text-underline-offset:3px}
