@@ -144,3 +144,34 @@
 .analysis-thread{display:flex;align-items:center;flex-wrap:wrap;gap:.6rem;margin-block:1rem}
 .analysis-thread select{font:inherit;min-height:44px;max-width:100%;background:white;color:#38271f;border:1px solid #aa9c90;border-radius:4px;padding:.35rem .6rem}
 .analysis-thread select:focus-visible{outline:2px solid #596c49;outline-offset:2px}
+
+.trend-material{width:100%;height:100%;background-repeat:no-repeat;background-size:max(100%,var(--field-paint-width,100%)) max(100%,var(--field-paint-height,100%))}
+.trend-soil{background-color:#543b2a;background-image:var(--field-paint-soil,none)}
+.trend-canopy{background-color:#a2b77b;background-image:var(--field-paint-canopy,none)}
+.trend-field-outline{display:none}
+@media(forced-colors:active){
+  .trend-series{stroke:CanvasText}
+  .trend-field{display:none}
+  .trend-field-outline{display:inline}
+}
+
+
+.summary-tiles{position:relative}
+.summary-tiles .treemap{position:relative;z-index:1}
+.field-ready #tiles > .category-tile{background:transparent;color:var(--field-label,var(--tile-text))}
+.field-canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.field-settings{position:relative;color:var(--ink);font:600 14px Geist,system-ui}
+.field-settings summary{display:grid;place-items:center;min-height:44px;padding:0 12px;border:1px solid #e3d9cd;border-radius:7px;background:#fffdf7;cursor:pointer}
+.field-settings summary::-webkit-details-marker{display:none}
+.field-settings-controls{position:absolute;inset:calc(100% + 6px) 0 auto auto;z-index:20;width:220px;padding:10px 13px;border:1px solid #ddd1c4;border-radius:9px;background:#fffdf7;box-shadow:0 7px 18px #3928202d}
+.field-settings label{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:35px}
+.field-settings input[type=color]{width:40px;height:27px}
+.field-settings input[type=checkbox]{width:16px;height:16px;accent-color:var(--meadow)}
+
+.field-span{position:absolute;inset-block:0;left:var(--at);width:var(--width);background:var(--field-soil) left center / 132px auto;opacity:.32;pointer-events:none}
+.field-span[data-kind="2"]{background-image:var(--field-canopy)}
+.trace:is(:hover,:focus-within) .field-span{visibility:hidden}
+@media(forced-colors:active){
+  .field-canvas,.field-span,.field-settings{display:none}
+  .field-ready #tiles > .category-tile{background:ButtonFace;color:ButtonText}
+}

@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
 import { Button } from "../controls";
 
@@ -46,7 +46,7 @@ export function renderSummary(model: Overview) {
   });
 }
 
-export function Summary() {
+export function Summary({ fieldTexture }: { fieldTexture?: string }) {
   const model = useSyncExternalStore(subscribe, () => overview);
   return <section className="summary-panel" id="summary-panel" aria-labelledby="summary-heading">
     <div className="summary-top">
@@ -54,6 +54,7 @@ export function Summary() {
       <p id="summary-total">{model?.total}</p>
     </div>
     <p id="summary-note" className="summary-note">{model?.note}</p>
+    <div className="summary-tiles">
     <div id="tiles" className="treemap">
       {model?.categories.map(category => <Button type="button" key={category.kind}
         className={`category-tile ${category.style}`} data-kind={category.kind}
@@ -62,6 +63,8 @@ export function Summary() {
         <span className="category-metric">{category.duration}<span className="category-share">{category.share}</span></span>
         <span className="category-icon" aria-hidden="true">{category.expanded ? "−" : "+"}</span>
       </Button>)}
+    </div>
+    {fieldTexture && <FieldSurface texture={fieldTexture} />}
     </div>
     <section id="operation-panel" hidden={!model?.breakdown} aria-labelledby="operation-heading"
       onKeyDown={event => {
@@ -88,97 +91,263 @@ export function Summary() {
   </section>;
 }
 
-type Coverage = { t3Runs: number; codexSpans: number; githubJobs: number };
-type DelayCoverage = { sufficient: number; occurrences: number };
-type OutcomeImpact = { totals: { coverage: DelayCoverage; affectedOutcomes: number; confirmedMs: number | null; sharedMs: number | null };
-  patterns: { pattern: string; stage: string; affectedOutcomes: number; uniqueMs: number | null }[] };
-type Analysis = { analyzedAt: string; bounded?: boolean; window?: { from: string; to: string };
-  coverage?: { active: number; withCodex: number; withCI: number; withBoth: number };
-  outcomeImpact?: OutcomeImpact | null;
-  ranking: { rule: string; threads: number; occurrences: number }[];
-  threads: { id: string; coverage: Coverage }[] };
-type Detail = { coverage: Coverage; rules: string[]; costs: { clock: string; operation: string; seconds: number; unknown: number }[] };
+const fieldPalettes = [
+  { name: "Soil", color: "#543b2a", kind: "workflow" },
+  { name: "Crops", color: "#91ad5f", kind: "agent" },
+  { name: "Unobserved", color: "#dfbf89", kind: "unclear" },
+];
 
-export function Bottlenecks({ api }: { api: string }) {
-  const [data, setData] = useState<Analysis>();
-  const [thread, setThread] = useState("");
-  const [detail, setDetail] = useState<Detail>();
-  const [status, setStatus] = useState("Loading analysis…");
-  const [detailStatus, setDetailStatus] = useState("");
+export function FieldSettings() {
+  return <details className="field-settings" id="field-settings" hidden
+    onKeyDown={event => {
+      if (event.key !== "Escape" || !event.currentTarget.open) return;
+      event.currentTarget.open = false;
+      event.currentTarget.querySelector("summary")?.focus();
+    }}>
+    <summary>Field colors</summary>
+    <div className="field-settings-controls">
+      {fieldPalettes.map(({ name, color }) => <label key={name}>{name}<input type="color" defaultValue={color} /></label>)}
+      <label>Wind<input type="checkbox" defaultChecked /></label>
+    </div>
+  </details>;
+}
+
+function rgb(value: string) {
+  return [1, 3, 5].map(offset => parseInt(value.slice(offset, offset + 2), 16));
+}
+
+function shade(color: number[], tone: number) {
+  return color.map(channel => Math.round(Math.max(0, Math.min(255, channel + tone))));
+}
+
+function luminance(color: number[]) {
+  return color.reduce((value, channel, index) => {
+    const srgb = channel / 255;
+    const linear = srgb <= .04045 ? srgb / 12.92 : ((srgb + .055) / 1.055) ** 2.4;
+    return value + linear * [.2126, .7152, .0722][index];
+  }, 0);
+}
+
+function contrast(first: number, second: number) {
+  return (Math.max(first, second) + .05) / (Math.min(first, second) + .05);
+}
+
+function safePalette(value: string) {
+  const center = rgb(value);
+  const light = luminance(center);
+  const brandText = light > .26 ? "#1a130d" : "#fff4df";
+  const label = contrast(luminance(rgb(brandText)), light) >= 4.55
+    ? brandText
+    : light > .179 ? "#000000" : "#ffffff";
+  const labelLight = luminance(rgb(label));
+  let amplitude = 66;
+  while (amplitude > 0 && [-amplitude, amplitude].some(end =>
+    contrast(labelLight, luminance(shade(center, end))) < 4.5)) amplitude--;
+  return { center, label, amplitude };
+}
+
+function textureLayer(width: number, height: number) {
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  return canvas.getContext("2d");
+}
+
+function installMaterialRelief(root: HTMLElement, atlas: HTMLImageElement) {
+  const output = textureLayer(320, 80);
+  if (!output) return;
+  const { width, height } = output.canvas;
+  output.drawImage(atlas, 0, 0, atlas.width, atlas.height / 2, 0, 0, width, height);
+  const map = output.getImageData(0, 0, width, height);
+  output.drawImage(atlas, 0, atlas.height / 2, atlas.width, atlas.height / 2, 0, 0, width, height);
+  const sand = output.getImageData(0, 0, width, height);
+  const relief = output.createImageData(width, height);
+  for (const [source, channel, name] of [[map, 0, "soil"], [map, 1, "canopy"], [sand, 0, "sand-relief"]] as const) {
+    for (let offset = 0; offset < source.data.length; offset += 4) {
+      const tone = source.data[offset + channel] - 128;
+      const color = tone >= 0 ? 255 : 0;
+      relief.data[offset] = color;
+      relief.data[offset + 1] = color;
+      relief.data[offset + 2] = color;
+      relief.data[offset + 3] = Math.abs(tone) * 1.55;
+    }
+    output.putImageData(relief, 0, 0);
+    root.style.setProperty(`--field-${name}`, `url("${output.canvas.toDataURL()}")`);
+  }
+}
+
+function FieldSurface({ texture }: { texture: string }) {
+  const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
-    const ctrl = new AbortController();
-    fetch(api, { signal: AbortSignal.any([ctrl.signal, AbortSignal.timeout(8000)]) })
-      .then(res => { if (!res.ok) throw Error(); return res.json(); })
-      .then((result: Analysis) => { setData(result); setStatus(""); })
-      .catch(() => { if (!ctrl.signal.aborted) setStatus("Analysis is unavailable. Check your private connection and reload."); });
-    return () => ctrl.abort();
-  }, [api]);
-  useEffect(() => {
-    if (!thread) return;
-    const ctrl = new AbortController();
-    fetch(`${api}/threads/${thread}`, { signal: AbortSignal.any([ctrl.signal, AbortSignal.timeout(8000)]) })
-      .then(res => { if (!res.ok) throw Error(); return res.json(); })
-      .then((result: Detail) => { setDetail(result); setDetailStatus(""); })
-      .catch(() => { if (!ctrl.signal.aborted) setDetailStatus("Thread details are unavailable."); });
-    return () => ctrl.abort();
-  }, [api, thread]);
-  const label = (rule: string) => rule.replaceAll("-", " ");
-  const count = (n: number, singular: string) => `${n} ${singular}${n === 1 ? "" : "s"}`;
-  const duration = (ms: number | null) => ms === null ? "Unknown"
-    : `${(ms / 1000).toLocaleString(undefined, { maximumFractionDigits: 3 })} s`;
-  const impact = data?.outcomeImpact;
-  const clockLabels: Record<string, string> = {
-    "ci-job-queue": "CI job queue",
-    "ci-job-execution": "CI job execution",
-    "codex-otel-span": "Codex span",
-    "t3-run-envelope": "T3 run",
-    "t3-run-admission": "T3 admission",
-  };
-  return <section className="bottlenecks" aria-labelledby="bottlenecks-heading">
-    <h2 id="bottlenecks-heading">Bottlenecks</h2>
-    {status && <p role="status">{status}</p>}
-    {data && <>
-      <p className="summary-note">{data.window && "Last 24 hours · "}{count(data.threads.length, data.window ? "active thread" : "joined thread")}
-        {data.window ? <br /> : " · "}{data.window ? "Window ending " : "Analyzed "}
-        <time dateTime={data.window?.to ?? data.analyzedAt}>
-          {new Date(data.window?.to ?? data.analyzedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</time>
-        {data.bounded && " · Recent threads only"}</p>
-      {data.coverage && <p className="summary-note">Threads with links · Codex {data.coverage.withCodex} · CI {data.coverage.withCI}</p>}
-      {data.window && (impact && impact.totals.coverage.occurrences > 0 ? <>
-        <p>Confirmed outcome delay · {duration(impact.totals.confirmedMs)} over {count(impact.totals.affectedOutcomes, "outcome")}
-          {impact.totals.sharedMs ? ` · ${duration(impact.totals.sharedMs)} shared` : ""}</p>
-        <p className="summary-note">{impact.totals.coverage.sufficient} of {impact.totals.coverage.occurrences} delay observations had sufficient evidence.</p>
-        {impact.patterns.length > 0 && <table><caption>Outcome delay by pattern</caption>
-          <thead><tr><th scope="col">Pattern</th><th scope="col">Outcomes</th><th scope="col">Unique delay</th></tr></thead>
-          <tbody>{impact.patterns.map(item => <tr key={`${item.stage}/${item.pattern}`}><th scope="row">
-            {label(item.pattern)} · {label(item.stage)}</th><td>{item.affectedOutcomes}</td><td>{duration(item.uniqueMs)}</td></tr>)}</tbody>
-        </table>}
-      </> : <p className="summary-note">Confirmed outcome delay is unknown for this window.</p>)}
-      {data.ranking.length ? <table><caption>Findings ranked by affected threads</caption>
-        <thead><tr><th scope="col">Finding</th><th scope="col">Threads</th><th scope="col">Events</th></tr></thead>
-        <tbody>{data.ranking.map(item => <tr key={item.rule}><th scope="row">{label(item.rule)}</th>
-          <td>{item.threads}</td><td>{item.occurrences}</td></tr>)}</tbody>
-      </table> : <p>{data.window
-        ? data.threads.length ? "No linked CI failures or timeouts were observed." : "No captured T3 activity in this window."
-        : data.threads.length ? "No findings in the observed evidence." : "No joined threads yet."}</p>}
-      {data.threads.length > 0 && <label className="analysis-thread">Thread details
-        <select value={thread} onChange={event => {
-          setDetail(undefined);
-          setDetailStatus(event.target.value ? "Loading thread…" : "");
-          setThread(event.target.value);
-        }}><option value="">Select a thread</option>
-          {data.threads.map((item, index) => <option key={item.id} value={item.id}>Thread {index + 1}</option>)}
-        </select>
-      </label>}
-      {detailStatus && <p role="status">{detailStatus}</p>}
-      {detail && <>
-        <p>{count(detail.coverage.t3Runs, "T3 run")} · {count(detail.coverage.codexSpans, "Codex span")} · {count(detail.coverage.githubJobs, "GitHub job")}</p>
-        {detail.rules.length > 0 && <ul>{detail.rules.map((rule, index) => <li key={index}>{label(rule)}</li>)}</ul>}
-        {detail.costs.length > 0 && data.window && <p className="summary-note">Full thread timings</p>}
-        {detail.costs.length > 0 && <ul aria-label="Measured clocks">{detail.costs.map(cost =>
-          <li key={`${cost.clock}:${cost.operation}`}>{clockLabels[cost.clock] ?? label(cost.clock)} · {cost.operation.replaceAll("_", " ")} · {cost.seconds}s
-            {cost.unknown > 0 && ` · ${cost.unknown} unknown`}</li>)}</ul>}
-      </>}
-    </>}
-  </section>;
+    const canvas = ref.current;
+    const wrapper = canvas?.parentElement;
+    const plot = wrapper?.querySelector<HTMLElement>("#tiles");
+    const settings = document.querySelector<HTMLDetailsElement>("#field-settings");
+    const root = wrapper?.closest("main");
+    const context = canvas?.getContext("2d");
+    const wind = settings?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    if (!canvas || !wrapper || !plot || !settings || !wind || !root || !context) return;
+    const inputs = [...settings.querySelectorAll<HTMLInputElement>('input[type="color"]')];
+    const reduced = matchMedia("(prefers-reduced-motion: reduce)");
+    const forced = matchMedia("(forced-colors: active)");
+    wind.checked = !reduced.matches;
+    wind.disabled = reduced.matches;
+
+    const atlas = new Image();
+    let map: ImageData | undefined;
+    let sand: ImageData | undefined;
+    let materials: CanvasRenderingContext2D[] = [];
+    let leaves: CanvasRenderingContext2D | null = null;
+    let paintedCanopy: CanvasRenderingContext2D | null = null;
+    let paletteKey = "";
+    let parcels: { x: number; y: number; width: number; height: number }[] = [];
+    let frame = 0;
+    let lastPaint = -Infinity;
+
+    function draw(time: number) {
+      if (!context || !leaves || !canvas || !parcels.length) return;
+      const canopy = leaves.canvas;
+      const scale = canvas.height / 160;
+      const band = Math.max(1, Math.round(3 * scale));
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      parcels.forEach(({ x, y, width, height }, index) => {
+        if (!width || !height) return;
+        context.save();
+        context.beginPath();
+        context.rect(x, y, width, height);
+        context.clip();
+        context.drawImage(materials[index].canvas, 0, 0);
+        if (index === 1) {
+          for (let row = y; row < y + height; row += band) {
+            const strip = Math.min(band, y + height - row);
+            const sway = time ? scale * (2.5 * Math.sin(time * .0019 + row / scale * .040) +
+              1.3 * Math.sin(time * .0027 - row / scale * .094)) : 0;
+            context.drawImage(canopy, x, row, width, strip, x + sway, row, width, strip);
+          }
+        }
+        context.restore();
+      });
+    }
+
+    function animate(time: number) {
+      if (time - lastPaint >= 32) {
+        draw(time);
+        lastPaint = time;
+      }
+      frame = requestAnimationFrame(animate);
+    }
+
+    function sync() {
+      cancelAnimationFrame(frame);
+      draw(0);
+      if (parcels.length && wind?.checked && !reduced.matches && !forced.matches && !document.hidden) {
+        frame = requestAnimationFrame(animate);
+      }
+    }
+
+    function recolor() {
+      if (!canvas || !wrapper || !plot || !root || !map || !sand || !materials.length || !leaves || !paintedCanopy) return;
+      const { width, height } = canvas;
+      const tiles = fieldPalettes.map(({ kind }) => plot.querySelector<HTMLElement>(".category-tile." + kind));
+      const [soil, crops, unobserved] = tiles;
+      const size = plot.getBoundingClientRect();
+      if (!soil || !crops || !unobserved || !size.width || !size.height) return;
+      parcels = [soil, crops, unobserved].map(tile => {
+        const box = tile.getBoundingClientRect();
+        const x = Math.round((box.left - size.left) * width / size.width);
+        const y = Math.round((box.top - size.top) * height / size.height);
+        const right = Math.round((box.right - size.left) * width / size.width);
+        const bottom = Math.round((box.bottom - size.top) * height / size.height);
+        return { x, y, width: right - x, height: bottom - y };
+      });
+      const trend = root.querySelector(".trend-plot svg");
+      const trendWidth = trend?.getBoundingClientRect().width;
+      if (trendWidth) {
+        root.style.setProperty("--field-paint-width", `${size.width * 400 / trendWidth}px`);
+        root.style.setProperty("--field-paint-height", `${size.height * 400 / trendWidth}px`);
+      }
+      const nextPaletteKey = inputs.map(input => input.value).join();
+      if (paletteKey !== nextPaletteKey) {
+        paletteKey = nextPaletteKey;
+        const shades = inputs.map(input => safePalette(input.value));
+        tiles.forEach((tile, index) => tile?.style.setProperty("--field-label", shades[index].label));
+        const groundColors = shades.map(({ center, amplitude }, parcel) => Array.from({ length: 256 }, (_, index) =>
+          shade(center, (index / 255 * 2 - 1) * amplitude * (parcel === 1 ? .9 : 1))));
+        const cropColors = Array.from({ length: 256 }, (_, index) =>
+          shade(shades[1].center, Math.max(-1, Math.min(1, (index - 128) / 94)) * shades[1].amplitude));
+        const terrain = materials.map(material => material.createImageData(width, height));
+        const canopy = leaves.createImageData(width, height);
+        for (let offset = 0; offset < map.data.length; offset += 4) {
+          for (const [parcel, image] of terrain.entries()) {
+            image.data.set(groundColors[parcel][(parcel === 2 ? sand : map).data[offset]], offset);
+            image.data[offset + 3] = 255;
+          }
+          canopy.data.set(cropColors[map.data[offset + 1]], offset);
+          canopy.data[offset + 3] = map.data[offset + 2];
+        }
+        materials.forEach((material, index) => material.putImageData(terrain[index], 0, 0));
+        leaves.putImageData(canopy, 0, 0);
+        paintedCanopy.drawImage(materials[1].canvas, 0, 0);
+        paintedCanopy.drawImage(leaves.canvas, 0, 0);
+        for (const [name, material] of [["soil", materials[0]], ["canopy", paintedCanopy]] as const) {
+          root.style.setProperty(`--field-paint-${name}`, `url("${material.canvas.toDataURL()}")`);
+        }
+      }
+      wrapper.classList.add("field-ready");
+      if (settings) settings.hidden = false;
+      sync();
+    }
+
+    const resize = new ResizeObserver(recolor);
+    const tileChanges = new MutationObserver(changes => {
+      if (changes.some(change => change.attributeName === "style")) recolor();
+      else sync();
+    });
+    const updateMotion = () => {
+      wind.disabled = reduced.matches;
+      if (reduced.matches) wind.checked = false;
+      sync();
+    };
+    atlas.onload = () => {
+      const { width } = atlas;
+      const height = atlas.height / 2;
+      canvas.width = width;
+      canvas.height = height;
+      const ground = textureLayer(width, height);
+      const cropGround = textureLayer(width, height);
+      const sandGround = textureLayer(width, height);
+      leaves = textureLayer(width, height);
+      paintedCanopy = textureLayer(width, height);
+      if (!ground || !cropGround || !sandGround || !leaves || !paintedCanopy) return;
+      materials = [ground, cropGround, sandGround];
+      ground.drawImage(atlas, 0, height, width, height, 0, 0, width, height);
+      sand = ground.getImageData(0, 0, width, height);
+      ground.drawImage(atlas, 0, 0, width, height, 0, 0, width, height);
+      map = ground.getImageData(0, 0, width, height);
+      installMaterialRelief(root, atlas);
+      recolor();
+    };
+    atlas.src = texture;
+    resize.observe(plot);
+    const trendPlot = root.querySelector(".trend-plot");
+    if (trendPlot) resize.observe(trendPlot);
+    tileChanges.observe(plot, { attributes: true, attributeFilter: ["inert", "style"] });
+    for (const input of inputs) input.addEventListener("input", recolor);
+    wind.addEventListener("change", sync);
+    reduced.addEventListener("change", updateMotion);
+    forced.addEventListener("change", sync);
+    document.addEventListener("visibilitychange", sync);
+    return () => {
+      atlas.onload = null;
+      resize.disconnect();
+      tileChanges.disconnect();
+      cancelAnimationFrame(frame);
+      for (const input of inputs) input.removeEventListener("input", recolor);
+      wind.removeEventListener("change", sync);
+      reduced.removeEventListener("change", updateMotion);
+      forced.removeEventListener("change", sync);
+      document.removeEventListener("visibilitychange", sync);
+    };
+  }, [texture]);
+  return <canvas ref={ref} className="field-canvas" aria-hidden="true" />;
 }

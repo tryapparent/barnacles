@@ -35,7 +35,13 @@ function segmentPaths(data: Batch[]) {
       const dx = (point.x - previous.x) / 3;
       return path + ` C${previous.x + dx},${previous.y} ${point.x - dx},${point.y} ${point.x},${point.y}`;
     }, `M${first.x},${first.y}`);
-    return { curve, fill: `${curve} V112 H${first.x} Z`, first, length: points.length };
+    return {
+      curve,
+      soil: `${curve} V12 H${first.x} Z`,
+      canopy: `${curve} V112 H${first.x} Z`,
+      first,
+      length: points.length,
+    };
   });
 }
 
@@ -45,30 +51,31 @@ export function AgentWorkTrend() {
   const first = data[0];
   const last = data[data.length - 1];
   const paths = segmentPaths(data);
+  const field = paths.filter(path => path.length > 1);
   const label = (batch: Batch) => `${batch.first}–${batch.last}`;
   return <section className="agent-work-trend" aria-labelledby={id}>
     <h2 id={id}>Agent work share</h2>
     <Collapsible className="trend-disclosure">
       <div className="trend-plot">
-      {first && paths.length > 0 ? <svg viewBox="0 0 400 145" role="img" aria-label="Agent work share by batch. Exact values are in Batch data.">
+      {first && paths.length > 0 ? <svg viewBox="0 0 400 145" role="img" aria-label="Agent work share across batches of ten threads.">
         <defs>
-          <linearGradient id={`${id}-cream`} x1="0" x2="0" y1="0" y2="1">
-            <stop stopColor="var(--cream)" stopOpacity=".38" /><stop offset=".65" stopColor="var(--cream)" /><stop offset="1" stopColor="var(--cream)" />
-          </linearGradient>
-          <pattern id={`${id}-etch`} width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(32)">
-            <path d="M0 0v5" stroke="var(--meadow)" strokeOpacity=".69" strokeWidth="1.1" />
-          </pattern>
+          <clipPath id={`${id}-soil`}>
+            {field.map(({ soil, first }) => <path key={first.x} d={soil} />)}
+          </clipPath>
+          <clipPath id={`${id}-canopy`}>
+            {field.map(({ canopy, first }) => <path key={first.x} d={canopy} />)}
+          </clipPath>
         </defs>
-        {paths.filter(path => path.length > 1).map(({ fill, first }) => <g key={first.x}>
-          <path d={fill} fill={`url(#${id}-cream)`} /><path d={fill} fill={`url(#${id}-etch)`} />
-        </g>)}
-        {[100, 50, 0].map(value => <g key={value}>
-          <path d={`M48 ${112 - value}H389`} stroke="currentColor" strokeOpacity=".21" />
-          <text x="43" y={116 - value} textAnchor="end">{value}%</text>
-        </g>)}
-        {paths.map(({ curve, first, length }) => <path key={first.x}
+        {field.length > 0 && (["soil", "canopy"] as const).map(material =>
+          <foreignObject className="trend-field" key={material} x="53" y="12" width="329" height="100"
+            clipPath={`url(#${id}-${material})`}>
+            <div className={`trend-material trend-${material}`} />
+          </foreignObject>)}
+        {[100, 50, 0].map(value =>
+          <text key={value} x="43" y={116 - value} textAnchor="end">{value}%</text>)}
+        {paths.map(({ curve, first, length }) => <path className={length === 1 ? "trend-series" : "trend-series trend-field-outline"} key={first.x}
           d={length === 1 ? `M${first.x - 4},${first.y}h8` : curve}
-          fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />)}
+          fill="none" stroke="#3c5930" strokeWidth="2.2" strokeLinecap="round" />)}
         <text x="51" y="134">Threads {label(first)}</text>
         {last !== first && <text x="389" y="134" textAnchor="end">Threads {label(last)}</text>}
       </svg> : <p className="agent-work-empty">{first ? "No classified time in the recorded batches." : "The trend starts after 10 threads."}</p>}
