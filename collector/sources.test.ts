@@ -583,7 +583,14 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
     const diagnostic = { kind: "diagnostic", thread: "t", id: "checker", failed: true,
       line: "Staged checker could not load installed tools; run setup" };
     const jobResult = { kind: "job-result", thread: "t", id: "run:2:job", conclusion: "failure" };
+    const admission = { kind: "hosted-admission", thread: "t", id: "run:7:job", conclusion: "cancelled",
+      assigned: false, steps: 0, annotation: "The job was not acquired by Runner of type hosted even after multiple attempts" };
     const facts = [
+      admission, admission,
+      { ...admission, id: "superseded", annotation: "Canceling since a higher priority waiting request exists" },
+      { ...admission, id: "assigned", assigned: true },
+      { ...admission, id: "with-steps", steps: 1 },
+      { ...admission, id: "success", conclusion: "success" },
       jobResult, jobResult,
       { ...jobResult, id: "run:4:job", conclusion: "timed_out" },
       { ...jobResult, id: "run:5:job", conclusion: "cancelled" },
@@ -610,11 +617,11 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
     const result = JSON.parse(first);
     assert.deepEqual(result.files, [{ $: "FileTotal", path: "README.md", requests: 3, threads: 2, revisits: 1 }]);
     assert.deepEqual(result.costs, [{ $: "Cost", clock: "runner", operation: "build", count: 1, seconds: 129, unknown: 1 }]);
-    assert.deepEqual(result.findings.slice(0, 3).map(({ rule }: { rule: string }) => rule),
-      ["ci-job-failure", "ci-job-timeout", "staged-verification-prerequisite"]);
+    assert.deepEqual(result.findings.slice(0, 4).map(({ rule }: { rule: string }) => rule),
+      ["ci-hosted-admission-failure", "ci-job-failure", "ci-job-timeout", "staged-verification-prerequisite"]);
     assert.ok(!first.includes("installed tools"));
     assert.deepEqual(result.findings.map(({ id, previous, seconds, median }: Record<string, unknown>) =>
-      [id, previous, seconds, median]), [["run:2:job", "", 0, 0], ["run:4:job", "", 0, 0], ["checker", "", 0, 0], ["recovered", "first", 20, 0], ["tail", "", 250, 10]]);
+      [id, previous, seconds, median]), [["run:7:job", "", 0, 0], ["run:2:job", "", 0, 0], ["run:4:job", "", 0, 0], ["checker", "", 0, 0], ["recovered", "first", 20, 0], ["tail", "", 250, 10]]);
   } finally {
     rmSync(job, { recursive: true, force: true });
   }
