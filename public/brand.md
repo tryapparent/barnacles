@@ -16,7 +16,7 @@ Open the [visual brand guide](brand/) for examples and downloadable wordmarks.
 
 ## Wordmark and type
 
-- Set **plow** and display headlines in **Young Serif Regular (400)**. Use the lowercase wordmark on its own with clear space of roughly one lowercase letter around it. Use Ink on Cool Mist or Original Cream on Wet Earth. Transparent wordmarks are supplied in [Ink](assets/plow-ink.png) and [Original Cream](assets/plow-cream.png).
+- Set **plow** and display headlines in **Young Serif Regular (400)**. Use the lowercase wordmark on its own with clear space of roughly one lowercase letter around it. Use Ink on White or Original Cream on Wet Earth. Transparent wordmarks are supplied in [Ink](assets/plow-ink.png) and [Original Cream](assets/plow-cream.png).
 - Use **Young Serif Regular (400)** for main copy, including the intro at 17–23 px on the landing page. Use **Source Serif 4 Regular (400)** with optical sizing at 12–14 px for labels, timestamps, and controls.
 - At a 1,440 px composition width, use roughly 100 px for the hero, 76 px for the second display headline, 42 px for the wordmark,. At a 375 px width, use 34 px for the hero, 25 px for the second headline, 24 px for the wordmark,.
 
@@ -26,11 +26,11 @@ Open the [visual brand guide](brand/) for examples and downloadable wordmarks.
 | --- | --- | --- |
 | Wet Earth | `#392820` | Dark supporting surfaces |
 | Ink | `#1A130D` | Text on light and accent fills |
-| Cool Mist | `#F2F5F6` | Main light background |
+| White | `#FFFFFF` | Main light background |
 | Meadow | `#6A934F` | Primary accent and action fill |
 | Original Cream | `#FFF4DF` | Warm text and accents on Wet Earth |
 
-Ink labels reach 5.16:1 on Meadow. Meadow reaches 3.25:1 on Cool Mist, 3.26:1 on Original Cream, and 3.94:1 on Wet Earth for graphical accents. Original Cream reaches 12.85:1 on Wet Earth and 1.00:1 on Cool Mist. Use Ink or Wet Earth where a meaningful edge needs contrast on a light surface. Plow chart component choices are open.
+Ink labels reach 5.16:1 on Meadow. Meadow reaches 3.56:1 on White, 3.26:1 on Original Cream, and 3.94:1 on Wet Earth for graphical accents. Original Cream reaches 12.85:1 on Wet Earth and 1.09:1 on White. Use Ink or Wet Earth where a meaningful edge needs contrast on a light surface. Plow chart component choices are open.
 
 ## Art and composition
 

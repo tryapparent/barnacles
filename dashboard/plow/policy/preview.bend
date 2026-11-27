@@ -120,7 +120,7 @@ def layout(+truth: List<&2, Spans.Part>, +scale: Nat, +width: Nat, +details: Boo
   +display = Spans.groups(truth,details)
   +entries = Spans.colors(display,0,details)
   +margin = Nat.div(Nat.add(Nat.mul(5n,scale),width),width)
-  Layout{entries,gather_labels(label_regions(bridge_labels(entries,0,"#f2f5f6",scale,width)),scale,width,details,measurements,
+  Layout{entries,gather_labels(label_regions(bridge_labels(entries,0,"#ffffff",scale,width)),scale,width,details,measurements,
     Bool.pick(List<&2,Nat>,details,List.sort(~Nat,~Spans.n_before,failures),[]),margin)}
 
 def shared_scale(durations: List<&2, Nat>, +longest: Nat) -> Nat:

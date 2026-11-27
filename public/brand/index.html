@@ -8,9 +8,9 @@
 <style>
 @font-face{font-family:"Young Serif";src:url("../assets/youngserif.woff2") format("woff2");font-weight:400;font-style:normal;font-display:swap}
 @font-face{font-family:"Source Serif 4";src:url("../assets/source-serif-4.woff2") format("woff2");font-weight:400;font-style:normal;font-display:swap}
-:root{--ink:#1a130d;--mist:#f2f5f6;--earth:#392820;--meadow:#6a934f;--cream:#fff4df;--rule:color-mix(in srgb,var(--mist) 78%,var(--earth));--display:"Young Serif",Georgia,serif}
+:root{--ink:#1a130d;--white:#ffffff;--earth:#392820;--meadow:#6a934f;--cream:#fff4df;--rule:color-mix(in srgb,var(--white) 78%,var(--earth));--display:"Young Serif",Georgia,serif}
 *{box-sizing:border-box}
-.guide{width:min(100%,1120px);margin-inline:auto;padding-inline:clamp(16px,5vw,56px);color:var(--ink);background:var(--mist);font:400 16px/1.55 "Young Serif",Georgia,serif;font-synthesis:none}
+.guide{width:min(100%,1120px);margin-inline:auto;padding-inline:clamp(16px,5vw,56px);color:var(--ink);background:var(--white);font:400 16px/1.55 "Young Serif",Georgia,serif;font-synthesis:none}
 :root{--small:"Source Serif 4",Georgia,serif}
 .guide :is(p,h1,h2,h3,h4,figure,blockquote,ul){margin:0}
 .guide a{color:inherit;text-underline-offset:.22em;text-decoration-thickness:1px}
@@ -36,7 +36,7 @@
 .guide .small-specimen{margin-block:14px;font-size:12px}
 .section :is(.identity,.type-grid,.swatches,.art,.sample){margin-block-start:clamp(22px,4vw,42px)}
 .identity{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:clamp(14px,3vw,28px)}
-.logo-panel{display:grid;place-items:center;min-height:clamp(110px,18vw,206px);padding:16px;background:var(--mist);border:1px solid var(--rule)}
+.logo-panel{display:grid;place-items:center;min-height:clamp(110px,18vw,206px);padding:16px;background:var(--white);border:1px solid var(--rule)}
 .logo-panel.dark{background:var(--earth)}
 .logo-panel img{display:block;width:min(58%,190px);height:auto}
 .downloads{font-size:14px}
@@ -136,11 +136,11 @@
 
  <section class="section" id="color" aria-labelledby="color-heading">
   <h2 id="color-heading">Brand palette</h2>
-  <p class="lead">Use Ink for labels on Meadow. Meadow clears 3:1 against both light colors and Wet Earth for graphical accents.</p>
+  <p class="lead">Use Ink for labels on Meadow. Meadow clears 3:1 against White, Original Cream, and Wet Earth for graphical accents.</p>
   <ul class="swatches">
    <li><span class="swatch" style="--sample:var(--earth)"></span><strong>Wet Earth</strong><small class="hex">#392820</small><small>Dark supporting surfaces</small></li>
    <li><span class="swatch" style="--sample:var(--ink)"></span><strong>Ink</strong><small class="hex">#1A130D</small><small>Text on light and accent fills</small></li>
-   <li><span class="swatch" style="--sample:var(--mist)"></span><strong>Cool Mist</strong><small class="hex">#F2F5F6</small><small>Main light background</small></li>
+   <li><span class="swatch" style="--sample:var(--white)"></span><strong>White</strong><small class="hex">#FFFFFF</small><small>Main light background</small></li>
    <li><span class="swatch" style="--sample:var(--meadow)"></span><strong>Meadow</strong><small class="hex">#6A934F</small><small>Primary accent and action fill</small></li>
    <li><span class="swatch" style="--sample:var(--cream)"></span><strong>Original Cream</strong><small class="hex">#FFF4DF</small><small>Warm text and accents on Wet Earth</small></li>
   </ul>
