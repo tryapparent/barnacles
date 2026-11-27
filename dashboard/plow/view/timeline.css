@@ -12,10 +12,6 @@ h1,p,ol{margin:0}.wordmark,h1{font-family:"Young Serif",Georgia,serif;font-weigh
 }
 .activity-landscape{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;object-position:center top;z-index:-1;pointer-events:none}
 .activity-meta{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px}
-.activity-links{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:0 6px}
-#session-history-link{display:inline-flex;align-items:center;min-height:44px;padding:0 7px;border-radius:4px;background:var(--earth);color:var(--cream);font-size:14px;font-weight:650;text-underline-offset:3px}
-#session-history-link:hover{background:var(--ink)}
-#session-history-link:focus-visible{outline:2px solid var(--cream);outline-offset:-4px}
 @media(forced-colors:active){
   .activity-header{border-bottom:1px solid CanvasText}
   .activity-landscape{display:none}
@@ -96,8 +92,9 @@ button[aria-pressed=true]{background:var(--earth);border-color:var(--earth);colo
 .trace:hover header,.trace:focus-within header,.trace:hover header::after,.trace:focus-within header::after{background:#f6f3ed}
 .trace .meta,.utc-tick{font:500 12px/1.1 "Source Serif 4",Georgia,serif}
 .trace header{padding-inline-end:62px}
-.trace .inspectable{position:absolute;inset:0 2px 0 auto;display:grid;place-items:center;width:auto;min-width:56px;height:44px;border:0;padding-inline:7px;color:var(--earth);font:600 12px "Source Serif 4",Georgia,serif;text-decoration:underline;text-underline-offset:3px}
-.trace .inspectable[aria-expanded=true]{background:var(--earth);color:var(--cream);text-decoration:none}
+.trace .inspectable{position:absolute;inset:0 2px 0 auto;display:grid;place-items:center;width:auto;min-width:44px;height:44px;border:0;padding:0;color:var(--earth)}
+.trace .inspectable:hover{background:#ebe3d6}
+.trace .inspectable[aria-expanded=true]{background:var(--earth);color:var(--cream)}
 .trace:has(.inspectable[aria-expanded=true]){background:#f4efe7}
 .inspector-slot{height:0;margin:0}
 .inspector-slot .inspect-panel{position:fixed;inset:auto max(24px,calc((100vw - 1230px) / 2)) 22px auto;z-index:12;width:min(420px,calc(100vw - 32px));height:auto;max-height:min(340px,50vh);padding:14px 16px;border:1px solid #d9d1c5;border-radius:12px;background:var(--white);box-shadow:0 8px 28px rgb(57 40 32 / .16)}

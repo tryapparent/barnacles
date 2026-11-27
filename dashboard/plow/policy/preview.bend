@@ -270,5 +270,8 @@ def initial_overview() -> Summary.OverviewSelection:
 def select_overview(selection: Summary.OverviewSelection, action: Summary.OverviewAction) -> Summary.OverviewSelection:
   Summary.select_overview(selection,action)
 
-def agent_work_trend(threads: List<&2,Trend.TrendThread>, first: Nat) -> List<&2,Trend.TrendBatch>:
-  Trend.agent_work_trend(threads,first)
+def overview_start(to: Nat) -> Nat:
+  Nat.sub(to,86400000n)
+
+def agent_work_trend(traces: List<&2,Summary.SummaryTrace>, from: Nat) -> List<&2,Trend.TrendPoint>:
+  Trend.agent_work_trend(traces,from)

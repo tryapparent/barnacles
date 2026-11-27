@@ -1,6 +1,12 @@
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
-import { Button, Card, fieldPalettes } from "../controls";
+import { Button, Card } from "../controls";
+
+const fieldPalettes = [
+  { kind: "workflow", color: "#543b2a" },
+  { kind: "agent", color: "#91ad5f" },
+  { kind: "unclear", color: "#dfbf89" },
+];
 
 type Category = {
   kind: number;
@@ -63,7 +69,7 @@ export function Summary({ fieldTexture }: { fieldTexture?: string }) {
   const model = useSyncExternalStore(subscribe, () => overview);
   const categoryTracks = model ? parcelTracks(model.categories.map(({ weight }) => weight), 128, 136) : undefined;
   const operationTracks = model ? parcelTracks(model.operations.map(({ weight }) => weight), 104, 104) : undefined;
-  return <Card className="summary-panel" id="summary-panel" aria-labelledby="summary-heading"
+  return <Card className="summary-panel" id="summary-panel" aria-labelledby="summary-heading" aria-describedby="overview-period"
     onKeyDown={event => {
       if (event.key === "Escape" && model?.breakdown) {
         event.preventDefault();
@@ -102,7 +108,7 @@ export function Summary({ fieldTexture }: { fieldTexture?: string }) {
           </span>
         </Button>)}
       </div>
-      <p id="operation-empty" className="summary-note" hidden={!model?.emptyOperations}>No operations in this range. Try zooming out.</p>
+      <p id="operation-empty" className="summary-note" hidden={!model?.emptyOperations}>No recorded operations in the last 24 hours.</p>
       {model?.recovery && <Button type="button" className="operation-recovery"
         data-operation={model.recovery.key} onClick={model.clearOperation}>{model.recovery.name}</Button>}
     </section>
@@ -172,44 +178,15 @@ function installMaterialRelief(root: HTMLElement, atlas: HTMLImageElement) {
   }
 }
 
-function installParcelTextures(root: HTMLElement, field: ImageData, sand: ImageData) {
-  const output = textureLayer(field.width, field.height);
-  if (!output) return;
-  const image = output.createImageData(field.width, field.height);
-  for (const material of ["soil", "crops", "sand"] as const) {
-    for (let offset = 0; offset < image.data.length; offset += 4) {
-      const soil = field.data[offset];
-      const leaves = field.data[offset + 2] / 255;
-      const relief = material === "sand" ? sand.data[offset]
-        : material === "crops" ? soil * (1 - leaves) + field.data[offset + 1] * leaves
-        : soil;
-      const tone = Math.max(38, Math.min(218, relief));
-      image.data[offset] = tone;
-      image.data[offset + 1] = tone;
-      image.data[offset + 2] = tone;
-      image.data[offset + 3] = 255;
-    }
-    output.putImageData(image, 0, 0);
-    root.style.setProperty(`--parcel-${material}`, `url("${output.canvas.toDataURL()}")`);
-  }
-}
-
 function FieldSurface({ texture }: { texture: string }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const canvas = ref.current;
     const wrapper = canvas?.parentElement;
     const plot = wrapper?.querySelector<HTMLElement>("#tiles");
-    const settings = document.querySelector<HTMLDetailsElement>("#field-settings");
     const root = wrapper?.closest("main");
     const context = canvas?.getContext("2d");
-    const wind = settings?.querySelector<HTMLInputElement>('input[type="checkbox"]');
-    if (!canvas || !wrapper || !plot || !settings || !wind || !root || !context) return;
-    const inputs = [...settings.querySelectorAll<HTMLInputElement>('input[type="color"]')];
-    const reduced = matchMedia("(prefers-reduced-motion: reduce)");
-    const forced = matchMedia("(forced-colors: active)");
-    wind.checked = !reduced.matches;
-    wind.disabled = reduced.matches;
+    if (!canvas || !wrapper || !plot || !root || !context) return;
 
     const atlas = new Image();
     let map: ImageData | undefined;
@@ -217,51 +194,21 @@ function FieldSurface({ texture }: { texture: string }) {
     let materials: CanvasRenderingContext2D[] = [];
     let leaves: CanvasRenderingContext2D | null = null;
     let paintedCanopy: CanvasRenderingContext2D | null = null;
-    let paletteKey = "";
+    let painted = false;
     let divide = 0;
     let horizon = 0;
-    let frame = 0;
-    let lastPaint = -Infinity;
-
-    function draw(time: number) {
-      if (!context || !materials.length || !leaves || !canvas || !horizon) return;
+    function draw() {
+      if (!context || !materials.length || !paintedCanopy || !canvas) return;
       const { width, height } = canvas;
-      const scale = height / 160;
-      const band = Math.round(3 * scale);
       context.drawImage(materials[0].canvas, 0, 0);
       if (divide >= width) return;
+      if (horizon > 0) {
+        context.drawImage(paintedCanopy.canvas, divide, 0, width - divide, horizon,
+          divide, 0, width - divide, horizon);
+      }
       if (horizon < height) {
         context.drawImage(materials[2].canvas, divide, horizon, width - divide, height - horizon,
           divide, horizon, width - divide, height - horizon);
-      }
-      context.save();
-      context.beginPath();
-      context.rect(divide, 0, width - divide, horizon);
-      context.clip();
-      context.drawImage(materials[1].canvas, 0, 0);
-      for (let y = 0; y < horizon; y += band) {
-        const strip = Math.min(band, horizon - y);
-        const sway = time ? scale * (2.5 * Math.sin(time * .0019 + y / scale * .040) +
-          1.3 * Math.sin(time * .0027 - y / scale * .094)) : 0;
-        context.drawImage(leaves.canvas, divide, y, width - divide, strip,
-          divide + sway, y, width - divide, strip);
-      }
-      context.restore();
-    }
-
-    function animate(time: number) {
-      if (time - lastPaint >= 32) {
-        draw(time);
-        lastPaint = time;
-      }
-      frame = requestAnimationFrame(animate);
-    }
-
-    function sync() {
-      cancelAnimationFrame(frame);
-      draw(0);
-      if (horizon && wind?.checked && !reduced.matches && !forced.matches && !document.hidden && !plot?.inert) {
-        frame = requestAnimationFrame(animate);
       }
     }
 
@@ -280,10 +227,9 @@ function FieldSurface({ texture }: { texture: string }) {
         root.style.setProperty("--field-paint-width", `${size.width * 400 / trendWidth}px`);
         root.style.setProperty("--field-paint-height", `${size.height * 400 / trendWidth}px`);
       }
-      const nextPaletteKey = inputs.map(input => input.value).join();
-      if (paletteKey !== nextPaletteKey) {
-        paletteKey = nextPaletteKey;
-        const shades = inputs.map(input => safePalette(input.value));
+      if (!painted) {
+        painted = true;
+        const shades = fieldPalettes.map(({ color }) => safePalette(color));
         tiles.forEach((tile, index) => tile?.style.setProperty("--field-label", shades[index].label));
         const groundColors = shades.map(({ center, amplitude }, parcel) => Array.from({ length: 256 }, (_, index) =>
           shade(center, (index / 255 * 2 - 1) * amplitude * (parcel === 1 ? .9 : 1))));
@@ -303,25 +249,15 @@ function FieldSurface({ texture }: { texture: string }) {
         leaves.putImageData(canopy, 0, 0);
         paintedCanopy.drawImage(materials[1].canvas, 0, 0);
         paintedCanopy.drawImage(leaves.canvas, 0, 0);
-        for (const [name, material] of [["soil", materials[0]], ["canopy", paintedCanopy]] as const) {
+        for (const [name, material] of [["soil", materials[0]], ["canopy", paintedCanopy], ["sand", materials[2]]] as const) {
           root.style.setProperty(`--field-paint-${name}`, `url("${material.canvas.toDataURL()}")`);
         }
       }
       wrapper.classList.add("field-ready");
-      if (settings) settings.hidden = false;
-      sync();
+      draw();
     }
 
     const resize = new ResizeObserver(recolor);
-    const tileChanges = new MutationObserver(changes => {
-      if (changes.some(change => change.attributeName === "style")) recolor();
-      else sync();
-    });
-    const updateMotion = () => {
-      wind.disabled = reduced.matches;
-      if (reduced.matches) wind.checked = false;
-      sync();
-    };
     atlas.onload = () => {
       const { width } = atlas;
       const height = atlas.height / 2;
@@ -339,29 +275,15 @@ function FieldSurface({ texture }: { texture: string }) {
       ground.drawImage(atlas, 0, 0, width, height, 0, 0, width, height);
       map = ground.getImageData(0, 0, width, height);
       installMaterialRelief(root, atlas);
-      installParcelTextures(root, map, sand);
       recolor();
     };
     atlas.src = texture;
     resize.observe(plot);
     const trendPlot = root.querySelector(".trend-plot");
     if (trendPlot) resize.observe(trendPlot);
-    tileChanges.observe(plot, { attributes: true, attributeFilter: ["inert", "style"] });
-    for (const input of inputs) input.addEventListener("input", recolor);
-    wind.addEventListener("change", sync);
-    reduced.addEventListener("change", updateMotion);
-    forced.addEventListener("change", sync);
-    document.addEventListener("visibilitychange", sync);
     return () => {
       atlas.onload = null;
       resize.disconnect();
-      tileChanges.disconnect();
-      cancelAnimationFrame(frame);
-      for (const input of inputs) input.removeEventListener("input", recolor);
-      wind.removeEventListener("change", sync);
-      reduced.removeEventListener("change", updateMotion);
-      forced.removeEventListener("change", sync);
-      document.removeEventListener("visibilitychange", sync);
     };
   }, [texture]);
   return <canvas ref={ref} className="field-canvas" aria-hidden="true" />;

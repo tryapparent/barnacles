@@ -1,4 +1,5 @@
-import type { DatabaseSync, SQLOutputValue } from "node:sqlite";
+import { buildPolicy, loadPolicy } from "../../tooling/bend.ts";
+import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
 import type { List } from "../storage/sources.ts";
 import type { IntervalIdentity, ObservedInterval } from "./intervals.ts";
 import { rows, type collectTiming, type ProcessAttribution, type Stats } from "./timing.ts";
@@ -146,4 +147,58 @@ export function writeTraces(source: DatabaseSync, view: DatabaseSync, policy: Tr
   const defaultTrace = choice.trace_id ? { session: choice.session, traceId: choice.trace_id, from: choice.from, to: choice.to, mixed: choice.mixed }
     : undefined;
   return { rolloutCount, traceSessions: sessions.length, defaultTrace };
+}
+
+type FeedRun = { $: "Run"; requested: number; started: number; completed: number; status: string };
+type ProviderSpan = { $: "ProviderSpan"; a: number; b: number; operation: string };
+type CiPoll = { $: "CiPoll"; a: number; b: number };
+type FeedThread = { $: "Thread"; created: number; updated: number; runs: List<FeedRun>; detail: List<ProviderSpan>; ci: List<CiPoll> };
+type FeedSpan = { a: number; b: number; name: string };
+type FeedTrace = { start: number; end: number; work: List<FeedSpan>; wait: List<FeedSpan>; errors: List<number>; detail: List<FeedSpan>; ci: List<FeedSpan> };
+type FeedPolicy = { project_feed(threads: List<FeedThread>, asOf: number): { observed: number; traces: List<FeedTrace>;
+  overview: List<FeedTrace>; as_of: number } };
+
+const feedList = <T>(values: T[]): List<T> =>
+  values.reduceRight<List<T>>((tail, head) => ({ $: "Con", head, tail }), { $: "Nil" });
+
+export async function projectPlowFeed(path: string, scratch: string, asOf = Date.now()) {
+  const policy = await loadPolicy<FeedPolicy>(
+    await buildPolicy(scratch, new URL("../analysis/plow-feed.bend", import.meta.url), "plow-feed.mjs"));
+  const db = new DatabaseSync(path, { readOnly: true });
+  try {
+    db.exec("PRAGMA busy_timeout = 5000; BEGIN");
+    const threads = db.prepare("SELECT instance, thread_id, created_ms, updated_ms FROM t3_threads ORDER BY instance, thread_id").all();
+    const runs = db.prepare(`SELECT requested_ms, started_ms, completed_ms, status FROM t3_runs
+      WHERE instance=? AND thread_id=? ORDER BY run_id`);
+    const spans = db.prepare(`SELECT s.start_ns,s.end_ns,s.operation FROM t3_live_codex_links t
+      JOIN t3_live_codex_span_links l ON (l.codex_instance,l.session_id)=(t.codex_instance,t.session_id)
+      JOIN codex_otel_spans s ON (s.instance,s.trace_id,s.span_id)=(l.codex_instance,l.trace_id,l.span_id)
+      WHERE t.t3_instance=? AND t.thread_id=? ORDER BY s.start_ns,s.trace_id,s.span_id`);
+    const ci = db.prepare(`SELECT p.poll_started_ms,p.poll_result_ms FROM t3_codex_links t
+      JOIN codex_process_receipts p ON (p.instance,p.session_id)=(t.codex_instance,t.session_id)
+      WHERE t.t3_instance=? AND t.thread_id=? ORDER BY p.poll_started_ms,p.poll_result_ms`);
+    const ms = (ns: SQLOutputValue) => Number(BigInt(String(ns)) / 1000000n);
+    const projected = policy.project_feed(feedList(threads.map(thread => ({
+      $: "Thread", created: Number(thread.created_ms), updated: Number(thread.updated_ms),
+      runs: feedList(runs.all(thread.instance, thread.thread_id).map(run => ({
+        $: "Run", requested: Number(run.requested_ms), started: Number(run.started_ms),
+        completed: Number(run.completed_ms), status: String(run.status),
+      }))),
+      detail: feedList(spans.all(thread.instance, thread.thread_id).map(span => ({
+        $: "ProviderSpan", a: ms(span.start_ns), b: ms(span.end_ns), operation: String(span.operation),
+      }))),
+      ci: feedList(ci.all(thread.instance, thread.thread_id).map(poll => ({
+        $: "CiPoll", a: Number(poll.poll_started_ms), b: Number(poll.poll_result_ms),
+      }))),
+    }))), asOf);
+    const encodeSpans = (list: List<FeedSpan>) => rows(list).map(({ a, b, name }) => [a / 1000, b / 1000, name]);
+    const encodeTraces = (list: List<FeedTrace>) => rows(list).map(trace => ({
+      startUtcMs: trace.start, end: trace.end / 1000, work: encodeSpans(trace.work), wait: encodeSpans(trace.wait),
+      errors: rows(trace.errors).map(at => at / 1000), detail: encodeSpans(trace.detail), ci: encodeSpans(trace.ci),
+    }));
+    return { observed: projected.observed, traces: encodeTraces(projected.traces),
+      overview: { to: projected.as_of, traces: encodeTraces(projected.overview) } };
+  } finally {
+    db.close();
+  }
 }
