@@ -169,6 +169,30 @@ def observe_peer(state: Replay, thread: String, +id: String, +clock: String, coh
           with_outlier(findings, earlier_peers(past, revision, start), clock, thread, id, seconds)},
         Replay{seen, files, reads, costs, attempts, cohorts, findings})
 
+def prerequisite_label(+line: String) -> String:
+  +missing_checker = String.starts_with(line, "Staged checker could not load installed tools")
+  +missing_typescript = Bool.and(String.starts_with(line, "Dependency policy failed: Staged TypeScript "),
+    String.contains(line, ": locked TypeScript dependencies are missing for staged"))
+  Bool.pick(String, Bool.or(missing_checker, missing_typescript), "staged-verification-prerequisite", "")
+
+def observe_failure(state: Replay, +thread: String, +id: String, +label: String, failed: Bool) -> Replay:
+  match state:
+    case Replay{+seen, +files, +reads, +costs, +attempts, +cohorts, +findings}:
+      +event = pair("failure", pair(thread, pair(label, id)))
+      +valid = Bool.and(failed, Bool.and(Bool.not(String.is_empty(label)), Bool.not(includes(seen, event))))
+      Bool.pick(Replay, valid,
+        Replay{Map.set(&2, Bool, seen, event, True{}), files, reads, costs, attempts, cohorts,
+          Finding{label, thread, id, "", 0, 0, 0, 0} <> findings},
+        Replay{seen, files, reads, costs, attempts, cohorts, findings})
+
+def observe_diagnostic(state: Replay, thread: String, id: String, line: String, failed: Bool) -> Replay:
+  observe_failure(state, thread, id, prerequisite_label(String.trim(line)), failed)
+
+def observe_job_result(state: Replay, thread: String, id: String, +conclusion: String) -> Replay:
+  +timeout = String.eq(conclusion, "timed_out")
+  +failed = Bool.or(timeout, String.eq(conclusion, "failure"))
+  observe_failure(state, thread, id, Bool.pick(String, timeout, "ci-job-timeout", "ci-job-failure"), failed)
+
 def replay_files(state: Replay) -> List<&2, FileTotal>:
   match state:
     case Replay{_, files, _, _, _, _, _}: Map.values(&2, FileTotal, files)
