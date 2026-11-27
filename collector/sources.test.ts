@@ -576,6 +576,95 @@ test("nested wait receipts, recycled handles and exact watcher overlap through t
   } finally { rmSync(job, { recursive: true, force: true }); }
 });
 
+test("bottleneck replay binds verification and recovery to original receipts", () => {
+  const root = process.env.BARNACLES_TEST_DIRECTORY;
+  assert.ok(root);
+  const job = mkdtempSync(join(root, "bottleneck-recovery-test-"));
+  const file = join(job, "facts.ndjson");
+  const worktree = { kind: "storage-worktree-removal", thread: "t", id: "worktree-first", path: "path-1",
+    receipt: "quarantine-1", producer: "host-storage-maintenance", phase: "post", deleted: true, at: 100 };
+  const repository = { kind: "github-pr-repository-recovery", thread: "t", id: "repository-recovery",
+    createdRepository: "fixture/upstream", closedRepository: "fixture/upstream", repairedRepository: "fixture/fork",
+    createdPr: 2, closedPr: 2, repairedPr: 4, title: "Update documentation", repairedTitle: "Update documentation",
+    implicit: true, created: 100, closed: 110, repaired: 120 };
+  const transcribe = { kind: "rust-transcribe-runtime-missing", thread: "t", id: "transcribe-runtime",
+    operation: "cargo-build-script", origin: "build.rs", failed: true,
+    line: 'read transcribe runtime: Os { code: 2, kind: NotFound, message: "No such file or directory" }' };
+  const stale = { kind: "model-backend-revision-refusal", thread: "t", id: "stale-backend",
+    endpoint: "GET /api/model/options?explicit_only=1", status: 503, running: "aaaaaaa", checkout: "bbbbbbb",
+    line: "Restart required: This process is running code from aaaaaaa but the checkout on disk is now bbbbbbb. The model picker would risk a stale-module crash — restart the Desktop-owned backend to load the new code (use Restart backend in Hermes Desktop, or quit and reopen the app)" };
+  const gate = { kind: "platform-admission-status-refusal", thread: "t", id: "queued-gate",
+    run: "12345678901", gateRun: "12345678901", head: "a".repeat(40), gateHead: "a".repeat(40),
+    workflowStatus: "queued", platform: "linux", diagnostic: "No successful linux main verification for this exact commit",
+    original: false, alternative: true, requiredFinished: 100, refusedAt: 200 };
+  const rebuild = { kind: "declared-input-rebuild", thread: "t", id: "same-input-rebuild",
+    priorLane: "engine / linux-x64", landedLane: "engine / linux-x64", priorEvent: "pull_request", landedEvent: "push",
+    priorResult: "success", landedResult: "success", priorInputs: "a".repeat(64), landedInputs: "a".repeat(64),
+    decision: "no qualifying prior artifact", priorEnded: 100, start: 120, end: 240 };
+  const draft = { kind: "hosted-publish-result", thread: "t", id: "draft-tag-readback",
+    publisher: "linux-compatibility-tag-read", conclusion: "failure", exitCode: 1, status: 404,
+    line: "Error: Command failed: gh api repos/example/capture/releases/tags/linux-main-" + "a".repeat(40) };
+  const pages = { kind: "hosted-publish-result", thread: "t", id: "pages-seal-refusal",
+    publisher: "pages-artifact-seal", conclusion: "failure", exitCode: 1, status: 0, line: "Error: Unexpected artifact input" };
+  const copyTarget = { kind: "hosted-macos-automation-probe", thread: "t", id: "copy-target",
+    step: "Native GPUI Copy capture ID against the same installed App", conclusion: "failure",
+    fixture: "capture/desktop/scripts/native/copy-capture-id.swift", command: "swiftc", exitCode: 1,
+    failure: "Native Copy ID fixture failed: The observed input point does not hit the exact owned app" };
+  const facts = [
+    worktree, worktree,
+    { ...worktree, id: "same-removal", at: 110 },
+    { ...worktree, id: "planned-removal", phase: "pre", receipt: "quarantine-2", at: 120 },
+    { ...worktree, id: "other-path", path: "path-2", receipt: "quarantine-3", at: 130 },
+    { ...worktree, id: "worktree-removed-again", receipt: "quarantine-4", at: 140 },
+    repository, repository,
+    { ...repository, id: "explicit-first-target", implicit: false },
+    { ...repository, id: "unrelated-closure", closedPr: 3 },
+    { ...repository, id: "later-title", repairedTitle: "Separate documentation", repaired: 240 },
+    transcribe, transcribe,
+    { ...transcribe, id: "successful-build", failed: false },
+    { ...transcribe, id: "other-origin", origin: "runtime.rs" },
+    stale, stale,
+    { ...stale, id: "same-revision", checkout: stale.running },
+    { ...stale, id: "non-matching-endpoint", endpoint: "GET /api/model/status" },
+    gate, gate,
+    { ...gate, id: "other-head", gateHead: "b".repeat(40) },
+    { ...gate, id: "both-refuse", alternative: false },
+    { ...gate, id: "no-separation", platform: "macos" },
+    rebuild, rebuild,
+    { ...rebuild, id: "scope-changed", landedInputs: "b".repeat(64) },
+    { ...rebuild, id: "wrong-lane", priorLane: "engine / macos-x64" },
+    { ...rebuild, id: "artifact-reused", decision: "verified matching receipt" },
+    draft, draft,
+    { ...draft, id: "wrong-http-status", status: 403 },
+    { ...draft, id: "invalid-draft-route", line: "Error: Command failed: gh api repos/example/capture/releases/latest" },
+    pages, pages,
+    { ...pages, id: "different-seal-error", line: "Error: invalid deployment credential" },
+    copyTarget, copyTarget,
+    { ...copyTarget, id: "different-native-error", failure: "Native Copy ID fixture failed: setup not ready" },
+    { ...copyTarget, id: "positive-target-check", conclusion: "success", exitCode: 0 },
+  ];
+  try {
+    writeFileSync(file, facts.map(fact => JSON.stringify(fact)).join("\n") + "\n");
+    const text = execFileSync(process.execPath, [
+      fileURLToPath(new URL("./import-sources.ts", import.meta.url)), job, "bottlenecks", file,
+    ], { encoding: "utf8" });
+    const rows = JSON.parse(text).findings as { id: string; rule: string; seconds: number }[];
+    assert.deepEqual(rows.map(row => [row.id, row.rule, row.seconds]), [
+      ["worktree-removed-again", "local-worktree-removal-repeated", 0],
+      ["repository-recovery", "github-pr-default-repository-recovered", 20],
+      ["transcribe-runtime", "local-rust-transcribe-runtime-missing", 0],
+      ["stale-backend", "local-model-catalog-stale-backend-revision", 0],
+      ["queued-gate", "ci-platform-admission-queued-status-refused", 100],
+      ["same-input-rebuild", "ci-main-rebuild-same-declared-inputs", 120],
+      ["draft-tag-readback", "ci-release-tag-readback-not-found", 0],
+      ["pages-seal-refusal", "ci-pages-artifact-input-refused", 0],
+      ["copy-target", "ci-native-copy-id-target-refused", 0],
+    ]);
+  } finally {
+    rmSync(job, { recursive: true, force: true });
+  }
+});
+
 test("bottleneck replay separates clocks, distinct peers and observed recoveries", () => {
   const root = process.env.BARNACLES_TEST_DIRECTORY;
   assert.ok(root);

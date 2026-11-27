@@ -383,6 +383,61 @@ def observe_actions_job_log_escape_refusal(state: Replay, thread: String, id: St
   +receipt = String.eq(diagnostic, "the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway")
   observe_failure(state, thread, id, "ci-job-log-escape-refused", Bool.and(failed, Bool.and(producer, receipt)))
 
+def observe_storage_worktree_removal(state: Replay, thread: String, id: String, path: String, receipt: String,
+  producer: String, phase: String, deleted: Bool, +at: U32) -> Replay:
+  +source = Bool.and(String.eq(producer, "host-storage-maintenance"), String.eq(phase, "post"))
+  observe_repeat(state, thread, id, "local-worktree-removal-repeated", path, receipt, at, at, 0, Bool.and(source, deleted))
+
+def observe_pr_repository_recovery(state: Replay, thread: String, id: String, +created_repo: String,
+  closed_repo: String, repaired_repo: String, +created_pr: U32, closed_pr: U32, repaired_pr: U32,
+  title: String, repaired_title: String, implicit: Bool, +created: U32, +closed: U32, +repaired: U32) -> Replay:
+  +closure = Bool.and(String.eq(created_repo, closed_repo), Bool.and(U32.is_eq(created_pr, closed_pr), U32.is_gt(created_pr, 0)))
+  +changed = Bool.and(implicit, Bool.and(Bool.not(String.eq(created_repo, repaired_repo)), U32.is_gt(repaired_pr, 0)))
+  +elapsed = U32.sub(repaired, created)
+  +ordered = Bool.and(U32.is_gt(created, 0),
+    Bool.and(U32.is_ge(closed, created), Bool.and(U32.is_ge(repaired, closed), U32.is_le(elapsed, 600))))
+  observe_failure_with_duration(state, thread, id, "github-pr-default-repository-recovered",
+    Bool.and(closure, Bool.and(changed, Bool.and(ordered, String.eq(title, repaired_title)))), elapsed)
+
+def observe_transcribe_runtime_missing(state: Replay, thread: String, id: String, operation: String,
+  origin: String, line: String, failed: Bool) -> Replay:
+  +source = Bool.and(String.eq(operation, "cargo-build-script"), String.eq(origin, "build.rs"))
+  +diagnostic = String.eq(line, "read transcribe runtime: Os { code: 2, kind: NotFound, message: \"No such file or directory\" }")
+  observe_failure(state, thread, id, "local-rust-transcribe-runtime-missing", Bool.and(failed, Bool.and(source, diagnostic)))
+
+def observe_model_backend_revision_refusal(state: Replay, thread: String, id: String, endpoint: String, status: U32,
+  +running: String, +checkout: String, line: String) -> Replay:
+  +route = Bool.and(String.eq(endpoint, "GET /api/model/options?explicit_only=1"), U32.is_eq(status, 503))
+  +mismatch = Bool.not(String.eq(running, checkout))
+  +expected = String.append("Restart required: This process is running code from ", String.append(running,
+    String.append(" but the checkout on disk is now ", String.append(checkout,
+      ". The model picker would risk a stale-module crash — restart the Desktop-owned backend to load the new code (use Restart backend in Hermes Desktop, or quit and reopen the app)"))))
+  observe_failure(state, thread, id, "local-model-catalog-stale-backend-revision",
+    Bool.and(route, Bool.and(mismatch, String.eq(line, expected))))
+
+def observe_platform_admission_status_refusal(state: Replay, thread: String, id: String, run: String,
+  gate_run: String, +head: String, gate_head: String, workflow_status: String, platform: String, diagnostic: String,
+  original: Bool, alternative: Bool, +required_finished: U32, +refused_at: U32) -> Replay:
+  +identity = Bool.and(String.eq(run, gate_run), String.eq(head, gate_head))
+  +status = Bool.and(String.eq(workflow_status, "queued"), String.eq(platform, "linux"))
+  +proof = Bool.and(Bool.not(original), Bool.and(alternative,
+    String.eq(diagnostic, "No successful linux main verification for this exact commit")))
+  +elapsed = U32.sub(refused_at, required_finished)
+  +clock = Bool.and(U32.is_gt(required_finished, 0), Bool.and(U32.is_gt(refused_at, required_finished), U32.is_ge(elapsed, 60)))
+  observe_failure_with_duration(state, thread, id, "ci-platform-admission-queued-status-refused",
+    Bool.and(identity, Bool.and(status, Bool.and(proof, clock))), elapsed)
+
+def observe_same_declared_input_rebuild(state: Replay, thread: String, id: String, prior_lane: String,
+  landed_lane: String, prior_event: String, landed_event: String, prior_result: String, landed_result: String,
+  prior_inputs: String, landed_inputs: String, decision: String, +prior_ended: U32, +start: U32, +end: U32) -> Replay:
+  +same_inputs = Bool.and(String.eq(prior_lane, landed_lane), String.eq(prior_inputs, landed_inputs))
+  +events = Bool.and(String.eq(prior_event, "pull_request"), String.eq(landed_event, "push"))
+  +verified = Bool.and(String.eq(prior_result, "success"), String.eq(landed_result, "success"))
+  +fallback = String.eq(decision, "no qualifying prior artifact")
+  +ordered = Bool.and(U32.is_gt(prior_ended, 0), Bool.and(U32.is_ge(start, prior_ended), U32.is_gt(end, start)))
+  observe_failure_with_duration(state, thread, id, "ci-main-rebuild-same-declared-inputs",
+    Bool.and(same_inputs, Bool.and(events, Bool.and(verified, Bool.and(fallback, ordered)))), U32.sub(end, start))
+
 def observe_hosted_workflow_startup_failure(state: Replay, thread: String, id: String, status: String,
   conclusion: String, job_count: U32, attempt: U32) -> Replay:
   +ended = Bool.and(String.eq(status, "completed"), String.eq(conclusion, "startup_failure"))
@@ -527,13 +582,19 @@ def observe_hosted_status_write(state: Replay, thread: String, id: String, step:
   observe_failure(state, thread, id, "ci-status-reporter-rate-limited",
     Bool.and(reporter, Bool.and(write, Bool.and(failed, throttle))))
 
-def observe_hosted_macos_probe(state: Replay, thread: String, id: String, step: String, conclusion: String,
-  fixture: String, command: String, failure: String, exit_code: U32) -> Replay:
+def observe_hosted_macos_probe(state: Replay, thread: String, id: String, +step: String, conclusion: String,
+  +fixture: String, +command: String, +failure: String, exit_code: U32) -> Replay:
   +tool = Bool.and(String.eq(step, "Native Mac Storage and error-reporting controls against the installed Rust GUI"),
     String.eq(fixture, "capture/desktop/ui/frontend/tests/mac-storage-native.cjs"))
   +probe = Bool.and(String.eq(command, "system-events-ui-elements-enabled"), String.eq(failure, "ERR_TEST_FAILURE"))
+  +copy = Bool.and(String.eq(step, "Native GPUI Copy capture ID against the same installed App"),
+    String.eq(fixture, "capture/desktop/scripts/native/copy-capture-id.swift"))
+  +ownership = Bool.and(String.eq(command, "swiftc"),
+    String.eq(failure, "Native Copy ID fixture failed: The observed input point does not hit the exact owned app"))
   +failed = Bool.and(String.eq(conclusion, "failure"), U32.is_eq(exit_code, 1))
-  observe_failure(state, thread, id, "ci-macos-system-events-probe-failed", Bool.and(tool, Bool.and(probe, failed)))
+  +label = Bool.pick(String, Bool.and(tool, probe), "ci-macos-system-events-probe-failed",
+    Bool.pick(String, Bool.and(copy, ownership), "ci-native-copy-id-target-refused", ""))
+  observe_failure(state, thread, id, label, failed)
 
 def observe_actions_rate_limit(state: Replay, thread: String, id: String, +operation: String, status: U32, +line: String,
   failed: Bool) -> Replay:
@@ -590,8 +651,15 @@ def publication_label(+publisher: String, +line: String, +status: U32) -> String
   +http_prefix = String.append("HTTP ", String.append(Nat.show(U32.to_nat(status)), " (https://uploads.github.com/repos/"))
   +upload_line = Bool.and(String.starts_with(line, http_prefix), Bool.and(String.contains(line, "/releases/"),
     String.ends_with(line, "/assets)")))
+  +draft = Bool.and(String.eq(publisher, "linux-compatibility-tag-read"), Bool.and(U32.is_eq(status, 404),
+    Bool.and(String.starts_with(line, "Error: Command failed: gh api repos/"),
+      String.contains(line, "/releases/tags/linux-main-"))))
+  +allowlist = Bool.and(String.eq(publisher, "pages-artifact-seal"), Bool.and(U32.is_eq(status, 0),
+    String.eq(line, "Error: Unexpected artifact input")))
   Bool.pick(String, onboarding, "ci-onboarding-release-artifact-conflict",
-    Bool.pick(String, Bool.and(upload, upload_line), "ci-release-upload-server-error", ""))
+    Bool.pick(String, Bool.and(upload, upload_line), "ci-release-upload-server-error",
+      Bool.pick(String, draft, "ci-release-tag-readback-not-found",
+        Bool.pick(String, allowlist, "ci-pages-artifact-input-refused", ""))))
 
 def observe_hosted_publish(state: Replay, thread: String, id: String, publisher: String, conclusion: String,
   exit_code: U32, status: U32, line: String) -> Replay:
