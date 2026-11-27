@@ -72,7 +72,7 @@ export function Summary() {
       }}>
       <div className="operation-heading">
         <h3 id="operation-heading">{model?.breakdown}</h3>
-        <Button type="button" id="collapse" onClick={model?.close}>Close breakdown <span aria-hidden="true">×</span></Button>
+        <Button type="button" id="collapse" aria-label="Close breakdown" onClick={model?.close}><span aria-hidden="true">×</span></Button>
       </div>
       <div id="operation-tiles" role="group" aria-label="Operations">
         {model?.operations.map(operation => <Button type="button" key={operation.key}
