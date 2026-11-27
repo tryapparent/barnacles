@@ -146,6 +146,7 @@ export type NativeBinding = {
 };
 
 export type SessionJoinPolicy = {
+  repository_name(value: string): string;
   choose_binding(thread: string, requested: string, refs: List<NativeBinding>):
     { $: "NoBinding" | "Ambiguous" } | { $: "Bound"; session_id: string; reference_id: string };
   exact_join(expected: string, captured: string): JoinState;

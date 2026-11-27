@@ -1,4 +1,5 @@
 import Base
+import ../repository.bend as Repository
 
 type JoinState is Data:
   Linked{}
@@ -56,3 +57,6 @@ def binding_scan(+thread: String, +requested: String, +refs: List<&2, NativeBind
 
 def choose_binding(+thread: String, +requested: String, +refs: List<&2, NativeBinding>) -> BindingChoice:
   binding_scan(thread, requested, refs, NoBinding{})
+
+def repository_name(value: String) -> String:
+  Repository.normalized(value)

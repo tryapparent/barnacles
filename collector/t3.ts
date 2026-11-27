@@ -169,8 +169,7 @@ async function fetchNativeReferences(endpoint: string, bearer: string, threadId:
   }
 }
 
-async function importLiveSession(evidence: string, scratch: string, bindingPath: string, traces: string,
-  policy: SourcePolicy) {
+async function importLiveSession(evidence: string, scratch: string, bindingPath: string, traces: string) {
   const binding = statSync(bindingPath);
   if (!binding.isFile() || binding.size > 1024 * 1024) throw Error("Expected a bounded T3 session binding");
   const traceSource = statSync(traces, { bigint: true });
@@ -198,7 +197,7 @@ async function importLiveSession(evidence: string, scratch: string, bindingPath:
   return joinSession(evidence, traces, {
     t3Instance: token(receipt.t3Instance), threadId, codexInstance: token(receipt.codexInstance),
     sessionId: token(selected.session_id), referenceId: selected.reference_id,
-    ci: ci && { observationId: token(ci.observationId), kind: str(ci.kind), repository: repository(str(ci.repository), policy),
+    ci: ci && { observationId: token(ci.observationId), kind: str(ci.kind), repository: repository(str(ci.repository), joinPolicy),
       runId: positiveInt(ci.runId), attempt: positiveInt(ci.attempt), sha: sha(ci.headSha) },
   }, joinPolicy, bendList);
 }
@@ -213,10 +212,12 @@ async function main() {
   const evidence = join(resolve(directory), "evidence.sqlite");
   const scratch = mkdtempSync(join(resolve(directory), "build-"));
   try {
+    if (live) {
+      console.log(JSON.stringify(await importLiveSession(evidence, scratch, t3Instance, threadId)));
+      return;
+    }
     const { policy, admission } = await buildSourcePolicies(scratch);
-    const result = live
-      ? await importLiveSession(evidence, scratch, t3Instance, threadId, policy)
-      : await importLinkedRollout(evidence, t3Database, t3Instance, threadId, codexInstance, rollout, policy, admission);
+    const result = await importLinkedRollout(evidence, t3Database, t3Instance, threadId, codexInstance, rollout, policy, admission);
     console.log(JSON.stringify(result));
   } finally {
     rmSync(scratch, { recursive: true, force: true });
