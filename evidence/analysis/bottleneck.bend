@@ -687,6 +687,20 @@ def observe_forge_response(state: Replay, thread: String, id: String, operation:
   +valid = Bool.and(Bool.and(create, server_error), Bool.and(failed, identified))
   observe_failure(state, thread, id, "pr-create-http-server-error", valid)
 
+def observe_pr_merge_response(state: Replay, thread: String, id: String, +repository: String, +pr: U32,
+  +status: U32, +receipt: String, following_repository: String, following_pr: U32, +following_state: String,
+  following_merge_commit: String) -> Replay:
+  +server_error = Bool.and(U32.is_ge(status, 500), U32.is_lt(status, 600))
+  +original = Bool.or(String.eq(receipt, "gh-cli-merge-http"), String.eq(receipt, "gh-rest-merge-http"))
+  +target = Bool.and(Bool.not(String.is_empty(repository)), U32.is_gt(pr, 0))
+  +same_pr = Bool.and(String.eq(repository, following_repository), U32.is_eq(pr, following_pr))
+  +has_commit = Bool.not(String.is_empty(following_merge_commit))
+  +open = Bool.and(String.eq(following_state, "OPEN"), Bool.not(has_commit))
+  +merged = Bool.and(String.eq(following_state, "MERGED"), has_commit)
+  +rule = Bool.pick(String, Bool.and(same_pr, open), "pr-merge-http-error-observed-open",
+    Bool.pick(String, Bool.and(same_pr, merged), "pr-merge-http-error-observed-merged", "pr-merge-http-server-error"))
+  observe_failure(state, thread, id, rule, Bool.and(target, Bool.and(server_error, original)))
+
 def observe_github_pr_ref_resolution(state: Replay, thread: String, id: String, base: String,
   head: String, line: String, failed: Bool) -> Replay:
   +expected = String.append("pull request create failed: GraphQL: Head sha can't be blank, Base sha can't be blank, No commits between ",
