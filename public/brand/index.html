@@ -8,9 +8,9 @@
 <style>
 @font-face{font-family:"Young Serif";src:url("../assets/youngserif.woff2") format("woff2");font-weight:400;font-style:normal;font-display:swap}
 @font-face{font-family:Geist;src:url("../assets/geist.woff2") format("woff2");font-weight:400 650;font-style:normal;font-display:swap}
-:root{--ink:#1a130d;--cream:#fff4df;--earth:#392820;--meadow:#6f9b53;--straw:#a18054;--rule:color-mix(in srgb,var(--cream) 78%,var(--earth));--display:"Young Serif",Georgia,serif}
+:root{--ink:#1a130d;--mist:#f2f5f6;--earth:#392820;--meadow:#6f9b53;--straw:#a18054;--rule:color-mix(in srgb,var(--mist) 78%,var(--earth));--display:"Young Serif",Georgia,serif}
 *{box-sizing:border-box}
-.guide{width:min(100%,1120px);margin-inline:auto;padding-inline:clamp(16px,5vw,56px);color:var(--ink);background:var(--cream);font:400 16px/1.55 Geist,system-ui,sans-serif;font-synthesis:none}
+.guide{width:min(100%,1120px);margin-inline:auto;padding-inline:clamp(16px,5vw,56px);color:var(--ink);background:var(--mist);font:400 16px/1.55 Geist,system-ui,sans-serif;font-synthesis:none}
 .guide :is(p,h1,h2,h3,h4,figure,blockquote,ul){margin:0}
 .guide a{color:inherit;text-underline-offset:.22em;text-decoration-thickness:1px}
 .guide a:hover{text-decoration-thickness:2px}
@@ -33,7 +33,7 @@
 .section .lead{margin-block-start:12px;max-width:57ch;color:var(--earth)}
 .section :is(.identity,.type-grid,.swatches,.art,.sample){margin-block-start:clamp(22px,4vw,42px)}
 .identity{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:clamp(14px,3vw,28px)}
-.logo-panel{display:grid;place-items:center;min-height:clamp(110px,18vw,206px);padding:16px;background:var(--cream);border:1px solid var(--rule)}
+.logo-panel{display:grid;place-items:center;min-height:clamp(110px,18vw,206px);padding:16px;background:var(--mist);border:1px solid var(--rule)}
 .logo-panel.dark{background:var(--earth)}
 .logo-panel img{display:block;width:min(58%,190px);height:auto}
 .downloads{font-size:14px}
@@ -55,7 +55,7 @@
 .art .hands img{position:absolute;width:195%;max-width:none;object-position:left 43%}
 .art .art-name{display:block;margin-block-start:10px;font-weight:600}
 .art .art-note{display:block;margin-block-start:2px}
-.sample{padding:clamp(18px,4.5vw,40px);background:var(--earth);color:var(--cream)}
+.sample{padding:clamp(18px,4.5vw,40px);background:var(--earth);color:var(--mist)}
 .sample .sample-head{font:400 clamp(27px,5vw,55px)/1.08 var(--display);letter-spacing:-.035em}
 .sample .sample-body{margin-block-start:12px;max-width:45ch}
 .sample .sample-action{display:inline-block;margin-block-start:18px;padding:7px 14px;background:var(--meadow);color:var(--ink);font-weight:600}
@@ -105,8 +105,8 @@
     <figcaption class="downloads"><a href="../assets/plow-ink.png" download>Download Ink PNG</a></figcaption>
    </figure>
    <figure>
-    <div class="logo-panel dark"><img src="../assets/plow-cream.png" width="954" height="494" alt="Lowercase plow in cream"></div>
-    <figcaption class="downloads"><a href="../assets/plow-cream.png" download>Download Cream PNG</a></figcaption>
+    <div class="logo-panel dark"><img src="../assets/plow-cool-mist.png" width="954" height="494" alt="Lowercase plow in Cool Mist"></div>
+    <figcaption class="downloads"><a href="../assets/plow-cool-mist.png" download>Download Cool Mist PNG</a></figcaption>
    </figure>
   </div>
  </section>
@@ -131,11 +131,11 @@
 
  <section class="section" id="color" aria-labelledby="color-heading">
   <h2 id="color-heading">Brand palette</h2>
-  <p class="lead">Use Ink for labels on Meadow and Toasted Straw. Toasted Straw clears 3:1 against Cream and Wet Earth for graphical accents.</p>
+  <p class="lead">Use Ink for labels on Meadow and Toasted Straw. Toasted Straw clears 3:1 against Cool Mist and Wet Earth for graphical accents.</p>
   <ul class="swatches">
    <li><span class="swatch" style="--sample:var(--earth)"></span><strong>Wet Earth</strong><small class="hex">#392820</small><small>Dark supporting surfaces</small></li>
    <li><span class="swatch" style="--sample:var(--ink)"></span><strong>Ink</strong><small class="hex">#1A130D</small><small>Text on light and accent fills</small></li>
-   <li><span class="swatch" style="--sample:var(--cream)"></span><strong>Cream</strong><small class="hex">#FFF4DF</small><small>Light surfaces and text on Wet Earth</small></li>
+   <li><span class="swatch" style="--sample:var(--mist)"></span><strong>Cool Mist</strong><small class="hex">#F2F5F6</small><small>Light surfaces and text on Wet Earth</small></li>
    <li><span class="swatch" style="--sample:var(--meadow)"></span><strong>Meadow</strong><small class="hex">#6F9B53</small><small>Primary accent and action fill</small></li>
    <li><span class="swatch" style="--sample:var(--straw)"></span><strong>Toasted Straw</strong><small class="hex">#A18054</small><small>Warm graphic accent and supporting fill</small></li>
   </ul>
