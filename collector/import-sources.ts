@@ -298,9 +298,21 @@ async function replayBottlenecks(file: string, scratch: string) {
           clockSecond(value.exitCode), clockSecond(value.driverExit), bendBool(value.scenarioStarted), token(value.command),
           factText(value.line), token(value.required), clockSecond(value.elapsedMs));
       } else if (value.kind === "workflow-status-gate") {
-        state = policy.observe_workflow_gate(state, token(value.thread), id, token(value.dependentJob),
+        state = policy.observe_workflow_gate(state, token(value.thread), id, value.workflow == null ? "" : token(value.workflow),
+          token(value.dependentJob),
           token(value.prerequisite), clockSecond(value.attemptStarted), clockSecond(value.earliestJobStarted),
           clockSecond(value.previousCompleted), clockSecond(value.gateCompleted), clockSecond(value.dependentStarted));
+      } else if (value.kind === "pre-push-timing-fixture") {
+        state = policy.observe_pre_push_timing_fixture(state, token(value.thread), id, token(value.operation),
+          token(value.setting), factText(value.fixture), factText(value.actual), factText(value.expected),
+          factText(value.line), bendBool(value.failed), clockSecond(value.suiteElapsedMs));
+      } else if (value.kind === "main-verification-reuse") {
+        state = policy.observe_main_reuse_refusal(state, token(value.thread), id, token(value.event),
+          factText(value.step), token(value.conclusion), factText(value.line));
+      } else if (value.kind === "hermes-validator-cache-copy") {
+        state = policy.observe_hermes_cache_merge(state, token(value.thread), id, factText(value.step),
+          token(value.conclusion), clockSecond(value.exitCode), token(value.code), token(value.syscall),
+          factText(value.origin), bendBool(value.restored));
       } else if (value.kind === "native-model-fetch-result") {
         state = policy.observe_native_model_fetch(state, token(value.thread), id, factText(value.step), token(value.conclusion),
           clockSecond(value.exitCode), clockSecond(value.status), sha(value.revision), factText(value.line), factText(value.origin),
