@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
+import { DatabaseSync } from "node:sqlite";
+import { projectPlowFeed } from "./session-history.ts";
 import { buildPolicy, loadPolicy } from "../../tooling/bend.ts";
 
 type FixtureList<T> = { $: "Nil" } | { $: "Con"; head: T; tail: FixtureList<T> };
@@ -39,6 +41,41 @@ test("timeline protects gaps, overlap precedence, and clipped failure times", as
       [3250, 5500, 1, "Linux"], [5500, 7000, 1, "Workflows & waits"], [7000, 8000, 0, "Activity unclear"],
     ]);
     assert.deepEqual(fixtureRows(evidence.failures).map(({ at, label }) => [at, label]), [[7000, "Linux"]]);
+  } finally {
+    rmSync(job, { recursive: true, force: true });
+  }
+});
+
+
+test("projects scoped T3 links with exact session clocks", async () => {
+  const parent = process.env.PLOW_TEST_DIRECTORY;
+  assert.ok(parent);
+  const job = mkdtempSync(join(parent, "feed-"));
+  try {
+    const t3Environment = "00000000-0000-4000-8000-000000000001";
+    const t3Thread = "00000000-0000-4000-8000-000000000002";
+    const t3Delegate = "subagent:codex:" + "a".repeat(64);
+    const t3Path = t3Environment + "/" + encodeURIComponent(t3Delegate);
+    const dbPath = join(job, 'projection-fixture.sqlite')
+    const db = new DatabaseSync(dbPath)
+    db.exec(`
+      CREATE TABLE t3_threads(instance TEXT, thread_id TEXT, created_ms INTEGER, updated_ms INTEGER);
+      CREATE TABLE t3_runs(instance TEXT, thread_id TEXT, run_id TEXT, requested_ms INTEGER, started_ms INTEGER,
+        completed_ms INTEGER, status TEXT);
+      INSERT INTO t3_threads VALUES ('fixture-t3','${t3Thread}',100,1200),('fixture-t3','${t3Delegate}',1500,3000),('t3','unknown',3200,3400);
+      INSERT INTO t3_runs VALUES ('fixture-t3','${t3Thread}','a',110,300,900,'failed'),('fixture-t3','${t3Delegate}','b',2000,2400,NULL,'running'),
+        ('fixture-t3','${t3Delegate}','c',2100,NULL,NULL,'queued'),('fixture-t3','${t3Delegate}','d',NULL,2300,3200,'completed'),
+        ('another','latest','e',1600,1700,1800,'completed');
+    `)
+    db.close()
+    const projected = await projectPlowFeed(dbPath, job, new Map([['fixture-t3', t3Environment]]))
+    assert.deepEqual(projected, {
+      observed: 3000,
+      traces: [
+        { t3Path, startUtcMs: 1500, end: .9, work: [], wait: [[.5,.9,'T3 admission']], errors: [] },
+        { t3Path: t3Environment + '/' + t3Thread, startUtcMs: 100, end: .8, work: [[.2,.8,'Provider run']], wait: [[.01,.2,'T3 admission']], errors: [.8] },
+      ],
+    })
   } finally {
     rmSync(job, { recursive: true, force: true });
   }

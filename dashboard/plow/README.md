@@ -14,7 +14,9 @@ only threads with matching spans in the visible UTC range and outlines those
 spans on the same clock. Matching rows close up inside the fixed-height
 timeline viewport. Selecting the operation again clears the
 filter. Changing the time range updates the matches while preserving the
-selected operation.
+selected operation. Zoom to six hours or less and select a thread to inspect
+its recorded timeline. **Open in T3** opens the selected conversation when a
+verified thread reference is available.
 
 React renders the dashboard shell and time summary with the shared
 [shadcn controls](../web/controls.tsx). The timeline renderer handles UTC
@@ -26,9 +28,10 @@ policies under `policy/`. The registered host paths provide HTML, embedded
 fonts, DOM and browser input adapters, build packaging, Chromium verification,
 and the JavaScript Worker module and Cloudflare API calls that those runtimes
 require. The projection reuses the collector database and publishes only
-timing intervals, generic clock labels, and an observation timestamp. It
-omits thread identifiers, titles, prompt text, links, and unlinked Codex
-and GitHub records. Generated files and live data stay out of Git and build
+timing intervals, generic clock labels, an observation timestamp, and validated
+T3 references for the displayed threads. Cloudflare Access protects these
+references in the private feed and dashboard response. The feed omits titles,
+prompt text, and unlinked Codex and GitHub records. Generated files and live data stay out of Git and build
 artifacts. When configured, the Session history link opens Plow’s private tailnet view.
 
 ## Build and verify
@@ -91,6 +94,12 @@ job=$(mktemp -d /tmp/apparent-dev-plow-feed-XXXXXX)
 node dashboard/plow/build.ts --project-feed "$evidence" "$job/feed.json"
 node dashboard/plow/deploy.ts --publish-feed "$job/feed.json"
 ```
+
+For collected T3 instances stored as aliases, provide an optional private
+`<database>.t3-environments.json` alongside the database. Its JSON object
+maps each verified collector alias to its T3 environment UUID. The publisher
+adds links for UUID-backed threads and delegated thread IDs. Unmapped aliases
+omit the action. Keep the mapping out of Git and deployment artifacts.
 
 Run this pair from one fifteen-minute timer on the collection host, with the
 second command conditional on the first succeeding. Remove the temporary

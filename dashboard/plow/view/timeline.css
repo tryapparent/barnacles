@@ -81,3 +81,8 @@ button[aria-pressed=true]{background:var(--earth);border-color:var(--earth);colo
 .inspector-slot{block-size:176px;margin-top:10px}
 .inspector-slot .inspect-panel{block-size:100%;overflow:auto;scrollbar-gutter:stable;overscroll-behavior-y:contain;padding-inline:4px}
 .inspect-panel:focus-visible{outline-offset:-2px}
+.inspector-header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:4px 12px;margin-block-end:5px}
+.inspector-header h3{margin:0}
+.inspector-header a{display:inline-flex;align-items:center;min-height:44px;padding:6px 13px;border:1px solid #827467;border-radius:5px;color:var(--ink);font:650 15px Geist,system-ui;text-decoration:none}
+.inspector-header a:hover{background:var(--cream)}
+.inspector-header a:focus-visible{outline-offset:-3px}

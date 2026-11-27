@@ -86,13 +86,13 @@ export function readGitHub(path: string): unknown {
 export type GitHubReader = (path: string) => unknown;
 
 export function githubReader(repository: string, env = process.env, send = fetch): GitHubReader {
-  const mode = env.BARNACLES_GITHUB_AUTH;
+  const mode = env.PLOW_GITHUB_AUTH;
   if (!mode) return readGitHub;
   if (mode !== "app" && mode !== "token" && mode !== "public") throw Error("Invalid GitHub authentication mode");
   let credential = "";
   if (mode !== "public") {
     try {
-      credential = readFileSync(env.BARNACLES_GITHUB_CREDENTIAL_FILE ?? "", "utf8").trim();
+      credential = readFileSync(env.PLOW_GITHUB_CREDENTIAL_FILE ?? "", "utf8").trim();
       if (!credential) throw Error();
     } catch {
       throw Error("Expected a readable GitHub credential file");
@@ -127,9 +127,9 @@ export function githubReader(repository: string, env = process.env, send = fetch
     },
   });
   const request = octokit.request.defaults({ headers: { "x-github-api-version": "2022-11-28" } });
-  const installationId = mode === "app" ? positiveInt(env.BARNACLES_GITHUB_INSTALLATION_ID) : null;
+  const installationId = mode === "app" ? positiveInt(env.PLOW_GITHUB_INSTALLATION_ID) : null;
   const auth = installationId ? createAppAuth({
-    appId: positiveInt(env.BARNACLES_GITHUB_APP_ID),
+    appId: positiveInt(env.PLOW_GITHUB_APP_ID),
     installationId,
     privateKey: credential,
     request,
