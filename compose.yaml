@@ -9,6 +9,7 @@ services:
     restart: unless-stopped
     read_only: true
     init: true
+    user: "${PLOW_FRONTEND_UID_GID:-0:0}"
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     ports:

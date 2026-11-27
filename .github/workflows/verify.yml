@@ -34,10 +34,14 @@ jobs:
           export PLOW_FRONTEND_ASSETS="$RUNNER_TEMP/plow"
           export PLOW_FRONTEND_FEED="$RUNNER_TEMP/plow-feed"
           export PLOW_RELEASE="$GITHUB_SHA"
+          export PLOW_FRONTEND_UID_GID="$(id -u):$(id -g)"
           mkdir -m 700 "$PLOW_FRONTEND_FEED"
           printf '%s\n' '{"observed":0,"traces":[]}' > "$PLOW_FRONTEND_FEED/timeline.json"
           trap 'docker compose -p plow-dashboard-check down' EXIT
-          docker compose -p plow-dashboard-check up -d --wait plow-dashboard
+          if ! docker compose -p plow-dashboard-check up -d --wait plow-dashboard; then
+            docker compose -p plow-dashboard-check logs plow-dashboard
+            exit 1
+          fi
           test "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:3033/_health)" = 204
           test "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:3033/app)" = 403
         env:
