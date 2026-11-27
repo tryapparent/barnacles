@@ -2,9 +2,8 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { buildPolicies, buildPolicy, loadPolicy } from "../tooling/bend.ts";
-import { backupAnalysisInput, joinedTargets, publishJoinedAnalysis } from "../evidence/index.ts";
-import { admissionPolicy, joinSession, loadEvidence, repository, sessionJoinPolicy, sourcePolicy, type AdmissionPolicy, type NativeBinding, type SessionJoinPolicy, type Point, type SourcePolicy, type ThreadEvidence } from "../evidence/index.ts";
-import { array, bendList, boundedFile, millis, point, row, sha, stockT3Origin, stockT3Rpc, str, timeParts, toMillis, token } from "./wire.ts";
+import { admissionPolicy, backupAnalysisInput, joinedTargets, joinSession, loadEvidence, publishJoinedAnalysis, repository, sessionJoinPolicy, sourcePolicy, type AdmissionPolicy, type NativeBinding, type SessionJoinPolicy, type Point, type SourcePolicy, type ThreadEvidence } from "../evidence/index.ts";
+import { array, bendList, boundedFile, millis, point, replayOutcomeDelays, row, sha, stockT3Origin, stockT3Rpc, str, timeParts, toMillis, token } from "./wire.ts";
 import { positiveInt } from "./github/attempt.ts";
 import { inspectRollout } from "./codex/rollout.ts";
 
@@ -263,6 +262,13 @@ async function main() {
   }
 }
 
+function readAnalysisImpact(receipts: string, scratch: string) {
+  const file = join(receipts, "outcomes", "outcome-delays.json");
+  return statSync(file, { throwIfNoEntry: false })
+    ? async (window: { from: number; to: number }) => JSON.parse(await replayOutcomeDelays(file, scratch, window))
+    : undefined;
+}
+
 if (import.meta.main) {
   main().catch((error: unknown) => {
     console.error(error instanceof Error ? error.message : "T3 rollout import failed");
@@ -292,7 +298,7 @@ export async function refreshAnalysis() {
         catch (error) { if (!(error instanceof Error) || !/\((NoBinding|Ambiguous)\)$/.test(error.message)) throw error; }
       }
     }
-    console.log(await publishJoinedAnalysis(path, output, scratch));
+    console.log(await publishJoinedAnalysis(path, output, scratch, Date.now(), readAnalysisImpact(receipts, scratch)));
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }

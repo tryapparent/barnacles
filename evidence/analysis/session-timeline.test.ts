@@ -15,6 +15,43 @@ function fixtureRows<T>(list: FixtureList<T>) {
   return output;
 }
 
+test("daily outcome impact clips confirmed intervals and keeps shared time out of unique pattern totals", async () => {
+  const parent = process.env.PLOW_TEST_DIRECTORY;
+  assert.ok(parent);
+  const job = mkdtempSync(join(parent, "daily-impact-"));
+  try {
+    const compiled = await buildPolicy(job, new URL("./outcome-delay.bend", import.meta.url), "daily-impact.mjs");
+    type Time = { $: "Some"; value: number } | { $: "None" };
+    const policy = await loadPolicy<{
+      outcome_delays_in_window(windows: FixtureList<unknown>, from: number, to: number): {
+        totals: { confirmedMs: Time; sharedMs: Time; affectedOutcomes: number; coverage: { occurrences: number; sufficient: number } };
+        patterns: FixtureList<{ pattern: string; uniqueMs: Time }>;
+      };
+    }>(compiled);
+    const blocker = (pattern: string, fromMs: number, untilMs: number) => ({
+      $: "Blocker", occurrence: pattern, pattern, condition: pattern, scope: "revision",
+      fromMs, untilMs, pending: "pending", released: "released",
+    });
+    const full = { $: "DelayWindow", id: "ready", outcome: "merge", scope: "revision", stage: "delivery",
+      basis: "exact-revision", readyMs: 1000, possibleMs: 8000, readiness: "ready", availability: "possible",
+      blockers: fixtureList([blocker("ci", 1000, 5000), blocker("approval", 4000, 8000)]),
+    };
+    const unknown = { ...full, id: "unknown", outcome: "deploy", readiness: "",
+      blockers: fixtureList([blocker("runner", 3500, 0)]) };
+    const result = policy.outcome_delays_in_window(fixtureList([full, full, unknown]), 3000, 7000);
+    assert.equal(result.totals.affectedOutcomes, 1);
+    assert.equal(result.totals.coverage.occurrences, 3);
+    assert.equal(result.totals.coverage.sufficient, 2);
+    assert.deepEqual(result.totals.confirmedMs, { $: "Some", value: 4000 });
+    assert.deepEqual(result.totals.sharedMs, { $: "Some", value: 1000 });
+    assert.deepEqual(fixtureRows(result.patterns).map(({ pattern, uniqueMs }) => [pattern, uniqueMs]),
+      [["approval", { $: "Some", value: 2000 }], ["ci", { $: "Some", value: 1000 }], ["runner", { $: "None" }]]);
+    assert.deepEqual(policy.outcome_delays_in_window(fixtureList([full]), 8000, 9000).totals.confirmedMs, { $: "None" });
+  } finally {
+    rmSync(job, { recursive: true, force: true });
+  }
+});
+
 
 test("timeline protects gaps, overlap precedence, and clipped failure times", async () => {
   const parent = process.env.PLOW_TEST_DIRECTORY;
@@ -134,14 +171,34 @@ test("joined bottleneck replay counts exact job facts once and preserves missing
     assert.deepEqual(analysis.files, []);
     assert.equal(analysis.findings.length, 1);
     assert.match(JSON.stringify(analysis.findings[0]), /"ci-job-failure"/);
+    const additional = new DatabaseSync(file);
+    try {
+      additional.exec(`
+        INSERT INTO t3_threads VALUES
+          ('fixture','shared',1699900000000,1700000003000,'completed','manual_t3',0,1),
+          ('fixture','metadata-only',1699900000000,1700000003000,'completed','manual_t3',0,0),
+          ('fixture','future',1700000012000,1700000012000,'completed','manual_t3',0,0);
+        INSERT INTO t3_runs VALUES ('fixture','shared','shared-run',1699900000000,1699900001000,1700000003000,'completed');
+        INSERT INTO t3_ci_observations VALUES ('fixture','shared','watch','watch','synthetic/example',40,2,'revision');
+        INSERT INTO t3_ci_links VALUES ('fixture','shared','watch');
+        WITH RECURSIVE i(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM i WHERE n<51)
+        INSERT INTO t3_threads SELECT 'fixture','partial-'||n,1700000000000,1700000000000,'running','manual_t3',0,0 FROM i;
+      `);
+    } finally {
+      additional.close();
+    }
     const output = join(job, "analysis.sqlite");
-    assert.equal((await publishJoinedAnalysis(file, output, job)).recomputed, 1);
-    assert.equal((await publishJoinedAnalysis(file, output, job)).recomputed, 0);
+    const cutoff = 1700000012000;
+    assert.equal((await publishJoinedAnalysis(file, output, job, cutoff)).recomputed, 53);
+    assert.equal((await publishJoinedAnalysis(file, output, job, cutoff)).recomputed, 0);
     const published = new DatabaseSync(output, { readOnly: true });
     try {
       const summary = JSON.parse(String(published.prepare("SELECT payload FROM analysis_summary").get()?.payload));
-      assert.deepEqual(summary.ranking, [{ $: "Rank", rule: "ci-job-failure", threads: 1, occurrences: 1 }]);
-      const detail = JSON.parse(String(published.prepare("SELECT payload FROM analysis_threads").get()?.payload));
+      assert.equal(Date.parse(summary.window.to) - Date.parse(summary.window.from), 86400000);
+      assert.deepEqual(summary.coverage, { $: "Coverage", active: 53, withCodex: 0, withCI: 2, withBoth: 0 });
+      assert.deepEqual(summary.ranking, [{ $: "Rank", rule: "ci-job-failure", threads: 2, occurrences: 1 }]);
+      const ciThread = summary.threads.find((thread: { coverage: { githubJobs: number } }) => thread.coverage.githubJobs);
+      const detail = JSON.parse(String(published.prepare("SELECT payload FROM analysis_threads WHERE id=?").get(ciThread.id)?.payload));
       assert.deepEqual(detail.rules, ["ci-job-failure"]);
       assert.equal(detail.coverage.githubJobs, 3);
       assert.notEqual(detail.id, "thread");
@@ -149,7 +206,15 @@ test("joined bottleneck replay counts exact job facts once and preserves missing
     } finally {
       published.close();
     }
-
+    assert.equal((await publishJoinedAnalysis(file, output, job, cutoff + 86400000)).analyzedThreads, 1);
+    const expired = new DatabaseSync(output, { readOnly: true });
+    try {
+      const summary = JSON.parse(String(expired.prepare("SELECT payload FROM analysis_summary").get()?.payload));
+      assert.deepEqual(summary.ranking, []);
+      assert.equal(expired.prepare("SELECT count(*) AS n FROM analysis_threads").get()?.n, 1);
+    } finally {
+      expired.close();
+    }
   } finally {
     rmSync(job, { recursive: true, force: true });
   }
