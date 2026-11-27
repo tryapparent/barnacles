@@ -14,6 +14,21 @@ type Admission is Data:
   Admit{}
   Reject{message: String}
 
+type NativeRef is Data:
+  NativeRef{driver: String, native_driver: String, native_id: String, strength: String}
+
+def count_native_matches(refs: List<&2, NativeRef>, +session: String, +remaining: U32, +matches: U32) -> Bool:
+  match refs:
+    case []: U32.is_eq(matches, 1)
+    case NativeRef{driver, native_driver, native_id, strength} <> tail:
+      found = Bool.and(String.eq(driver, "codex"), Bool.and(String.eq(native_driver, "codex"),
+        Bool.and(String.eq(strength, "strong"), String.eq(native_id, session))))
+      Bool.and(U32.is_gt(remaining, 0),
+        count_native_matches(tail, session, U32.sub(remaining, 1), U32.add(matches, Bool.pick(U32, found, 1, 0))))
+
+def t3_rollout_matches(refs: List<&2, NativeRef>, +session: String) -> Bool:
+  Bool.and(Bool.not(String.eq(session, "")), count_native_matches(refs, session, 64, 0))
+
 def words_before(+a: U32, lo_a: U32, +b: U32, lo_b: U32) -> Bool:
   Bool.or(U32.is_lt(a, b), Bool.and(U32.is_eq(a, b), U32.is_lt(lo_a, lo_b)))
 
