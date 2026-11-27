@@ -210,6 +210,12 @@ type ReplayPolicy = {
     itemType: string, status: string, truncated: boolean, line: string): unknown;
   observe_run_watch_deadline(state: unknown, thread: string, id: string, operation: string, launchHandle: number,
     terminalHandle: number, exitStatus: boolean, exitCode: number, timeout: number, elapsedMs: number): unknown;
+  observe_manual_ci_status_read(state: unknown, thread: string, id: string, repository: string, run: string,
+    attempt: number, snapshot: string, at: number, pending: boolean, mode: string): unknown;
+  observe_staged_source_budget(state: unknown, thread: string, id: string, operation: string, phase: string,
+    unit: string, path: string, actual: number, allowance: number, failed: boolean): unknown;
+  observe_hosted_bun_test_deadline(state: unknown, thread: string, id: string, step: string, conclusion: string,
+    diagnostic: string, path: string, test: string, exitCode: number, budgetMs: number, elapsedMs: number): unknown;
   replay_files(state: unknown): List<Record<string, unknown>>;
   replay_costs(state: unknown): List<Record<string, unknown>>;
   replay_findings(state: unknown): List<Record<string, unknown>>;
@@ -328,6 +334,18 @@ async function replayBottlenecks(file: string, scratch: string) {
         state = policy.observe_run_watch_deadline(state, token(value.thread), id, token(value.operation),
           clockSecond(value.launchHandle), clockSecond(value.terminalHandle), bendBool(value.exitStatus),
           clockSecond(value.exitCode), clockSecond(value.timeout), clockSecond(value.elapsedMs));
+      } else if (value.kind === "manual-ci-status-read") {
+        state = policy.observe_manual_ci_status_read(state, token(value.thread), id, factText(value.repository),
+          token(value.run), clockSecond(value.attempt), sha(value.snapshot), clockSecond(value.at),
+          bendBool(value.pending), token(value.mode));
+      } else if (value.kind === "staged-source-budget") {
+        state = policy.observe_staged_source_budget(state, token(value.thread), id, token(value.operation),
+          factText(value.phase), token(value.unit), factText(value.path), clockSecond(value.actual),
+          clockSecond(value.allowance), bendBool(value.failed));
+      } else if (value.kind === "hosted-bun-test-deadline") {
+        state = policy.observe_hosted_bun_test_deadline(state, token(value.thread), id, factText(value.step),
+          token(value.conclusion), token(value.diagnostic), factText(value.path), factText(value.test),
+          clockSecond(value.exitCode), clockSecond(value.budgetMs), clockSecond(value.elapsedMs));
       } else if (value.kind === "hermes-validator-cache-copy") {
         state = policy.observe_hermes_cache_merge(state, token(value.thread), id, factText(value.step),
           token(value.conclusion), clockSecond(value.exitCode), token(value.code), token(value.syscall),

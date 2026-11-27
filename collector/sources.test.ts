@@ -733,6 +733,13 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       line: "Failed to create unified exec process: No such file or directory (os error 2)" };
     const runWatch = { kind: "run-watch-deadline", thread: "t", id: "run-watch-expired", operation: "gh-run-watch",
       launchHandle: 42, terminalHandle: 42, exitStatus: true, exitCode: 124, timeout: 1800, elapsedMs: 1_802_000 };
+    const statusRead = { kind: "manual-ci-status-read", thread: "t", id: "manual-first", repository: "example/app",
+      run: "12345678901", attempt: 1, snapshot: "a".repeat(40), at: 100, pending: true, mode: "manual-watcher-log" };
+    const sourceBudget = { kind: "staged-source-budget", thread: "t", id: "budget-refusal", operation: "git-commit",
+      phase: "budgets/style", unit: "source-tokens", path: "tool/tests/suite.ts", actual: 5131, allowance: 4000, failed: true };
+    const bunTimeout = { kind: "hosted-bun-test-deadline", thread: "t", id: "fixture-deadline", step: "Run bun test tests/",
+      conclusion: "failure", diagnostic: "done-callback-deadline", path: "tests/workflow.test.ts", test: "Missing tools stay fail-closed",
+      exitCode: 1, budgetMs: 5000, elapsedMs: 5159 };
     const facts = [
       admission, admission,
       { ...admission, id: "superseded", annotation: "Canceling since a higher priority waiting request exists" },
@@ -972,6 +979,31 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       { ...runWatch, id: "user-stopped-watcher", exitCode: 143 },
       { ...runWatch, id: "too-early-to-be-deadline", elapsedMs: 1_799_999 },
       { ...runWatch, id: "late-receipt", elapsedMs: 1_816_000 },
+      statusRead, statusRead,
+      { ...statusRead, id: "manual-second", at: 160 },
+      { ...statusRead, id: "provider-owned-read", mode: "provider-observer", at: 170 },
+      { ...statusRead, id: "other-attempt", attempt: 2, at: 180 },
+      { ...statusRead, id: "other-run", run: "12345678902", at: 190 },
+      { ...statusRead, id: "manual-third", at: 200 },
+      { ...statusRead, id: "manual-changed", snapshot: "b".repeat(40), at: 220 },
+      { ...statusRead, id: "manual-returned", at: 260 },
+      { ...statusRead, id: "manual-terminal", pending: false, at: 300 },
+      { ...statusRead, id: "manual-new-pending", at: 310 },
+      { ...statusRead, id: "manual-late", at: 620 },
+      { ...statusRead, id: "manual-follow-up", at: 680 },
+      { ...statusRead, id: "manual-old-receipt", at: 660 },
+      { ...statusRead, id: "manual-same-second", at: 680 },
+      { ...statusRead, id: "manual-third-after-gap", at: 730 },
+      sourceBudget, sourceBudget,
+      { ...sourceBudget, id: "at-allowance", actual: 4000 },
+      { ...sourceBudget, id: "different-test-unit", unit: "file-lines" },
+      { ...sourceBudget, id: "copied-budget-warning", failed: false },
+      { ...sourceBudget, id: "different-budget-phase", phase: "width" },
+      bunTimeout, bunTimeout,
+      { ...bunTimeout, id: "assertion", diagnostic: "assertion" },
+      { ...bunTimeout, id: "early-exit", elapsedMs: 4999 },
+      { ...bunTimeout, id: "hosted-cancelled", conclusion: "cancelled" },
+      { ...bunTimeout, id: "wrong-test-tool", step: "Run npm test tests/" },
       read, read, { ...read, id: "b", at: 160 }, { ...read, thread: "t2", at: 170 },
       timing, timing, { ...timing, id: "unpaired", end: 0 },
       attempt, { ...attempt, id: "changed", key: "gate:v2", start: 115, end: 120, failed: false, succeeded: true },
@@ -1031,7 +1063,8 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
         "local-native-media-prerequisite-unavailable", "staged-embedded-html-unsupported",
         "ci-connect-synthetic-approval-expired", "ci-apt-install-before-job-deadline", "ci-apt-step-cancelled-at-job-deadline",
         "local-push-issue-trailer-refused", "ci-pr-check-observer-exact-head", "ci-selector-compared-older-base",
-        "local-exec-launch-enoent", "ci-local-run-observer-deadline",
+        "local-exec-launch-enoent", "ci-local-run-observer-deadline", "ci-manual-status-read-repeated",
+        "ci-manual-status-read-repeated", "staged-source-token-budget", "ci-bun-test-deadline",
         "recovered-attempt", "runner"]);
     assert.ok(!first.includes("installed tools"));
     assert.ok(!first.includes("#42:"));
@@ -1060,6 +1093,8 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       ["fixture-expiry", "", 0, 0], ["apt-media", "", 1443, 0], ["apt-disk", "", 25, 0],
       ["issue-trailer", "", 0, 0], ["pr-head-observer", "", 1423, 0], ["old-base", "", 0, 0],
       ["exec-launch", "", 0, 0], ["run-watch-expired", "", 1802, 0],
+      ["manual-third", "manual-second", 0, 0], ["manual-third-after-gap", "manual-follow-up", 0, 0],
+      ["budget-refusal", "", 0, 0], ["fixture-deadline", "", 5, 0],
       ["recovered", "first", 20, 0], ["tail", "", 250, 10],
     ]);
   } finally {
