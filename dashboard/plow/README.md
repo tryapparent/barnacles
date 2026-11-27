@@ -6,8 +6,8 @@ disjoint evidence intervals to that viewport, then sums and ranks them across
 threads. Different threads can overlap on the clock. A category opens its
 operation breakdown below the category tiles. Selecting an operation shows
 only threads with matching spans in the visible UTC range and outlines those
-spans on the same clock. Filtered-out rows leave their space empty so the
-matching threads stay in place. Selecting the operation again clears the
+spans on the same clock. Matching rows close up inside the fixed-height
+timeline viewport. Selecting the operation again clears the
 filter. Changing the time range updates the matches while preserving the
 selected operation.
 
