@@ -1,9 +1,8 @@
-import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { once } from "node:events";
 import { createServer, type ServerResponse } from "node:http";
 import { dirname, extname, join, resolve } from "node:path";
 import { openShippingReview, readPollMinutes, savePollMinutes, snapshotFormatVersion, writeSnapshot, readSessionStudy, writeSessionStudy } from "../evidence/read.ts";
-import { dashboards } from "./panels.ts";
 
 function validateSnapshot(directory: string) {
   const path = join(directory, "snapshot.json");
@@ -14,7 +13,7 @@ function validateSnapshot(directory: string) {
   if (manifest?.formatVersion !== snapshotFormatVersion) {
     throw Error(`Unsupported snapshot format. Prepare a version ${snapshotFormatVersion} snapshot.`);
   }
-  for (const file of ["dashboard.sqlite", "tempo.ndjson", "dashboards/shipping.json"]) {
+  for (const file of ["dashboard.sqlite", "tempo.ndjson"]) {
     if (!statSync(join(directory, file), { throwIfNoEntry: false })?.isFile()) {
       throw Error(`Incomplete snapshot: missing ${file}.`);
     }
@@ -50,18 +49,13 @@ async function prepare(args: string[]) {
           writeSync(payloads, payload_bytes + "\n", null, "latin1");
           return trace_id;
         }, undefined, timingCutoff, join(staging, "review-policy.mjs"));
-      const provision = join(staging, "dashboards");
-      mkdirSync(provision);
-      for (const [name, config] of Object.entries(dashboards(range, range.repository))) {
-        writeFileSync(join(provision, name + ".json"), JSON.stringify(config), { flag: "wx" });
-      }
       writeFileSync(join(staging, "snapshot.json"), JSON.stringify(range.manifest) + "\n", { flag: "wx" });
     } finally {
       closeSync(payloads);
       rmSync(scratch, { recursive: true, force: true });
     }
     renameSync(staging, directory);
-    console.log("Prepared local Grafana snapshot");
+    console.log("Prepared local Harbor snapshot");
   } finally {
     rmSync(staging, { recursive: true, force: true });
   }

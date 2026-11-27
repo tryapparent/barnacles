@@ -17,19 +17,6 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run verify
-  compose:
-    runs-on: ubuntu-latest
-    timeout-minutes: 12
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: '22'
-          cache: npm
-      - run: npm ci --ignore-scripts
-      - run: npm run verify -- dashboard
-        env:
-          BARNACLES_COMPOSE_SMOKE: '1'
   plow:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -51,7 +38,7 @@ jobs:
           retention-days: 3
   collector-release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository_id == '1473191494'
-    needs: [verify, compose, plow]
+    needs: [verify, plow]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -82,7 +69,7 @@ jobs:
           if-no-files-found: error
   deploy-plow:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository_id == '1473191494'
-    needs: [verify, compose, plow]
+    needs: [verify, plow]
     runs-on: ubuntu-latest
     timeout-minutes: 6
     environment:

@@ -19,7 +19,7 @@ type DemoPolicy = {
 
 const job = mkdtempSync("/tmp/apparent-dev-barnacles-demo-");
 const database = join(job, "evidence.sqlite");
-const dashboard = join(job, "grafana");
+const dashboard = join(job, "snapshot");
 const run = (entry: string, ...args: string[]) =>
   execFileSync(process.execPath, [fileURLToPath(new URL("../" + entry, import.meta.url)), ...args],
     { stdio: "inherit" });
@@ -76,7 +76,7 @@ try {
   run("collector/import-sources.ts", job, "rollout", "demo", rollout);
   run("collector/import-sources.ts", job, "report");
   run("dashboard/prepare.ts", database, dashboard, repo);
-  console.log(`Synthetic snapshot ready. Run dashboard/run.sh "${dashboard}" to open Grafana.`);
+  console.log(`Synthetic snapshot ready. Run node dashboard/prepare.ts --serve "${dashboard}" to start the Harbor API.`);
 } catch (error) {
   console.error(`Demo failed. Synthetic input and diagnostics are in "${job}".`, error);
   process.exitCode = 1;
