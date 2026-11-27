@@ -1,5 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { createAppAuth } from "@octokit/auth-app";
+import { Octokit } from "@octokit/core";
 
 import type { ActionAttempt, AttemptIdentity, List } from "../../evidence/index.ts";
 import { bendList } from "../wire.ts";
@@ -80,6 +83,89 @@ export function readGitHub(path: string): unknown {
   }
 }
 
+export type GitHubReader = (path: string) => unknown;
+
+export function githubReader(repository: string, env = process.env, send = fetch): GitHubReader {
+  const mode = env.BARNACLES_GITHUB_AUTH;
+  if (!mode) return readGitHub;
+  if (mode !== "app" && mode !== "token" && mode !== "public") throw Error("Invalid GitHub authentication mode");
+  let credential = "";
+  if (mode !== "public") {
+    try {
+      credential = readFileSync(env.BARNACLES_GITHUB_CREDENTIAL_FILE ?? "", "utf8").trim();
+      if (!credential) throw Error();
+    } catch {
+      throw Error("Expected a readable GitHub credential file");
+    }
+  }
+
+  const deadline = performance.now() + 300_000;
+  let remaining = 300;
+  let limited = false;
+  const octokit = new Octokit({
+    auth: mode === "token" ? credential : undefined,
+    userAgent: "plow-github-collector",
+    request: {
+      fetch: async (input, init) => {
+        const timeLeft = Math.floor(deadline - performance.now());
+        if (remaining-- <= 0 || limited || timeLeft <= 0) throw Error("GitHub request budget exhausted");
+        const response = await send(input,
+          { ...init, redirect: "error", signal: AbortSignal.timeout(Math.min(timeLeft, 30_000)) });
+        limited = response.headers.get("x-ratelimit-remaining") === "0" || response.status === 429 ||
+          (response.status === 403 && response.headers.has("retry-after"));
+        if (!response.body) return response;
+        let bytes = 0;
+        const bounded = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+          transform(chunk, stream) {
+            bytes += chunk.byteLength;
+            if (bytes > 16 * 1024 * 1024) stream.error(Error("GitHub response exceeded the size limit"));
+            else stream.enqueue(chunk);
+          },
+        }));
+        return new Response(bounded, { status: response.status, headers: response.headers });
+      },
+    },
+  });
+  const request = octokit.request.defaults({ headers: { "x-github-api-version": "2022-11-28" } });
+  const installationId = mode === "app" ? positiveInt(env.BARNACLES_GITHUB_INSTALLATION_ID) : null;
+  const auth = installationId ? createAppAuth({
+    appId: positiveInt(env.BARNACLES_GITHUB_APP_ID),
+    installationId,
+    privateKey: credential,
+    request,
+  }) : null;
+  let verified = false;
+  return async (path) => {
+    const origin = "https://api.github.com";
+    const url = new URL(path, origin);
+    if (url.origin !== origin || !url.pathname.startsWith(`/repos/${repository}/`)) {
+      throw Error("GitHub request outside the configured repository");
+    }
+    if (limited || remaining <= 0 || performance.now() >= deadline) throw Error("GitHub request budget exhausted or API rate limited");
+    try {
+      if (auth && !verified) {
+        const { token } = await auth({ type: "app" });
+        const { data } = await request("GET /repos/{owner}/{repo}/installation", {
+          owner: repository.split("/")[0], repo: repository.split("/")[1], headers: { authorization: `bearer ${token}` },
+        });
+        if (data.id !== installationId) throw Error("GitHub App installation identity mismatch");
+        verified = true;
+      }
+      const installation = auth && await auth({
+        type: "installation", repositoryNames: [repository.split("/")[1]],
+        permissions: { actions: "read", contents: "read", pull_requests: "read" },
+      });
+      const { data } = await request(`GET ${url.pathname}${url.search}`,
+        installation ? { headers: { authorization: `token ${installation.token}` } } : {});
+      return data;
+    } catch (error) {
+      const status = (error as { status?: number }).status;
+      if (status === 403 && /secondary rate limit/i.test((error as Error).message)) limited = true;
+      throw Error(`GitHub read failed${status ? ` (HTTP ${status})` : ""}. Check authentication, read access, and API limits.`);
+    }
+  };
+}
+
 export function wireCount(value: unknown): number {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 0xffffffff) {
     throw new Error("Invalid GitHub inventory count");
@@ -144,11 +230,11 @@ function inventoryDigest(jobs: Map<number, Json>): string {
   return snapshotDigest([...jobs.entries()].sort(([left], [right]) => left - right));
 }
 
-function readJobs(path: string, policy: ClockPolicy, read: typeof readGitHub) {
+async function readJobs(path: string, policy: ClockPolicy, read: GitHubReader) {
   const jobs = new Map<number, Json>();
   let state = policy.empty_inventory();
   for (let page = 1; state.$ === "More"; page++) {
-    const response = object(read(`${path}/jobs?per_page=100&page=${page}`));
+    const response = object(await read(`${path}/jobs?per_page=100&page=${page}`));
     const count = wireCount(response.total_count);
     const rows = Array.isArray(response.jobs) ? response.jobs.map(object) : null;
     const expectedCount = String(count);
@@ -165,7 +251,7 @@ function readJobs(path: string, policy: ClockPolicy, read: typeof readGitHub) {
   throw new Error("Partial GitHub job inventory. No evidence was written.");
 }
 
-export function collectAttempt(identity: AttemptIdentity, policy: ClockPolicy, read = readGitHub): ActionAttempt {
+export async function collectAttempt(identity: AttemptIdentity, policy: ClockPolicy, read: GitHubReader = readGitHub): Promise<ActionAttempt> {
   const { repository, runId, attempt, sha } = identity;
   checkRepository(repository, policy);
   fullSha(sha);
@@ -173,8 +259,8 @@ export function collectAttempt(identity: AttemptIdentity, policy: ClockPolicy, r
   positiveInt(attempt);
   const path = `repos/${repository}/actions/runs/${runId}/attempts/${attempt}`;
   const expected = [String(runId), String(attempt), sha] as const;
-  function readAttempt() {
-    const run = object(read(path));
+  async function readAttempt() {
+    const run = object(await read(path));
     if (!policy.attempt_matches(wireId(run.id), wireId(run.run_attempt), wireText(run.head_sha), ...expected)) {
       throw new Error("GitHub attempt identity does not match the request");
     }
@@ -185,8 +271,8 @@ export function collectAttempt(identity: AttemptIdentity, policy: ClockPolicy, r
       created: clock(run.created_at), started: clock(run.run_started_at), sourceUpdated: clock(run.updated_at),
     };
   }
-  const run = readAttempt();
-  const inventory = readJobs(path, policy, read);
+  const run = await readAttempt();
+  const inventory = await readJobs(path, policy, read);
   const jobs = [...inventory.values()].map((job) => {
     if (!policy.job_matches(
       wireId(job.run_id), wireId(job.run_attempt), wireText(job.head_sha), ...expected,
@@ -196,8 +282,8 @@ export function collectAttempt(identity: AttemptIdentity, policy: ClockPolicy, r
     }
     return normalizeJob(job, attempt === 1, policy);
   });
-  const confirmation = readJobs(path, policy, read);
-  if (!policy.stable_attempt(snapshotDigest(run), snapshotDigest(readAttempt()),
+  const confirmation = await readJobs(path, policy, read);
+  if (!policy.stable_attempt(snapshotDigest(run), snapshotDigest(await readAttempt()),
     inventoryDigest(inventory), inventoryDigest(confirmation))) {
     throw new Error("Changing GitHub attempt or job inventory. No evidence was written.");
   }
@@ -208,8 +294,8 @@ export function collectAttempt(identity: AttemptIdentity, policy: ClockPolicy, r
   };
 }
 
-export function collectWindow(repository: string, from: string, to: string, maxPages: number, maxAttempts: number,
-  policy: ClockPolicy, read = readGitHub) {
+export async function collectWindow(repository: string, from: string, to: string, maxPages: number, maxAttempts: number,
+  policy: ClockPolicy, read: GitHubReader = readGitHub) {
   checkRepository(repository, policy);
   const start = clock(from);
   const end = clock(to);
@@ -221,7 +307,7 @@ export function collectWindow(repository: string, from: string, to: string, maxP
   let pagesRead = 0;
   for (let page = 1; page <= maxPages; page++) {
     const query = new URLSearchParams({ created: `${from}..${to}`, per_page: "100", page: String(page) });
-    const response = object(read(`repos/${repository}/actions/runs?${query}`));
+    const response = object(await read(`repos/${repository}/actions/runs?${query}`));
     const count = wireCount(response.total_count);
     if (page === 1) reportedTotal = count;
     const offset = (page - 1) * 100;
@@ -243,8 +329,9 @@ export function collectWindow(repository: string, from: string, to: string, maxP
     pagesRead = page;
     if (policy.same_count(inventory.size, policy.discoverable_count(reportedTotal))) break;
   }
-  const attempts = [...inventory.values()].filter((_, index) => policy.select_run(index, maxAttempts))
-    .map((identity) => collectAttempt(identity, policy, read));
+  const selected = [...inventory.values()].filter((_, index) => policy.select_run(index, maxAttempts));
+  const attempts = [];
+  for (const identity of selected) attempts.push(await collectAttempt(identity, policy, read));
   return {
     attempts,
     coverage: {

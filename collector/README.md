@@ -63,6 +63,11 @@ Successful window imports print a JSON receipt containing the window, requested 
 
 Run the synthetic checks with `npm run verify -- collector`. They compile the actual Bend2 policy and exercise pagination, partial and changing inventories, the command-line entry point, and SQLite replay.
 
+## GitHub-only Octokit pilot
+
+[Run the isolated Compose pilot](github/README.md) for a one-repository poll or
+an exact-attempt capture with App installation authentication.
+
 ## Poll GitHub
 
 Use one collector process per evidence database and SQLite snapshot. With
