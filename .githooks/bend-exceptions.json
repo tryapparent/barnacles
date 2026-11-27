@@ -11,6 +11,9 @@
     "collector/t3.ts",
     "collector/wire.ts"
   ],
+  "Docker Compose native declaration for the isolated GitHub pilot": [
+    "collector/github/compose.yaml"
+  ],
   "OpenTelemetry Collector native configuration and transport filtering": [
     "collector/codex/otelcol.yaml"
   ],
