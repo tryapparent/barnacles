@@ -147,6 +147,8 @@ type ReplayPolicy = {
     failed: boolean, succeeded: boolean): unknown;
   observe_peer(state: unknown, thread: string, id: string, clock: string, cohort: string, revision: string,
     start: number, end: number, eligible: boolean): unknown;
+  observe_job_result(state: unknown, thread: string, id: string, conclusion: string): unknown;
+  observe_diagnostic(state: unknown, thread: string, id: string, line: string, failed: boolean): unknown;
   replay_files(state: unknown): List<Record<string, unknown>>;
   replay_costs(state: unknown): List<Record<string, unknown>>;
   replay_findings(state: unknown): List<Record<string, unknown>>;
@@ -192,6 +194,10 @@ async function replayBottlenecks(file: string, scratch: string) {
       } else if (value.kind === "attempt") {
         state = policy.observe_attempt(state, token(value.thread), id, factText(value.key),
           clockSecond(value.start), clockSecond(value.end), bendBool(value.failed), bendBool(value.succeeded));
+      } else if (value.kind === "job-result") {
+        state = policy.observe_job_result(state, token(value.thread), id, token(value.conclusion));
+      } else if (value.kind === "diagnostic") {
+        state = policy.observe_diagnostic(state, token(value.thread), id, factText(value.line), bendBool(value.failed));
       } else if (value.kind === "peer") {
         state = policy.observe_peer(state, token(value.thread), id, token(value.clock), factText(value.cohort),
           token(value.revision), clockSecond(value.start), clockSecond(value.end), bendBool(value.eligible));
