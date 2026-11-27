@@ -15,6 +15,7 @@ x-analysis: &analysis
       COPY collector collector
       COPY dashboard dashboard
       COPY evidence evidence
+      COPY mcp mcp
       ENV PLOW_BEND_BUNDLE=/app/compiler
   profiles: [analysis]
   read_only: true
@@ -88,6 +89,8 @@ services:
     environment:
       PLOW_ANALYSIS_BIND_HOST: 0.0.0.0
       PLOW_ANALYSIS_USER: ${PLOW_ANALYSIS_USER:-}
+      PLOW_MCP_ACCESS_TEAM: ${PLOW_MCP_ACCESS_TEAM:-}
+      PLOW_MCP_ACCESS_AUDIENCE: ${PLOW_MCP_ACCESS_AUDIENCE:-}
     ports:
       - "127.0.0.1:${PLOW_ANALYSIS_PORT:-15480}:8080"
     volumes:

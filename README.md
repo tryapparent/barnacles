@@ -21,6 +21,7 @@ Codex JSONL     T3 snapshots     GitHub APIs
 - [Collector](collector/README.md) documents source boundaries and code to adapt from Apparent.
 - [Evidence](evidence/README.md) defines record identities, release attribution, and metrics.
 - The [Plow dashboard](https://plow.tryapparent.com/app) shows thread activity and time summaries from collected session evidence. See the [dashboard guide](dashboard/plow/README.md) to build and test it.
+- [Plow MCP](mcp/README.md) gives agents read-only access to bottleneck priorities and thread diagnostics through Cloudflare Access.
 
 ## Try it locally
 

@@ -38,6 +38,31 @@ export function accessVerifier(jwtVerify, keys, issuer, audience) {
   }
 }
 
+export function managedOAuth(previous, callback) {
+  const next = { ...previous, enabled: true }
+  if (!callback) return next
+  const url = new URL(callback)
+  if (url.protocol !== 'https:' || url.username || url.password || url.hash || callback.includes('*')) {
+    throw Error('Expected an exact HTTPS redirect URI from the hosted MCP client.')
+  }
+  const registration = next.dynamic_client_registration
+  return { ...next, dynamic_client_registration: {
+    ...registration, enabled: true, allowed_uris: [...new Set([...(registration?.allowed_uris ?? []), callback])],
+  } }
+}
+
+export async function checkOAuthChallenge(endpoint) {
+  const response = await fetch(endpoint, {
+    method: 'POST', redirect: 'manual', signal: AbortSignal.timeout(8000),
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize' }),
+  })
+  await response.body?.cancel()
+  if (response.status !== 401 || !/\bresource_metadata=/i.test(response.headers.get('www-authenticate') ?? '')) {
+    throw Error('Cloudflare did not return MCP OAuth discovery.')
+  }
+}
+
 export function createDashboardServer({ getFeed, verifyToken, analysisApi, revision }) {
   const api = analysisApiUrl(analysisApi)
   const content = api ? html.replace('data-analysis-api=""', `data-analysis-api="${api.href}"`) : html

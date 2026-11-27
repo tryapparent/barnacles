@@ -45,7 +45,8 @@ def published_entry(+owner: String, +target: String) -> Bool:
 def local_import(+owner: String, +path: String, +target: String, target_owner: String) -> Bool:
   Bool.or(String.eq(owner, target_owner), Bool.or(published_entry(owner, target),
     Bool.or(Bool.and(String.eq(path, "dashboard/prepare.test.ts"), String.eq(target, "evidence/index.ts")),
-      Bool.and(String.eq(path, "dashboard/plow/build.ts"), String.eq(target, "tooling/bend.ts")))))
+      Bool.and(Bool.or(String.eq(path, "dashboard/plow/build.ts"), String.eq(path, "dashboard/prepare.ts")),
+        String.eq(target, "tooling/bend.ts")))))
 
 def disallowed_specifier(+value: String) -> Bool:
   Bool.or(String.is_empty(value), Bool.or(String.contains(value, "\\"),
