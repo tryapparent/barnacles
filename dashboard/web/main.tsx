@@ -1,14 +1,16 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent } from "react";
 import { createRoot } from "react-dom/client";
 import {
-  dayLabel, fetchEvidence, milestoneLabel, pagePath,
+  dayLabel, fetchEvidence, milestoneLabel, pagePath, useEvidence,
   shippingPath, stageLabel, stages, utcLabel, durationMillis, processMillis,
-  changePolicy, changeValues, changeTree, countLabel,
+  changePolicy, changeTree, countLabel,
+  changeValues,
   type ChangeReview, type ChangeNode, type ChangeFile, type Detail, type Milestone, type ProcessCapture, type Review,
 } from "./api";
 import { DailyStages, Overview, StageKey } from "./visual/charts";
 import { Button, NativeSelect } from "./controls";
 import { Fleet } from "./visual/fleet";
+import { SessionHistoryPage } from "./visual/session-history";
 import "./style.css";
 
 function toUTC(value: string) {
@@ -90,41 +92,6 @@ function provenanceLabel(source: string) {
     "verified-release-asset-check": "Release asset check",
   };
   return sources[source] ?? source;
-}
-
-type Request<T> = { state: "loading" } | { state: "ready"; data: T } | { state: "error"; message: string };
-
-function useEvidence<T extends object>(path: string, refresh = false) {
-  const [result, setResult] = useState<Request<T>>({ state: "loading" });
-  const [attempt, setAttempt] = useState(0);
-  useEffect(() => {
-    const controller = new AbortController();
-    setResult({ state: "loading" });
-    fetchEvidence<T>(path, controller.signal).then((data) => {
-      if (!controller.signal.aborted) setResult({ state: "ready", data });
-    }, (error: Error) => {
-      if (!controller.signal.aborted) setResult({ state: "error", message: error.message });
-    });
-    return () => controller.abort();
-  }, [path, attempt]);
-  useEffect(() => {
-    if (!refresh) return;
-    let pending: AbortController | undefined;
-    const timer = window.setInterval(() => {
-      if (document.hidden || pending) return;
-      const controller = pending = new AbortController();
-      fetchEvidence<T>(path, controller.signal).then((data) => {
-        if (controller.signal.aborted) return;
-        setResult((prior) => prior.state === "ready" && "snapshotAt" in prior.data &&
-          "snapshotAt" in data && prior.data.snapshotAt === data.snapshotAt ? prior : { state: "ready", data });
-      }).catch(() => undefined).finally(() => { pending = undefined; });
-    }, 30_000);
-    return () => {
-      window.clearInterval(timer);
-      pending?.abort();
-    };
-  }, [path, refresh]);
-  return { result, retry: () => setAttempt((count) => count + 1) };
 }
 
 function ProcessWaterfall({ capture }: { capture: ProcessCapture }) {
@@ -397,17 +364,20 @@ function App() {
   const settingsToggle = settingsPath && <button type="button" className="settings-toggle" aria-expanded={showSettings}
     aria-controls={showSettings ? "poll-settings" : undefined}
     onClick={() => setShowSettings((open) => !open)}>Settings</button>;
-  const changesLink = <Button asChild variant="outline"><a href="/changed-code">Changed Code Analysis</a></Button>;
+  const dashboardLinks = <nav className="dashboard-links" aria-label="Dashboard views">
+    <Button asChild variant="outline"><a href="/sessions">Session history</a></Button>
+    <Button asChild variant="outline"><a href="/changed-code">Changed Code Analysis</a></Button>
+  </nav>;
   return <main className="review">
     {!review && <header className="masthead">
       <h1>Barnacles</h1>
-      {changesLink}
+      {dashboardLinks}
       <div className="scope">
         <a href={path}>Review API JSON</a>
         {settingsToggle}
       </div>
     </header>}
-    {review && <Fleet fleet={review.fleet} onSelect={select} headerAction={changesLink}>
+    {review && <Fleet fleet={review.fleet} onSelect={select} headerAction={dashboardLinks}>
       <div className="review-info">
         <span>{dayLabel(review.window.from)}–{dayLabel(review.window.to)} UTC</span>
         <span>Snapshot · <time dateTime={review.snapshotAt}>{utcLabel(review.snapshotAt)}</time></span>
@@ -601,5 +571,7 @@ function ChangedCodePage() {
 }
 
 const isChanges = location.pathname === "/changed-code";
+const isHistory = location.pathname === "/sessions";
 if (isChanges) document.title = "Barnacles · Changed Code Analysis";
-createRoot(document.getElementById("root")!).render(isChanges ? <ChangedCodePage /> : <App />);
+if (isHistory) document.title = "Plow · Session history";
+createRoot(document.getElementById("root")!).render(isHistory ? <SessionHistoryPage /> : isChanges ? <ChangedCodePage /> : <App />);

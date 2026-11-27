@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+
 export const stages = [
   ["pre-commit", "Pre-commit", "commit"],
   ["pr-opened", "PR opened", "pr"],
@@ -130,3 +132,62 @@ export function duration(seconds: number | null, signed = false) {
 }
 
 export const processMillis = (microseconds: number) => policy.process_label(microseconds);
+
+export type HistoryEvent = { $: "HistoryEvent"; index: number; lane: number; start: number;
+  end: { $: "None" } | { $: "Some"; value: number }; label: string; source: string; state: string; relation: string; clipped: boolean };
+export type HistoryEntry = { $: "HistoryEntry"; thread: { $: "HistoryThread"; id: string; sample: number;
+  title: string; source: string; start: number; cutoff: number; rollout_count: number };
+  end: number; count: number; signals: number };
+export type HistoryLane = { index: number; name: string; events: HistoryEvent[] };
+export type HistoryTrace = { entry: HistoryEntry; lanes: HistoryLane[];
+  signals: { rule: string; id: string; seconds: number; median: number; peers: number; event: HistoryEvent["end"] }[] };
+
+type SessionPolicy = {
+  session_matches(entry: HistoryEntry, query: string): boolean;
+  order_duration(events: ChangeList<HistoryEvent>): ChangeList<HistoryEvent>;
+  order_events(events: ChangeList<HistoryEvent>): ChangeList<HistoryEvent>;
+  session_events(events: ChangeList<HistoryEvent>, from: number, to: number, query: string, offset: number):
+    { total: number; rows: ChangeList<HistoryEvent> };
+  trace_elapsed(ms: number): string;
+};
+
+const sessionModules = import.meta.glob<SessionPolicy>("../../evidence/analysis/session-history.bend", { eager: true, import: "default" });
+export const sessionPolicy = sessionModules["../../evidence/analysis/session-history.bend"];
+export function sessionEventList(events: HistoryEvent[]) {
+  return events.reduceRight<ChangeList<HistoryEvent>>((tail, head) => ({ $: "Con", head, tail }), { $: "Nil" });
+}
+
+type Request<T> = { state: "loading" } | { state: "ready"; data: T } | { state: "error"; message: string };
+
+export function useEvidence<T extends object>(path: string, refresh = false) {
+  const [result, setResult] = useState<Request<T>>({ state: "loading" });
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    const controller = new AbortController();
+    setResult({ state: "loading" });
+    fetchEvidence<T>(path, controller.signal).then((data) => {
+      if (!controller.signal.aborted) setResult({ state: "ready", data });
+    }, (error: Error) => {
+      if (!controller.signal.aborted) setResult({ state: "error", message: error.message });
+    });
+    return () => controller.abort();
+  }, [path, attempt]);
+  useEffect(() => {
+    if (!refresh) return;
+    let pending: AbortController | undefined;
+    const timer = window.setInterval(() => {
+      if (document.hidden || pending) return;
+      const controller = pending = new AbortController();
+      fetchEvidence<T>(path, controller.signal).then((data) => {
+        if (controller.signal.aborted) return;
+        setResult((prior) => prior.state === "ready" && "snapshotAt" in prior.data &&
+          "snapshotAt" in data && prior.data.snapshotAt === data.snapshotAt ? prior : { state: "ready", data });
+      }).catch(() => undefined).finally(() => { pending = undefined; });
+    }, 30_000);
+    return () => {
+      window.clearInterval(timer);
+      pending?.abort();
+    };
+  }, [path, refresh]);
+  return { result, retry: () => setAttempt((count) => count + 1) };
+}

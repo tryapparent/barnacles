@@ -12,6 +12,7 @@ import {
   buildAdmissionPolicy, loadEvidence, type ActionAttempt, type PullRequest, type ReleaseEvidence, type RolloutEvidence, type ThreadEvidence,
 } from "../evidence/index.ts";
 import { dashboards } from "./panels.ts";
+import { verifyHarborWeb, verifySessionStudy } from "./harbor-fixture.ts";
 
 async function verifyCompose(initial: string, next: string, traceId: string) {
   const env = { ...process.env, COMPOSE_PROJECT_NAME: `barnacles-smoke-${process.pid}`, BARNACLES_PORT: "0" };
@@ -686,19 +687,7 @@ test("shipping API preserves historical and partial evidence and reads a replace
       return result.json();
     };
 
-    if (web) {
-      const page = await call("/");
-      assert.equal(page.status, 200);
-      assert.equal((await call("/changed-code")).status, 200);
-      assert.match(page.headers.get("content-type") ?? "", /text\/html/);
-      const script = (await page.text()).match(/src="(\/assets\/[^"]+\.js)"/)?.[1];
-      assert.ok(script);
-      const bundle = await call(script);
-      assert.equal(bundle.status, 200);
-      assert.match(bundle.headers.get("content-type") ?? "", /text\/javascript/);
-      await bundle.arrayBuffer();
-      assert.equal((await call("/dashboard.sqlite")).status, 404);
-    }
+    if (web) await verifyHarborWeb(call);
     const discovery = await get("/api/v1");
     const { endpoints } = discovery;
     assert.equal(endpoints.shipping.path, "/api/v1/shipping");
@@ -706,6 +695,7 @@ test("shipping API preserves historical and partial evidence and reads a replace
       scan: { revision: "a".repeat(40), commitsScanned: 5, hasMoreCommits: true, shallow: true, files: changes } });
     assert.equal(endpoints.processTimings.path, "/api/v1/process-timings");
     assert.deepEqual(await get(endpoints.processTimings.path), { captures: [] });
+    await verifySessionStudy(job, snapshot, cutoff, endpoints.sessionHistory.path, call, get);
     const settingsPath = discovery.pollingSettings;
     assert.equal(settingsPath, "/settings/polling");
     assert.deepEqual(await get(settingsPath), { minutes: 15 });
