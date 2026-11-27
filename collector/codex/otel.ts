@@ -5,7 +5,9 @@ import { join, resolve } from "node:path";
 import { CodexOtelConflict, codexOtelPolicy, saveCodexOtel, type CodexOtelFact, type CodexOtelPolicy } from "../../evidence/index.ts";
 import { T3OtelConflict, openT3Otel, t3OtelPolicy, type T3OtelSpan, type T3OtelPolicy } from "../../evidence/index.ts";
 import { buildPolicy, loadPolicy } from "../../tooling/bend.ts";
-import { array, row, str, token } from "../wire.ts";
+import { setTimeout as sleep } from "node:timers/promises";
+import { openT3History, type T3Command } from "../../evidence/index.ts";
+import { array, boundedFile, millis, row, SourceReadError, stockT3HistoryReader, str, token } from "../wire.ts";
 
 const bodyLimit = 8 * 1024 * 1024;
 
@@ -181,9 +183,117 @@ async function serveT3([job, instance, ...extra]: string[]) {
   process.once("SIGTERM", () => server.close(close));
 }
 
+type HistoryPolicy = {
+  observe(thread: string, kind: string, driver: string, strength: string, item: T3Command):
+    { $: "Invalid" | "Skip" } | { $: "Keep"; command: T3Command };
+  local_row(thread: string, owner: string, visibility: string): boolean;
+  page_valid(previous: string, next: string, more: boolean): boolean;
+  begin_scan(saved: string, head: string): string;
+  replay: Parameters<typeof openT3History>[2];
+};
+
+function historyId(value: unknown) {
+  const id = str(value);
+  return /^[A-Za-z0-9][A-Za-z0-9:._%-]*$/.test(id) ? id : "";
+}
+
+function historyPage(policy: HistoryPolicy, thread: string, page: ReturnType<typeof row>, cursor: string) {
+  const next = cursor ? page.nextCursor : page.historyCursor;
+  const sequence = page.snapshotSequence;
+  if (!(next === null || typeof next === "string" && next.length <= 4096) ||
+      typeof page.hasMoreHistory !== "boolean" || !policy.page_valid(cursor, next ?? "", page.hasMoreHistory) ||
+      typeof sequence !== "number" || !Number.isInteger(sequence) || sequence < 0 || sequence > 0xffffffff) {
+    throw Error("Invalid stock T3 page coordinates");
+  }
+  let items: unknown[];
+  if (cursor) {
+    items = array(page.items, 4096).map(row)
+      .filter(item => policy.local_row(thread, str(item.sourceThreadId), str(item.visibility)))
+      .map(item => item.item);
+  } else {
+    const projection = row(page.projection);
+    if (row(projection.thread).id !== thread) throw Error("T3 snapshot belongs to another thread");
+    items = array(projection.turnItems, 4096);
+  }
+  const commands: T3Command[] = [];
+  for (const input of items) {
+    const item = row(input);
+    const ref = row(item.nativeItemRef ?? {});
+    const result = policy.observe(thread, str(item.type), str(ref.driver), str(ref.strength), {
+      $: "Command", id: historyId(item.id), thread: historyId(item.threadId), run: historyId(item.runId),
+      provider_thread: historyId(item.providerThreadId), provider_turn: historyId(item.providerTurnId),
+      native_item: historyId(ref.nativeId), status: str(item.status),
+      exit_code: Number.isSafeInteger(item.exitCode) ? String(item.exitCode) : "",
+      started: String(millis(item.startedAt)), completed: String(millis(item.completedAt)), updated: String(millis(item.updatedAt)),
+    });
+    if (result.$ === "Invalid") throw Error("Invalid native Codex command in T3 history");
+    if (result.$ === "Keep") commands.push(result.command);
+  }
+  return { sequence, next: next ?? "", commands };
+}
+
+async function pollT3History([job, instance, flag, ...extra]: string[]) {
+  if (!job || !instance || flag && flag !== "--once" || extra.length) throw Error("Invalid T3 history invocation");
+  const threads = [...new Set(array(JSON.parse(boundedFile(process.env.PLOW_T3_HISTORY_TARGETS_FILE ?? "", 8192)
+    .toString("utf8")), 32).map(token))];
+  if (!threads.length) throw Error("Configure at least one T3 history thread");
+  const read = stockT3HistoryReader(process.env.PLOW_T3_HISTORY_ORIGIN ?? "",
+    process.env.PLOW_T3_HISTORY_READ_TOKEN_FILE ?? "/run/secrets/t3_history_read");
+  const policy = await compile<HistoryPolicy>(process.env.TMPDIR ?? resolve(job),
+    new URL("../t3-otel/history.bend", import.meta.url), "t3-history");
+  const store = openT3History(join(resolve(job), "evidence.sqlite"), token(instance), policy.replay);
+  const stop = new AbortController();
+  process.once("SIGTERM", () => stop.abort());
+  try {
+    do {
+      const coverage = { headPages: 0, olderPages: 0, complete: 0, failed: 0 };
+      for (const thread of threads) {
+        if (stop.signal.aborted) break;
+        try {
+          const saved = store.cursor(thread);
+          const head = historyPage(policy, thread, await read(thread, ""), "");
+          const cursor = policy.begin_scan(saved, head.next);
+          store.commit(thread, saved, cursor, head.sequence, head.commands);
+          coverage.headPages++;
+          if (cursor && !stop.signal.aborted) {
+            try {
+              const older = historyPage(policy, thread, await read(thread, cursor), cursor);
+              store.commit(thread, cursor, older.next, older.sequence, older.commands);
+              coverage.olderPages++;
+            } catch (error) {
+              if (error instanceof SourceReadError && error.status === 400) {
+                store.commit(thread, cursor, "", head.sequence, []);
+              }
+              throw error;
+            }
+          }
+          if (!store.cursor(thread)) coverage.complete++;
+        } catch {
+          coverage.failed++;
+        }
+      }
+      console.log(JSON.stringify(coverage));
+      if (flag === "--once") {
+        if (coverage.failed) process.exitCode = 1;
+        return;
+      }
+      await sleep(900_000, undefined, { signal: stop.signal }).catch(() => {});
+    } while (!stop.signal.aborted);
+  } finally {
+    store.close();
+  }
+}
+
 if (import.meta.main) {
   const args = process.argv.slice(2);
-  if (args[0] === "--t3") {
+  if (args[0] === "--t3-history") {
+    try {
+      await pollT3History(args.slice(1));
+    } catch {
+      console.error("T3 history collector startup failed");
+      process.exitCode = 1;
+    }
+  } else if (args[0] === "--t3") {
     try {
       await serveT3(args.slice(1));
     } catch {

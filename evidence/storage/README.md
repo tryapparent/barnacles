@@ -16,6 +16,24 @@ The [Codex OTLP boundary](../../collector/codex/README.md) uses [its own admissi
 
 The [T3 OTLP intake](../../collector/t3-otel/README.md) writes a separate SQLite database. The `t3_otel_spans` primary key is the configured source instance, trace ID and span ID. The writer keeps an optional parent span ID even if that span has never been observed. Source clocks are exact decimal Unix nanosecond strings. The first committed observation keeps a writer-side Unix millisecond ingest clock. Identical normalized evidence leaves the existing row and its ingest clock intact, even when sent in a different batch. A conflicting observation rolls back the entire incoming write transaction. An admitted operation or command type records source evidence for that span. It establishes no run, notification, process exit or delivery outcome.
 
+## Stock T3 command history
+
+The [Compose history reader](../../collector/t3-otel/README.md#read-history-from-stock-t3)
+adds `t3_history_commands` and `t3_history_progress` to the same evidence
+volume. A command key is the trusted source instance, T3 thread ID and
+T3 turn item ID. Rows retain the source snapshot sequence, optional run
+ID, T3 provider thread and turn IDs, strong Codex item ID, status, and
+optional exit code. IDs from the T3 provider projection have T3's scope.
+The millisecond clocks are T3 item lifecycle fields. In particular,
+`t3_completed_ms` is the time T3 recorded completion. Runtime
+calculations require separate process evidence.
+
+An older snapshot cannot overwrite a newer command observation. Identical
+evidence at the same source sequence is replayable. A conflict at the same
+sequence rolls back the page, including its cursor update. Keep a stable
+instance label for the lifetime of one T3 event store and use a new label
+when replacing it with independently sequenced data.
+
 ## Live session links
 
 `t3_live_codex_links` associates a scoped native session with its T3 thread

@@ -43,10 +43,55 @@ Ingress success acknowledges a filtered batch accepted by the Collector's file-b
 
 Read `t3_otel_spans` in the evidence volume's `data/evidence.sqlite` using a read-only connection. [The storage contract](../../evidence/storage/README.md#live-t3-code-traces) defines row identity and clocks.
 
+## Read history from stock T3
+
+The optional `history` Compose profile reads the stock T3 v0.1.13
+Orchestration v2 API. It runs on the collector host and needs HTTP access
+to the T3 server. It uses the authenticated `/bounded` snapshot and
+`/history?view=activity` pages. Configure the API origin separately from
+the OTLP receiver URL.
+
+| Compose environment setting | Value |
+| --- | --- |
+| `COMPOSE_PROFILES` | Include `history` to run the poller |
+| `PLOW_T3_HISTORY_ORIGIN` | Private HTTPS T3 server origin, or loopback HTTP in a disposable test |
+| `PLOW_T3_HISTORY_READ_TOKEN_FILE` | Absolute path to a file containing a T3 session bearer with only `orchestration:read` |
+| `PLOW_T3_HISTORY_TARGETS_FILE` | Absolute path to a JSON array of up to 32 authorized T3 thread IDs for this instance |
+
+The two files must be readable by service UID `10001`. Mount both
+read-only and keep them out of Git. Use a separate credential from the
+two OTLP bearers. See the [Clanker rollout guide](../../dashboard/enablement/deploy/t3-otlp.md#enable-stock-t3-history).
+
+The service polls on startup and waits 15 minutes after each pass.
+Each target gets a fresh head snapshot and at most one older page per
+pass. The history cursor and evidence for each successful page commit
+together. On source failure the cursor stays in place for retry, except
+when T3 rejects the cursor with HTTP 400. In that case the next pass
+starts again at the head. A completed scan starts a fresh sweep on a
+later pass so updates to older commands can be picked up. Cycle logs
+give counts for head pages, older pages, completed scans and failures.
+Completion covers retained history for the configured target at the time
+of the scan.
+
+T3 returns a broader history payload to authorized readers. Plow keeps
+only local Codex commands with a strong native item reference and T3
+provider thread and turn IDs. It keeps status, exit code when present,
+and T3 clocks for those commands. Older items with incomplete identity
+are skipped.
+Command text, tool output, prompts and duplicate inherited items are
+discarded. The process handle, exact process runtime and agent blocked
+time remain unknown. [SQLite contract](../../evidence/storage/README.md#stock-t3-command-history)
+
+Run a single pass against a disposable target with
+`docker compose --env-file "$private_env" -f collector/t3-otel/compose.yaml run --rm history --once`.
+The command reports a nonzero status if a target fails. In the automated
+Collector test, a failed older-page request resumes after a fresh head
+snapshot and stale evidence cannot change the newer exit code.
+
 ## Verify
 
 - Run `npm run verify -- collector` to exercise the compiled T3 and Codex policies through the HTTP writer with synthetic requests. The assertions cover separate auth and signals, instance binding, exact replay, same-batch and existing-row conflicts, invalid sibling rollback, redaction and ingest-clock preservation.
 - For an isolated Compose proof, send a synthetic idle create and archive from a disposable native T3 server. Check the stored instance, trace, span, parent, thread and command IDs, command types and clock fields. Exercise the ingress with a wrong bearer and wrong signal. Send a canary in free-text fields and unapproved attributes, then check that the SQLite file, sending queue and diagnostics omit it.
 - Stop only the candidate's evidence service and send a valid batch. With the receiver stopped, inspect the queue volume read-only for a known synthetic allowed ID and the absence of the canary. Restart and recreate the Collector while the receiver stays stopped. Start the receiver, submit identical replay, and check the SQLite rows and first ingest clocks. Recreate the project without deleting its volumes and compare the rows again.
 
-The native exercise covers thread creation and archive. PR watch notification, notification-to-run linkage, provider input acceptance and real provider turns require additional evidence. Historical backfill, cross-source joins, outcome metrics and dashboards are separate work.
+The native trace exercise covers thread creation and archive. PR watch notification, notification-to-run linkage, and provider input acceptance require additional evidence.

@@ -201,6 +201,34 @@ export function boundedResponse(response: Response, limit: number): Response {
   return new Response(body, { status: response.status, headers: response.headers });
 }
 
+export function stockT3HistoryReader(endpoint: string, credential: string) {
+  const origin = new URL(endpoint);
+  const loopback = ["127.0.0.1", "[::1]", "localhost"].includes(origin.hostname);
+  if (!(origin.protocol === "https:" || loopback && origin.protocol === "http:") ||
+      origin.username || origin.password || origin.pathname !== "/" || origin.search || origin.hash) {
+    throw Error("Expected an HTTPS T3 origin or a loopback HTTP origin");
+  }
+  const secret = boundedFile(credential, 8192).toString("utf8").trim();
+  if (!/^[!-~]+$/.test(secret)) throw Error("Expected a T3 read bearer");
+  const headers = { authorization: `Bearer ${secret}`, "x-t3-orchestration-protocol": "2" };
+  return async (thread: string, cursor: string) => {
+    const url = new URL(`/api/orchestration/threads/${encodeURIComponent(thread)}`, origin);
+    url.pathname += cursor ? "/history" : "/bounded";
+    if (cursor) {
+      url.searchParams.set("cursor", cursor);
+      url.searchParams.set("view", "activity");
+    } else {
+      url.searchParams.set("dedupeBodies", "1");
+    }
+    const response = await fetch(url, { headers, redirect: "error", signal: AbortSignal.timeout(5000) });
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new SourceReadError(response.status);
+    }
+    return row(await boundedResponse(response, 8 * 1024 * 1024).json());
+  };
+}
+
 async function mcpReply(response: Response, id: number) {
   if (!response.headers.get("content-type")?.startsWith("text/event-stream")) return row(await response.json());
   if (!response.body) throw Error("Missing MCP reply stream");
