@@ -4,6 +4,7 @@ import { appendFileSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
+import { zstdCompressSync } from "node:zlib";
 import { sourcePolicy, admissionPolicy, deliveryPolicy, type AdmissionPolicy, type DeliveryPolicy, deliveryReport, loadEvidence, waitReport, watchOverlaps, type PullRequest, type ReleaseEvidence, type RolloutEvidence, type SourcePolicy, type ThreadEvidence } from "../evidence/index.ts";
 import { buildPolicies, loadPolicy } from "../tooling/bend.ts";
 import { fileURLToPath } from "node:url";
@@ -305,6 +306,7 @@ test("rollout CLI keeps fork lineage, rejects unproven input, and preserves repl
   const job = mkdtempSync(join(root, "fork-test-"));
   try {
     const input = join(job, "synthetic.jsonl");
+    const archive = join(job, "synthetic.jsonl.zst");
     const time = "2026-01-01T12:00:00Z";
     const meta = (payload: object) => ({ type: "session_meta", payload });
     const item = (type: string, call_id: string) => ({ type: "response_item", timestamp: time,
@@ -319,8 +321,9 @@ test("rollout CLI keeps fork lineage, rejects unproven input, and preserves repl
       item("function_call", "shared-call"),
       item("function_call_output", "shared-call"),
     ];
-    const write = (records: object[]) =>
-      writeFileSync(input, records.map((record, ordinal) => JSON.stringify({ ordinal, ...record })).join("\n") + "\n");
+    const jsonl = (records: object[]) =>
+      records.map((record, ordinal) => JSON.stringify({ ordinal, ...record })).join("\n") + "\n";
+    const write = (records: object[]) => writeFileSync(input, jsonl(records));
     const cli = (command: string, ...args: string[]) => spawnSync(process.execPath,
       [fileURLToPath(new URL("./import-sources.ts", import.meta.url)), job, command, ...args], { encoding: "utf8" });
     write(fork);
@@ -329,6 +332,18 @@ test("rollout CLI keeps fork lineage, rejects unproven input, and preserves repl
       assert.equal(result.status, 0, result.stderr);
       assert.equal(JSON.parse(result.stdout).status, "admitted_fork_suffix");
     }
+    writeFileSync(archive, zstdCompressSync(Buffer.from(jsonl(fork))));
+    const compressed = cli("rollout", "synthetic", archive, "fork-file");
+    assert.equal(compressed.status, 0, compressed.stderr);
+    assert.equal(JSON.parse(compressed.stdout).status, "admitted_fork_suffix");
+    writeFileSync(archive, Buffer.from("invalid compressed data"));
+    const invalidArchive = cli("rollout", "synthetic", archive, "invalid-archive");
+    assert.equal(invalidArchive.status, 1);
+    assert.match(invalidArchive.stderr, /read_failed/);
+    writeFileSync(archive, zstdCompressSync(Buffer.alloc(128 * 1024 * 1024 + 1, 120)));
+    const expanded = cli("rollout", "synthetic", archive, "expanded-file");
+    assert.equal(expanded.status, 1);
+    assert.match(expanded.stderr, /oversized/);
     write([...fork, { ...item("function_call", "bad-ordinal"), ordinal: 10 }]);
     const unproven = cli("rollout", "synthetic", input, "unproven-file");
     assert.equal(unproven.status, 1);
@@ -347,7 +362,9 @@ test("rollout CLI keeps fork lineage, rejects unproven input, and preserves repl
     assert.deepEqual(coverage.imports.map(({ source_key, status, inherited_lines, read_bytes }) =>
       [source_key, status, inherited_lines, read_bytes > 0]), [
       ["conflicting-file", "conflicting_metadata", 0, true],
+      ["expanded-file", "oversized", 0, true],
       ["fork-file", "admitted_fork_suffix", 3, true],
+      ["invalid-archive", "read_failed", 0, true],
       ["oversized-file", "oversized", 0, false],
       ["unproven-file", "unproven_fork", 3, true],
     ]);
@@ -700,6 +717,13 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       deadlineSeconds: 1500, attemptStarted: 90, jobStarted: 100, jobEnded: 1613, started: 144, ended: 1587 };
     const aptDeadlineDisk = { ...aptDeadline, id: "apt-disk", package: "qemu-utils",
       step: "Install disk-image contract dependency (no KVM required)", stepConclusion: "cancelled", started: 1587, ended: 1612 };
+    const issueTrailer = { ...boundary, id: "issue-trailer", boundary: "issue-trailer",
+      line: "Commit needs a final Issue trailer", terminal: "error: failed to push some refs" };
+    const prObserver = { kind: "exact-pr-check-observer", thread: "t", id: "pr-head-observer",
+      repository: "example/app", pr: 51, revision: "a".repeat(40),
+      beforeRepository: "example/app", beforePr: 51, beforeRevision: "a".repeat(40),
+      afterRepository: "example/app", afterPr: 51, afterRevision: "a".repeat(40),
+      timeoutSeconds: 2700, exitCode: 0, elapsedMs: 1_423_730 };
     const facts = [
       admission, admission,
       { ...admission, id: "superseded", annotation: "Canceling since a higher priority waiting request exists" },
@@ -909,6 +933,14 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       { ...aptDeadline, id: "no-annotated-deadline", deadlineSeconds: 0 },
       { ...aptDeadlineDisk, id: "after-job-end", ended: 1614 },
       { ...aptDeadline, id: "other-setup", step: "Install OCR preprocessing dependency" },
+      issueTrailer, issueTrailer,
+      { ...issueTrailer, id: "trailer-only-in-note", operation: "git-commit" },
+      prObserver, prObserver,
+      { ...prObserver, id: "observer-other-revision", afterRevision: "b".repeat(40) },
+      { ...prObserver, id: "observer-other-pr", beforePr: 50 },
+      { ...prObserver, id: "observer-other-repo", afterRepository: "example/other" },
+      { ...prObserver, id: "observer-timeout", exitCode: 124 },
+      { ...prObserver, id: "observer-quick-check", elapsedMs: 59_999 },
       read, read, { ...read, id: "b", at: 160 }, { ...read, thread: "t2", at: 170 },
       timing, timing, { ...timing, id: "unpaired", end: 0 },
       attempt, { ...attempt, id: "changed", key: "gate:v2", start: 115, end: 120, failed: false, succeeded: true },
@@ -967,6 +999,7 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
         "local-push-worktree-changed-during-verification", "local-desktop-dependency-lock-unavailable",
         "local-native-media-prerequisite-unavailable", "staged-embedded-html-unsupported",
         "ci-connect-synthetic-approval-expired", "ci-apt-install-before-job-deadline", "ci-apt-step-cancelled-at-job-deadline",
+        "local-push-issue-trailer-refused", "ci-pr-check-observer-exact-head",
         "recovered-attempt", "runner"]);
     assert.ok(!first.includes("installed tools"));
     assert.ok(!first.includes("#42:"));
@@ -993,6 +1026,7 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       ["actor-cancelled", "", 0, 0], ["selector-refused", "", 0, 0], ["dirty-worktree", "", 0, 0],
       ["locked-install", "", 0, 0], ["native-media", "", 0, 0], ["embedded-html", "", 0, 0],
       ["fixture-expiry", "", 0, 0], ["apt-media", "", 1443, 0], ["apt-disk", "", 25, 0],
+      ["issue-trailer", "", 0, 0], ["pr-head-observer", "", 1423, 0],
       ["recovered", "first", 20, 0], ["tail", "", 250, 10],
     ]);
   } finally {

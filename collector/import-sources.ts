@@ -316,6 +316,11 @@ async function replayBottlenecks(file: string, scratch: string) {
       } else if (value.kind === "local-verification-boundary") {
         state = policy.observe_local_verify_boundary(state, token(value.thread), id, token(value.operation),
           token(value.boundary), factText(value.line), factText(value.terminal), bendBool(value.failed));
+      } else if (value.kind === "exact-pr-check-observer") {
+        state = policy.observe_exact_pr_check_wait(state, token(value.thread), id, factText(value.repository),
+          clockSecond(value.pr), sha(value.revision), factText(value.beforeRepository), clockSecond(value.beforePr),
+          sha(value.beforeRevision), factText(value.afterRepository), clockSecond(value.afterPr), sha(value.afterRevision),
+          clockSecond(value.exitCode), clockSecond(value.timeoutSeconds), clockSecond(value.elapsedMs));
       } else if (value.kind === "hosted-client-approval-fixture") {
         state = policy.observe_hosted_approval_fixture(state, token(value.thread), id, factText(value.step),
           token(value.conclusion), factText(value.test), factText(value.line), factText(value.origin));
