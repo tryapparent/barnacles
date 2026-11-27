@@ -159,6 +159,11 @@ type ReplayPolicy = {
     assigned: boolean, steps: number, annotation: string): unknown;
   observe_pr_notice(state: unknown, thread: string, id: string, sourceThread: string, visibility: string,
     status: string, truncated: boolean, linkedPr: number, message: string): unknown;
+  observe_manual_verification(state: unknown, thread: string, id: string, repository: string, revision: string,
+    event: string, path: string, status: string, conclusion: string, attempt: number, executedJobs: number,
+    totalJobs: number, completed: number): unknown;
+  observe_empty_pr_rollup(state: unknown, thread: string, id: string, repository: string, revision: string,
+    turn: string, pr: number, observed: number, started: number, checks: number): unknown;
   observe_pr_watch_wake(state: unknown, thread: string, id: string, watchId: string, number: number, message: string,
     registered: number, parked: number, notified: number, priorOrdinal: number, nextOrdinal: number,
     noticeStamp: string, requestedStamp: string): unknown;
@@ -372,6 +377,14 @@ async function replayBottlenecks(file: string, scratch: string, patterns: boolea
         state = policy.observe_pr_notice(state, token(value.thread), id, token(value.sourceThread),
           token(value.visibility), token(value.status), bendBool(value.truncated), clockSecond(value.linkedPr),
           factText(value.message));
+      } else if (value.kind === "t3-linked-manual-verification") {
+        state = policy.observe_manual_verification(state, token(value.thread), id, factText(value.repository),
+          sha(value.revision), token(value.event), factText(value.path), token(value.status), token(value.conclusion),
+          clockSecond(value.attempt), clockSecond(value.executedJobs), clockSecond(value.totalJobs), clockSecond(value.completed));
+      } else if (value.kind === "t3-empty-pr-check-rollup") {
+        state = policy.observe_empty_pr_rollup(state, token(value.thread), id, factText(value.repository),
+          sha(value.revision), token(value.turn), clockSecond(value.pr), clockSecond(value.observed),
+          clockSecond(value.started), clockSecond(value.checks));
       } else if (value.kind === "t3-pr-watch-wake") {
         const noticeStamp = factText(value.noticeStamp);
         state = policy.observe_pr_watch_wake(state, token(value.thread), id, token(value.watchId),

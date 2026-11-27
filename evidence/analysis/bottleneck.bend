@@ -592,6 +592,73 @@ def observe_pr_notice(state: Replay, +thread: String, id: String, source_thread:
   +valid = Bool.and(U32.is_gt(pr, 0), Bool.and(local, Bool.and(complete, conflict)))
   observe_failure(state, thread, id, "pr-merge-conflict-observed", valid)
 
+def manual_verification_key(thread: String, repository: String, revision: String) -> String:
+  pair("manual-verification", pair(thread, pair(repository, revision)))
+
+def update_manual_verification(state: Replay, key: String, id: String, +completed: U32, valid: Bool,
+  prior: Attempt) -> Replay:
+  match state prior:
+    case Replay{seen, files, reads, costs, +attempts, cohorts, status_reads, findings} Attempt{_, _, +earliest, _}:
+      +earlier = Bool.or(U32.is_eq(earliest, 0), U32.is_lt(completed, earliest))
+      +accept = Bool.and(valid, Bool.and(U32.is_gt(completed, 0), earlier))
+      Replay{seen, files, reads, costs,
+        Bool.pick(Map<&2, Attempt>, accept, Map.set(&2, Attempt, attempts, key, Attempt{id, completed, completed, False{}}), attempts),
+        cohorts, status_reads, findings}
+
+def observe_manual_verification(+state: Replay, thread: String, id: String, repository: String, revision: String,
+  event: String, +path: String, status: String, conclusion: String, attempt: U32, +jobs: U32, total_jobs: U32,
+  completed: U32) -> Replay:
+  match state:
+    case Replay{_, _, _, _, attempts, _, _, _}:
+      +linux = String.eq(path, ".github/workflows/verification.yml")
+      +mac = Bool.or(String.eq(path, ".github/workflows/verification-mac.yml"),
+        String.eq(path, ".github/workflows/verification-mac-main.yml"))
+      +terminal = Bool.and(String.eq(event, "workflow_dispatch"),
+        Bool.and(String.eq(status, "completed"), String.eq(conclusion, "success")))
+      +executed = Bool.and(U32.is_gt(attempt, 0), Bool.and(U32.is_gt(jobs, 0), U32.is_ge(total_jobs, jobs)))
+      +valid = Bool.and(Bool.or(linux, mac), Bool.and(terminal, executed))
+      +key = manual_verification_key(thread, repository, revision)
+      update_manual_verification(state, key, id, completed, valid,
+        found(~Attempt, Map.get(Attempt, Attempt{"", 0, 0, False{}}, attempts, key)))
+
+def record_empty_pr_rollup(state: Replay, +thread: String, +id: String, +scope: String, +turn_key: String,
+  +observed: U32, +started: U32, valid: Bool, prior: Attempt, manual: Attempt) -> Replay:
+  match state prior manual:
+    case Replay{+seen, +files, +reads, +costs, +attempts, +cohorts, +status_reads, +findings} Attempt{+last, _, +last_at, _} Attempt{verified, _, +verified_at, _}:
+      +read = pair("pr-rollup-read", pair(thread, id))
+      +first = pair("pr-rollup-empty", scope)
+      +unlisted = pair("pr-rollup-manual-unlisted", scope)
+      +accepted = Bool.and(valid, Bool.and(U32.is_ge(observed, last_at), Bool.not(includes(seen, read))))
+      +initial = Bool.not(includes(seen, first))
+      +repeat = U32.is_gt(last_at, 0)
+      +bound = Bool.and(U32.is_gt(verified_at, 0), U32.is_gt(started, verified_at))
+      +external = Bool.and(bound, Bool.not(includes(seen, unlisted)))
+      +with_initial = Bool.pick(List<&2, Finding>, initial,
+        Finding{"t3-pr-check-rollup-empty", thread, id, "", 0, 0, 0, 0} <> findings, findings)
+      +with_repeat = Bool.pick(List<&2, Finding>, repeat,
+        Finding{"t3-pr-check-rollup-repeated", thread, id, last, U32.sub(observed, last_at), 0, 0, 0} <> with_initial, with_initial)
+      +with_manual = Bool.pick(List<&2, Finding>, external,
+        Finding{"t3-pr-manual-verification-unlisted", thread, id, verified, U32.sub(started, verified_at), 0, 0, 0} <> with_repeat, with_repeat)
+      +seen_reads = Map.set(&2, Bool, Map.set(&2, Bool, seen, read, True{}), first, True{})
+      Bool.pick(Replay, accepted,
+        Replay{Bool.pick(Map<&2, Bool>, external, Map.set(&2, Bool, seen_reads, unlisted, True{}), seen_reads),
+          files, reads, costs, Map.set(&2, Attempt, attempts, turn_key, Attempt{id, observed, observed, False{}}),
+          cohorts, status_reads, with_manual},
+        Replay{seen, files, reads, costs, attempts, cohorts, status_reads, findings})
+
+def observe_empty_pr_rollup(+state: Replay, +thread: String, id: String, +repository: String, +revision: String,
+  turn: String, +pr: U32, +observed: U32, +started: U32, checks: U32) -> Replay:
+  match state:
+    case Replay{_, _, _, _, +attempts, _, _, _}:
+      +scope = pair(thread, pair(repository, pair(U32.show(pr), revision)))
+      +turn_key = pair("pr-rollup-turn", pair(scope, turn))
+      +manual_key = manual_verification_key(thread, repository, revision)
+      +clock = Bool.and(U32.is_gt(observed, 0), U32.is_ge(observed, started))
+      +valid = Bool.and(U32.is_gt(pr, 0), Bool.and(clock, U32.is_eq(checks, 0)))
+      record_empty_pr_rollup(state, thread, id, scope, turn_key, observed, started, valid,
+        found(~Attempt, Map.get(Attempt, Attempt{"", 0, 0, False{}}, attempts, turn_key)),
+        found(~Attempt, Map.get(Attempt, Attempt{"", 0, 0, False{}}, attempts, manual_key)))
+
 def record_pr_watch_wake(state: Replay, +thread: String, +id: String, watch_id: String, reason: String,
   +seconds: U32, valid: Bool) -> Replay:
   match state:
