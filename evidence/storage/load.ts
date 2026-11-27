@@ -25,6 +25,7 @@ export type EvidenceBatch =
   | { source: "github-actions-window"; attempts: ActionAttempt[] }
   | { source: "github-delivery"; pullRequest: PullRequest; release?: ReleaseEvidence }
   | { source: "codex"; rollout: RolloutEvidence }
+  | { source: "t3-rollout"; rollout: RolloutEvidence; t3Instance: string; thread: string }
   | { source: "codex-rejected"; receipt: RolloutImport }
   | { source: "git-change-scan"; repository: string; report: ChangedCodeReport; inventory?: ChangedCodeFile[] }
   | { source: "t3"; thread: ThreadEvidence };
@@ -52,6 +53,13 @@ export function loadEvidence(database: string, batch: EvidenceBatch, policy: Adm
     case "github-actions": return saveAttempt(database, batch.attempt, policy);
     case "github-delivery": return saveDelivery(database, batch.pullRequest, batch.release, policy);
     case "codex": return saveRollout(database, batch.rollout, policy);
+    case "t3-rollout": {
+      saveRollout(database, batch.rollout, policy);
+      return writeSources(database, (db) => {
+        db.prepare(`INSERT INTO t3_codex_links VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`)
+          .run(batch.t3Instance, batch.thread, batch.rollout.instance, batch.rollout.session);
+      });
+    }
     case "git-change-scan": return saveChangedCode(database, batch.repository, batch.report, batch.inventory);
     case "t3": return saveThread(database, batch.thread, policy);
   }

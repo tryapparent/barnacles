@@ -8,6 +8,7 @@ type PriorAttempt = { $: "None" } | { $: "Some"; value: AttemptRevision };
 type Admission = { $: "Admit" } | { $: "Reject"; message: string };
 
 export type AdmissionPolicy = {
+  t3_rollout_matches(refs: unknown, session: string): boolean;
   thread_admission(previous: Snapshot, revision: Revision): Admission;
   rollout_admission(previous: Snapshot, revision: Revision): Admission;
   pr_admission(previous: Snapshot, revision: Revision): Admission;

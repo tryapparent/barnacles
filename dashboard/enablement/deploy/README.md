@@ -25,6 +25,37 @@ and persistent collector state. Verify the dashboard, an asset and
 `/api/v1/shipping?limit=1` through the same authorized tailnet URL. If the
 release fails, repeat the switch with the previous target and verify again.
 
+### Collector delivery from GitHub Actions
+
+After verification passes on main, the `collector-release` job publishes a
+build-attested archive of the tracked source and built frontend. The
+Clanker deploy command requires an attestation from the expected GitHub-hosted
+workflow, source ref, and exact current main commit.
+
+Run `dashboard/run.sh collector-deploy` with these host-local environment
+variables. The systemd user deployment service runs the same command from an
+installed copy of the launcher.
+
+| Variable | Value |
+| --- | --- |
+| `PLOW_COLLECTOR_ROOT` | Existing release root containing `current`, `polling`, and `releases` |
+| `PLOW_COLLECTOR_PORT` | Existing dashboard loopback port |
+| `PLOW_COLLECTOR_REPOSITORY` | Repository the collector reads |
+| `PLOW_COLLECTOR_PROXY_USER` | Existing dashboard proxy login |
+| `BARNACLES_BEND_BUNDLE` | Same verified local compiler bundle used by the poller |
+
+The command serializes with the existing deployment lock. It prepares a
+candidate snapshot from a local SQLite backup, checks the dashboard and API
+over loopback, then switches `current` and waits for a fresh snapshot from the
+running collector. Failed activation restores the previous release. Keep
+collector schema changes compatible with that rollback window because both
+releases use the same persistent evidence database. The optional T3–Codex
+configuration stays in the poller service's local environment.
+
+Run the deployment service on demand for the first release. After verifying
+the result, enable its timer for subsequent releases. The timer checks for
+code updates separately from the collector's 15-minute data refresh.
+
 ## Grafana and Tempo
 
 The repository root names and assembles one Compose project. Dashboard owns the Grafana and Tempo services, provisioning, replay, smoke tests, and recovery. Evidence owns the [snapshot contract](../../../evidence/README.md#published-dashboard-snapshot). Collector remains a host-side CLI for selected source inputs and credentials. A recurring import job can join through its own Compose include.
