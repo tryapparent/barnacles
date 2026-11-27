@@ -380,18 +380,43 @@ def observe_failed_step(+state: Replay, thread: String, +id: String, clock: Stri
     observe_failure(observe_timing(state, id, clock, operation, start, end), thread, id, label, True{}),
     state)
 
-def observe_workflow_gate(+state: Replay, thread: String, +id: String, +job: String, +prerequisite: String,
+def observe_workflow_gate(+state: Replay, thread: String, +id: String, +workflow: String, +job: String, +prerequisite: String,
   +attempt_started: U32, +earliest_job: U32, +previous: U32, +gate: U32, started: U32) -> Replay:
   +original = Bool.and(U32.is_gt(attempt_started, 0), Bool.and(U32.is_ge(earliest_job, attempt_started),
     U32.is_ge(previous, earliest_job)))
   +seconds = U32.sub(gate, previous)
   +ordered = Bool.and(U32.is_ge(gate, previous), Bool.and(U32.is_ge(started, gate), U32.is_ge(seconds, 60)))
   +distinct = Bool.not(String.eq(job, prerequisite))
-  +operation = String.append(job, String.append(" needs ", prerequisite))
+  +prefix = Bool.pick(String, String.is_empty(workflow), "", String.append(workflow, " / "))
+  +operation = String.append(prefix, String.append(job, String.append(" needs ", prerequisite)))
   +valid = Bool.and(original, Bool.and(ordered, distinct))
   Bool.pick(Replay, valid,
     observe_failure_with_duration(observe_timing(state, id, "ci-workflow-status-gate", operation, previous, gate),
       thread, id, "ci-workflow-status-gate", True{}, seconds), state)
+
+def observe_pre_push_timing_fixture(state: Replay, thread: String, id: String, operation: String, setting: String,
+  fixture: String, actual: String, expected: String, line: String, failed: Bool, suite_ms: U32) -> Replay:
+  +launch = Bool.and(String.eq(operation, "git-push"), String.eq(setting, "APPARENT_TIMING_FILE"))
+  +mismatch = Bool.and(String.eq(fixture, "enablement/tests/test_pre_push_guard.py"),
+    Bool.and(String.eq(actual, "--offline --timings"), String.eq(expected, "--offline")))
+  +rejected = Bool.and(failed, String.eq(line, "pre-push: verification failed; push rejected"))
+  observe_failure_with_duration(state, thread, id, "local-push-timing-flag-fixture-mismatch",
+    Bool.and(launch, Bool.and(mismatch, rejected)), U32.div(suite_ms, 1000))
+
+def observe_main_reuse_refusal(state: Replay, thread: String, id: String, event: String, step: String,
+  conclusion: String, line: String) -> Replay:
+  +context = Bool.and(String.eq(event, "push"), String.eq(conclusion, "success"))
+  +producer = String.eq(step, "Run node --experimental-strip-types enablement/ci/routing/evidence.ts --reuse")
+  +changed = String.eq(line, "Verification definitions changed; fresh main suites required.")
+  observe_failure(state, thread, id, "ci-reuse-verification-definitions-changed", Bool.and(context, Bool.and(producer, changed)))
+
+def observe_hermes_cache_merge(state: Replay, thread: String, id: String, step: String, conclusion: String,
+  exit_code: U32, code: String, syscall: String, origin: String, restored: Bool) -> Replay:
+  +failed = Bool.and(String.eq(conclusion, "failure"), U32.is_eq(exit_code, 1))
+  +producer = Bool.and(String.eq(step, "Install supported Hermes validator"),
+    String.eq(origin, "installCandidate:hermes/enablement/ci/validator-job.ts"))
+  +copy = Bool.and(restored, Bool.and(String.eq(code, "EEXIST"), String.eq(syscall, "cp")))
+  observe_failure(state, thread, id, "ci-hermes-validator-cache-copy-conflict", Bool.and(failed, Bool.and(producer, copy)))
 
 def observe_apt_mirror_probe(state: Replay, thread: String, id: String, step: String, conclusion: String, exit_code: U32,
   +mirror_a: String, +mirror_b: String, line: String, start: U32, end: U32) -> Replay:

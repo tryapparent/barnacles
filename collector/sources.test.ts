@@ -675,6 +675,16 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       line: "Error: Capture is still pending; retry fetch later" };
     const unsafeOutput = { ...captureAccess, id: "shared-dir",
       line: "Error: Unsafe shared or unowned directory tree; run apparent connect alternatives for local inspection and authorized transfer options" };
+    const timingFixture = { kind: "pre-push-timing-fixture", thread: "t", id: "fixture-timing",
+      operation: "git-push", setting: "APPARENT_TIMING_FILE", fixture: "enablement/tests/test_pre_push_guard.py",
+      actual: "--offline --timings", expected: "--offline", line: "pre-push: verification failed; push rejected",
+      failed: true, suiteElapsedMs: 68_216 };
+    const reuseRefusal = { kind: "main-verification-reuse", thread: "t", id: "reuse-refusal", event: "push",
+      step: "Run node --experimental-strip-types enablement/ci/routing/evidence.ts --reuse", conclusion: "success",
+      line: "Verification definitions changed; fresh main suites required." };
+    const cacheConflict = { kind: "hermes-validator-cache-copy", thread: "t", id: "cache-copy",
+      step: "Install supported Hermes validator", conclusion: "failure", exitCode: 1, code: "EEXIST", syscall: "cp",
+      origin: "installCandidate:hermes/enablement/ci/validator-job.ts", restored: true };
     const facts = [
       admission, admission,
       { ...admission, id: "superseded", annotation: "Canceling since a higher priority waiting request exists" },
@@ -853,6 +863,18 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       { ...pendingCapture, id: "successful-fetch", failed: false },
       { ...pendingCapture, id: "inspect-is-not-transfer", operation: "apparent-inspect" },
       { ...unsafeOutput, id: "other-command", operation: "apparent-open" },
+      { ...statusGate, id: "connect-portable-gate", workflow: "stream-connect" },
+      timingFixture, timingFixture,
+      { ...timingFixture, id: "without-setting", setting: "TMPDIR" },
+      { ...timingFixture, id: "expected-timings", expected: "--offline --timings" },
+      { ...timingFixture, id: "recovered-push", failed: false },
+      reuseRefusal, reuseRefusal,
+      { ...reuseRefusal, id: "quoted-in-tests", step: "Run bun test enablement/ci/" },
+      { ...reuseRefusal, id: "pull-request-reuse", event: "pull_request" },
+      cacheConflict, cacheConflict,
+      { ...cacheConflict, id: "no-restore", restored: false },
+      { ...cacheConflict, id: "other-copy-step", step: "Snapshot downloaded PyPI wheels only" },
+      { ...cacheConflict, id: "permission-copy", code: "EACCES" },
       read, read, { ...read, id: "b", at: 160 }, { ...read, thread: "t2", at: 170 },
       timing, timing, { ...timing, id: "unpaired", end: 0 },
       attempt, { ...attempt, id: "changed", key: "gate:v2", start: 115, end: 120, failed: false, succeeded: true },
@@ -880,6 +902,7 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       { $: "Cost", clock: "ci-native-prerequisite-step", operation: "bend-toolchain", count: 1, seconds: 13, unknown: 0 },
       { $: "Cost", clock: "ci-native-prerequisite-step", operation: "circle-vision", count: 1, seconds: 113, unknown: 0 },
       { $: "Cost", clock: "ci-workflow-status-gate", operation: "linux needs portable", count: 1, seconds: 120, unknown: 0 },
+      { $: "Cost", clock: "ci-workflow-status-gate", operation: "stream-connect / linux needs portable", count: 1, seconds: 120, unknown: 0 },
       { $: "Cost", clock: "local-build-admission", operation: "t3-build", count: 2, seconds: 123, unknown: 0 },
       { $: "Cost", clock: "runner", operation: "build", count: 1, seconds: 129, unknown: 1 },
       { $: "Cost", clock: "t3-pr-watch-parked", operation: "checks-passed", count: 1, seconds: 80, unknown: 0 },
@@ -902,6 +925,8 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
         "local-vm-missing-guest-command",
         "ci-workflow-status-gate", "ci-connect-activation-ownership-conflict", "ci-connect-candidate-already-active",
         "capture-upload-pending", "capture-directory-unsafe",
+        "ci-workflow-status-gate", "local-push-timing-flag-fixture-mismatch",
+        "ci-reuse-verification-definitions-changed", "ci-hermes-validator-cache-copy-conflict",
         "recovered-attempt", "runner"]);
     assert.ok(!first.includes("installed tools"));
     assert.ok(!first.includes("#42:"));
@@ -923,6 +948,8 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       ["vm-ready", "", 0, 0],
       ["portable-gate", "", 120, 0], ["activation", "", 8, 0], ["already-active", "", 10, 0],
       ["upload-pending", "", 0, 0], ["shared-dir", "", 0, 0],
+      ["connect-portable-gate", "", 120, 0], ["fixture-timing", "", 68, 0],
+      ["reuse-refusal", "", 0, 0], ["cache-copy", "", 0, 0],
       ["recovered", "first", 20, 0], ["tail", "", 250, 10],
     ]);
   } finally {
