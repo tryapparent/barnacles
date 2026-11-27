@@ -1,4 +1,5 @@
 import Base
+import ./range.bend as Range
 import ../bottleneck.bend as Study
 import ./priorities.bend as Priority
 
@@ -26,8 +27,8 @@ type Tally is Data:
 type Coverage is Data:
   Coverage{active: U32, withCodex: U32, withCI: U32, withBoth: U32}
 
-def last_day(+to: Nat) -> DayWindow:
-  DayWindow{Nat.sub(to, 86400000n), to}
+def report_window(range: String, +to: Nat) -> DayWindow:
+  DayWindow{Range.start(range,to),to}
 
 def within(+window: DayWindow, +stamp: Nat) -> Bool:
   match window:
@@ -110,3 +111,6 @@ def refresh_needed(stored: String, observed: String) -> Bool:
 
 def top_priorities(batches: List<&2, Priority.Batch>, delays: List<&2, Priority.Delay>) -> List<&2, Priority.Priority>:
   Priority.priorities(batches, delays)
+
+def active_count(batches: List<&2, Priority.Batch>) -> Nat:
+  List.length(&2, Priority.Batch, batches)

@@ -1,9 +1,5 @@
 const eyeIcon = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="2.5"/></svg>'
 const feed = JSON.parse(document.getElementById('trace-data').textContent)
-const traces = feed.traces.map((trace, index) => ({
-  ...trace,
-  title: 'Thread ' + (index + 1),
-}))
 const rows = document.getElementById('traces')
 const probe = document.querySelector('.measure')
 const ruler = document.getElementById('chart-ruler')
@@ -32,11 +28,9 @@ function decodeEvidence(trace) {
   return { ...trace, end, evidence, failures, totals: policy.evidence_totals(evidence),
     recordedFailures: [...values(policy.failure_points(true,end,failures))] }
 }
-const evidenceRows = traces.map(decodeEvidence)
-const frame = policy.utc_frame(asList(evidenceRows.map(trace => ({
-  $: 'UtcSpan', start: trace.startUtcMs, end: trace.startUtcMs + trace.end,
-}))))
-const scale = frame.end - frame.start
+let evidenceRows = []
+let frame
+const scale = () => frame.end - frame.start
 const utcDay = new Intl.DateTimeFormat('en-US', { timeZone:'UTC', month:'short', day:'numeric' })
 const utcClock = new Intl.DateTimeFormat('en-GB', { timeZone:'UTC', hour:'2-digit',minute:'2-digit', hourCycle:'h23' })
 const axis = document.getElementById('scale-caption')
@@ -49,14 +43,6 @@ function drawTicks() {
     axis.append(tick)
   }
 }
-for (const [index,trace] of evidenceRows.entries()) {
-  const mark = makeElement('span')
-  mark.style.left = percent(policy.utc_offset(frame,trace.startUtcMs),scale)
-  mark.style.width = percent(trace.end,scale)
-  mark.style.top = 3 + index * 2.6 + 'px'
-  minimap.querySelector('.mini-threads').append(mark)
-}
-const titles = new Set(evidenceRows.flatMap(trace => [...values(policy.available_titles(trace.evidence))]))
 let details = false
 let measuredWidth = 0
 let measurements
@@ -64,8 +50,8 @@ let measurementWidth
 let openTrace = -1
 let zoom = 1
 let baseWidth = 0
-let visibleWindow = frame
-const minimumDuration = Math.max(1, Math.ceil(scale / 128))
+let visibleWindow
+const minimumDuration = () => Math.max(1, Math.ceil(scale() / 128))
 
 function makeElement(tag, className, text) {
   const element = document.createElement(tag)
@@ -74,6 +60,7 @@ function makeElement(tag, className, text) {
   return element
 }
 function measure() {
+  const titles = new Set(evidenceRows.flatMap(trace => [...values(policy.available_titles(trace.evidence))]))
   return asList([...titles].map(key => {
     probe.textContent = key
     return { $: 'Measurement', key, width: Math.ceil(probe.getBoundingClientRect().width) }
@@ -224,7 +211,7 @@ function draw() {
     fit: () => applyWindow(policy.view_window(frame, trace.startUtcMs, trace.end, 1), true),
     visible: policy.window_overlap(visibleWindow, trace.startUtcMs, trace.startUtcMs + trace.end),
   })), {
-    host: rangeControls, max: scale,
+    host: rangeControls, max: scale(),
     value: [visibleWindow.start - frame.start, visibleWindow.end - frame.start],
     format: value => utc(frame.start + value) + ' UTC',
     resize: (index, value) => moveBoundary(index === 0, frame.start + value),
@@ -254,7 +241,7 @@ function duration() {
 let fitted = false
 let pendingDraw = 0
 function applyWindow(next, focused = false) {
-  if (!traces.length) return
+  if (!evidenceRows.length) return
   visibleWindow = next
   fitted = focused
   if (!pendingDraw) pendingDraw = requestAnimationFrame(drawWindow)
@@ -266,7 +253,7 @@ function drawWindow() {
   viewportWidth = viewport.clientWidth
   baseWidth = Math.floor(viewportWidth - frozen)
   if (baseWidth <= 0) return
-  zoom = scale / duration()
+  zoom = scale() / duration()
   details = policy.trace_details(duration(), fitted)
   grid.style.setProperty('--timeline-width', baseWidth + 'px')
   clearTooltip()
@@ -280,7 +267,7 @@ function panWindow(fraction, start = visibleWindow.start) {
 }
 function zoomWindow(factor, anchor) {
   const length = duration()
-  const next = policy.view_window(frame, frame.start, Math.round(length * factor), Math.min(minimumDuration, length))
+  const next = policy.view_window(frame, frame.start, Math.round(length * factor), Math.min(minimumDuration(), length))
   const nextLength = next.end - next.start
   const start = Math.max(0, Math.round(visibleWindow.start + (length - nextLength) * anchor))
   applyWindow(policy.view_window(frame, start, nextLength, 1))
@@ -289,10 +276,10 @@ function selectWindow(first, last, distance, bounds) {
   if (!policy.brush_ready(Math.round(distance))) return
   const span = bounds.end - bounds.start
   const start = Math.round(bounds.start + span * first)
-  applyWindow(policy.view_window(frame, start, Math.round(span * (last - first)), Math.min(minimumDuration, span)))
+  applyWindow(policy.view_window(frame, start, Math.round(span * (last - first)), Math.min(minimumDuration(), span)))
 }
 function moveBoundary(startEdge, position) {
-  applyWindow(policy.move_edge(frame, visibleWindow, Math.max(0, Math.round(position)), minimumDuration, startEdge))
+  applyWindow(policy.move_edge(frame, visibleWindow, Math.max(0, Math.round(position)), minimumDuration(), startEdge))
 }
 
 PlowUI.wireChartInput({

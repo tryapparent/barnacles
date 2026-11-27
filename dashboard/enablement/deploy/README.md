@@ -71,9 +71,11 @@ a subsequent poll to resolve.
 Set `PLOW_ANALYSIS_USER` to the authorized tailnet login. The API binds to
 a loopback host port selected by `PLOW_ANALYSIS_PORT`. The read-only API
 mount contains the named analysis volume only. The refresh container takes a
-consistent backup of the input and refreshes the rolling 24-hour view every
-15 minutes. The report ends at the refresh's UTC cutoff and includes captured
-T3 thread creation and run activity in `[cutoff - 24 hours, cutoff)`. A closed
+consistent backup of the input and refreshes the rolling 24-hour and seven-day
+views every 15 minutes. Both end at the refresh’s UTC cutoff and cover
+captured T3 thread creation and run activity in their respective windows.
+The REST summary defaults to 24 hours. The dashboard requests the weekly
+priorities with `?range=7d`. A closed
 admission or run interval that crosses the boundary also qualifies. Thread
 metadata edits alone do not qualify. The cohort includes threads with partial
 source coverage. Code paths that discover new Codex links have their own
@@ -85,7 +87,7 @@ threads. Its occurrence is counted once. The thread picker shows full-thread
 diagnostic clocks. A missing source or clock limits what the summary can
 observe. When available, put a private [outcome-delay ledger](../../../collector/README.md#measure-confirmed-outcome-delay)
 at `outcomes/outcome-delays.json` under the receipts directory. Bend2 validates
-and unions the original intervals before clipping them to the 24-hour window.
+and unions the original intervals before clipping them to each report window.
 The API publishes only aggregated impact and coverage. Delay is unknown when
 the ledger is absent or insufficient. An interrupted refresh leaves the last
 committed results readable.
@@ -108,7 +110,7 @@ OTLP evidence volume's mountpoint and set `PLOW_ANALYSIS_T3_INSTANCE`
 and `PLOW_ANALYSIS_CODEX_INSTANCE` to the exact stored source namespaces.
 The worker uses the stock T3 poller's allowlisted run and provider
 projections as its T3 input and uses the live GitHub and Codex databases
-read-only. It evaluates the configured T3 instance in the 24-hour window.
+read-only. It loads seven days of projections for the configured T3 instance.
 It reuses the original Bend2 native-session check and leaves missing or
 ambiguous binding evidence out of the trace join. A PR link supplies
 repository context. The exact CI join still requires the original

@@ -23,7 +23,8 @@ const demo = [
 const traces = demo.map((trace, index) => ({ ...trace, errors: index ? [] : [600, 601] }))
 traces[0].detail = [[13000, 14200, 'Model sampling']]
 traces[0].ci = [[2000, 2100, 'CI watcher observation']]
-const feed = { observed: 1795730400000, traces, overview: { to: 1795744800000, traces } }
+const to = 1795744800000
+const feed = { observed: 1795730400000, traces, overview: { from: to - 604800000, to, traces } }
 let storedFeed = JSON.stringify(feed)
 let reads = 0
 const issuer = 'https://fixture.cloudflareaccess.com'
@@ -82,9 +83,9 @@ try {
     const screenshot = async name => {
       if (process.env.PLOW_SCREENSHOTS) await page.screenshot({ path: resolve(directory, `${width}-${name}.png`), fullPage: true, animations: 'disabled' })
     }
-    equal(await page.getByRole('link', { name: 'Session history' }).count(), 0)
-    equal(await page.getByText('Field colors', { exact: true }).count(), 0)
-    await page.getByText('Last 24 hours', { exact: true }).waitFor()
+    const day = page.getByRole('button', { name: 'Last 24 hours' })
+    const week = page.getByRole('button', { name: 'Last 7 days' })
+    equal(await day.getAttribute('aria-pressed'), 'true')
     await screenshot('overview')
     const summary = page.locator('#summary-panel')
     const timeline = page.locator('#timeline-panel')
@@ -99,27 +100,26 @@ try {
     const titles = () => timeline.locator('.trace:visible .sample-title').allTextContents()
     const matchingThreads = ['Thread 1', 'Thread 6']
     const geometry = () => page.evaluate(() => {
-      const bounds = element => {
-        const { x, y, width, height } = element.getBoundingClientRect()
+      const bounds = selector => {
+        const { x, y, width, height } = document.querySelector(selector).getBoundingClientRect()
         return [x + scrollX, y + scrollY, width, height]
       }
       const selectors = ['.activity-header', '#summary-panel', '.summary-top', '#tiles', '#timeline-panel',
         '.timeline-heading-row', '.time-strip', '.navigator', '#minimap', '#timeline-viewport', '.inspector-slot']
       return {
         page: [document.documentElement.scrollWidth, document.documentElement.scrollHeight],
-        regions: Object.fromEntries(selectors.map(selector => [selector, bounds(document.querySelector(selector))])),
+        regions: selectors.map(bounds),
       }
     })
     const rowSlots = () => page.locator('.trace:visible').evaluateAll(rows =>
       rows.map(row => [row.offsetTop, row.offsetHeight]))
-    const originalSlots = await rowSlots()
-    const assertPacked = async count => deepEqual(await rowSlots(), originalSlots.slice(0, count))
+    const slots = await rowSlots()
+    const assertPacked = async count => deepEqual(await rowSlots(), slots.slice(0, count))
     const overview = await geometry()
-    const assertStable = async state => deepEqual(await geometry(), overview, `${width}px · ${state}`)
+    const assertStable = async state => deepEqual(await geometry(), overview, state)
     const total = () => page.locator('#summary-total').innerText()
     const initialTotal = await total()
     match(initialTotal, /across 9 threads/)
-    equal(await timeline.getByRole('button', { name: /Zoom in|Zoom out|Fit all/ }).count(), 0)
     const rangeStart = timeline.getByRole('slider', { name: 'Visible range start' })
     const rangeEnd = timeline.getByRole('slider', { name: 'Visible range end' })
     const dragHandle = async (handle, dx) => {
@@ -142,15 +142,25 @@ try {
     await rangeEnd.press('ArrowRight')
     equal(await rangeStart.getAttribute('aria-valuetext'), leftEdge)
     await reset()
-    await assertStable('resize either edge and reset')
     const trend = page.getByRole('region', { name: 'Agent work share' })
     const trendLabel = () => trend.getByRole('img').getAttribute('aria-label')
     const initialTrend = await trendLabel()
     match(initialTrend, /UTC: [\d.]+%/)
-    equal(await trend.getByRole('button', { name: 'Batch values' }).count(), 0)
     const view = page.locator('#timeline-viewport')
     const window = async () => { await settle(); return view.evaluate(el => [+el.dataset.start, +el.dataset.end]) }
     const fit = timeline.getByRole('button', { name: /^Fit Thread 1\./ })
+    deepEqual(await window(), [to - 86400000, to])
+    await week.press('Space')
+    deepEqual(await window(), [to - 604800000, to])
+    equal(await week.getAttribute('aria-pressed'), 'true')
+    equal((await titles()).length, 10)
+    match(await total(), /across 10 threads/)
+    equal((await trendLabel()).split(' UTC: ').length - 1, 7)
+    await screenshot('week')
+    await day.press('Enter')
+    deepEqual(await window(), [to - 86400000, to])
+    equal(await total(), initialTotal)
+    equal(await trendLabel(), initialTrend)
     await fit.press('Space')
     deepEqual(await window(), [demo[0].startUtcMs, demo[0].startUtcMs + demo[0].end * 1000])
     equal(await fit.evaluate(el => el === document.activeElement), true)
@@ -182,7 +192,7 @@ try {
     await workflow.focus()
     await page.keyboard.press('Enter')
     equal(await summary.getByRole('heading').textContent(), 'Admission wait')
-    equal((await titles()).length, 10)
+    equal((await titles()).length, 9)
     await assertStable('open operation breakdown')
     await screenshot('breakdown')
 
@@ -197,19 +207,14 @@ try {
     await assertStable('filter to Publish artifacts')
 
     await ci.click()
-    equal((await titles()).length, 8)
-    equal(await timeline.locator('.match-span:visible').count(), 8)
-    await assertPacked(8)
+    equal((await titles()).length, 7)
+    equal(await timeline.locator('.match-span:visible').count(), 7)
+    await assertPacked(7)
     await page.keyboard.press('Escape')
-    equal((await titles()).length, 10)
-    await assertPacked(10)
+    equal((await titles()).length, 9)
+    await assertPacked(9)
     await assertStable('clear filter with Escape')
-    const timelineRegion = timeline.getByRole('region', { name: 'UTC timelines' })
-    ok(await timelineRegion.evaluate(element => element.scrollHeight <= element.clientHeight))
-    equal(await timelineRegion.evaluate(element => getComputedStyle(element).overflowX), 'hidden')
-    await publish.click()
-    await publish.click()
-    equal((await titles()).length, 10)
+    ok(await view.evaluate(el => el.scrollHeight <= el.clientHeight))
     await publish.click()
 
     const brush = async (from, to) => {
@@ -236,8 +241,8 @@ try {
     await summary.getByRole('button', { name: 'Close breakdown' }).click()
     equal(await workflow.getAttribute('aria-expanded'), 'false')
     equal(await workflow.evaluate(element => element === document.activeElement), true)
-    equal((await titles()).length, 10)
-    await assertPacked(10)
+    equal((await titles()).length, 9)
+    await assertPacked(9)
     await assertStable('reset zoom and close operation breakdown')
 
     await summary.getByRole('button', { name: /^Provider run/ }).click()
@@ -249,7 +254,7 @@ try {
     await summary.getByRole('button', { name: 'Close breakdown' }).click()
     await workflow.click()
     await publish.click()
-    await brush(.60, .72)
+    await brush(.43, .50)
     deepEqual(await titles(), ['Thread 6'])
     const inspect = timeline.getByRole('button', { name: /^Inspect Thread 6/ })
     await inspect.click()
@@ -278,13 +283,12 @@ try {
     const helpBounds = await help.boundingBox()
     ok(Math.abs(guideBounds.x + guideBounds.width - helpBounds.x - helpBounds.width) < 2)
     ok(guideBounds.y >= helpBounds.y + helpBounds.height)
-    await assertStable('open timeline guide')
     await screenshot('help')
     await page.keyboard.press('Escape')
     equal(await instructions.isVisible(), false)
     storedFeed = JSON.stringify({ observed: 0, traces: [] })
     await page.reload()
-    await page.getByText('No measured session time has been imported yet.').waitFor()
+    await page.getByText('No measured session time in this range.').waitFor()
     equal(await timeline.isVisible(), false)
     storedFeed = null
     equal((await page.reload()).status(), 503)

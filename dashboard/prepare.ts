@@ -72,13 +72,13 @@ async function prepare(args: string[]) {
 
 const threadId = /^[a-f0-9]{24}$/;
 
-function readAnalysis(file: string, thread?: string): string | undefined {
+function readAnalysis(file: string, thread?: string, weekly = false): string | undefined {
   const db = new DatabaseSync(file, { readOnly: true });
   try {
     db.exec("PRAGMA busy_timeout=3000");
     const item = thread
       ? db.prepare("SELECT payload FROM analysis_threads WHERE id=?").get(thread)
-      : db.prepare("SELECT payload FROM analysis_summary WHERE id=1").get();
+      : db.prepare(weekly ? "SELECT payload FROM analysis_week WHERE id=1" : "SELECT payload FROM analysis_summary WHERE id=1").get();
     return item ? String(item.payload) : undefined;
   } finally {
     db.close();
@@ -168,7 +168,9 @@ export async function serveAnalysis(file: string, port: string) {
     if (request.method === "OPTIONS") return start(204).end();
     if (request.method !== "GET") return start(405).end();
     try {
-      const payload = readAnalysis(file, thread);
+      const range = new URL(request.url!, origin).searchParams.get("range");
+      if (range !== null && (!summary || (range !== "24h" && range !== "7d"))) return start(400).end();
+      const payload = readAnalysis(file, thread, range === "7d");
       start(payload ? 200 : thread ? 404 : 503).end(payload);
     } catch {
       start(503).end();

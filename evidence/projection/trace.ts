@@ -156,7 +156,7 @@ type FeedThread = { $: "Thread"; created: number; updated: number; runs: List<Fe
 type FeedSpan = { a: number; b: number; name: string };
 type FeedTrace = { start: number; end: number; work: List<FeedSpan>; wait: List<FeedSpan>; errors: List<number>; detail: List<FeedSpan>; ci: List<FeedSpan> };
 type FeedPolicy = { project_feed(threads: List<FeedThread>, asOf: number): { observed: number; traces: List<FeedTrace>;
-  overview: List<FeedTrace>; as_of: number } };
+  overview: List<FeedTrace>; from: number; as_of: number } };
 
 const feedList = <T>(values: T[]): List<T> =>
   values.reduceRight<List<T>>((tail, head) => ({ $: "Con", head, tail }), { $: "Nil" });
@@ -197,7 +197,7 @@ export async function projectPlowFeed(path: string, scratch: string, asOf = Date
       errors: rows(trace.errors).map(at => at / 1000), detail: encodeSpans(trace.detail), ci: encodeSpans(trace.ci),
     }));
     return { observed: projected.observed, traces: encodeTraces(projected.traces),
-      overview: { to: projected.as_of, traces: encodeTraces(projected.overview) } };
+      overview: { from: projected.from, to: projected.as_of, traces: encodeTraces(projected.overview) } };
   } finally {
     db.close();
   }
