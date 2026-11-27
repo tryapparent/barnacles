@@ -3,7 +3,7 @@ import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { buildPolicies, buildPolicy, loadPolicy } from "../tooling/bend.ts";
 import { admissionPolicy, joinSession, loadEvidence, repository, sessionJoinPolicy, sourcePolicy, type AdmissionPolicy, type NativeBinding, type SessionJoinPolicy, type Point, type SourcePolicy, type ThreadEvidence } from "../evidence/index.ts";
-import { array, bendList, boundedFile, millis, point, row, sha, str, timeParts, toMillis, token } from "./wire.ts";
+import { array, bendList, boundedFile, millis, point, row, sha, stockT3Origin, stockT3Rpc, str, timeParts, toMillis, token } from "./wire.ts";
 import { positiveInt } from "./github/attempt.ts";
 import { inspectRollout } from "./codex/rollout.ts";
 
@@ -196,51 +196,10 @@ export function linkedRolloutPoller(evidence: string, policy: SourcePolicy, admi
   };
 }
 
-async function fetchNativeReferences(endpoint: string, bearer: string, threadId: string): Promise<unknown[]> {
-  const origin = new URL(endpoint);
-  const local = origin.hostname === "127.0.0.1" || origin.hostname === "[::1]" || origin.hostname === "localhost";
-  if (!(origin.protocol === "https:" || local && origin.protocol === "http:") ||
-      origin.username || origin.password || origin.pathname !== "/" || origin.search || origin.hash) {
-    throw Error("Expected an HTTPS T3 origin or a loopback HTTP origin");
-  }
-  const response = await fetch(new URL("/api/auth/websocket-ticket", origin), {
-    method: "POST", headers: { Authorization: `Bearer ${bearer}` }, redirect: "error", signal: AbortSignal.timeout(5000),
-  });
-  if (!response.ok) throw Error(`T3 websocket ticket request failed (${response.status})`);
-  const { ticket } = row(await response.json());
-  if (typeof ticket !== "string" || !ticket || ticket.length > 4096) throw Error("Invalid T3 websocket ticket");
-  const address = new URL("/ws", origin);
-  address.protocol = origin.protocol === "https:" ? "wss:" : "ws:";
-  address.searchParams.set("orchestrationProtocol", "2");
-  address.searchParams.set("wsTicket", ticket);
-  const socket = new WebSocket(address);
-  try {
-    return await new Promise<unknown[]>((fulfill, reject) => {
-      function fail() { reject(Error("T3 thread projection could not be read")); }
-      socket.addEventListener("error", fail);
-      socket.addEventListener("close", fail);
-      socket.addEventListener("open", () => socket.send(JSON.stringify({
-        _tag: "Request", id: "1", tag: "orchestration.getThreadProjection", payload: { threadId }, headers: [],
-      })));
-      socket.addEventListener("message", (message) => {
-        try {
-          if (typeof message.data !== "string" || message.data.length > 8 * 1024 * 1024) return fail();
-          for (const item of [JSON.parse(message.data)].flat()) {
-            const frame = row(item);
-            if (frame._tag !== "Exit" || frame.requestId !== "1") continue;
-            const result = row(frame.exit);
-            if (result._tag !== "Success") return fail();
-            fulfill(array(row(result.value).providerThreads, 64));
-          }
-        } catch {
-          fail();
-        }
-      });
-      AbortSignal.timeout(8000).addEventListener("abort", fail, { once: true });
-    });
-  } finally {
-    socket.close();
-  }
+async function fetchNativeReferences(endpoint: string, bearer: string, threadId: string) {
+  const result = await stockT3Rpc(stockT3Origin(endpoint), bearer, "orchestration.getThreadProjection",
+    { threadId }, 8 * 1024 * 1024);
+  return array(result.providerThreads, 64);
 }
 
 async function importLiveSession(evidence: string, scratch: string, bindingPath: string, traces: string) {

@@ -7,7 +7,8 @@ import { T3OtelConflict, openT3Otel, t3OtelPolicy, type T3OtelSpan, type T3OtelP
 import { buildPolicy, loadPolicy } from "../../tooling/bend.ts";
 import { setTimeout as sleep } from "node:timers/promises";
 import { openT3History, type T3Command } from "../../evidence/index.ts";
-import { array, boundedFile, millis, row, SourceReadError, stockT3HistoryReader, str, token } from "../wire.ts";
+import { array, bendList, bendValues, millis, row, SourceReadError, stockT3HistoryReader, stockT3Id, str, token, t3HistoryTargets } from "../wire.ts";
+import type { List } from "../../evidence/index.ts";
 
 const bodyLimit = 8 * 1024 * 1024;
 
@@ -190,12 +191,8 @@ type HistoryPolicy = {
   page_valid(previous: string, next: string, more: boolean): boolean;
   begin_scan(saved: string, head: string): string;
   replay: Parameters<typeof openT3History>[2];
+  rotation(after: string, ids: List<string>): { total: number; threads: List<string> };
 };
-
-function historyId(value: unknown) {
-  const id = str(value);
-  return /^[A-Za-z0-9][A-Za-z0-9:._%-]*$/.test(id) ? id : "";
-}
 
 function historyPage(policy: HistoryPolicy, thread: string, page: ReturnType<typeof row>, cursor: string) {
   const next = cursor ? page.nextCursor : page.historyCursor;
@@ -220,9 +217,9 @@ function historyPage(policy: HistoryPolicy, thread: string, page: ReturnType<typ
     const item = row(input);
     const ref = row(item.nativeItemRef ?? {});
     const result = policy.observe(thread, str(item.type), str(ref.driver), str(ref.strength), {
-      $: "Command", id: historyId(item.id), thread: historyId(item.threadId), run: historyId(item.runId),
-      provider_thread: historyId(item.providerThreadId), provider_turn: historyId(item.providerTurnId),
-      native_item: historyId(ref.nativeId), status: str(item.status),
+      $: "Command", id: stockT3Id(item.id), thread: stockT3Id(item.threadId), run: stockT3Id(item.runId),
+      provider_thread: stockT3Id(item.providerThreadId), provider_turn: stockT3Id(item.providerTurnId),
+      native_item: stockT3Id(ref.nativeId), status: str(item.status),
       exit_code: Number.isSafeInteger(item.exitCode) ? String(item.exitCode) : "",
       started: String(millis(item.startedAt)), completed: String(millis(item.completedAt)), updated: String(millis(item.updatedAt)),
     });
@@ -234,10 +231,8 @@ function historyPage(policy: HistoryPolicy, thread: string, page: ReturnType<typ
 
 async function pollT3History([job, instance, flag, ...extra]: string[]) {
   if (!job || !instance || flag && flag !== "--once" || extra.length) throw Error("Invalid T3 history invocation");
-  const threads = [...new Set(array(JSON.parse(boundedFile(process.env.PLOW_T3_HISTORY_TARGETS_FILE ?? "", 8192)
-    .toString("utf8")), 32).map(token))];
-  if (!threads.length) throw Error("Configure at least one T3 history thread");
-  const read = stockT3HistoryReader(process.env.PLOW_T3_HISTORY_ORIGIN ?? "",
+  const targets = t3HistoryTargets();
+  const source = stockT3HistoryReader(process.env.PLOW_T3_HISTORY_ORIGIN ?? "",
     process.env.PLOW_T3_HISTORY_READ_TOKEN_FILE ?? "/run/secrets/t3_history_read");
   const policy = await compile<HistoryPolicy>(process.env.TMPDIR ?? resolve(job),
     new URL("../t3-otel/history.bend", import.meta.url), "t3-history");
@@ -247,17 +242,29 @@ async function pollT3History([job, instance, flag, ...extra]: string[]) {
   try {
     do {
       const coverage = { headPages: 0, olderPages: 0, complete: 0, failed: 0 };
+      let last = store.rotation();
+      let threads: Iterable<string> = targets ?? [];
+      if (targets === null) {
+        try {
+          const inventory = policy.rotation(last, bendList(await source.inventory()));
+          threads = bendValues(inventory.threads);
+          console.log(JSON.stringify({ discovered: Number(inventory.total) }));
+        } catch {
+          console.error("T3 thread discovery failed");
+          coverage.failed++;
+        }
+      }
       for (const thread of threads) {
         if (stop.signal.aborted) break;
         try {
           const saved = store.cursor(thread);
-          const head = historyPage(policy, thread, await read(thread, ""), "");
+          const head = historyPage(policy, thread, await source.page(thread, ""), "");
           const cursor = policy.begin_scan(saved, head.next);
           store.commit(thread, saved, cursor, head.sequence, head.commands);
           coverage.headPages++;
           if (cursor && !stop.signal.aborted) {
             try {
-              const older = historyPage(policy, thread, await read(thread, cursor), cursor);
+              const older = historyPage(policy, thread, await source.page(thread, cursor), cursor);
               store.commit(thread, cursor, older.next, older.sequence, older.commands);
               coverage.olderPages++;
             } catch (error) {
@@ -270,6 +277,10 @@ async function pollT3History([job, instance, flag, ...extra]: string[]) {
           if (!store.cursor(thread)) coverage.complete++;
         } catch {
           coverage.failed++;
+        }
+        if (targets === null) {
+          if (!store.advance(last, thread)) break;
+          last = thread;
         }
       }
       console.log(JSON.stringify(coverage));

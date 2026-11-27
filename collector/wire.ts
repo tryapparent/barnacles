@@ -201,17 +201,85 @@ export function boundedResponse(response: Response, limit: number): Response {
   return new Response(body, { status: response.status, headers: response.headers });
 }
 
-export function stockT3HistoryReader(endpoint: string, credential: string) {
+export function stockT3Origin(endpoint: string) {
   const origin = new URL(endpoint);
   const loopback = ["127.0.0.1", "[::1]", "localhost"].includes(origin.hostname);
   if (!(origin.protocol === "https:" || loopback && origin.protocol === "http:") ||
       origin.username || origin.password || origin.pathname !== "/" || origin.search || origin.hash) {
     throw Error("Expected an HTTPS T3 origin or a loopback HTTP origin");
   }
+  return origin;
+}
+
+export function stockT3Id(value: unknown) {
+  return typeof value === "string" && value.length <= 512 && /^[A-Za-z0-9][A-Za-z0-9:._%-]*$/.test(value) ? value : "";
+}
+
+function requireStockT3Id(value: unknown) {
+  const id = stockT3Id(value);
+  if (!id) throw Error("Invalid T3 history identifier");
+  return id;
+}
+
+export async function stockT3Rpc(origin: URL, bearer: string, tag: string, payload: ObjectRow, limit: number, timeout = 8000) {
+  const response = await fetch(new URL("/api/auth/websocket-ticket", origin), {
+    method: "POST", headers: { Authorization: `Bearer ${bearer}` }, redirect: "error", signal: AbortSignal.timeout(5000),
+  });
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw new SourceReadError(response.status);
+  }
+  const { ticket } = row(await boundedResponse(response, 8192).json());
+  if (typeof ticket !== "string" || !ticket || ticket.length > 4096) throw Error("Invalid T3 websocket ticket");
+  const address = new URL("/ws", origin);
+  address.protocol = origin.protocol === "https:" ? "wss:" : "ws:";
+  address.searchParams.set("orchestrationProtocol", "2");
+  address.searchParams.set("wsTicket", ticket);
+  const socket = new WebSocket(address);
+  try {
+    return await new Promise<ObjectRow>((fulfill, reject) => {
+      function fail() { reject(Error("T3 read RPC failed")); }
+      socket.addEventListener("error", fail);
+      socket.addEventListener("close", fail);
+      socket.addEventListener("open", () => socket.send(JSON.stringify({
+        _tag: "Request", id: "1", tag, payload, headers: [],
+      })));
+      socket.addEventListener("message", (message) => {
+        try {
+          if (typeof message.data !== "string" || message.data.length > limit) return fail();
+          for (const item of [JSON.parse(message.data)].flat()) {
+            const frame = row(item);
+            if (frame._tag !== "Exit" || frame.requestId !== "1") continue;
+            const result = row(frame.exit);
+            if (result._tag !== "Success") return fail();
+            fulfill(row(result.value));
+          }
+        } catch {
+          fail();
+        }
+      });
+      AbortSignal.timeout(timeout).addEventListener("abort", fail, { once: true });
+    });
+  } finally {
+    socket.close();
+  }
+}
+
+export function stockT3HistoryReader(endpoint: string, credential: string) {
+  const origin = stockT3Origin(endpoint);
   const secret = boundedFile(credential, 8192).toString("utf8").trim();
   if (!/^[!-~]+$/.test(secret)) throw Error("Expected a T3 read bearer");
   const headers = { authorization: `Bearer ${secret}`, "x-t3-orchestration-protocol": "2" };
-  return async (thread: string, cursor: string) => {
+  async function get(url: URL, limit: number, timeout: number) {
+    const response = await fetch(url, { headers, redirect: "error", signal: AbortSignal.timeout(timeout) });
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new SourceReadError(response.status);
+    }
+    return row(await boundedResponse(response, limit).json());
+  }
+
+  async function page(thread: string, cursor: string) {
     const url = new URL(`/api/orchestration/threads/${encodeURIComponent(thread)}`, origin);
     url.pathname += cursor ? "/history" : "/bounded";
     if (cursor) {
@@ -220,101 +288,29 @@ export function stockT3HistoryReader(endpoint: string, credential: string) {
     } else {
       url.searchParams.set("dedupeBodies", "1");
     }
-    const response = await fetch(url, { headers, redirect: "error", signal: AbortSignal.timeout(5000) });
-    if (!response.ok) {
-      await response.body?.cancel();
-      throw new SourceReadError(response.status);
-    }
-    return row(await boundedResponse(response, 8 * 1024 * 1024).json());
-  };
+    return get(url, 8 * 1024 * 1024, 5000);
+  }
+
+  return { page, async inventory() {
+    const bytes = 64 * 1024 * 1024;
+    const [active, archived] = await Promise.all([
+      get(new URL("/api/orchestration/shell", origin), bytes, 15000),
+      stockT3Rpc(origin, secret, "orchestration.getArchivedShellSnapshot", {}, bytes, 15000),
+    ]);
+    const threads = (snapshot: ObjectRow) => array(snapshot.threads, 50_000).map(item => requireStockT3Id(row(item).id));
+    return [...threads(active), ...threads(archived)];
+  } };
 }
 
-async function mcpReply(response: Response, id: number) {
-  if (!response.headers.get("content-type")?.startsWith("text/event-stream")) return row(await response.json());
-  if (!response.body) throw Error("Missing MCP reply stream");
-  const events = response.body.pipeThrough(new TextDecoderStream()).getReader();
-  let pending = "";
-  try {
-    while (true) {
-      const chunk = await events.read();
-      if (chunk.done) throw Error("Missing MCP response");
-      pending += chunk.value;
-      const frames = pending.split(/\r?\n\r?\n|\r\r/);
-      pending = frames.pop()!;
-      for (const frame of frames) {
-        const data = frame.split(/\r\n|\r|\n/).filter((line) => line.startsWith("data:"))
-          .map((line) => line.slice(5).replace(/^ /, "")).join("\n");
-        if (data) {
-          const reply = row(JSON.parse(data));
-          if (reply.id === id) return reply;
-        }
-      }
+export function t3HistoryTargets(env = process.env) {
+  switch (env.PLOW_T3_HISTORY_SCOPE ?? "allowlist") {
+    case "all": return null;
+    case "allowlist": {
+      const ids = [...new Set(array(JSON.parse(boundedFile(env.PLOW_T3_HISTORY_TARGETS_FILE ?? "", 20_000)
+        .toString("utf8")), 32).map(requireStockT3Id))];
+      if (!ids.length) throw Error("Configure at least one T3 history thread");
+      return ids;
     }
-  } finally {
-    await events.cancel().catch(() => {});
+    default: throw Error("Invalid T3 history scope");
   }
-}
-
-export function t3HistoryReader(env = process.env) {
-  let endpoint: URL;
-  let secret: string;
-  try {
-    endpoint = new URL(env.PLOW_T3_HISTORY_MCP_URL ?? "");
-    const loopback = ["127.0.0.1", "[::1]", "localhost"].includes(endpoint.hostname);
-    if ((!loopback || endpoint.protocol !== "http:") && endpoint.protocol !== "https:") throw Error();
-    if (endpoint.username || endpoint.password || endpoint.hash) throw Error();
-    secret = boundedFile(env.PLOW_T3_HISTORY_CREDENTIAL_FILE ?? "", 8192).toString("utf8").trim();
-    if (!secret) throw Error();
-  } catch {
-    throw new SourceReadError(401);
-  }
-
-  const deadline = performance.now() + 45_000;
-  const offered = "2025-06-18";
-  let protocol = "";
-  let session = "";
-  let id = 0;
-  async function post(method: string, params: unknown, notification = false) {
-    const time = Math.floor(deadline - performance.now());
-    if (time <= 0 || id >= 11) throw new SourceReadError(0, false, false, true);
-    const requestId = notification ? undefined : ++id;
-    const headers = new Headers({
-      "content-type": "application/json", accept: "application/json, text/event-stream",
-      authorization: `Bearer ${secret}`,
-    });
-    if (protocol) headers.set("mcp-protocol-version", protocol);
-    if (session) headers.set("mcp-session-id", session);
-    const response = await fetch(endpoint, { method: "POST", headers, redirect: "error",
-      signal: AbortSignal.timeout(Math.min(time, 10_000)),
-      body: JSON.stringify({ jsonrpc: "2.0", id: requestId, method, params }) });
-    if (!response.ok) {
-      await response.body?.cancel();
-      throw new SourceReadError(response.status, response.status === 403 && response.headers.has("retry-after"),
-        !!session && response.status === 404);
-    }
-    if (notification) {
-      await response.body?.cancel();
-      return {};
-    }
-    const reply = await mcpReply(boundedResponse(response, 512 * 1024), requestId!);
-    if (reply.id !== requestId || reply.jsonrpc !== "2.0" || reply.error) throw Error("Invalid or failed T3 RPC response");
-    if (method === "initialize") session = response.headers.get("mcp-session-id") ?? "";
-    return row(reply.result);
-  }
-
-  return async (name: "t3_environment_read" | "t3_project_read" | "t3_thread_read", args: ObjectRow) => {
-    if (!protocol) {
-      const initialized = await post("initialize", {
-        protocolVersion: offered, capabilities: {}, clientInfo: { name: "plow-history", version: "1" },
-      });
-      if (initialized.protocolVersion !== offered && initialized.protocolVersion !== "2025-03-26") {
-        throw Error("Unsupported T3 MCP protocol version");
-      }
-      protocol = initialized.protocolVersion;
-      await post("notifications/initialized", {}, true);
-    }
-    const result = await post("tools/call", { name, arguments: args });
-    if (result.isError === true) throw Error("T3 did not return coverage for the requested target");
-    return row(result.structuredContent);
-  };
 }
