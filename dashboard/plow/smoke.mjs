@@ -229,7 +229,7 @@ try {
     }
     await assertStable('focus the last operation in the breakdown')
     await summary.getByRole('button', { name: /^Local testing/ }).click()
-    assert.deepEqual(await titles(), ['Settings cleanup', 'Runner diagnostics', 'Dependency update'])
+    assert.deepEqual(await titles(), ['Thread 3', 'Thread 8', 'Thread 9'])
     await assertPacked(3)
     await assertStable('filter to Local testing')
     await screenshot('local-testing')
