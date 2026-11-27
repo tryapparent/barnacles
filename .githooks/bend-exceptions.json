@@ -62,6 +62,7 @@
     "collector/sources.test.ts",
     "dashboard/prepare.test.ts",
     "dashboard/harbor-fixture.ts",
+    "evidence/analysis/session-timeline.test.ts",
     "evidence/delivery/delivery.test.ts",
     "examples/demo.ts",
     "tooling/tests/directory-width.test.ts"
@@ -85,6 +86,8 @@
     "dashboard/web/visual/scene.js",
     "dashboard/web/visual/session-history.css",
     "dashboard/web/visual/session-history.tsx",
+    "dashboard/web/visual/session-timeline.css",
+    "dashboard/web/visual/session-timeline.tsx",
     "dashboard/web/vite.config.ts"
   ],
   "Static Plow site hosting, presentation and binary assets": [

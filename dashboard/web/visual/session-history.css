@@ -11,13 +11,6 @@
   font-display: swap;
 }
 
-@font-face {
-  font-family: Geist;
-  src: url("../../../public/assets/geist.woff2") format("woff2");
-  font-weight: 400 650;
-  font-display: swap;
-}
-
 .trace-page {
   --trace-paper: #f2f5f6;
   --trace-earth: #392820;
@@ -38,7 +31,7 @@
   color-scheme: light;
   background: var(--trace-paper);
   color: var(--trace-ink);
-  font: 15px/1.5 Geist, system-ui, sans-serif;
+  font: 15px/1.5 system-ui, sans-serif;
 }
 
 .trace-page a { color: var(--trace-link); text-underline-offset: .19em; }
