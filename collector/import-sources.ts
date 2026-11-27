@@ -313,6 +313,17 @@ async function replayBottlenecks(file: string, scratch: string) {
         state = policy.observe_hermes_cache_merge(state, token(value.thread), id, factText(value.step),
           token(value.conclusion), clockSecond(value.exitCode), token(value.code), token(value.syscall),
           factText(value.origin), bendBool(value.restored));
+      } else if (value.kind === "local-verification-boundary") {
+        state = policy.observe_local_verify_boundary(state, token(value.thread), id, token(value.operation),
+          token(value.boundary), factText(value.line), factText(value.terminal), bendBool(value.failed));
+      } else if (value.kind === "hosted-client-approval-fixture") {
+        state = policy.observe_hosted_approval_fixture(state, token(value.thread), id, factText(value.step),
+          token(value.conclusion), factText(value.test), factText(value.line), factText(value.origin));
+      } else if (value.kind === "hosted-apt-job-deadline") {
+        state = policy.observe_apt_job_deadline(state, token(value.thread), id, factText(value.step), token(value.package),
+          token(value.jobConclusion), token(value.stepConclusion), clockSecond(value.deadlineSeconds),
+          clockSecond(value.attemptStarted), clockSecond(value.jobStarted), clockSecond(value.jobEnded),
+          clockSecond(value.started), clockSecond(value.ended));
       } else if (value.kind === "native-model-fetch-result") {
         state = policy.observe_native_model_fetch(state, token(value.thread), id, factText(value.step), token(value.conclusion),
           clockSecond(value.exitCode), clockSecond(value.status), sha(value.revision), factText(value.line), factText(value.origin),
