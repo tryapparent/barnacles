@@ -11,80 +11,7 @@ import { promisify } from "node:util";
 import {
   buildAdmissionPolicy, loadEvidence, type ActionAttempt, type PullRequest, type ReleaseEvidence, type RolloutEvidence, type ThreadEvidence,
 } from "../evidence/index.ts";
-import { dashboards } from "./panels.ts";
 import { verifyHarborWeb, verifySessionStudy } from "./harbor-fixture.ts";
-
-async function verifyCompose(initial: string, next: string, traceId: string) {
-  const env = { ...process.env, COMPOSE_PROJECT_NAME: `barnacles-smoke-${process.pid}`, BARNACLES_PORT: "0" };
-  const compose = (...args: string[]) => execFileSync("docker", ["compose", ...args], { env, encoding: "utf8" }).trim();
-  const deploy = (snapshot: string, action?: string, image?: string) => execFileSync("dashboard/run.sh",
-    action ? [snapshot, action] : [snapshot], {
-      env: { ...env, BARNACLES_GRAFANA_IMAGE: image ?? "" }, stdio: "inherit", timeout: 150_000,
-    });
-  const readContainer = (service: string, format: string) =>
-    execFileSync("docker", ["inspect", "--format", format, compose("ps", "-q", service)], { encoding: "utf8" }).trim();
-  const grafanaSnapshot = () => readContainer("grafana",
-    '{{range .Mounts}}{{if eq .Destination "/barnacles/dashboard.sqlite"}}{{.Source}}{{end}}{{end}}');
-  const ready = async (version: string, repository: string, pullRequests: number) => {
-    const base = `http://${compose("port", "grafana", "3000")}`;
-    const read = async (path: string, options?: RequestInit) => {
-      const response = await fetch(base + path, { ...options, signal: AbortSignal.timeout(10_000) });
-      assert.equal(response.status, 200, path);
-      return response.json();
-    };
-    assert.equal((await read("/api/health")).version, version);
-    for (const uid of ["barnacles", "barnacles-tempo"]) {
-      assert.equal((await read(`/api/datasources/uid/${uid}/health`)).status, "OK");
-    }
-    const shipping = await read("/api/dashboards/uid/barnacles-shipping");
-    const scope = shipping.dashboard.panels.find(({ id }: { id: number }) => id === 1);
-    assert.ok(scope.options.content.includes(repository));
-    const coverage = await read("/api/ds/query", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ from: "now-1h", to: "now", queries: [{
-        datasource: { uid: "barnacles", type: "frser-sqlite-datasource" }, refId: "A",
-        queryType: "table", queryText: "SELECT pr_count FROM coverage",
-      }] }),
-    });
-    assert.deepEqual(coverage.results.A.frames[0].data.values, [[pullRequests]]);
-    const trace = await read(`/api/datasources/proxy/uid/barnacles-tempo/api/traces/${traceId}`);
-    const body = JSON.stringify(trace);
-    assert.ok(body.includes(traceId) || body.includes(Buffer.from(traceId, "hex").toString("base64")));
-    assert.ok(body.includes("Git inspection +1"));
-  };
-
-  Object.assign(env, { BARNACLES_SNAPSHOT_DIR: initial, BARNACLES_GRAFANA_UID: "0", BARNACLES_GRAFANA_GID: "0" });
-  try {
-    deploy(initial, "config");
-    deploy(initial);
-    await ready("12.3.0", "synthetic/example", 2);
-    const tempo = compose("ps", "-q", "tempo");
-    assert.equal(grafanaSnapshot(), join(initial, "dashboard.sqlite"));
-    const upgraded = "grafana/grafana:12.3.1@sha256:2175aaa91c96733d86d31cf270d5310b278654b03f5718c59de12a865380a31f";
-    deploy(initial, "grafana", upgraded);
-    assert.equal(compose("ps", "-q", "tempo"), tempo);
-    assert.equal(grafanaSnapshot(), join(initial, "dashboard.sqlite"));
-    await ready("12.3.1", "synthetic/example", 2);
-    deploy(initial, "grafana");
-    assert.equal(compose("ps", "-q", "tempo"), tempo);
-    await ready("12.3.0", "synthetic/example", 2);
-    const image = readContainer("grafana", "{{.Image}}");
-    assert.throws(() => deploy(next, "grafana"));
-    assert.equal(compose("ps", "-q", "tempo"), tempo);
-    assert.equal(grafanaSnapshot(), join(initial, "dashboard.sqlite"));
-    deploy(next);
-    await ready("12.3.0", "synthetic/other", 0);
-    assert.equal(grafanaSnapshot(), join(next, "dashboard.sqlite"));
-    assert.equal(readContainer("grafana", "{{.Image}}"), image);
-    deploy(initial);
-    await ready("12.3.0", "synthetic/example", 2);
-  } catch (error) {
-    console.error(compose("logs", "--no-color", "--tail", "30"));
-    throw error;
-  } finally {
-    deploy(initial, "down");
-  }
-}
 
 test("dashboard derives a covered comparison and preserves missing source coverage", async () => {
   const parent = process.env.BARNACLES_TEST_DIRECTORY;
@@ -188,6 +115,7 @@ test("dashboard derives a covered comparison and preserves missing source covera
         { stdio: "pipe", timeout: 120_000 });
     const buildStarted = Date.now();
     prepare(out, repo);
+    assert.equal(existsSync(join(out, "dashboards")), false);
     const manifest = JSON.parse(readFileSync(join(out, "snapshot.json"), "utf8"));
     assert.equal(manifest.formatVersion, 1);
     assert.match(manifest.generation, /^[0-9a-f-]{36}$/);
@@ -202,6 +130,10 @@ test("dashboard derives a covered comparison and preserves missing source covera
     writeFileSync(join(out, "snapshot.json"), JSON.stringify(manifest));
     const db = new DatabaseSync(join(out, "dashboard.sqlite"), { readOnly: true });
     try {
+      assert.deepEqual(Object.values(db.prepare("SELECT revision, commits_scanned, truncated, shallow FROM changed_code_scan").get()!),
+        ["a".repeat(40), 5, 1, 1]);
+      assert.deepEqual(db.prepare("SELECT path, path_base64, commits FROM changed_files ORDER BY rank").all().map(Object.values),
+        [["src/frequent.ts", null, 4], [null, "/w==", 2]]);
       const summary = db.prepare("SELECT shipped, linked, direction, delta_seconds FROM coverage").get();
       assert.deepEqual(Object.values(summary!), [2, 2, "Gardening", 3600]);
       assert.deepEqual(db.prepare("SELECT mean_seconds, observed, missing FROM delivery_stages ORDER BY ordinal").all().map(Object.values),
@@ -286,54 +218,6 @@ test("dashboard derives a covered comparison and preserves missing source covera
       const traceId = createHash("sha256").update(JSON.stringify(["barnacles-codex-trace", pointKey])).digest("hex").slice(0, 32);
       assert.equal(eventOnly[0].traceId, traceId);
       assert.equal(eventOnly[0].startTimeUnixNano, eventOnly[0].endTimeUnixNano);
-      const config = JSON.parse(readFileSync(join(out, "dashboards/shipping.json"), "utf8"));
-      assert.equal(config.uid, "barnacles-shipping");
-      assert.ok(config.links.some(({ url }: { url: string }) => url.startsWith("/d/barnacles-changed-code/")));
-      const changes = JSON.parse(readFileSync(join(out, "dashboards/changed-code.json"), "utf8"));
-      assert.equal(changes.timepicker.hidden, true);
-      assert.match(changes.panels[0].options.content, /5 non-merge commits.*synthetic\/example.*aaaaaaaaaaaa/);
-      assert.match(changes.panels[0].options.content, /outside the scan limit.*Shallow history/);
-      assert.deepEqual(db.prepare(changes.panels[1].targets[0].rawQueryText).all().map(Object.values),
-        [["src/frequent.ts", 4], ["Base64: /w==", 2]]);
-      assert.equal(JSON.parse(readFileSync(join(out, "dashboards/actions.json"), "utf8")).uid, "barnacles-actions");
-      const scope = config.panels.find(({ title }: { title: string }) => title === "Evidence scope").options.content;
-      assert.match(scope, /synthetic\/example/);
-      assert.match(scope, /all 3 imported rollouts across projects/);
-      assert.equal(config.timepicker.hidden, true);
-      const treemap = config.panels.find(({ type }: { type: string }) => type === "marcusolsson-treemap-panel");
-      const ranked = config.panels.find(({ id }: { id: number }) => id === 10);
-      assert.equal(treemap.options.textField, "Name");
-      for (const panel of [treemap, ranked]) {
-        const query = panel.targets[0].rawQueryText.replace("${operation_clock:sqlstring}", "'CI execution'")
-          .replaceAll("${overview_operation:sqlstring}", "'All operations'").replaceAll("${window:sqlstring}", "'24h'");
-        assert.equal(db.prepare(query).get()?.Name, "Build");
-      }
-      const timingBoard = JSON.parse(readFileSync(join(out, "dashboards/timing.json"), "utf8"));
-      assert.equal(timingBoard.timepicker.hidden, true);
-      const details = timingBoard.panels.find(({ id }: { id: number }) => id === 3);
-      const drilldown = (clock: string, workflow: string, operation: string) => {
-        const query = details.targets[0].rawQueryText.replaceAll("${clock:sqlstring}", `'${clock}'`)
-          .replaceAll("${workflow:sqlstring}", `'${workflow}'`).replaceAll("${operation:sqlstring}", `'${operation}'`)
-          .replaceAll("${window:sqlstring}", "'24h'");
-        return db.prepare(query).all().map(({ Operation }) => Operation);
-      };
-      const groups = ["Mixed · File inspection + Rust build", "Mixed · Git inspection + File inspection"];
-      assert.deepEqual(drilldown("Tool envelopes", "*", "Mixed"), groups);
-      assert.deepEqual(drilldown("Tool envelopes", "0", "Mixed"), groups);
-      assert.deepEqual(drilldown("Tool envelopes", "2", "Mixed"), []);
-      assert.deepEqual(drilldown("Tool envelopes", "0", groups[1]), [groups[1]]);
-      assert.deepEqual(drilldown("Tool envelopes", "*", "All operations"), ["Mixed", "Unknown", "Git inspection"]);
-      assert.deepEqual(drilldown("CI execution", "2", "*"), ["Build"]);
-      const trace = JSON.parse(readFileSync(join(out, "dashboards/trace.json"), "utf8"));
-      assert.ok(trace.panels.some(({ type }: { type: string }) => type === "traces"));
-      assert.equal(trace.templating.list[0].current.value, "1");
-      assert.equal(trace.templating.list[1].current.value, window.traceId);
-      if (process.env.BARNACLES_COMPOSE_SMOKE === "1") {
-        const next = join(job, "next");
-        prepare(next, "synthetic/other");
-        assert.notEqual(JSON.parse(readFileSync(join(next, "snapshot.json"), "utf8")).generation, manifest.generation);
-        await verifyCompose(out, next, window.traceId);
-      }
     } finally { db.close(); }
 
     const report = JSON.parse(execFileSync(process.execPath, ["evidence/report-actions.ts", source, repo],
@@ -356,81 +240,6 @@ test("dashboard derives a covered comparison and preserves missing source covera
     assert.ok(!legacyPayload.includes("Estimated model wait"));
     assert.ok(!legacyPayload.includes("barnacles.submitted_command"));
   } finally { rmSync(job, { recursive: true, force: true }); }
-});
-
-test("Actions dashboard reads ranked overlap, coverage and exact job steps from the snapshot contract", () => {
-  const parent = process.env.BARNACLES_TEST_DIRECTORY;
-  assert.ok(parent, "Set BARNACLES_TEST_DIRECTORY to a private job directory");
-  const job = mkdtempSync(join(parent, "actions-dashboard-test-"));
-  const db = new DatabaseSync(join(job, "dashboard.sqlite"));
-  try {
-    db.exec(`
-      CREATE TABLE actions_wait_coverage (
-        window_start_ms INTEGER, window_end_ms INTEGER,
-        wait_count INTEGER, exact_wait_count INTEGER, matched_wait_count INTEGER,
-        matched_attempts INTEGER, unmatched_attempts INTEGER, jobless_attempts INTEGER,
-        matched_wait_ms INTEGER, running_ms INTEGER, queue_only_ms INTEGER, unknown_job_ms INTEGER, wait_source_present INTEGER
-      );
-      CREATE TABLE actions_wait_jobs (
-        job_label TEXT, job_count INTEGER, execution_ms INTEGER, only_known_running_ms INTEGER,
-        queue_ms INTEGER, rank INTEGER
-      );
-      CREATE TABLE actions_wait_job_instances (
-        repository TEXT, run_id INTEGER, head_sha TEXT, attempt INTEGER, job_id INTEGER, job_label TEXT,
-        execution_ms INTEGER, only_known_running_ms INTEGER, queue_ms INTEGER
-      );
-      CREATE TABLE actions_wait_steps (
-        run_id INTEGER, attempt INTEGER, job_id INTEGER, step_number INTEGER, step_label TEXT, execution_ms INTEGER
-      );
-      INSERT INTO actions_wait_coverage VALUES
-        (1767225600123, 1767312000456, 12, 10, 8, 3, 1, 1, 300000, 210000, 15000, 75000, 1);
-      INSERT INTO actions_wait_jobs VALUES
-        ('Package', 1, 180000, 120000, 10000, 2),
-        ('Build & ''verify'' / x64', 2, 200000, 120000, 5000, 1),
-        ('Pending job', 1, NULL, NULL, 0, 3);
-      INSERT INTO actions_wait_job_instances VALUES
-        ('synthetic/example', 4201, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 2, 2001, 'Build & ''verify'' / x64', 80000, 50000, 5000),
-        ('synthetic/example', 4201, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 1, 2002, 'Build & ''verify'' / x64', 120000, 70000, 0),
-        ('synthetic/example', 4202, 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 1, 2003, 'Package', 180000, 120000, 10000),
-        ('synthetic/example', 4202, 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 1, 2004, 'Pending job', NULL, NULL, 0),
-        ('other/example', 9999, 'cccccccccccccccccccccccccccccccccccccccc', 1, 9999, 'Build & ''verify'' / x64', 45000, 0, 0);
-      INSERT INTO actions_wait_steps VALUES
-        (4201, 1, 2002, 1, 'First attempt only', 75000),
-        (4201, 2, 2001, 2, 'Compile sources', 75000),
-        (4201, 2, 2001, 1, 'Set up toolchain', 5000),
-        (4202, 1, 2003, 1, 'Package output', 180000);
-    `);
-    const { actions, shipping } = dashboards({ from: 0, to: 0, rolloutCount: 0, timingCutoff: 0, traceSessions: 0 },
-      "synthetic/example");
-    assert.equal(shipping.links[0].url, "/d/barnacles-actions/actions");
-    assert.equal(actions.timepicker.hidden, true);
-    const query = (id: number, family = "*", instance = "*") => {
-      const panel = actions.panels.find((panel) => "id" in panel && panel.id === id);
-      assert.ok(panel && "targets" in panel);
-      const sql = (panel.targets as { rawQueryText: string }[])[0].rawQueryText
-        .replaceAll("${job_family:sqlstring}", `'${family.replaceAll("'", "''")}'`)
-        .replaceAll("${job_instance:sqlstring}", `'${instance.replaceAll("'", "''")}'`);
-      return db.prepare(sql).all().map(Object.values);
-    };
-    assert.deepEqual(query(2), [["Start", "2026-01-01 00:00:00.123"], ["End", "2026-01-02 00:00:00.456"], ["Source", "Watcher evidence available"]]);
-    assert.deepEqual(query(3), [
-      ["Build & 'verify' / x64", 2, 200000, 120000, 5000],
-      ["Package", 1, 180000, 120000, 10000], ["Pending job", 1, null, null, 0],
-    ]);
-    assert.deepEqual(query(4).map((row) => row[1]), [12, 10, 8, 3, 1, 1]);
-    assert.deepEqual(query(5).map((row) => row[1]), [300000, 210000, 15000, 75000]);
-    assert.deepEqual(query(6, ":Build & 'verify' / x64").map((row) => [row[0], row[2], row[3], row.at(-1)]),
-      [["2001", 2, "4201", "4201/2/2001"], ["2002", 1, "4201", "4201/1/2002"]]);
-    assert.deepEqual(query(7, "*", "4201/2/2001"), [[1, "Set up toolchain", 5000], [2, "Compile sources", 75000]]);
-    assert.deepEqual(query(7), []);
-    db.exec("DELETE FROM actions_wait_jobs; DELETE FROM actions_wait_job_instances; DELETE FROM actions_wait_steps;");
-    for (const id of [3, 6, 7]) assert.deepEqual(query(id), []);
-    db.exec("UPDATE actions_wait_coverage SET wait_source_present = 0");
-    assert.deepEqual(query(2).at(-1), ["Source", "Reimport Codex rollouts"]);
-  } finally {
-    db.close();
-    rmSync(job, { recursive: true, force: true });
-  }
 });
 
 test("timing windows clip spans, count overlap once and preserve unknown clocks", async () => {
@@ -495,14 +304,10 @@ test("timing windows clip spans, count overlap once and preserve unknown clocks"
         ["1h", 0, null, null, 0, 0],
         ["24h", 20_000, 20_000, 10_000, 0, 0],
       ]);
-      const config = JSON.parse(readFileSync(join(out, "dashboards/shipping.json"), "utf8"));
-      const ranked = config.panels.find(({ id }: { id: number }) => id === 10);
-      const rows = (window: string) => db.prepare(ranked.targets[0].rawQueryText
-        .replaceAll("${window:sqlstring}", window)
-        .replaceAll("${operation_clock:sqlstring}", "'Tool envelopes'")
-        .replaceAll("${overview_operation:sqlstring}", "'All operations'")).all().map(Object.values);
-      assert.deepEqual(rows("'1h'"), [["Build", 25, 22, 4, 6.25], ["Git", 8, 8, 1, 8]]);
-      assert.deepEqual(rows("'24h'"), [["Build", 36, 33, 6, 6], ["Git", 13, 13, 1, 13]]);
+      const ranked = db.prepare(`SELECT operation, total_seconds, union_seconds, count, mean_seconds
+        FROM operation_totals WHERE window=? AND clock='Tool envelopes' ORDER BY rank`);
+      assert.deepEqual(ranked.all("1h").map(Object.values), [["Build", 25, 22, 4, 6.25], ["Git", 8, 8, 1, 8]]);
+      assert.deepEqual(ranked.all("24h").map(Object.values), [["Build", 36, 33, 6, 6], ["Git", 13, 13, 1, 13]]);
       assert.equal(db.prepare("SELECT position FROM source_bounds WHERE source='Actions' AND window='1h'").get()?.position,
         "Before window");
     } finally { db.close(); }

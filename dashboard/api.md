@@ -8,8 +8,8 @@ pagination, and shipment counts. The Node host handles HTTP, JSON and SQLite I/O
 ## Run locally
 
 ```sh
-node dashboard/prepare.ts "$job/evidence.sqlite" "$job/grafana" OWNER/REPO
-node dashboard/prepare.ts --serve "$job/grafana"
+node dashboard/prepare.ts "$job/evidence.sqlite" "$job/snapshot" OWNER/REPO
+node dashboard/prepare.ts --serve "$job/snapshot"
 ```
 
 The API listens on `127.0.0.1:3031` by default. Pass a port as the last argument
@@ -32,7 +32,7 @@ origin.
 ```sh
 npm ci --ignore-scripts
 npm run build:harbor -- --outDir "$job/harbor"
-node dashboard/prepare.ts --serve "$job/grafana" 3031 "$job/harbor"
+node dashboard/prepare.ts --serve "$job/snapshot" 3031 "$job/harbor"
 ```
 
 Open [Shipping review](http://127.0.0.1:3031/). The browser requests the same
@@ -276,7 +276,7 @@ is the original sample's JSON output from the
 [bottleneck replay](../collector/README.md#replay-bottleneck-evidence).
 
 ```sh
-node dashboard/prepare.ts --session-study "$job/grafana" "$job/waterfall.json" "$job/replay.json"
+node dashboard/prepare.ts --session-study "$job/snapshot" "$job/waterfall.json" "$job/replay.json"
 ```
 
 The loader accepts the frozen capture cutoff and its `threads` array. Each
@@ -315,9 +315,7 @@ missing study data, clock ordering, partial endpoints, signal binding,
 authorization, and atomic replacement on import failure.
 
 Grafana Explore's trace minimap, Jaeger's per-span rows, and Langfuse's
-session-to-trace navigation informed the inspection flow. The existing
-[Grafana rollout waterfall](provisioning/README.md#read-the-evidence)
-continues to consume the separate Codex OTLP projection. Harbor keeps
+session-to-trace navigation informed the inspection flow. Harbor keeps
 the original study's clocks, source relationships, and incomplete ends.
 [Grafana Explore](https://grafana.com/docs/grafana/latest/visualizations/explore/trace-integration/),
 [Jaeger trace view](https://www.jaegertracing.io/docs/2.23/features/#trace-view),

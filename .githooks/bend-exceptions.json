@@ -31,14 +31,8 @@
     "evidence/projection/trace.ts",
     "evidence/analysis/session-history.ts"
   ],
-  "Grafana and Tempo provisioning, serialization, and runtime": [
-    "dashboard/enablement/deploy/compose.yaml",
-    "dashboard/load-tempo.ts",
-    "dashboard/panels.ts",
+  "Dashboard snapshot I/O, Harbor runtime, and Compose wiring": [
     "dashboard/prepare.ts",
-    "dashboard/provisioning/dashboards/barnacles.yml",
-    "dashboard/provisioning/datasources/barnacles.yml",
-    "dashboard/provisioning/tempo.yml",
     "dashboard/run.sh",
     "compose.yaml"
   ],
