@@ -48,7 +48,7 @@ Put explanations in visible Markdown documentation. Staged code and configuratio
 
 ## Verification and delivery
 
-- Verify the changed entry point. For dashboard changes, inspect the actual Plow build for the supported sizes, themes, keyboard paths, and relevant data states. Use the approved design reference when available.
+- Verify the changed entry point. Plow's dashboard is desktop-only for design and acceptance. Review the actual build at representative desktop widths, in affected themes, and with relevant keyboard paths and data states. Skip phone and mobile-width layout work and verification unless explicitly requested. Use the approved design reference when available.
 - Record the exact commands and evidence for the change and state any gaps.
 - Assigned Plow implementation work includes standing authorization to merge its eligible PRs and let the existing automatic Clanker rollout proceed. Treat a draft PR as a checkpoint, follow checks and review, resolve in-scope blockers, and finish after verifying the merge and applicable rollout. Proceed without asking for separate merge or routine rollout confirmation.
 - New production services, manual deployments outside the existing release process, source-side instrumentation, and spend require separate authorization.

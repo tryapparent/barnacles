@@ -1,12 +1,13 @@
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
-import { Button } from "../controls";
+import { Button, Card, fieldPalettes } from "../controls";
 
 type Category = {
   kind: number;
   name: string;
   style: string;
   duration: string;
+  weight: number;
   share: string;
   expanded: boolean;
   select: () => void;
@@ -15,17 +16,20 @@ type Category = {
 type Operation = {
   key: string;
   name: string;
-  metric?: string;
+  metric: string;
+  weight: number;
+  share: string;
   active?: boolean;
   select: () => void;
 };
 
 type Overview = {
   total: string;
-  note: string;
+  hasTime: boolean;
   categories: Category[];
   breakdown?: string;
   operations: Operation[];
+  recovery?: { key: string; name: string };
   emptyOperations: boolean;
   close: () => void;
   clearOperation?: () => void;
@@ -46,70 +50,64 @@ export function renderSummary(model: Overview) {
   });
 }
 
+function parcelTracks([first, ...rest]: number[], left: number, right: number) {
+  if (rest.length === 0) return;
+  const column = (minimum: number, duration: number) => `minmax(${minimum}px, ${Math.max(1, duration)}fr)`;
+  return {
+    gridTemplateColumns: `${column(left, first)} ${column(right, rest.reduce((total, weight) => total + weight, 0))}`,
+    gridTemplateRows: rest.map(weight => column(44, weight)).join(" "),
+  };
+}
+
 export function Summary({ fieldTexture }: { fieldTexture?: string }) {
   const model = useSyncExternalStore(subscribe, () => overview);
-  return <section className="summary-panel" id="summary-panel" aria-labelledby="summary-heading">
+  const categoryTracks = model ? parcelTracks(model.categories.map(({ weight }) => weight), 128, 136) : undefined;
+  const operationTracks = model ? parcelTracks(model.operations.map(({ weight }) => weight), 104, 104) : undefined;
+  return <Card className="summary-panel" id="summary-panel" aria-labelledby="summary-heading"
+    onKeyDown={event => {
+      if (event.key === "Escape" && model?.breakdown) {
+        event.preventDefault();
+        (model.clearOperation ?? model.close)();
+      }
+    }}>
+    <div className="summary-surface" aria-hidden="true" />
     <div className="summary-top">
-      <h2 id="summary-heading">Where time went</h2>
-      <p id="summary-total">{model?.total}</p>
+      <h2 id="summary-heading">{model?.breakdown ?? "Where time went"}</h2>
+      <p id="summary-total" className={model?.hasTime ? "visually-hidden" : undefined}>{model?.total}</p>
+      <Button type="button" id="collapse" hidden={!model?.breakdown} aria-label="Close breakdown"
+        title="Return to Where time went" onClick={model?.close}>
+        <span aria-hidden="true">↖</span>
+      </Button>
     </div>
-    <p id="summary-note" className="summary-note">{model?.note}</p>
     <div className="summary-tiles">
-    <div id="tiles" className="treemap">
+    <div id="tiles" className="treemap" inert={!!model?.breakdown} style={categoryTracks}>
       {model?.categories.map(category => <Button type="button" key={category.kind}
         className={`category-tile ${category.style}`} data-kind={category.kind}
-        aria-expanded={category.expanded} aria-controls="operation-panel" onClick={category.select}>
+        aria-expanded={category.expanded} aria-controls="operation-panel" aria-description={category.share + " of measured time"} onClick={category.select}>
         <span className="category-name">{category.name}</span>
-        <span className="category-metric">{category.duration}<span className="category-share">{category.share}</span></span>
+        <span className="category-metric">{category.duration}</span>
         <span className="category-icon" aria-hidden="true">{category.expanded ? "−" : "+"}</span>
       </Button>)}
     </div>
     {fieldTexture && <FieldSurface texture={fieldTexture} />}
-    </div>
-    <section id="operation-panel" hidden={!model?.breakdown} aria-labelledby="operation-heading"
-      onKeyDown={event => {
-        if (event.key === "Escape" && model?.clearOperation) {
-          event.preventDefault();
-          model.clearOperation();
-        }
-      }}>
-      <div className="operation-heading">
-        <h3 id="operation-heading">{model?.breakdown}</h3>
-        <Button type="button" id="collapse" aria-label="Close breakdown" onClick={model?.close}><span aria-hidden="true">×</span></Button>
-      </div>
-      <div id="operation-tiles" role="group" aria-label="Operations">
+    <section id="operation-panel" hidden={!model?.breakdown} aria-labelledby="summary-heading">
+      <div id="operation-tiles" role="group" aria-label="Operations" style={operationTracks}>
         {model?.operations.map(operation => <Button type="button" key={operation.key}
-          className="operation-tile" data-operation={operation.key} aria-pressed={operation.active} onClick={operation.select}>
-          {operation.metric ? <>
-            <span className="operation-name">{operation.name}<span className="selected-indicator" aria-hidden="true">✓</span></span>
-            <span className="operation-metric">{operation.metric}</span>
-          </> : operation.name}
+          className="operation-tile" data-operation={operation.key} aria-pressed={operation.active}
+          aria-description={operation.share + " of category time"} onClick={operation.select}>
+          <span className="operation-name">{operation.name}</span>
+          <span className="operation-metric">
+            {operation.metric}
+            <span className="selected-indicator" aria-hidden="true">✓</span>
+          </span>
         </Button>)}
       </div>
       <p id="operation-empty" className="summary-note" hidden={!model?.emptyOperations}>No operations in this range. Try zooming out.</p>
+      {model?.recovery && <Button type="button" className="operation-recovery"
+        data-operation={model.recovery.key} onClick={model.clearOperation}>{model.recovery.name}</Button>}
     </section>
-  </section>;
-}
-
-const fieldPalettes = [
-  { name: "Soil", color: "#543b2a", kind: "workflow" },
-  { name: "Crops", color: "#91ad5f", kind: "agent" },
-  { name: "Unobserved", color: "#dfbf89", kind: "unclear" },
-];
-
-export function FieldSettings() {
-  return <details className="field-settings" id="field-settings" hidden
-    onKeyDown={event => {
-      if (event.key !== "Escape" || !event.currentTarget.open) return;
-      event.currentTarget.open = false;
-      event.currentTarget.querySelector("summary")?.focus();
-    }}>
-    <summary>Field colors</summary>
-    <div className="field-settings-controls">
-      {fieldPalettes.map(({ name, color }) => <label key={name}>{name}<input type="color" defaultValue={color} /></label>)}
-      <label>Wind<input type="checkbox" defaultChecked /></label>
     </div>
-  </details>;
+  </Card>;
 }
 
 function rgb(value: string) {
@@ -159,12 +157,10 @@ function installMaterialRelief(root: HTMLElement, atlas: HTMLImageElement) {
   const { width, height } = output.canvas;
   output.drawImage(atlas, 0, 0, atlas.width, atlas.height / 2, 0, 0, width, height);
   const map = output.getImageData(0, 0, width, height);
-  output.drawImage(atlas, 0, atlas.height / 2, atlas.width, atlas.height / 2, 0, 0, width, height);
-  const sand = output.getImageData(0, 0, width, height);
   const relief = output.createImageData(width, height);
-  for (const [source, channel, name] of [[map, 0, "soil"], [map, 1, "canopy"], [sand, 0, "sand-relief"]] as const) {
-    for (let offset = 0; offset < source.data.length; offset += 4) {
-      const tone = source.data[offset + channel] - 128;
+  for (const [channel, name] of ["soil", "canopy"].entries()) {
+    for (let offset = 0; offset < map.data.length; offset += 4) {
+      const tone = map.data[offset + channel] - 128;
       const color = tone >= 0 ? 255 : 0;
       relief.data[offset] = color;
       relief.data[offset + 1] = color;
@@ -173,6 +169,28 @@ function installMaterialRelief(root: HTMLElement, atlas: HTMLImageElement) {
     }
     output.putImageData(relief, 0, 0);
     root.style.setProperty(`--field-${name}`, `url("${output.canvas.toDataURL()}")`);
+  }
+}
+
+function installParcelTextures(root: HTMLElement, field: ImageData, sand: ImageData) {
+  const output = textureLayer(field.width, field.height);
+  if (!output) return;
+  const image = output.createImageData(field.width, field.height);
+  for (const material of ["soil", "crops", "sand"] as const) {
+    for (let offset = 0; offset < image.data.length; offset += 4) {
+      const soil = field.data[offset];
+      const leaves = field.data[offset + 2] / 255;
+      const relief = material === "sand" ? sand.data[offset]
+        : material === "crops" ? soil * (1 - leaves) + field.data[offset + 1] * leaves
+        : soil;
+      const tone = Math.max(38, Math.min(218, relief));
+      image.data[offset] = tone;
+      image.data[offset + 1] = tone;
+      image.data[offset + 2] = tone;
+      image.data[offset + 3] = 255;
+    }
+    output.putImageData(image, 0, 0);
+    root.style.setProperty(`--parcel-${material}`, `url("${output.canvas.toDataURL()}")`);
   }
 }
 
@@ -200,33 +218,35 @@ function FieldSurface({ texture }: { texture: string }) {
     let leaves: CanvasRenderingContext2D | null = null;
     let paintedCanopy: CanvasRenderingContext2D | null = null;
     let paletteKey = "";
-    let parcels: { x: number; y: number; width: number; height: number }[] = [];
+    let divide = 0;
+    let horizon = 0;
     let frame = 0;
     let lastPaint = -Infinity;
 
     function draw(time: number) {
-      if (!context || !leaves || !canvas || !parcels.length) return;
-      const canopy = leaves.canvas;
-      const scale = canvas.height / 160;
-      const band = Math.max(1, Math.round(3 * scale));
-      context.clearRect(0, 0, canvas.width, canvas.height);
-      parcels.forEach(({ x, y, width, height }, index) => {
-        if (!width || !height) return;
-        context.save();
-        context.beginPath();
-        context.rect(x, y, width, height);
-        context.clip();
-        context.drawImage(materials[index].canvas, 0, 0);
-        if (index === 1) {
-          for (let row = y; row < y + height; row += band) {
-            const strip = Math.min(band, y + height - row);
-            const sway = time ? scale * (2.5 * Math.sin(time * .0019 + row / scale * .040) +
-              1.3 * Math.sin(time * .0027 - row / scale * .094)) : 0;
-            context.drawImage(canopy, x, row, width, strip, x + sway, row, width, strip);
-          }
-        }
-        context.restore();
-      });
+      if (!context || !materials.length || !leaves || !canvas || !horizon) return;
+      const { width, height } = canvas;
+      const scale = height / 160;
+      const band = Math.round(3 * scale);
+      context.drawImage(materials[0].canvas, 0, 0);
+      if (divide >= width) return;
+      if (horizon < height) {
+        context.drawImage(materials[2].canvas, divide, horizon, width - divide, height - horizon,
+          divide, horizon, width - divide, height - horizon);
+      }
+      context.save();
+      context.beginPath();
+      context.rect(divide, 0, width - divide, horizon);
+      context.clip();
+      context.drawImage(materials[1].canvas, 0, 0);
+      for (let y = 0; y < horizon; y += band) {
+        const strip = Math.min(band, horizon - y);
+        const sway = time ? scale * (2.5 * Math.sin(time * .0019 + y / scale * .040) +
+          1.3 * Math.sin(time * .0027 - y / scale * .094)) : 0;
+        context.drawImage(leaves.canvas, divide, y, width - divide, strip,
+          divide + sway, y, width - divide, strip);
+      }
+      context.restore();
     }
 
     function animate(time: number) {
@@ -240,7 +260,7 @@ function FieldSurface({ texture }: { texture: string }) {
     function sync() {
       cancelAnimationFrame(frame);
       draw(0);
-      if (parcels.length && wind?.checked && !reduced.matches && !forced.matches && !document.hidden) {
+      if (horizon && wind?.checked && !reduced.matches && !forced.matches && !document.hidden && !plot?.inert) {
         frame = requestAnimationFrame(animate);
       }
     }
@@ -249,17 +269,11 @@ function FieldSurface({ texture }: { texture: string }) {
       if (!canvas || !wrapper || !plot || !root || !map || !sand || !materials.length || !leaves || !paintedCanopy) return;
       const { width, height } = canvas;
       const tiles = fieldPalettes.map(({ kind }) => plot.querySelector<HTMLElement>(".category-tile." + kind));
-      const [soil, crops, unobserved] = tiles;
+      const [soil, crops] = tiles;
       const size = plot.getBoundingClientRect();
-      if (!soil || !crops || !unobserved || !size.width || !size.height) return;
-      parcels = [soil, crops, unobserved].map(tile => {
-        const box = tile.getBoundingClientRect();
-        const x = Math.round((box.left - size.left) * width / size.width);
-        const y = Math.round((box.top - size.top) * height / size.height);
-        const right = Math.round((box.right - size.left) * width / size.width);
-        const bottom = Math.round((box.bottom - size.top) * height / size.height);
-        return { x, y, width: right - x, height: bottom - y };
-      });
+      if (!soil || !crops || !size.width || !size.height) return;
+      divide = Math.round(soil.getBoundingClientRect().width / size.width * width);
+      horizon = Math.round(crops.getBoundingClientRect().height / size.height * height);
       const trend = root.querySelector(".trend-plot svg");
       const trendWidth = trend?.getBoundingClientRect().width;
       if (trendWidth) {
@@ -325,6 +339,7 @@ function FieldSurface({ texture }: { texture: string }) {
       ground.drawImage(atlas, 0, 0, width, height, 0, 0, width, height);
       map = ground.getImageData(0, 0, width, height);
       installMaterialRelief(root, atlas);
+      installParcelTextures(root, map, sand);
       recolor();
     };
     atlas.src = texture;

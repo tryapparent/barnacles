@@ -2,6 +2,9 @@ const tiles = document.getElementById('tiles')
 const operationPanel = document.getElementById('operation-panel')
 const operationTiles = document.getElementById('operation-tiles')
 const collapse = document.getElementById('collapse')
+const summarySurface = document.querySelector('.summary-surface')
+const summaryTop = document.querySelector('.summary-top')
+const summaryMotion = matchMedia('(prefers-reduced-motion: reduce), (forced-colors: active)')
 const timelineSelection = document.getElementById('timeline-selection')
 const categories = [
   { kind: 1, name: 'Admission wait', style: 'workflow' },
@@ -117,14 +120,46 @@ function categoryButton(kind) {
 }
 
 function operationButton(name) {
-  return [...operationTiles.children].find(button => button.dataset.operation === name)
+  return [...operationPanel.querySelectorAll('[data-operation]')].find(button => button.dataset.operation === name)
+}
+
+function animateCategory(tile, opening, previousPaint, interrupted) {
+  const bounds = tile.getBoundingClientRect()
+  const card = summarySurface.getBoundingClientRect()
+  const paint = opening ? { background: getComputedStyle(summarySurface).background } : previousPaint
+  const frameFor = rect => ({
+    transform: `translate(${rect.x - card.x}px,${rect.y - card.y}px) scale(${rect.width / card.width},${rect.height / card.height})`,
+    borderRadius: rect === card ? 'inherit' : '5px',
+    ...paint,
+    visibility: 'visible',
+  })
+  const duration = opening ? 330 : 235
+  summarySurface.animate(opening ? [frameFor(bounds), frameFor(card)] : [frameFor(interrupted ?? card), frameFor(bounds)], {
+    duration, easing: 'cubic-bezier(.2,.8,.2,1)',
+  })
+  for (const element of opening ? [summaryTop, operationPanel] : [summaryTop]) {
+    element.animate([{ opacity: 0 }, { opacity: 0, offset: .28 }, { opacity: 1 }], { duration })
+  }
 }
 
 function selectCategory(category) {
+  const tile = categoryButton(category.kind)
+  const opening = operationPanel.hidden
+  const surfaceStyle = getComputedStyle(summarySurface)
+  const previousPaint = {
+    background: surfaceStyle.background,
+    '--breakdown-texture': surfaceStyle.getPropertyValue('--breakdown-texture'),
+  }
+  const interrupted = !opening && summarySurface.getAnimations().length ? summarySurface.getBoundingClientRect() : null
+  for (const element of [summarySurface, summaryTop, operationPanel]) {
+    for (const animation of element.getAnimations()) animation.cancel()
+  }
   selection = policy.select_overview(selection, { $:'SelectCategory', kind:category.kind })
   previousWindow = ''
   paintRange()
-  categoryButton(category.kind)?.focus({ preventScroll:true })
+  if (tile && !summaryMotion.matches) animateCategory(tile, opening, previousPaint, interrupted)
+  const next = operationPanel.hidden ? categoryButton(category.kind) : collapse
+  next?.focus({ preventScroll:true })
 }
 
 function selectOperation(name) {
@@ -144,32 +179,35 @@ function renderSummary(windowStart, windowEnd) {
   const operations = group ? [...values(group.operations)].map(operation => ({
     key: operation.name,
     name: operationLabel(operation.name),
-    metric: durationLabel(operation.duration) + ' · ' + shareLabel.format(operation.duration / group.duration),
+    metric: durationLabel(operation.duration),
+    weight: operation.duration,
+    share: shareLabel.format(operation.duration / group.duration),
     active: operation.name === selection.operation,
     select: () => selectOperation(operation.name),
   })) : []
-  const emptyOperations = operations.length === 0
   const selected = selection.operation
-  if (selected && !operations.some(operation => operation.key === selected)) {
-    operations.push({ key: selected, name: 'Clear ' + operationLabel(selected), select: () => selectOperation(selected) })
-  }
+  const recovery = selected && !operations.some(operation => operation.key === selected)
+    ? { key: selected, name: 'Clear ' + operationLabel(selected) }
+    : undefined
 
   PlowUI.renderSummary({
-    total: result.duration ? durationLabel(result.duration) + ' across ' + threadCount(result.threads) : '',
-    note: result.duration ? 'Time is summed across threads in the visible UTC range.' : 'No recorded time in this range. Try zooming out.',
+    total: result.duration ? durationLabel(result.duration) + ' across ' + threadCount(result.threads) : 'No recorded time in this range',
+    hasTime: result.duration > 0,
     categories: categories.map(category => {
       const group = groups.get(category.kind)
       return {
         ...category,
         duration: group ? durationLabel(group.duration) : '0m',
+        weight: group?.duration ?? 0,
         share: shareLabel.format(group ? group.duration / result.duration : 0),
         expanded: category.kind === selection.category,
         select: () => selectCategory(category),
       }
     }),
-    breakdown: activeCategory && activeCategory.name + ' breakdown',
+    breakdown: activeCategory?.name,
     operations,
-    emptyOperations,
+    recovery,
+    emptyOperations: operations.length === 0,
     close: () => selectCategory(activeCategory),
     clearOperation: selected ? () => selectOperation(selected) : undefined,
   })
@@ -190,6 +228,7 @@ function paintFilter(start, end) {
     ? operationLabel(selection.operation) + ' · ' + threadCount(filter.threads) + ' shown'
     : 'No matching threads in this range. Zoom out or deselect the operation.'
   if (timelineSelection.textContent !== status) timelineSelection.textContent = status
+  timelineSelection.toggleAttribute('data-empty', !!filter && filter.threads === 0)
   document.getElementById('timeline-panel').dataset.category = selection.category
   for (const row of rows.children) paintThreadMatch(row, row.querySelector('.rail'), Number(row.dataset.traceIndex))
   if (openTrace !== -1 && rows.children[openTrace].hidden) closeInspector()

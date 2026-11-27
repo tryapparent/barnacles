@@ -1,6 +1,6 @@
 import { useId, useSyncExternalStore } from "react";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "@ui-sdk/react/collapsible";
-import { Button } from "../controls";
+import { Button, Card } from "../controls";
 
 type Batch = { first: number; last: number; measured: number; basis_points: number };
 type Point = { x: number; y: number };
@@ -53,7 +53,7 @@ export function AgentWorkTrend() {
   const paths = segmentPaths(data);
   const field = paths.filter(path => path.length > 1);
   const label = (batch: Batch) => `${batch.first}–${batch.last}`;
-  return <section className="agent-work-trend" aria-labelledby={id}>
+  return <Card className="agent-work-trend" aria-labelledby={id}>
     <h2 id={id}>Agent work share</h2>
     <Collapsible className="trend-disclosure">
       <div className="trend-plot">
@@ -81,9 +81,15 @@ export function AgentWorkTrend() {
       </svg> : <p className="agent-work-empty">{first ? "No classified time in the recorded batches." : "The trend starts after 10 threads."}</p>}
       </div>
       {first && <>
-        <CollapsibleTrigger render={<Button variant="outline" className="batch-trigger" />}>Batch data</CollapsibleTrigger>
+        <CollapsibleTrigger render={<Button variant="outline" className="batch-trigger" />} title="Batch data">
+          <svg width="17" height="17" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
+            <rect x="2.5" y="3.5" width="15" height="13" rx="1" />
+            <path d="M2.5 8h15m-15 4h15M8 8v8.5" />
+          </svg>
+          Batch values
+        </CollapsibleTrigger>
         <CollapsiblePanel className="trend-batch-panel" role="region" aria-label="Batch data" tabIndex={0}>
-          <p>Each batch groups 10 consecutive threads. Every measured thread counts equally. Unclear time is excluded.</p>
+          <p className="trend-method">Run time as a share of run time plus admission wait. Each batch covers ten threads. The timeline shows the latest ten.</p>
           <table aria-label="Agent work share by thread range">
             <thead><tr><th scope="col">Threads</th><th scope="col">Agent work</th><th scope="col">Measured</th></tr></thead>
             <tbody>{data.map(batch => <tr key={batch.first}>
@@ -95,5 +101,5 @@ export function AgentWorkTrend() {
         </CollapsiblePanel>
       </>}
     </Collapsible>
-  </section>;
+  </Card>;
 }
