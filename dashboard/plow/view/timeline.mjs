@@ -4,6 +4,7 @@ const probe = document.querySelector('.measure')
 const ruler = document.getElementById('chart-ruler')
 const viewport = document.getElementById('timeline-viewport')
 const grid = document.getElementById('timeline-grid')
+const inspector = document.getElementById('thread-inspector')
 const minimap = document.getElementById('minimap')
 const miniWindow = minimap.querySelector('.mini-window')
 const miniBrush = minimap.querySelector('.mini-brush')
@@ -82,11 +83,10 @@ function elapsed(ms) {
   const minutes = Math.floor(seconds / 60)
   return Math.floor(minutes / 60) + ':' + String(minutes % 60).padStart(2,'0') + ':' + String(seconds % 60).padStart(2,'0')
 }
-function showEvidence(trace, panel) {
-  const heading = makeElement('h2','', 'Recorded timeline')
+function showEvidence(trace) {
+  const heading = makeElement('h3','', trace.shortTitle + ' · Recorded timeline')
+  heading.id = 'inspector-heading'
   const list = makeElement('ol','evidence-list')
-  list.tabIndex = 0
-  list.dataset.focusPart = 'events'
   list.setAttribute('aria-label', 'Recorded timeline, elapsed from first message')
   const phases = [...values(trace.evidence)].map(p=>({start:p.a,end:p.b,label:p.name}))
   const failures = trace.recordedFailures.map(at=>({start:at,label:'Recorded failure'}))
@@ -100,10 +100,21 @@ function showEvidence(trace, panel) {
     summary.append(makeElement('strong','',failures.length===1?'Failure at ':'Failures at '))
     summary.append(failures.map(item=>elapsed(item.start)).join(', '))
   } else summary.textContent='No recorded failure.'
-  const guide = makeElement('p','evidence-panel-guide','Scroll the event list for later entries.')
-  panel.replaceChildren(heading,summary,list)
-  if(list.childElementCount>8)panel.append(guide)
+  inspector.replaceChildren(heading,summary,list)
 }
+
+function closeInspector() {
+  rows.querySelector('.inspectable[aria-expanded="true"]')?.setAttribute('aria-expanded','false')
+  openTrace = -1
+  inspector.hidden = true
+}
+
+inspector.addEventListener('keydown', event => {
+  if (event.key !== 'Escape') return
+  const trigger = rows.querySelector('.inspectable[aria-expanded="true"]')
+  closeInspector()
+  trigger?.focus()
+})
 
 function render(trace, width, measurements, index) {
   const plan = policy.layout(trace.evidence, scale, width, details, measurements, trace.failures)
@@ -119,26 +130,22 @@ function render(trace, width, measurements, index) {
   link.setAttribute('aria-label',trace.title+' · '+trace.subtitle)
   header.append(link,meta)
   const rail = makeElement(details?'button':'div',details?'rail inspectable':'rail')
-  const panel = makeElement('section','inspect-panel')
   if(details){
     rail.type='button'
     rail.dataset.focusPart='timeline'
     rail.setAttribute('aria-label','Inspect '+trace.title+' · '+trace.subtitle+' · '+trace.recordedFailures.length+' recorded failures')
     rail.setAttribute('aria-expanded',String(index===openTrace))
-    panel.id='inspect-'+index
-    panel.hidden=index!==openTrace
-    rail.setAttribute('aria-controls',panel.id)
-    if(!panel.hidden) showEvidence(trace,panel)
+    rail.setAttribute('aria-controls',inspector.id)
     rail.addEventListener('click',()=>{
-      const previous=rows.querySelector('.inspectable[aria-expanded="true"]')
-      if(previous&&previous!==rail){
-        previous.setAttribute('aria-expanded','false')
-        document.getElementById(previous.getAttribute('aria-controls')).hidden=true
-      }
-      openTrace=panel.hidden?index:-1
-      panel.hidden=openTrace!==index
-      rail.setAttribute('aria-expanded',String(!panel.hidden))
-      if(!panel.hidden&&!panel.childElementCount)showEvidence(trace,panel)
+      const opening = openTrace !== index
+      closeInspector()
+      if (!opening) return
+      openTrace = index
+      rail.setAttribute('aria-expanded','true')
+      showEvidence(trace)
+      inspector.hidden = false
+      inspector.scrollTop = 0
+      inspector.focus()
     })
   } else {
     rail.setAttribute('role','img')
@@ -171,7 +178,6 @@ function render(trace, width, measurements, index) {
   row.dataset.traceIndex = index
   row.append(header, rail)
   paintThreadMatch(row, rail, index)
-  if(details) row.append(panel)
   return row
 }
 function draw() {
@@ -182,10 +188,7 @@ function draw() {
   const active = document.activeElement
   const row = active?.closest('.trace')
   const part = active?.dataset.focusPart
-  const expandedScroll = rows.querySelector('.inspect-panel:not([hidden]) .evidence-list')?.scrollTop ?? 0
   rows.replaceChildren(...evidenceRows.map((trace,index)=>render(trace,measuredWidth,measurements,index)))
-  const list = rows.querySelector('.inspect-panel:not([hidden]) .evidence-list')
-  if (list) list.scrollTop = expandedScroll
   if (row && part) rows.querySelector('[data-trace-index="'+row.dataset.traceIndex+'"] [data-focus-part="'+part+'"]')?.focus({preventScroll:true})
 }
 function bounds(value, low, high) {
@@ -208,7 +211,7 @@ function applyZoom(nextZoom, center) {
   rangeCenter = bounds(center ?? rangeCenter,.5/zoom,1-.5/zoom)
   const visible = Math.round(scale / zoom)
   details = policy.detail_zoom(visible)
-  if (!details) openTrace = -1
+  if (!details && openTrace !== -1) closeInspector()
   modeReadout.textContent = durationLabel(visible) + ' visible' + ' · ' + (details ? 'Details' : 'Overview')
   zoomOut.disabled = zoom === 1
   fitAll.disabled = zoom === 1
@@ -221,7 +224,6 @@ function applyZoom(nextZoom, center) {
   viewportWidth = viewport.clientWidth
   baseWidth = width
   grid.style.setProperty('--timeline-width', (baseWidth * zoom) + 'px')
-  grid.style.setProperty('--panel-width', viewport.clientWidth + 'px')
   viewport.scrollLeft = (rangeCenter - .5/zoom) * baseWidth * zoom
   appliedScroll = viewport.scrollLeft
   settingZoom = true
