@@ -249,6 +249,46 @@ type ReplayPolicy = {
     assigned: boolean, annotation: string, deadline: number, started: number, ended: number): unknown;
   observe_hosted_electron_download(state: unknown, thread: string, id: string, step: string, conclusion: string,
     status: number, exitCode: number, artifact: string, origin: string, renderer: string): unknown;
+  observe_actions_job_log_escape_refusal(state: unknown, thread: string, id: string, operation: string, job: string,
+    responseJob: string, diagnostic: string, failed: boolean): unknown;
+  observe_apt_job_deadline(state: unknown, thread: string, id: string, step: string, packageName: string,
+    jobConclusion: string, stepConclusion: string, budget: number, attempt: number, jobStart: number, jobEnd: number,
+    start: number, end: number): unknown;
+  observe_exact_pr_check_wait(state: unknown, thread: string, id: string, repository: string, pr: number,
+    expected: string, firstRepository: string, firstPr: number, firstHead: string, lastRepository: string,
+    lastPr: number, lastHead: string, exitCode: number, timeout: number, elapsedMs: number): unknown;
+  observe_hermes_cache_merge(state: unknown, thread: string, id: string, step: string, conclusion: string,
+    exitCode: number, code: string, syscall: string, origin: string, restored: boolean): unknown;
+  observe_hosted_approval_fixture(state: unknown, thread: string, id: string, step: string, conclusion: string,
+    test: string, line: string, origin: string): unknown;
+  observe_local_electron_sandbox(state: unknown, thread: string, id: string, operation: string, runtime: string,
+    diagnostic: string, terminal: string, failed: boolean): unknown;
+  observe_local_verify_boundary(state: unknown, thread: string, id: string, operation: string, boundary: string,
+    line: string, terminal: string, failed: boolean): unknown;
+  observe_main_reuse_refusal(state: unknown, thread: string, id: string, event: string, step: string,
+    conclusion: string, line: string): unknown;
+  observe_manual_workflow_completion(state: unknown, thread: string, id: string, run: string, pendingRun: string,
+    observedRun: string, attempt: number, event: string, head: string, pendingHead: string, observedHead: string,
+    pendingStatus: string, observedStatus: string, conclusion: string, observedConclusion: string, pendingAt: number,
+    lastJobEnd: number, providerUpdated: number, observedAt: number): unknown;
+  observe_model_backend_revision_refusal(state: unknown, thread: string, id: string, endpoint: string, status: number,
+    running: string, checkout: string, line: string): unknown;
+  observe_platform_admission_status_refusal(state: unknown, thread: string, id: string, run: string, gateRun: string,
+    head: string, gateHead: string, workflowStatus: string, platform: string, diagnostic: string, original: boolean,
+    alternative: boolean, requiredFinished: number, refusedAt: number): unknown;
+  observe_pr_repository_recovery(state: unknown, thread: string, id: string, createdRepo: string, closedRepo: string,
+    repairedRepo: string, createdPr: number, closedPr: number, repairedPr: number, title: string,
+    repairedTitle: string, implicit: boolean, created: number, closed: number, repaired: number): unknown;
+  observe_pre_push_timing_fixture(state: unknown, thread: string, id: string, operation: string, setting: string,
+    fixture: string, actual: string, expected: string, line: string, failed: boolean, suiteMs: number): unknown;
+  observe_same_declared_input_rebuild(state: unknown, thread: string, id: string, priorLane: string,
+    landedLane: string, priorEvent: string, landedEvent: string, priorResult: string, landedResult: string,
+    priorInputs: string, landedInputs: string, decision: string, priorEnded: number, start: number,
+    end: number): unknown;
+  observe_storage_worktree_removal(state: unknown, thread: string, id: string, path: string, receipt: string,
+    producer: string, phase: string, deleted: boolean, at: number): unknown;
+  observe_transcribe_runtime_missing(state: unknown, thread: string, id: string, operation: string, origin: string,
+    line: string, failed: boolean): unknown;
   replay_files(state: unknown): List<Record<string, unknown>>;
   replay_costs(state: unknown): List<Record<string, unknown>>;
   replay_findings(state: unknown): List<Record<string, unknown>>;
@@ -398,7 +438,7 @@ async function replayBottlenecks(file: string, scratch: string) {
           clockSecond(value.status), token(value.reason), clockSecond(value.exitCode));
       } else if (value.kind === "hosted-macos-automation-probe") {
         state = policy.observe_hosted_macos_probe(state, token(value.thread), id, factText(value.step),
-          token(value.conclusion), factText(value.fixture), token(value.command), token(value.failure), clockSecond(value.exitCode));
+          token(value.conclusion), factText(value.fixture), token(value.command), factText(value.failure), clockSecond(value.exitCode));
       } else if (value.kind === "local-fixture-comparison") {
         state = policy.observe_verification_fixture_comparison(state, token(value.thread), id, factText(value.beforeCommand),
           factText(value.afterCommand), clockSecond(value.beforeCases), clockSecond(value.afterCases),
@@ -433,6 +473,30 @@ async function replayBottlenecks(file: string, scratch: string) {
       } else if (value.kind === "actions-job-log-escape-refusal") {
         state = policy.observe_actions_job_log_escape_refusal(state, token(value.thread), id, token(value.operation),
           token(value.job), token(value.responseJob), factText(value.diagnostic), bendBool(value.failed));
+      } else if (value.kind === "storage-worktree-removal") {
+        state = policy.observe_storage_worktree_removal(state, token(value.thread), id, token(value.path), token(value.receipt),
+          token(value.producer), token(value.phase), bendBool(value.deleted), clockSecond(value.at));
+      } else if (value.kind === "github-pr-repository-recovery") {
+        state = policy.observe_pr_repository_recovery(state, token(value.thread), id, factText(value.createdRepository),
+          factText(value.closedRepository), factText(value.repairedRepository), clockSecond(value.createdPr),
+          clockSecond(value.closedPr), clockSecond(value.repairedPr), factText(value.title), factText(value.repairedTitle),
+          bendBool(value.implicit), clockSecond(value.created), clockSecond(value.closed), clockSecond(value.repaired));
+      } else if (value.kind === "rust-transcribe-runtime-missing") {
+        state = policy.observe_transcribe_runtime_missing(state, token(value.thread), id, token(value.operation),
+          factText(value.origin), factText(value.line), bendBool(value.failed));
+      } else if (value.kind === "model-backend-revision-refusal") {
+        state = policy.observe_model_backend_revision_refusal(state, token(value.thread), id, factText(value.endpoint),
+          clockSecond(value.status), token(value.running), token(value.checkout), factText(value.line));
+      } else if (value.kind === "platform-admission-status-refusal") {
+        state = policy.observe_platform_admission_status_refusal(state, token(value.thread), id, token(value.run),
+          token(value.gateRun), sha(value.head), sha(value.gateHead), token(value.workflowStatus), token(value.platform),
+          factText(value.diagnostic), bendBool(value.original), bendBool(value.alternative),
+          clockSecond(value.requiredFinished), clockSecond(value.refusedAt));
+      } else if (value.kind === "declared-input-rebuild") {
+        state = policy.observe_same_declared_input_rebuild(state, token(value.thread), id, factText(value.priorLane),
+          factText(value.landedLane), token(value.priorEvent), token(value.landedEvent), token(value.priorResult),
+          token(value.landedResult), token(value.priorInputs), token(value.landedInputs), factText(value.decision),
+          clockSecond(value.priorEnded), clockSecond(value.start), clockSecond(value.end));
       } else if (value.kind === "hosted-workflow-startup-failure") {
         state = policy.observe_hosted_workflow_startup_failure(state, token(value.thread), id, token(value.status),
           token(value.conclusion), clockSecond(value.jobCount), clockSecond(value.attempt));
