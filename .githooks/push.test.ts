@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 test("pre-push routes the outgoing commit and blocks failed verification", () => {
   const job = process.env.BARNACLES_TEST_DIRECTORY;
@@ -34,6 +35,7 @@ test("pre-push routes the outgoing commit and blocks failed verification", () =>
     pass("remote", "add", "origin", remote);
     mkdirSync(join(cwd, ".githooks"));
     mkdirSync(join(cwd, "node_modules/web-tree-sitter"), { recursive: true });
+    symlinkSync(fileURLToPath(new URL("../node_modules/js-tiktoken", import.meta.url)), join(cwd, "node_modules/js-tiktoken"));
     mkdirSync(join(cwd, "collector/github"), { recursive: true });
     mkdirSync(join(cwd, "dashboard"));
     mkdirSync(join(cwd, "evidence"));
@@ -93,6 +95,15 @@ test("pre-push routes the outgoing commit and blocks failed verification", () =>
     assert.equal(failure.status, 1);
     assert.match(failure.stderr, /checking collector dashboard tests/);
     assert.match(failure.stdout, /not ok/);
+    write("oversized.bend", `def example() -> String:\n  "${" a".repeat(4100)}"\n`);
+    commit("oversized.bend");
+    write("oversized.bend", "def example() -> String: \"small\"\n");
+    const budget = git("push", "origin", "feature");
+    assert.equal(budget.status, 1);
+    assert.match(budget.stderr, /source token check: "oversized\.bend" has 4109 source tokens \(allowance 4000\)/);
+    assert.doesNotMatch(budget.stderr, /checking .* tests/);
+    pass("rm", "-f", "oversized.bend");
+    pass("commit", "-qm", "remove oversized source");
     mkdirSync(join(cwd, "overwide"));
     for (let index = 0; index < 11; index++) write(`overwide/file-${index}.md`, "Synthetic\n");
     commit("overwide");

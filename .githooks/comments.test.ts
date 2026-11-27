@@ -125,6 +125,28 @@ test("real Git commits check the staged tree and enforce comment multiplicity", 
     pass("add", "policy.bend");
     pass("commit", "-qm", "Bend2 feature");
 
+    const source = (words: number) => `def example() -> String:\n  "${" a".repeat(words)}"\n`;
+    write("limit.bend", source(3992));
+    pass("add", "limit.bend");
+    write("limit.bend", source(3991));
+    reject(/source token check: "limit\.bend" has 4001 source tokens \(allowance 4000\)/);
+    pass("add", "limit.bend");
+    pass("commit", "-qm", "exactly 4000 tokens in the index");
+
+    write("legacy.bend", source(4100));
+    pass("add", "legacy.bend");
+    pass("-c", "core.hooksPath=/dev/null", "commit", "-qm", "synthetic oversized baseline");
+    write("legacy.bend", source(4101));
+    pass("add", "legacy.bend");
+    reject(/source token check: "legacy\.bend" has 4110 source tokens \(allowance 4109\)/);
+    write("legacy.bend", source(4099));
+    pass("add", "legacy.bend");
+    pass("commit", "-qm", "shrink an oversized file");
+    pass("mv", "legacy.bend", "moved.bend");
+    pass("commit", "-qm", "exact rename carries the allowance");
+    write("copy.bend", source(4099));
+    pass("add", "copy.bend");
+    reject(/source token check: "copy\.bend".*allowance 4000/);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

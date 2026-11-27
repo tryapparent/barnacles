@@ -55,3 +55,37 @@ def check_registry(registry: Registry, added: List<&2, String>) -> CheckedPaths:
 
 def check_paths(text: String, added: List<&2, String>) -> CheckedPaths:
   check_registry(read_registry(Json.parse.strict.unique.bytes(Json.utf8(text), 2)), added)
+
+def budget_lockfile(name: String) -> Bool:
+  List.contains(~String, ~String.eq, ["Cargo.lock", "package-lock.json", "npm-shrinkwrap.json", "bun.lock",
+    "bun.lockb", "yarn.lock", "pnpm-lock.yaml", "uv.lock", "poetry.lock"], name)
+
+def budget_path_excluded(parts: List<&2, String>) -> Bool:
+  match parts:
+    case []: False{}
+    case +name <> tail:
+      Bool.or(Bool.or(budget_lockfile(name), Rules.excluded_component(name)),
+        List.any(~&2, ~String, ~Rules.excluded_component, tail))
+
+def source_budget_candidate(mode: String, path: String) -> Bool:
+  Bool.and(String.starts_with(mode, "100"),
+    Bool.not(budget_path_excluded(List.reverse(&2, String, String.split(path, '/')))))
+
+def source_extension(parts: List<&2, String>) -> Bool:
+  match parts:
+    case ext <> _ <> _:
+      List.contains(~String, ~String.eq, ["js", "jsx", "cjs", "cjsx", "mjs", "mjsx", "ts", "tsx", "cts",
+        "ctsx", "mts", "mtsx", "bend", "rs", "py", "swift", "sh", "bash", "zsh", "css", "htm", "html",
+        "c", "h", "cc", "cpp", "cxx", "hpp", "hh", "m", "mm", "metal", "lock", "lockb"], String.to_lower(ext))
+    case _: False{}
+
+def source_budget_covered(path: String, prefix: String) -> Bool:
+  Bool.or(String.eq(prefix, "#!"), source_extension(List.reverse(&2, String, String.split(path, '.'))))
+
+def source_budget_inherits(+status: String, +old_mode: String, mode: String, old_oid: String, oid: String) -> Bool:
+  Bool.or(Bool.and(String.eq(status, "M"), String.starts_with(old_mode, "100")),
+    Bool.and(String.eq(status, "R100"), Bool.and(String.eq(old_mode, mode), String.eq(old_oid, oid))))
+
+def source_budget_violation(count: Nat, previous: Nat) -> Nat:
+  +allowance = Nat.max(4000n, previous)
+  Bool.pick(Nat, Nat.is_le(count, allowance), 0n, allowance)
