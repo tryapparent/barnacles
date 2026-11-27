@@ -149,6 +149,11 @@ def observe_hosted_test_failure(state: Replay, thread: String, id: String, scope
   observe_repeat(state, thread, id, "ci-test-failure-repeated", pair(scope, pair(lane, test)), execution,
     at, at, 0, String.eq(conclusion, "failure"))
 
+def observe_hosted_test_fanout(state: Replay, thread: String, id: String, scope: String, lane: String,
+  revision: String, failure: String, conclusion: String, +at: U32) -> Replay:
+  observe_repeat(state, thread, id, "ci-test-failure-cross-lane", pair(scope, pair(revision, failure)), lane,
+    at, at, 0, String.eq(conclusion, "failure"))
+
 def observe_package_build(state: Replay, thread: String, +id: String, scope: String, +tool: String,
   digest: String, +assets: U32, reported_ms: U32, +start: U32, +end: U32) -> Replay:
   +seconds = U32.div(reported_ms, 1000)
@@ -253,15 +258,42 @@ def observe_hosted_admission(state: Replay, thread: String, id: String, conclusi
   +reason = String.eq(String.trim(annotation), "The job was not acquired by Runner of type hosted even after multiple attempts")
   observe_failure(state, thread, id, "ci-hosted-admission-failure", Bool.and(cancelled, Bool.and(unallocated, reason)))
 
+def pr_notice_reason(pr: U32, +message: String) -> String:
+  +prefix = String.append("#", String.append(Nat.show(U32.to_nat(pr)), ": "))
+  Bool.pick(String, String.eq(message, String.append(prefix, "merge conflict")), "merge-conflict",
+    Bool.pick(String, String.eq(message, String.append(prefix, "checks passed, merge conflict")), "checks-passed-merge-conflict",
+      Bool.pick(String, String.eq(message, String.append(prefix, "checks failed")), "checks-failed",
+        Bool.pick(String, String.eq(message, String.append(prefix, "checks passed")), "checks-passed", ""))))
+
 def observe_pr_notice(state: Replay, +thread: String, id: String, source_thread: String, visibility: String,
-  status: String, truncated: Bool, +pr: U32, +message: String) -> Replay:
+  status: String, truncated: Bool, +pr: U32, message: String) -> Replay:
   +local = Bool.and(String.eq(source_thread, thread), String.eq(visibility, "local"))
   +complete = Bool.and(String.eq(status, "completed"), Bool.not(truncated))
-  +prefix = String.append("#", String.append(Nat.show(U32.to_nat(pr)), ": "))
-  +conflict = Bool.or(String.eq(message, String.append(prefix, "merge conflict")),
-    String.eq(message, String.append(prefix, "checks passed, merge conflict")))
+  +reason = pr_notice_reason(pr, message)
+  +conflict = Bool.or(String.eq(reason, "merge-conflict"), String.eq(reason, "checks-passed-merge-conflict"))
   +valid = Bool.and(U32.is_gt(pr, 0), Bool.and(local, Bool.and(complete, conflict)))
   observe_failure(state, thread, id, "pr-merge-conflict-observed", valid)
+
+def record_pr_watch_wake(state: Replay, +thread: String, +id: String, watch_id: String, reason: String,
+  +seconds: U32, valid: Bool) -> Replay:
+  match state:
+    case Replay{+seen, +files, +reads, +costs, +attempts, +cohorts, +findings}:
+      +event = pair("watch-wake", pair(thread, id))
+      +accept = Bool.and(valid, Bool.not(includes(seen, event)))
+      Bool.pick(Replay, accept,
+        Replay{Map.set(&2, Bool, seen, event, True{}), files, reads,
+          add_cost(costs, "t3-pr-watch-parked", reason, True{}, seconds), attempts, cohorts,
+          Finding{"t3-pr-watch-parked", thread, id, watch_id, seconds, 0, 0, 0} <> findings},
+        Replay{seen, files, reads, costs, attempts, cohorts, findings})
+
+def observe_pr_watch_wake(state: Replay, thread: String, id: String, watch_id: String, +pr: U32, message: String,
+  +registered: U32, +parked: U32, +notified: U32, +prior: U32, next: U32, notice_stamp: String,
+  requested_stamp: String) -> Replay:
+  +reason = pr_notice_reason(pr, message)
+  +ordered = Bool.and(U32.is_gt(registered, 0), Bool.and(U32.is_ge(parked, registered), U32.is_ge(notified, parked)))
+  +wake = Bool.and(U32.is_gt(prior, 0), Bool.and(U32.is_eq(next, U32.inc(prior)), String.eq(notice_stamp, requested_stamp)))
+  +valid = Bool.and(U32.is_gt(pr, 0), Bool.and(Bool.not(String.is_empty(reason)), Bool.and(ordered, wake)))
+  record_pr_watch_wake(state, thread, id, watch_id, reason, U32.sub(notified, parked), valid)
 
 def observe_forge_response(state: Replay, thread: String, id: String, operation: String, +status: U32,
   failed: Bool, identified: Bool) -> Replay:
@@ -286,6 +318,15 @@ def observe_local_admission_timeout(state: Replay, thread: String, id: String, e
   +timeout = Bool.and(U32.is_eq(exit_code, 124),
     String.eq(String.trim(line), "t3-build: timed out waiting for admission"))
   observe_failure(state, thread, id, "local-build-admission-timeout", timeout)
+
+def observe_socket_preflight(state: Replay, thread: String, id: String, +required: U32, +limit: U32,
+  line: String, origin: String) -> Replay:
+  +boundary = String.eq(origin, "check_temp_environment:enablement/verification.py")
+  +expected = String.append("RuntimeError: verification TMPDIR preflight: socket fixture needs ",
+    String.append(U32.show(required), String.append(" pathname bytes; platform permits ", String.append(U32.show(limit), "."))))
+  +matches = String.eq(line, expected)
+  +exceeded = Bool.and(U32.is_gt(limit, 0), U32.is_gt(required, limit))
+  observe_failure(state, thread, id, "local-verification-socket-path-limit", Bool.and(boundary, Bool.and(matches, exceeded)))
 
 def observe_capture_access(state: Replay, thread: String, id: String, +operation: String, line: String, failed: Bool) -> Replay:
   +lookup = Bool.or(String.eq(operation, "apparent-inspect"), String.eq(operation, "apparent-connect-files"))
@@ -328,6 +369,18 @@ def observe_native_model_fetch(state: Replay, thread: String, id: String, step: 
   +valid = Bool.and(failed, Bool.and(native_step, Bool.and(source, Bool.and(server_error, download))))
   observe_failed_step(state, thread, id, "ci-native-prerequisite-step", "circle-vision",
     "ci-model-prerequisite-http-server-error", valid, start, end)
+
+def observe_toolchain_fetch(state: Replay, thread: String, id: String, step: String, conclusion: String,
+  exit_code: U32, +status: U32, asset: String, line: String, origin: String, start: U32, end: U32) -> Replay:
+  +failed = Bool.and(String.eq(conclusion, "failure"), U32.is_eq(exit_code, 1))
+  +native_step = String.eq(step, "Prepare locked native prerequisites before first Cargo")
+  +source = String.eq(origin, "prepareBend:shared/enablement/bend/toolchain.ts")
+  +server_error = Bool.and(U32.is_ge(status, 500), U32.is_lt(status, 600))
+  +expected = String.append("Error: Bend toolchain download failed for ",
+    String.append(asset, String.append(": ", U32.show(status))))
+  +valid = Bool.and(failed, Bool.and(native_step, Bool.and(source, Bool.and(server_error, String.eq(line, expected)))))
+  observe_failed_step(state, thread, id, "ci-native-prerequisite-step", "bend-toolchain",
+    "ci-toolchain-prerequisite-http-server-error", valid, start, end)
 
 def observe_benchmark_admission(state: Replay, thread: String, id: String, +lane: String, conclusion: String,
   exit_code: U32, line: String, origin: String, start: U32, end: U32) -> Replay:
