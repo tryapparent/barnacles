@@ -615,6 +615,14 @@ test("bottleneck replay binds verification and recovery to original receipts", (
   const preProvider = { kind: "t3-worktree-prepare-failure", thread: "t", id: "failed-prepare", branch: "fixture",
     path: "/fixture/worktree", line: "Could not recreate the worktree for branch 'fixture' at /fixture/worktree.",
     runStatus: "failed", providerStarted: false, requested: 100, failedAt: 103 };
+  const reengagement = { kind: "t3-turn-reengagement", thread: "t", sourceThread: "t", id: "reengagement",
+    visibility: "local", priorStatus: "completed", priorOrdinal: 4, nextOrdinal: 5, closed: 100, requested: 230,
+    acknowledgement: "ended-early" };
+  const ingressInterrupted = { kind: "t3-ingress-interruption", thread: "t", sourceThread: "t", id: "rejected-input",
+    visibility: "local", inputTurn: 5, receiptTurn: 5, submitted: 230, reported: 230,
+    receipt: "interrupted-before-processing" };
+  const legacyFetch = { kind: "capture-access-result", thread: "t", id: "legacy-capture-fetch",
+    operation: "apparent-fetch", failed: true, line: "Error: Hosted API: not_found" };
   const facts = [
     worktree, worktree,
     { ...worktree, id: "same-removal", at: 110 },
@@ -657,6 +665,25 @@ test("bottleneck replay binds verification and recovery to original receipts", (
     { ...preProvider, id: "provider-already-started", providerStarted: true },
     { ...preProvider, id: "wrong-worktree", path: "/fixture/other" },
     { ...preProvider, id: "unordered-worktree", failedAt: 99 },
+    reengagement, reengagement,
+    { ...reengagement, id: "monitoring-reengagement", acknowledgement: "dropped-required-monitoring" },
+    { ...reengagement, id: "inherited-reengagement", visibility: "inherited" },
+    { ...reengagement, id: "foreign-reengagement", sourceThread: "other" },
+    { ...reengagement, id: "interrupted-prior", priorStatus: "interrupted" },
+    { ...reengagement, id: "nonadjacent-turn", nextOrdinal: 6 },
+    { ...reengagement, id: "unknown-close", closed: 0 },
+    { ...reengagement, id: "unordered-clock", closed: 231 },
+    { ...reengagement, id: "expected-handoff", acknowledgement: "yielded-for-handoff" },
+    ingressInterrupted, ingressInterrupted,
+    { ...ingressInterrupted, id: "wrong-receipt-turn", receiptTurn: 6 },
+    { ...ingressInterrupted, id: "inherited-input", visibility: "inherited" },
+    { ...ingressInterrupted, id: "premature-response", reported: 229 },
+    { ...ingressInterrupted, id: "explicit-hold", receipt: "paused" },
+    legacyFetch, legacyFetch,
+    { ...legacyFetch, id: "legacy-capture-inspect", operation: "apparent-inspect" },
+    { ...legacyFetch, id: "legacy-unrelated-reply", operation: "apparent-status" },
+    { ...legacyFetch, id: "legacy-not-terminal", failed: false },
+    { ...legacyFetch, id: "legacy-quoted-line", line: "Quoted: Error: Hosted API: not_found" },
   ];
   try {
     writeFileSync(file, facts.map(fact => JSON.stringify(fact)).join("\n") + "\n");
@@ -678,6 +705,11 @@ test("bottleneck replay binds verification and recovery to original receipts", (
       ["memory-second-observation", "local-build-memory-gate-with-worker-slots", 0],
       ["memory-second-thread", "local-build-memory-gate-with-worker-slots", 0],
       ["failed-prepare", "t3-worktree-recreation-failed-before-provider", 3],
+      ["reengagement", "t3-early-stop-acknowledged", 130],
+      ["monitoring-reengagement", "t3-monitoring-stop-acknowledged", 130],
+      ["rejected-input", "t3-inbound-message-interrupted", 0],
+      ["legacy-capture-fetch", "capture-reference-unavailable", 0],
+      ["legacy-capture-inspect", "capture-reference-unavailable", 0],
     ]);
     const patterns = JSON.parse(text).patterns;
     assert.deepEqual(patterns[0], { $: "RulePattern", rule: "local-build-memory-gate-with-worker-slots",

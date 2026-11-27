@@ -403,6 +403,28 @@ def observe_worktree_prepare_failure(state: Replay, thread: String, id: String, 
   observe_failure_with_duration(state, thread, id, "t3-worktree-recreation-failed-before-provider",
     Bool.and(before_provider, Bool.and(known, String.eq(line, expected))), U32.sub(failed_at, requested))
 
+def reengagement_label(+acknowledgement: String) -> String:
+  +early = String.eq(acknowledgement, "ended-early")
+  +monitoring = String.eq(acknowledgement, "dropped-required-monitoring")
+  Bool.pick(String, early, "t3-early-stop-acknowledged", Bool.pick(String, monitoring, "t3-monitoring-stop-acknowledged", ""))
+
+def observe_turn_reengagement(state: Replay, +thread: String, id: String, source_thread: String, visibility: String,
+  prior_status: String, +prior: U32, next: U32, +closed: U32, +requested: U32, acknowledgement: String) -> Replay:
+  +owned = Bool.and(String.eq(thread, source_thread), String.eq(visibility, "local"))
+  +completed = Bool.and(String.eq(prior_status, "completed"), Bool.and(U32.is_gt(prior, 0), U32.is_eq(U32.inc(prior), next)))
+  +ordered = Bool.and(U32.is_gt(closed, 0), U32.is_gt(requested, closed))
+  observe_failure_with_duration(state, thread, id, reengagement_label(acknowledgement),
+    Bool.and(owned, Bool.and(completed, ordered)), U32.sub(requested, closed))
+
+def observe_ingress_interruption(state: Replay, +thread: String, id: String, source_thread: String, visibility: String,
+  +input_turn: U32, receipt_turn: U32, +submitted: U32, reported: U32, receipt: String) -> Replay:
+  +owned = Bool.and(String.eq(thread, source_thread), String.eq(visibility, "local"))
+  +same_turn = Bool.and(U32.is_gt(input_turn, 0), U32.is_eq(input_turn, receipt_turn))
+  +ordered = Bool.and(U32.is_gt(submitted, 0), U32.is_ge(reported, submitted))
+  +rejected = String.eq(receipt, "interrupted-before-processing")
+  observe_failure(state, thread, id, "t3-inbound-message-interrupted",
+    Bool.and(Bool.and(owned, same_turn), Bool.and(ordered, rejected)))
+
 def observe_local_build_memory_gate(state: Replay, thread: String, id: String, cause: String,
   +available: U32, capacity: U32, +minimum: U32) -> Replay:
   +slots = Bool.and(U32.is_gt(minimum, 0), Bool.and(U32.is_ge(available, minimum), U32.is_ge(capacity, available)))
@@ -651,8 +673,9 @@ def observe_socket_preflight(state: Replay, thread: String, id: String, +require
   +exceeded = Bool.and(U32.is_gt(limit, 0), U32.is_gt(required, limit))
   observe_failure(state, thread, id, "local-verification-socket-path-limit", Bool.and(boundary, Bool.and(matches, exceeded)))
 
-def capture_access_label(+line: String, +lookup: Bool, fetch: Bool) -> String:
-  +unavailable = Bool.and(lookup, String.starts_with(line, "Error: Capture unavailable (not_found)."))
+def capture_access_label(+line: String, +lookup: Bool, +fetch: Bool) -> String:
+  +unavailable = Bool.or(Bool.and(lookup, String.starts_with(line, "Error: Capture unavailable (not_found).")),
+    Bool.and(Bool.or(lookup, fetch), String.eq(line, "Error: Hosted API: not_found")))
   +pending = Bool.and(fetch, String.eq(line, "Error: Capture is still pending; retry fetch later"))
   +unsafe = Bool.and(lookup, String.eq(line, "Error: Unsafe shared or unowned directory tree; run apparent connect alternatives for local inspection and authorized transfer options"))
   Bool.pick(String, unavailable, "capture-reference-unavailable",
