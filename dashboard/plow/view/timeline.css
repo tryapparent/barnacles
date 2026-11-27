@@ -100,6 +100,7 @@ button[aria-pressed=true]{background:var(--earth);border-color:var(--earth);colo
 .navigator.has-range .minimap{cursor:grab}
 @media(forced-colors:active){
   .mini-window{border:1px solid Highlight}
+  .marker{forced-color-adjust:none;background:CanvasText;box-shadow:0 0 0 1px Canvas}
   .mini-handle::before{background:ButtonFace;border:1px solid ButtonText}
   .mini-handle::after{border-color:ButtonText}
 }
