@@ -317,23 +317,23 @@ def observe_failure_with_duration(state: Replay, +thread: String, +id: String, +
 def observe_failure(state: Replay, thread: String, id: String, label: String, failed: Bool) -> Replay:
   observe_failure_with_duration(state, thread, id, label, failed, 0)
 
-def t3_command_refusal_label(+status: String, +receipt: String, +code: U32) -> String:
-  +failed = String.eq(status, "failed")
-  +background_receipt = Bool.or(String.eq(receipt, "foreground-shell-wrapper"), String.eq(receipt, "foreground-ampersand"))
-  +background_refusal = Bool.and(failed, Bool.and(background_receipt, U32.is_eq(code, 4294967295)))
-  +comment_conflict = Bool.and(failed, Bool.and(String.eq(receipt, "github-view-comment-format"), U32.is_eq(code, 1)))
-  +git_spawn = Bool.and(failed, Bool.and(String.eq(receipt, "git-fork-resource-unavailable"), U32.is_eq(code, 255)))
-  +shell_retry = Bool.and(String.eq(status, "completed"), Bool.and(String.eq(receipt, "shell-fork-retry"), U32.is_eq(code, 0)))
-  Bool.pick(String, background_refusal, "t3-terminal-backgrounding-refused",
-    Bool.pick(String, comment_conflict, "github-view-comment-format-conflict",
-      Bool.pick(String, git_spawn, "git-child-process-spawn-refused",
-        Bool.pick(String, shell_retry, "local-shell-fork-retry-observed", ""))))
+def command_refusal(result: String & String & U32) -> String:
+  match result:
+    case ("failed", "foreground-shell-wrapper", 4294967295): "t3-terminal-backgrounding-refused"
+    case ("failed", "foreground-ampersand", 4294967295): "t3-terminal-backgrounding-refused"
+    case ("failed", "github-view-comment-format", 1): "github-view-comment-format-conflict"
+    case ("failed", "git-fork-resource-unavailable", 255): "git-child-process-spawn-refused"
+    case ("completed", "shell-fork-retry", 0): "local-shell-fork-retry-observed"
+    case ("failed", "ssh-authentication-denied", 255): "ssh-authentication-refused"
+    case ("failed", "nomac-queue-busy", 2): "native-mac-queue-lock-busy"
+    case ("failed", "nomac-queue-busy", 75): "native-mac-queue-lock-busy"
+    case ("failed", "github-project-read-scope", 1): "github-project-read-scope-refused"
+    case _: ""
 
 def observe_t3_command_refusal(state: Replay, +thread: String, id: String, source_thread: String, visibility: String,
   item_type: String, status: String, receipt: String, code: U32) -> Replay:
   +local = Bool.and(String.eq(thread, source_thread), Bool.and(String.eq(visibility, "local"), String.eq(item_type, "command_execution")))
-  +label = t3_command_refusal_label(status, receipt, code)
-  observe_failure(state, thread, id, label, Bool.and(local, Bool.not(String.is_empty(label))))
+  observe_failure(state, thread, id, command_refusal((status, receipt, code)), local)
 
 def observe_staged_source_budget(state: Replay, thread: String, id: String, operation: String, phase: String,
   unit: String, path: String, actual: U32, +allowance: U32, failed: Bool) -> Replay:
@@ -876,8 +876,10 @@ def observe_hosted_apt(state: Replay, thread: String, id: String, conclusion: St
   observe_failure(state, thread, id, "ci-apt-package-not-found", Bool.and(failed, Bool.and(package, missing)))
 
 def observe_local_admission_timeout(state: Replay, thread: String, id: String, exit_code: U32, line: String) -> Replay:
-  +timeout = Bool.and(U32.is_eq(exit_code, 124),
-    String.eq(String.trim(line), "t3-build: timed out waiting for admission"))
+  +diagnostic = String.trim(line)
+  +boundary = Bool.or(String.eq(diagnostic, "t3-build: timed out waiting for admission"),
+    String.eq(diagnostic, "t3-build: timed out waiting for worker slots"))
+  +timeout = Bool.and(U32.is_eq(exit_code, 124), boundary)
   observe_failure(state, thread, id, "local-build-admission-timeout", timeout)
 
 def observe_socket_preflight(state: Replay, thread: String, id: String, +required: U32, +limit: U32,
