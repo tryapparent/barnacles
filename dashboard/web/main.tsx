@@ -2,7 +2,7 @@ import { Popover, PopoverContent, PopoverDescription, PopoverTitle, PopoverTrigg
 import { useEffect, useState } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
-import { Button, Card, FieldSettings } from "./controls";
+import { Button, Card } from "./controls";
 import { AgentWorkTrend } from "./visual/agent-work-trend";
 import { Summary } from "./visual/charts";
 
@@ -106,23 +106,20 @@ function Bottlenecks({ api }: { api: string }) {
   </Card>;
 }
 
-function Dashboard({ field, fieldTexture, sessionHistory, analysisApi }: { field: string; fieldTexture?: string; sessionHistory?: string; analysisApi?: string }) {
+function Dashboard({ field, fieldTexture, analysisApi }: { field: string; fieldTexture?: string; analysisApi?: string }) {
   return <>
     <main>
       <img className="activity-landscape" src={field} alt="" />
       <header className="activity-header">
         <div className="activity-meta">
           <p className="wordmark">plow</p>
-          <div className="activity-links">
-            {sessionHistory && <a id="session-history-link" href={sessionHistory}>Session history</a>}
-            {fieldTexture && <FieldSettings />}
-          </div>
         </div>
         <h1 className="visually-hidden">Thread activity</h1>
       </header>
       <div className="board">
         <p className="summary-note" id="feed-status">Session data is temporarily unavailable. Reload to try again.</p>
         <div id="feed-content" hidden>
+          <p className="overview-period" id="overview-period">Last 24 hours</p>
           <div className="activity-overview"><Summary fieldTexture={fieldTexture} /><AgentWorkTrend /></div>
           <Card id="timeline-panel" aria-labelledby="timeline-heading">
             <div className="timeline-heading-row">
@@ -186,10 +183,9 @@ function Dashboard({ field, fieldTexture, sessionHistory, analysisApi }: { field
 export function mountDashboard() {
   const element = document.getElementById("plow-root");
   if (!element?.dataset.field) throw Error("Missing Plow dashboard assets");
-  const { field, fieldTexture, sessionHistory, analysisApi } = element.dataset;
+  const { field, fieldTexture, analysisApi } = element.dataset;
   element.removeAttribute("data-field");
   element.removeAttribute("data-field-texture");
-  element.removeAttribute("data-session-history");
   const root = createRoot(element);
-  flushSync(() => root.render(<Dashboard field={field} fieldTexture={fieldTexture} sessionHistory={sessionHistory} analysisApi={analysisApi} />));
+  flushSync(() => root.render(<Dashboard field={field} fieldTexture={fieldTexture} analysisApi={analysisApi} />));
 }

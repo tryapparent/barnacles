@@ -40,7 +40,6 @@ services:
       PLOW_ACCESS_AUDIENCE: ${PLOW_ACCESS_AUDIENCE:-}
       PLOW_RELEASE: ${PLOW_RELEASE:-}
       PLOW_ANALYSIS_API_URL: ${PLOW_ANALYSIS_API_URL:-}
-      PLOW_SESSION_HISTORY_URL: ${PLOW_SESSION_HISTORY_URL:-}
     volumes:
       - type: bind
         source: ${PLOW_FRONTEND_ASSETS:-./.plow-assets}/worker.mjs

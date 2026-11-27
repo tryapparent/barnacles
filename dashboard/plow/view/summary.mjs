@@ -1,3 +1,17 @@
+const feedStatus = document.getElementById('feed-status')
+const feedContent = document.getElementById('feed-content')
+if (!feed.unavailable && traces.length === 0) {
+  feedStatus.textContent = 'No measured session time has been imported yet.'
+}
+feedStatus.hidden = traces.length > 0
+feedContent.hidden = traces.length === 0
+if (traces.length > 0) {
+  const cutoff = document.getElementById('feed-cutoff')
+  cutoff.textContent = 'Observed through ' + new Intl.DateTimeFormat('en-GB', {
+    dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC',
+  }).format(feed.observed) + ' UTC'
+  cutoff.hidden = false
+}
 const tiles = document.getElementById('tiles')
 const operationPanel = document.getElementById('operation-panel')
 const operationTiles = document.getElementById('operation-tiles')
@@ -11,10 +25,16 @@ const categories = [
   { kind: 2, name: 'Provider run', style: 'agent' },
   { kind: 0, name: 'Unobserved', style: 'unclear' },
 ]
-const summaryTraces = asList(evidenceRows.map((trace, index) => ({
+const summaryInput = rows => asList(rows.map((trace, index) => ({
   $: 'SummaryTrace', index: index + 1, start: trace.startUtcMs, parts: trace.evidence,
 })))
-
+const timelineTraces = summaryInput(evidenceRows)
+const overviewEnd = feed.overview?.to ?? feed.observed
+const overviewStart = policy.overview_start(overviewEnd)
+const overviewRows = feed.overview ? feed.overview.traces.map(decodeEvidence) : evidenceRows
+const overviewTraces = summaryInput(overviewRows)
+const overview = policy.time_summary(overviewTraces, overviewStart, overviewEnd)
+PlowUI.renderAgentWorkTrend([...values(policy.agent_work_trend(overviewTraces, overviewStart))])
 let selection = policy.initial_overview()
 let previousWindow = ''
 let matches = new Map()
@@ -111,8 +131,7 @@ function paintRange() {
   const key = start + '/' + end
   if (previousWindow === key) return
   previousWindow = key
-  renderSummary(start, end)
-  paintFilter(start, end)
+  paintFilter(start, end, false)
 }
 
 function categoryButton(kind) {
@@ -148,15 +167,14 @@ function selectCategory(category) {
   const surfaceStyle = getComputedStyle(summarySurface)
   const previousPaint = {
     background: surfaceStyle.background,
-    '--breakdown-texture': surfaceStyle.getPropertyValue('--breakdown-texture'),
   }
   const interrupted = !opening && summarySurface.getAnimations().length ? summarySurface.getBoundingClientRect() : null
   for (const element of [summarySurface, summaryTop, operationPanel]) {
     for (const animation of element.getAnimations()) animation.cancel()
   }
   selection = policy.select_overview(selection, { $:'SelectCategory', kind:category.kind })
-  previousWindow = ''
-  paintRange()
+  renderSummary()
+  paintFilter(visibleWindow.start, visibleWindow.end)
   if (tile && !summaryMotion.matches) animateCategory(tile, opening, previousPaint, interrupted)
   const next = operationPanel.hidden ? categoryButton(category.kind) : collapse
   next?.focus({ preventScroll:true })
@@ -164,15 +182,15 @@ function selectCategory(category) {
 
 function selectOperation(name) {
   selection = policy.select_overview(selection, { $:'SelectOperation', name })
-  previousWindow = ''
-  paintRange()
+  renderSummary()
+  paintFilter(visibleWindow.start, visibleWindow.end)
   const next = operationButton(name) ?? operationTiles.firstElementChild ?? collapse
   next.focus({ preventScroll:true })
 }
 
-function renderSummary(windowStart, windowEnd) {
+function renderSummary() {
   const focused = document.activeElement
-  const result = policy.time_summary(summaryTraces, windowStart, windowEnd)
+  const result = overview
   const groups = new Map([...values(result.categories)].map(group => [group.kind, group]))
   const activeCategory = categories.find(category => category.kind === selection.category)
   const group = groups.get(selection.category)
@@ -219,9 +237,9 @@ function renderSummary(windowStart, windowEnd) {
   }
 }
 
-function paintFilter(start, end) {
+function paintFilter(start, end, repaint = true) {
   const filter = selection.operation
-    ? policy.timeline_filter(summaryTraces, start, end, selection.category, selection.operation)
+    ? policy.timeline_filter(timelineTraces, start, end, selection.category, selection.operation)
     : null
   matches = new Map(filter ? [...values(filter.matches)].map(match => [match.index - 1, match.spans]) : [])
   const status = !filter ? '' : filter.threads > 0
@@ -230,8 +248,9 @@ function paintFilter(start, end) {
   if (timelineSelection.textContent !== status) timelineSelection.textContent = status
   timelineSelection.toggleAttribute('data-empty', !!filter && filter.threads === 0)
   document.getElementById('timeline-panel').dataset.category = selection.category
+  if (openTrace !== -1 && selection.operation && !matches.has(openTrace)) closeInspector()
+  if (!repaint) return
   for (const row of rows.children) paintThreadMatch(row, row.querySelector('.rail'), Number(row.dataset.traceIndex))
-  if (openTrace !== -1 && rows.children[openTrace].hidden) closeInspector()
 }
 
 function paintThreadMatch(row, rail, index) {
@@ -255,6 +274,10 @@ function paintThreadMatch(row, rail, index) {
 }
 
 if (traces.length > 0) {
+  renderSummary()
   applyWindow(frame)
-  document.fonts.ready.then(()=>{draw();paintWindow()})
+  document.fonts.ready.then(() => {
+    measurementWidth = undefined
+    applyWindow(visibleWindow, fitted)
+  })
 }

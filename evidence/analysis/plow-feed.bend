@@ -3,15 +3,15 @@ import Base
 type Run is Data:
   Run{requested: Nat, started: Nat, completed: Nat, status: String}
 type Thread is Data:
-  Thread{created: Nat, updated: Nat, runs: List<&2,Run>}
+  Thread{created: Nat, updated: Nat, runs: List<&2,Run>, detail: List<&2,ProviderSpan>, ci: List<&2,CiPoll>}
+type ProviderSpan is Data:
+  ProviderSpan{a: Nat, b: Nat, operation: String}
+type CiPoll is Data:
+  CiPoll{a: Nat, b: Nat}
 type Span is Data:
   Span{a: Nat, b: Nat, name: String}
 type Trace is Data:
-  Trace{start: Nat, end: Nat, work: List<&2,Span>, wait: List<&2,Span>, errors: List<&2,Nat>}
-type Feed is Data:
-  Feed{observed: Nat, traces: List<&2,Trace>}
-type Progress is Data:
-  Progress{remaining: Nat, feed: Feed}
+  Trace{start: Nat, end: Nat, work: List<&2,Span>, wait: List<&2,Span>, errors: List<&2,Nat>, detail: List<&2,Span>, ci: List<&2,Span>}
 type Clocks is Data:
   Clocks{last: Nat, work: List<&2,Span>, wait: List<&2,Span>, errors: List<&2,Nat>}
 
@@ -42,85 +42,73 @@ def run_clocks(runs: List<&2,Run>, +created: Nat, +updated: Nat, clocks: Clocks)
 
 def thread_before(a: Thread, b: Thread) -> Bool:
   match a b:
-    case Thread{x,_,_} Thread{y,_,_}: Nat.is_le(y,x)
+    case Thread{x,_,_,_,_} Thread{y,_,_,_,_}: Nat.is_le(y,x)
 
-def with_clocks(clocks: Clocks, +created: Nat, +updated: Nat, +remaining: Nat, feed: Feed) -> Progress:
-  match clocks feed:
-    case Clocks{+last,work,wait,errors} Feed{+observed,+traces}:
-      +known = Nat.is_lt(0n,last)
-      +kept = Bool.pick(List<&2,Trace>,known,Trace{created,last,work,wait,errors} <> traces,traces)
-      +through = Bool.pick(Nat,known,Nat.max(observed,updated),observed)
-      Progress{Bool.pick(Nat,known,Nat.sub(remaining,1n),remaining),Feed{through,kept}}
+def detail_name(operation: String) -> String:
+  match operation:
+    case "codex.sampling": "Model sampling"
+    case "codex.tool_blocking": "Tool wait"
+    case "dispatch_tool_call_with_state": "Tool call"
+    case "unified_exec.exec_command": "Command"
+    case "exec_command": "Command"
+    case _: ""
 
-def collect(threads: List<&2,Thread>, progress: Progress) -> Feed:
-  match threads progress:
-    case [] Progress{_,feed}: feed
-    case _ Progress{0n,feed}: feed
-    case Thread{+created,+updated,runs} <> rest Progress{remaining,feed}:
-      collect(rest,with_clocks(run_clocks(runs,created,updated,Clocks{0n,[],[],[]}),created,updated,remaining,feed))
-
-def ordered_feed(feed: Feed) -> Feed:
-  match feed:
-    case Feed{observed,traces}: Feed{observed,List.reverse(&2,Trace,traces)}
-
-type HistoryTime is Data:
-  HistoryTime{work: Nat, workflow: Nat}
-
-type HistoryWindow is Data:
-  HistoryWindow{first: Nat, threads: List<&2,HistoryTime>}
-
-type PublishedFeed is Data:
-  PublishedFeed{observed: Nat, traces: List<&2,Trace>, history: HistoryWindow}
-
-def clock_before(a: Nat, b: Nat) -> Bool:
-  Nat.is_le(a,b)
-
-def span_boundaries(spans: List<&2,Span>, tail: List<&2,Nat>) -> List<&2,Nat>:
-  match spans:
-    case []: tail
-    case Span{a,b,_} <> rest: a <> b <> span_boundaries(rest,tail)
-
-def span_covers(spans: List<&2,Span>, +a: Nat, +b: Nat) -> Bool:
-  match spans:
+def contains_span(+a: Nat, +b: Nat, work: List<&2,Span>) -> Bool:
+  match work:
     case []: False{}
     case Span{x,y,_} <> rest:
-      Bool.or(Bool.and(Nat.is_le(x,a),Nat.is_le(b,y)),span_covers(rest,a,b))
+      Bool.or(Bool.and(Nat.is_le(x,a),Nat.is_le(b,y)),contains_span(a,b,rest))
 
-def add_history_time(+a: Nat, +b: Nat, workflow: Bool, +work: Bool, time: HistoryTime) -> HistoryTime:
-  match time:
-    case HistoryTime{w,q}:
-      +duration = Nat.sub(b,a)
-      HistoryTime{Nat.add(w,Bool.pick(Nat,work,duration,0n)),
-        Nat.add(q,Bool.pick(Nat,Bool.and(Bool.not(work),workflow),duration,0n))}
+def provider_detail(input: List<&2,ProviderSpan>, +origin: Nat, +work: List<&2,Span>) -> List<&2,Span>:
+  match input:
+    case []: []
+    case ProviderSpan{+a,+b,operation} <> rest:
+      +name = detail_name(operation)
+      +start = Nat.sub(a,origin)
+      +end = Nat.sub(b,origin)
+      +tail = provider_detail(rest,origin,work)
+      +valid = Bool.and(Bool.not(String.eq(name,"")),Bool.and(Nat.is_le(origin,a),Nat.is_lt(start,end)))
+      Bool.pick(List<&2,Span>,Bool.and(valid,contains_span(start,end,work)),Span{start,end,name} <> tail,tail)
 
-def history_time(points: List<&2,Nat>, +work: List<&2,Span>, +wait: List<&2,Span>, tally: HistoryTime) -> HistoryTime:
-  match points:
-    case +a <> +b <> rest:
-      history_time(b <> rest,work,wait,add_history_time(a,b,span_covers(wait,a,b),span_covers(work,a,b),tally))
-    case _: tally
+def ci_observations(input: List<&2,CiPoll>, +created: Nat, +last: Nat) -> List<&2,Span>:
+  match input:
+    case []: []
+    case CiPoll{+a,+b} <> rest:
+      +tail = ci_observations(rest,created,last)
+      +valid = within(a,b,created,Nat.add(created,last))
+      Bool.pick(List<&2,Span>,valid,Span{Nat.sub(a,created),Nat.sub(b,created),"CI watcher observation"} <> tail,tail)
 
-def recorded_history(clocks: Clocks) -> HistoryTime:
-  match clocks:
-    case Clocks{_,+work,+wait,_}:
-      +points = List.sort(~Nat,~clock_before,span_boundaries(work,span_boundaries(wait,[])))
-      history_time(points,work,wait,HistoryTime{0n,0n})
+type PublishedFeed is Data:
+  PublishedFeed{observed: Nat, traces: List<&2,Trace>, overview: List<&2,Trace>, as_of: Nat}
 
-def retained_history(threads: List<&2,Thread>, skip: Nat) -> List<&2,HistoryTime>:
-  match threads skip:
-    case [] _: []
-    case _ <> rest 1n+left: retained_history(rest,left)
-    case Thread{+created,+updated,runs} <> rest 0n:
-      recorded_history(run_clocks(runs,created,updated,Clocks{0n,[],[],[]})) <> retained_history(rest,0n)
+type Projection is Data:
+  Projection{remaining: Nat, observed: Nat, traces: List<&2,Trace>, overview: List<&2,Trace>}
 
-def project_history(+threads: List<&2,Thread>) -> HistoryWindow:
-  +skip = Nat.mul(Nat.sub(Nat.div(List.length(&2,Thread,threads),10n),5n),10n)
-  HistoryWindow{Nat.add(skip,1n),retained_history(threads,skip)}
+def include_trace(clocks: Clocks, +created: Nat, +updated: Nat, +from: Nat, +to: Nat,
+  detail: List<&2,ProviderSpan>, ci: List<&2,CiPoll>, projection: Projection) -> Projection:
+  match clocks projection:
+    case Clocks{+last,+work,wait,errors} Projection{+remaining,+observed,+traces,+overview}:
+      +known = Nat.is_lt(0n,last)
+      +latest = Bool.and(known,Nat.is_lt(0n,remaining))
+      +in_day = Bool.and(known,Bool.and(Nat.is_lt(created,to),Nat.is_lt(from,Nat.add(created,last))))
+      +trace : Trace = Trace{created,last,work,wait,errors,provider_detail(detail,created,work),ci_observations(ci,created,last)}
+      Projection{Bool.pick(Nat,latest,Nat.sub(remaining,1n),remaining),
+        Bool.pick(Nat,latest,Nat.max(observed,updated),observed),
+        Bool.pick(List<&2,Trace>,latest,trace <> traces,traces),
+        Bool.pick(List<&2,Trace>,in_day,trace <> overview,overview)}
 
-def published_feed(feed: Feed, history: HistoryWindow) -> PublishedFeed:
-  match feed:
-    case Feed{observed,traces}: PublishedFeed{observed,traces,history}
+def collect(threads: List<&2,Thread>, +from: Nat, +to: Nat, projection: Projection) -> Projection:
+  match threads:
+    case []: projection
+    case Thread{+created,+updated,runs,detail,ci} <> rest:
+      +clocks = run_clocks(runs,created,updated,Clocks{0n,[],[],[]})
+      collect(rest,from,to,include_trace(clocks,created,updated,from,to,detail,ci,projection))
 
-def project_feed(threads: List<&2,Thread>) -> PublishedFeed:
+def publish(projection: Projection, as_of: Nat) -> PublishedFeed:
+  match projection:
+    case Projection{_,observed,traces,overview}:
+      PublishedFeed{observed,List.reverse(&2,Trace,traces),List.reverse(&2,Trace,overview),as_of}
+
+def project_feed(threads: List<&2,Thread>, +as_of: Nat) -> PublishedFeed:
   +newest = List.sort(~Thread,~thread_before,threads)
-  published_feed(ordered_feed(collect(newest,Progress{10n,Feed{0n,[]}})),
-    project_history(List.reverse(&2,Thread,newest)))
+  publish(collect(newest,Nat.sub(as_of,86400000n),as_of,Projection{10n,0n,[],[]}),as_of)

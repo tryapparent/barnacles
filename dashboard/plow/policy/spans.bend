@@ -30,13 +30,13 @@ def covered(input: List<&2, Interval>, +a: Nat, +b: Nat, best: Decision) -> Deci
       +same = U32.is_eq(kind,k)
       +update = Bool.and(active,Bool.or(higher,same))
       +generic = Bool.and(same,Bool.not(String.eq(name,n)))
-      +label = Bool.pick(String,generic,Bool.pick(String,U32.is_eq(kind,2),"Provider run","Admission wait"),name)
+      +label = Bool.pick(String,generic,Bool.pick(String,U32.is_ge(kind,2),"Provider run","Admission wait"),name)
       covered(rest,a,b,Bool.pick(Decision,update,Decision{kind,label},Decision{k,n}))
 
 def add_part(skip: Bool, decision: Decision, a: Nat, b: Nat, index: Nat, rest: List<&2,Part>) -> List<&2,Part>:
   match skip decision:
     case True{} _: rest
-    case False{} Decision{k,n}: Part{a,b,k,n,index} <> rest
+    case False{} Decision{k,n}: Part{a,b,U32.min(k,2),n,index} <> rest
 
 def split(points: List<&2, Nat>, +input: List<&2, Interval>, +index: Nat) -> List<&2, Part>:
   match points:

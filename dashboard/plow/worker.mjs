@@ -14,11 +14,6 @@ const headers = {
   'Content-Security-Policy': "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; font-src data:; img-src data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
 }
 
-export function sessionHistoryUrl(value) {
-  if (typeof value !== 'string' || !/^https:\/\/[a-z0-9.-]+\.ts\.net(?::[0-9]{1,5})?\/sessions$/.test(value) || !URL.canParse(value)) return
-  return new URL(value).href
-}
-
 export function analysisApiUrl(value) {
   if (typeof value !== 'string' || !/^https:\/\/[a-z0-9.-]+\.ts\.net(?::[0-9]{1,5})?\/api\/v1\/bottlenecks$/.test(value) || !URL.canParse(value)) return
   return new URL(value)
@@ -43,11 +38,9 @@ export function accessVerifier(jwtVerify, keys, issuer, audience) {
   }
 }
 
-export function createDashboardServer({ getFeed, verifyToken, history, analysisApi, revision }) {
-  const destination = sessionHistoryUrl(history)
-  const page = destination ? html.replace('data-session-history=""', `data-session-history="${destination}"`) : html
+export function createDashboardServer({ getFeed, verifyToken, analysisApi, revision }) {
   const api = analysisApiUrl(analysisApi)
-  const content = api ? page.replace('data-analysis-api=""', `data-analysis-api="${api.href}"`) : page
+  const content = api ? html.replace('data-analysis-api=""', `data-analysis-api="${api.href}"`) : html
   const pageHeaders = api ? { ...headers, 'Content-Security-Policy':
     `${headers['Content-Security-Policy']}; connect-src ${api.origin}` } : headers
   return createServer(async (request, response) => {
@@ -79,9 +72,9 @@ export function createDashboardServer({ getFeed, verifyToken, history, analysisA
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const { createRemoteJWKSet, jwtVerify } = await import('jose')
-  const { PLOW_ACCESS_TEAM, PLOW_ACCESS_AUDIENCE, PLOW_RELEASE, PLOW_SESSION_HISTORY_URL, PLOW_ANALYSIS_API_URL } = process.env
+  const { PLOW_ACCESS_TEAM, PLOW_ACCESS_AUDIENCE, PLOW_RELEASE, PLOW_ANALYSIS_API_URL } = process.env
   if (!/^[a-z0-9-]+$/.test(PLOW_ACCESS_TEAM ?? '') || !/^[a-f0-9]{64}$/.test(PLOW_ACCESS_AUDIENCE ?? '') ||
-      !/^[a-f0-9]{40}$/.test(PLOW_RELEASE ?? '') || (PLOW_SESSION_HISTORY_URL && !sessionHistoryUrl(PLOW_SESSION_HISTORY_URL)) ||
+      !/^[a-f0-9]{40}$/.test(PLOW_RELEASE ?? '') ||
       (PLOW_ANALYSIS_API_URL && !analysisApiUrl(PLOW_ANALYSIS_API_URL))) {
     throw Error('Invalid Plow Access, release, or private URL configuration')
   }
@@ -90,7 +83,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   createDashboardServer({
     getFeed: () => readFile('/feed/timeline.json', 'utf8'),
     verifyToken: accessVerifier(jwtVerify, keys, issuer, PLOW_ACCESS_AUDIENCE),
-    history: PLOW_SESSION_HISTORY_URL,
     analysisApi: PLOW_ANALYSIS_API_URL,
     revision: PLOW_RELEASE,
   }).listen(8080, '0.0.0.0')

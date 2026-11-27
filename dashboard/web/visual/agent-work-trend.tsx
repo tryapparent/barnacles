@@ -1,10 +1,9 @@
 import { useId, useSyncExternalStore } from "react";
-import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "@ui-sdk/react/collapsible";
-import { Button, Card } from "../controls";
+import { Card } from "../controls";
 
-type Batch = { first: number; last: number; measured: number; basis_points: number };
+type Bucket = { from: number; to: number; measured: number; basis_points: number };
 type Point = { x: number; y: number };
-let batches: Batch[] = [];
+let buckets: Bucket[] = [];
 const listeners = new Set<() => void>();
 
 function subscribe(listener: () => void) {
@@ -12,12 +11,12 @@ function subscribe(listener: () => void) {
   return () => { listeners.delete(listener); };
 }
 
-export function renderAgentWorkTrend(next: Batch[]) {
-  batches = next;
+export function renderAgentWorkTrend(next: Bucket[]) {
+  buckets = next;
   listeners.forEach(listener => listener());
 }
 
-function segmentPaths(data: Batch[]) {
+function segmentPaths(data: Bucket[]) {
   const segments: Point[][] = [];
   let current: Point[] = [];
   data.forEach((batch, index) => {
@@ -26,7 +25,7 @@ function segmentPaths(data: Batch[]) {
       return;
     }
     if (current.length === 0) segments.push(current);
-    current.push({ x: 53 + index * 329 / Math.max(1, data.length - 1), y: 112 - batch.basis_points / 100 });
+    current.push({ x: 53 + (index + .5) * 329 / data.length, y: 112 - batch.basis_points / 100 });
   });
   return segments.map(points => {
     const [first] = points;
@@ -46,18 +45,23 @@ function segmentPaths(data: Batch[]) {
 }
 
 export function AgentWorkTrend() {
-  const data = useSyncExternalStore(subscribe, () => batches);
+  const data = useSyncExternalStore(subscribe, () => buckets);
   const id = useId();
   const first = data[0];
   const last = data[data.length - 1];
   const paths = segmentPaths(data);
   const field = paths.filter(path => path.length > 1);
-  const label = (batch: Batch) => `${batch.first}–${batch.last}`;
-  return <Card className="agent-work-trend" aria-labelledby={id}>
+  const clock = new Intl.DateTimeFormat("en-GB", { timeZone: "UTC", hour: "2-digit", minute: "2-digit" });
+  const endpoint = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "UTC", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+  });
+  const description = data.map(bucket =>
+    `${clock.format(bucket.from)}–${clock.format(bucket.to)} UTC: ${bucket.measured ? (bucket.basis_points / 100).toFixed(1) + "%" : "unknown"}`
+  ).join(". ");
+  return <Card className="agent-work-trend" aria-labelledby={id} aria-describedby="overview-period">
     <h2 id={id}>Agent work share</h2>
-    <Collapsible className="trend-disclosure">
       <div className="trend-plot">
-      {first && paths.length > 0 ? <svg viewBox="0 0 400 145" role="img" aria-label="Agent work share across batches of ten threads.">
+      {first && paths.length > 0 ? <svg viewBox="0 0 400 145" role="img" aria-label={description}>
         <defs>
           <clipPath id={`${id}-soil`}>
             {field.map(({ soil, first }) => <path key={first.x} d={soil} />)}
@@ -76,30 +80,9 @@ export function AgentWorkTrend() {
         {paths.map(({ curve, first, length }) => <path className={length === 1 ? "trend-series" : "trend-series trend-field-outline"} key={first.x}
           d={length === 1 ? `M${first.x - 4},${first.y}h8` : curve}
           fill="none" stroke="#3c5930" strokeWidth="2.2" strokeLinecap="round" />)}
-        <text x="51" y="134">Threads {label(first)}</text>
-        {last !== first && <text x="389" y="134" textAnchor="end">Threads {label(last)}</text>}
-      </svg> : <p className="agent-work-empty">{first ? "No classified time in the recorded batches." : "The trend starts after 10 threads."}</p>}
+        <text x="51" y="134">{endpoint.format(first.from)} UTC</text>
+        <text x="389" y="134" textAnchor="end">{endpoint.format(last.to)} UTC</text>
+      </svg> : <p className="agent-work-empty">No measured provider or admission time in the last 24 hours.</p>}
       </div>
-      {first && <>
-        <CollapsibleTrigger render={<Button variant="outline" className="batch-trigger" />} title="Batch data">
-          <svg width="17" height="17" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
-            <rect x="2.5" y="3.5" width="15" height="13" rx="1" />
-            <path d="M2.5 8h15m-15 4h15M8 8v8.5" />
-          </svg>
-          Batch values
-        </CollapsibleTrigger>
-        <CollapsiblePanel className="trend-batch-panel" role="region" aria-label="Batch data" tabIndex={0}>
-          <p className="trend-method">Run time as a share of run time plus admission wait. Each batch covers ten threads. The timeline shows the latest ten.</p>
-          <table aria-label="Agent work share by thread range">
-            <thead><tr><th scope="col">Threads</th><th scope="col">Agent work</th><th scope="col">Measured</th></tr></thead>
-            <tbody>{data.map(batch => <tr key={batch.first}>
-              <th scope="row">{label(batch)}</th>
-              <td>{batch.measured > 0 ? `${(batch.basis_points / 100).toFixed(1)}%` : "Unknown"}</td>
-              <td>{batch.measured} of 10</td>
-            </tr>)}</tbody>
-          </table>
-        </CollapsiblePanel>
-      </>}
-    </Collapsible>
   </Card>;
 }
