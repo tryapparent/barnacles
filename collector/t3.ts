@@ -3,7 +3,7 @@ import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { buildPolicies, buildPolicy, loadPolicy } from "../tooling/bend.ts";
 import { admissionPolicy, joinSession, loadEvidence, repository, sessionJoinPolicy, sourcePolicy, type AdmissionPolicy, type NativeBinding, type SessionJoinPolicy, type Point, type SourcePolicy, type ThreadEvidence } from "../evidence/index.ts";
-import { array, bendList, boundedFile, millis, point, row, sha, stockT3Origin, stockT3Rpc, str, timeParts, toMillis, token } from "./wire.ts";
+import { array, bendList, boundedFile, millis, point, replayOutcomeDelays, row, sha, stockT3Origin, stockT3Rpc, str, timeParts, toMillis, token } from "./wire.ts";
 import { positiveInt } from "./github/attempt.ts";
 import { inspectRollout } from "./codex/rollout.ts";
 
@@ -260,6 +260,13 @@ async function main() {
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
+}
+
+export function readAnalysisImpact(receipts: string, scratch: string) {
+  const file = join(receipts, "outcomes", "outcome-delays.json");
+  return statSync(file, { throwIfNoEntry: false })
+    ? async (window: { from: number; to: number }) => JSON.parse(await replayOutcomeDelays(file, scratch, window))
+    : undefined;
 }
 
 if (import.meta.main) {

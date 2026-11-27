@@ -51,12 +51,15 @@ type JoinedSpan = { $: "Span"; id: string; operation: string; start: string; end
 type JoinedJob = { $: "Job"; id: string; label: string; status: string; conclusion: string; prior: boolean;
   created: string; queued: string; started: string; completed: string };
 type JoinedReplay = { runs: number; spans: number; attempts: number; jobs: number; carried: number };
+type Window = { $: "DayWindow"; from: number; to: number };
+type Observation = { $: "DayObservation"; rule: string; id: string };
 type JoinedPolicy = {
   project(thread: string, runs: List<JoinedRun>, spans: List<JoinedSpan>, attempts: number, jobs: List<JoinedJob>): JoinedReplay;
   files(result: JoinedReplay): List<unknown>;
   costs(result: JoinedReplay): List<unknown>;
   findings(result: JoinedReplay): List<unknown>;
   patterns(result: JoinedReplay): List<unknown>;
+  window_observations(window: Window, jobs: List<JoinedJob>): List<Observation>;
 };
 
 const joinedPolicy = async (scratch: string) => loadPolicy<JoinedPolicy>(
@@ -127,27 +130,20 @@ function replayJoinedThread(policy: JoinedPolicy, thread: string, input: ReturnT
 }
 
 type ThreadKey = { $: "Target"; instance: string; thread: string };
+type RunClock = { $: "RunClock"; requested: number; started: number; completed: number };
+type RankedThread = { $: "Thread"; id: string; codex: number; ci: number; observations: List<Observation> };
 type DashboardPolicy = {
   select_threads(input: List<ThreadKey>): List<ThreadKey>;
-  ranking(input: List<{ $: "Thread"; id: string; rules: List<string> }>): List<unknown>;
-  public_rule(finding: unknown): string;
+  last_day(to: number): Window;
+  active(window: Window, created: number, runs: List<RunClock>): boolean;
+  ranking(input: List<RankedThread>): List<unknown>;
+  source_coverage(input: List<RankedThread>): unknown;
   refresh_needed(stored: string, observed: string): boolean;
 };
 
 async function dashboardPolicy(scratch: string) {
   return loadPolicy<DashboardPolicy>(
     await buildPolicy(scratch, new URL("./joined/dashboard.bend", import.meta.url), "joined-dashboard.mjs"));
-}
-
-function candidateKeys(db: DatabaseSync, policy: DashboardPolicy, instance?: string) {
-  if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='t3_threads'").get()) return { keys: [], bounded: false };
-  const filter = instance === undefined ? `EXISTS (SELECT 1 FROM t3_live_codex_links l
-    WHERE l.t3_instance=t.instance AND l.thread_id=t.thread_id) OR EXISTS (SELECT 1 FROM t3_ci_links c
-    WHERE c.t3_instance=t.instance AND c.thread_id=t.thread_id)` : "t.instance=?";
-  const keys = db.prepare(`SELECT instance,thread_id FROM t3_threads t WHERE ${filter}
-    ORDER BY updated_ms DESC,instance,thread_id LIMIT 51`).all(...(instance === undefined ? [] : [instance]))
-    .map((r): ThreadKey => ({ $: "Target", instance: String(r.instance), thread: String(r.thread_id) }));
-  return { keys: rows(policy.select_threads(historyList(keys))), bounded: keys.length > 50 };
 }
 
 export async function backupAnalysisInput(input: string, output: string) {
@@ -163,17 +159,38 @@ export async function joinedTargets(path: string, scratch: string, instance: str
   const policy = await dashboardPolicy(scratch);
   const db = new DatabaseSync(path, { readOnly: true });
   try {
-    return candidateKeys(db, policy, instance).keys;
+    if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='t3_threads'").get()) return [];
+    const keys = db.prepare(`SELECT instance,thread_id FROM t3_threads WHERE instance=?
+      ORDER BY updated_ms DESC,thread_id LIMIT 50`).all(instance)
+      .map((r): ThreadKey => ({ $: "Target", instance: String(r.instance), thread: String(r.thread_id) }));
+    return rows(policy.select_threads(historyList(keys)));
   } finally {
     db.close();
   }
+}
+
+function activeKeys(db: DatabaseSync, policy: DashboardPolicy, window: Window) {
+  if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='t3_threads'").get()) return [];
+  const runs = db.prepare(`SELECT requested_ms,started_ms,completed_ms FROM t3_runs
+    WHERE instance=? AND thread_id=? ORDER BY run_id`);
+  const keys: ThreadKey[] = [];
+  for (const row of db.prepare("SELECT instance,thread_id,created_ms FROM t3_threads ORDER BY created_ms DESC,instance,thread_id").iterate()) {
+    const clocks = runs.all(row.instance, row.thread_id).map((r): RunClock => ({
+      $: "RunClock", requested: Number(r.requested_ms ?? 0), started: Number(r.started_ms ?? 0), completed: Number(r.completed_ms ?? 0),
+    }));
+    if (policy.active(window, Number(row.created_ms), historyList(clocks))) {
+      keys.push({ $: "Target", instance: String(row.instance), thread: String(row.thread_id) });
+    }
+  }
+  return keys;
 }
 
 type PublishedThread = {
   id: string; coverage: ReturnType<typeof replayJoinedThread>["coverage"]; costs: unknown[]; rules: string[];
 };
 
-export async function publishJoinedAnalysis(input: string, output: string, scratch: string) {
+export async function publishJoinedAnalysis(input: string, output: string, scratch: string, asOf = Date.now(),
+  readImpact?: (window: Window) => Promise<unknown>) {
   const from = statSync(input, { bigint: true });
   const to = statSync(output, { bigint: true, throwIfNoEntry: false });
   if (from.dev === to?.dev && from.ino === to?.ino) throw Error("Use a separate analysis database");
@@ -181,7 +198,9 @@ export async function publishJoinedAnalysis(input: string, output: string, scrat
   const source = new DatabaseSync(input, { readOnly: true });
   try {
     source.exec("PRAGMA busy_timeout=5000; BEGIN");
-    const { keys, bounded } = candidateKeys(source, summary);
+    const window = summary.last_day(asOf);
+    const outcomeImpact = await readImpact?.(window) ?? null;
+    const keys = activeKeys(source, summary, window);
     const revision = createHash("sha256").update(readFileSync(join(scratch, "joined-bottleneck.mjs")))
       .update(readFileSync(join(scratch, "joined-dashboard.mjs"))).digest("hex");
     closeSync(openSync(output, "a", 0o600));
@@ -197,33 +216,39 @@ export async function publishJoinedAnalysis(input: string, output: string, scrat
       const store = db.prepare("INSERT OR REPLACE INTO analysis_threads VALUES (?,?)");
       const mark = db.prepare("INSERT OR REPLACE INTO analysis_fingerprints VALUES (?,?)");
       let recomputed = 0;
-      const details = keys.map(({ instance, thread }) => {
+      const cohort = keys.map(({ instance, thread }) => {
         const id = createHash("sha256").update(JSON.stringify([instance, thread])).digest("hex").slice(0, 24);
         selected.run(id);
         const evidence = joinedInput(source, instance, thread);
-        const fingerprint = createHash("sha256").update(revision).update(JSON.stringify(evidence)).digest("hex");
+        const observations = policy.window_observations(window, historyList(evidence.jobs));
+        const rules = rows(observations).map(({ rule }) => rule);
+        const fingerprint = createHash("sha256").update(revision).update(JSON.stringify([evidence, observations])).digest("hex");
         const saved = previous.get(id);
         if (saved && !summary.refresh_needed(String(saved.fingerprint), fingerprint)) {
-          return JSON.parse(String(saved.payload)) as PublishedThread;
+          return { detail: JSON.parse(String(saved.payload)) as PublishedThread, observations };
         }
         const result = replayJoinedThread(policy, thread, evidence);
-        const detail = { id, coverage: result.coverage, costs: result.costs, rules: result.findings.map(summary.public_rule) };
+        const detail = { id, coverage: result.coverage, costs: result.costs, rules };
         store.run(id, JSON.stringify(detail));
         mark.run(id, fingerprint);
         recomputed++;
-        return detail;
+        return { detail, observations };
       });
+      const projected = historyList(cohort.map(({ detail: { id, coverage }, observations }): RankedThread =>
+        ({ $: "Thread", id, codex: coverage.codexSpans, ci: coverage.githubAttempts, observations })));
       const latest = {
-        version: 1, analyzedAt: new Date().toISOString(), bounded,
-        ranking: rows(summary.ranking(historyList(details.map(({ id, rules }) =>
-          ({ $: "Thread", id, rules: historyList(rules) }))))),
-        threads: details.map(({ id, coverage }) => ({ id, coverage })),
+        version: 2, analyzedAt: new Date(asOf).toISOString(),
+        window: { from: new Date(window.from).toISOString(), to: new Date(window.to).toISOString() },
+        coverage: summary.source_coverage(projected),
+        outcomeImpact,
+        ranking: rows(summary.ranking(projected)),
+        threads: cohort.map(({ detail: { id, coverage } }) => ({ id, coverage })),
       };
       db.exec(`DELETE FROM analysis_threads WHERE id NOT IN (SELECT id FROM selected_analysis_threads);
         DELETE FROM analysis_fingerprints WHERE id NOT IN (SELECT id FROM selected_analysis_threads);`);
       db.prepare("INSERT OR REPLACE INTO analysis_summary VALUES(1,?)").run(JSON.stringify(latest));
       db.exec("COMMIT");
-      return { analyzedThreads: details.length, recomputed, bounded };
+      return { analyzedThreads: cohort.length, recomputed };
     } finally {
       db.close();
     }

@@ -133,13 +133,16 @@ function delayWindow(value: unknown) {
     blockers: bendList(array(w.blockers, 64).map(delayBlocker)) };
 }
 
-export async function replayOutcomeDelays(file: string, scratch: string): Promise<string> {
+export async function replayOutcomeDelays(file: string, scratch: string, window?: { from: number; to: number }): Promise<string> {
   const source = row(JSON.parse(boundedFile(file, 8 * 1024 * 1024).toString("utf8")));
   if (source.version !== 1) throw Error("Expected outcome-delay evidence version 1");
   const windows = bendList(array(source.windows, 5000).map(delayWindow));
-  const policy = await loadPolicy<{ outcome_delays(windows: typeof windows): unknown }>(
+  type Report = { totals: unknown; patterns: unknown };
+  const policy = await loadPolicy<{ outcome_delays(windows: typeof windows): Report;
+    outcome_delays_in_window(windows: typeof windows, from: number, to: number): Report }>(
     await buildPolicy(scratch, new URL("../evidence/analysis/outcome-delay.bend", import.meta.url), "outcome-delay.mjs"));
-  return JSON.stringify(policy.outcome_delays(windows), (key, value) => {
+  const report = window ? policy.outcome_delays_in_window(windows, window.from, window.to) : policy.outcome_delays(windows);
+  return JSON.stringify(window ? { totals: report.totals, patterns: report.patterns } : report, (key, value) => {
     if (key === "$") return undefined;
     if (value?.$ === "Nil" || value?.$ === "Con") return Array.from(bendValues(value));
     if (value?.$ === "None") return null;
@@ -320,7 +323,7 @@ export function t3HistoryTargets(env = process.env) {
 
 async function refreshAnalysis() {
   const [root, input, traces, receipts, output] = process.argv.slice(2);
-  const { importLiveSession } = await import("./t3.ts");
+  const { importLiveSession, readAnalysisImpact } = await import("./t3.ts");
   const bearer = process.env.PLOW_T3_READ_TOKEN_FILE;
   if (bearer) process.env.PLOW_T3_READ_TOKEN = readFileSync(bearer, "utf8").trim();
   const scratch = mkdtempSync(join(root, "analysis-refresh-"));
@@ -340,7 +343,7 @@ async function refreshAnalysis() {
         catch (error) { if (!(error instanceof Error) || !/\((NoBinding|Ambiguous)\)$/.test(error.message)) throw error; }
       }
     }
-    console.log(await publishJoinedAnalysis(path, output, scratch));
+    console.log(await publishJoinedAnalysis(path, output, scratch, Date.now(), readAnalysisImpact(receipts, scratch)));
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }

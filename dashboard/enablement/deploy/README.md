@@ -71,9 +71,24 @@ a subsequent poll to resolve.
 Set `PLOW_ANALYSIS_USER` to the authorized tailnet login. The API binds to
 a loopback host port selected by `PLOW_ANALYSIS_PORT`. The read-only API
 mount contains the named analysis volume only. The refresh container takes a
-consistent backup of the input and refreshes the bounded current scope every
-15 minutes. Bend2 replays a thread when its projected evidence or rules change.
-An interrupted refresh leaves the last committed results readable. The report marks a scope that exceeds its 50-thread limit.
+consistent backup of the input and refreshes the rolling 24-hour view every
+15 minutes. The report ends at the refresh's UTC cutoff and includes captured
+T3 thread creation and run activity in `[cutoff - 24 hours, cutoff)`. A closed
+admission or run interval that crosses the boundary also qualifies. Thread
+metadata edits alone do not qualify. The cohort includes threads with partial
+source coverage. Code paths that discover new Codex links have their own
+bounded read budget. The dashboard summary has no 50-thread limit.
+
+Bend2 ranks completed, exactly linked CI findings in the window by distinct
+threads affected and unique job occurrences. A shared job can affect several
+threads. Its occurrence is counted once. The thread picker shows full-thread
+diagnostic clocks. A missing source or clock limits what the summary can
+observe. When available, put a private [outcome-delay ledger](../../../collector/README.md#measure-confirmed-outcome-delay)
+at `outcomes/outcome-delays.json` under the receipts directory. Bend2 validates
+and unions the original intervals before clipping them to the 24-hour window.
+The API publishes only aggregated impact and coverage. Delay is unknown when
+the ledger is absent or insufficient. An interrupted refresh leaves the last
+committed results readable.
 
 To resolve native Codex bindings over the network for already imported T3
 threads, supply `PLOW_ANALYSIS_T3_ORIGIN`, `PLOW_ANALYSIS_T3_INSTANCE`,
