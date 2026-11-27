@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
 import type { KernelCapture, List, Point } from "../evidence/index.ts";
+import { buildPolicy, loadPolicy } from "../tooling/bend.ts";
 
 export type ObjectRow = Record<string, unknown>;
 
@@ -22,6 +23,25 @@ export function token(value: unknown): string {
   const input = str(value);
   if (!/^[A-Za-z0-9][A-Za-z0-9:_-]*$/.test(input)) throw Error("Invalid source identifier");
   return input;
+}
+
+export function clockSecond(value: unknown): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 0xffffffff) {
+    throw Error("Expected an unsigned Unix second");
+  }
+  return value;
+}
+
+export function factText(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0 || value.length > 512 || /[\u0000-\u001f\u007f]/u.test(value)) {
+    throw Error("Expected a bounded fact label");
+  }
+  return value;
+}
+
+export function bendBool(value: unknown): boolean {
+  if (typeof value !== "boolean") throw Error("Expected a boolean fact");
+  return value;
 }
 
 export function sha(value: unknown): string {
@@ -86,6 +106,44 @@ function boundedFile(path: string, limit: number) {
   } finally {
     closeSync(fd);
   }
+}
+
+function delayClock(value: unknown): number {
+  if (value == null || value === 0) return 0;
+  if (typeof value !== "number" || !validMillis(value)) throw Error("Invalid outcome-delay clock");
+  return value;
+}
+
+const optionalToken = (value: unknown) => value == null || value === "" ? "" : token(value);
+
+function delayBlocker(value: unknown) {
+  const b = row(value);
+  return { $: "Blocker", occurrence: token(b.occurrence), pattern: token(b.pattern), condition: optionalToken(b.condition),
+    scope: optionalToken(b.scope), fromMs: delayClock(b.fromMs), untilMs: delayClock(b.untilMs),
+    pending: optionalToken(b.pending), released: optionalToken(b.released) };
+}
+
+function delayWindow(value: unknown) {
+  const w = row(value);
+  return { $: "DelayWindow", id: token(w.id), outcome: token(w.outcome), scope: optionalToken(w.scope), stage: token(w.stage),
+    basis: optionalToken(w.basis), readyMs: delayClock(w.readyMs), possibleMs: delayClock(w.possibleMs),
+    readiness: optionalToken(w.readiness), availability: optionalToken(w.availability),
+    blockers: bendList(array(w.blockers, 64).map(delayBlocker)) };
+}
+
+export async function replayOutcomeDelays(file: string, scratch: string): Promise<string> {
+  const source = row(JSON.parse(boundedFile(file, 8 * 1024 * 1024).toString("utf8")));
+  if (source.version !== 1) throw Error("Expected outcome-delay evidence version 1");
+  const windows = bendList(array(source.windows, 5000).map(delayWindow));
+  const policy = await loadPolicy<{ outcome_delays(windows: typeof windows): unknown }>(
+    await buildPolicy(scratch, new URL("../evidence/analysis/outcome-delay.bend", import.meta.url), "outcome-delay.mjs"));
+  return JSON.stringify(policy.outcome_delays(windows), (key, value) => {
+    if (key === "$") return undefined;
+    if (value?.$ === "Nil" || value?.$ === "Con") return Array.from(bendValues(value));
+    if (value?.$ === "None") return null;
+    if (value?.$ === "Some") return value.value;
+    return value;
+  }, 2);
 }
 
 export function kernelCapture(anchorPath: string, eventsPath: string, diagnosticsPath: string): KernelCapture {

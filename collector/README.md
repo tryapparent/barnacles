@@ -249,6 +249,31 @@ Use a private job directory and a frozen NDJSON stream of projected facts.
 node collector/import-sources.ts "$job" bottlenecks "$job/facts.ndjson"
 ```
 
+### Measure confirmed outcome delay
+
+Replay a private, versioned evidence ledger through the separate outcome-delay policy.
+
+```sh
+node collector/import-sources.ts "$job" outcome-delays "$job/outcomes.json"
+```
+
+The input is `{ "version": 1, "windows": [...] }`. Use one immutable record for each observed blocking episode. Keep occurrences with incomplete evidence in the input for coverage.
+
+| Record | Fields | Source contract |
+| --- | --- | --- |
+| Window | `id`, `outcome`, `scope`, `stage`, `basis`, `readyMs`, `possibleMs`, `readiness`, `availability`, `blockers` | The outcome is the same named next action or milestone across episodes. The scope binds the exact repository, revision and attempt, or an equally strong dependency identity. Supply `exact-revision` or `exact-dependency` as the basis. Use Unix milliseconds for when prerequisites outside the named blocking conditions were clear and when the outcome became possible. The two evidence IDs must bind those states to the exact scope. |
+| Blocker | `occurrence`, `pattern`, `condition`, `scope`, `fromMs`, `untilMs`, `pending`, `released` | Use a stable occurrence ID across repeated observations. Name the independent unresolved condition and supply its exact pending and release evidence IDs. Use the same scope as the window. A blocked dependency and its unresolved ancestor are one blocking chain. Project their active upstream condition once. |
+
+Project readiness only where the source accounts for all independent prerequisites during the measured window. An original required-check inventory and the exact same-revision status transitions can support this. A subsequent launch, a closed job clock, or a watch wake by itself cannot. Omit unknown clocks or evidence IDs. Carry a stable candidate outcome ID and the observed occurrence even when the next action is unresolved. Keep identifiable transcripts and logs outside this normalized ledger.
+
+Bend2 clips each condition to the readiness anchor and admits a window when the known blockers cover its entire interval through release. Identical window replays are ignored. Conflicting windows with the same identity, a wrong scope, inconsistent labels for the same condition, and missing boundaries remain unmeasured. Windows for the same outcome, stage and scope are unioned. Shared intervals count once overall and add no uniquely attributed time to the participating patterns.
+
+The result includes per-outcome segments and their conditions, the original normalized evidence and its sufficiency status, and a pattern and stage summary with `coverage.sufficient / coverage.occurrences`. An occurrence is counted once per pattern and scoped outcome. Median and worst pattern delay use uniquely attributed time per measured affected outcome. An outcome with only shared evidence has measured unique time of zero. Unmeasured durations are `null`. Totals across unrelated outcomes can overlap in wall time. Confirmed outcome delay is independent of job elapsed, runner time, tool occupancy, file tokens, and the delay a proposed change might actually remove.
+
+The command consumes normalized evidence supplied by an audit or collector. The GitHub polling command and the session-study snapshot have their own inputs and refresh paths.
+
+### Replay observations and rankings
+
 Pass `--patterns` to also rank rules by distinct affected thread count, then finding count. The result lists records with a positive observed duration and the largest duration for each rule. Each rule retains its original clock semantics. Counts describe the supplied evidence and can include several observations of one underlying incident.
 
 Each line is an object with an opaque `id` and one of these shapes:

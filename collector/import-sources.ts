@@ -10,7 +10,7 @@ import { buildPolicy, buildPolicies, loadPolicy } from "../tooling/bend.ts";
 import { positiveInt, type ClockPolicy } from "./github/attempt.ts";
 import { pollGitHub, pullRequest, releaseEvidence } from "./github/delivery.ts";
 import { inspectRollout } from "./codex/rollout.ts";
-import { bendValues, kernelCapture, kernelInteger, row, seconds, sha, str, token } from "./wire.ts";
+import { bendBool, bendValues, clockSecond, factText, kernelCapture, kernelInteger, replayOutcomeDelays, row, seconds, sha, str, token } from "./wire.ts";
 import { t3Snapshot } from "./t3.ts";
 
 async function poll(db: string, scratch: string, repo: string, snapshot: string, policy: SourcePolicy, admission: AdmissionPolicy, once: boolean) {
@@ -55,6 +55,7 @@ async function main() {
     ((command === "report" || command === "rollout-coverage") && !first) ||
     (command === "waits" && !third) ||
     (command === "bottlenecks" && first && (!second || second === "--patterns") && !third) ||
+    (command === "outcome-delays" && first && !second) ||
     (command === "watch-overlaps" && first && second && third && fourth) ||
     (command === "process" && first && second && third && !fourth) ||
     (command === "process-probe" && first && second && !third) ||
@@ -62,7 +63,7 @@ async function main() {
     (command === "rollout" && first && second && !fourth) ||
     (command === "github" && first && second && !fourth) ||
     (command === "poll-github" && first && second && (!third || third === "--once") && !fourth)
-  )) throw Error("Usage: import-sources.ts JOB_DIRECTORY { t3 SNAPSHOT | rollout INSTANCE FILE [SOURCE_ID] | github OWNER/REPO PR [TAG] | poll-github OWNER/REPO HARBOR_SNAPSHOT [--once] | process BINDING EVENTS DIAGNOSTICS | process-probe PARENT_PID WORK_DIRECTORY | report | rollout-coverage | waits [SESSION [CALL]] | watch-overlaps OWNER/REPO RUN SHA ATTEMPT | bottlenecks FACTS.ndjson [--patterns] }");
+  )) throw Error("Usage: import-sources.ts JOB_DIRECTORY { t3 SNAPSHOT | rollout INSTANCE FILE [SOURCE_ID] | github OWNER/REPO PR [TAG] | poll-github OWNER/REPO HARBOR_SNAPSHOT [--once] | process BINDING EVENTS DIAGNOSTICS | process-probe PARENT_PID WORK_DIRECTORY | report | rollout-coverage | waits [SESSION [CALL]] | watch-overlaps OWNER/REPO RUN SHA ATTEMPT | bottlenecks FACTS.ndjson [--patterns] | outcome-delays EVIDENCE.json }");
 
   const db = join(resolve(directory), "evidence.sqlite");
   if (command === "waits") {
@@ -71,6 +72,10 @@ async function main() {
   }
   const scratch = mkdtempSync(join(resolve(directory), "build-"));
   try {
+    if (command === "outcome-delays") {
+      console.log(await replayOutcomeDelays(first, scratch));
+      return;
+    }
     if (command === "bottlenecks") {
       console.log(JSON.stringify(await replayBottlenecks(first, scratch, second === "--patterns"), null, 2));
       return;
@@ -324,25 +329,6 @@ type ReplayPolicy = {
   replay_findings(state: unknown): List<Record<string, unknown>>;
   replay_patterns(state: unknown): List<Record<string, unknown>>;
 };
-
-function clockSecond(value: unknown): number {
-  if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 0xffffffff) {
-    throw Error("Expected an unsigned Unix second");
-  }
-  return value;
-}
-
-function factText(value: unknown): string {
-  if (typeof value !== "string" || value.length === 0 || value.length > 512 || /[\u0000-\u001f\u007f]/u.test(value)) {
-    throw Error("Expected a bounded fact label");
-  }
-  return value;
-}
-
-function bendBool(value: unknown): boolean {
-  if (typeof value !== "boolean") throw Error("Expected a boolean fact");
-  return value;
-}
 
 async function replayBottlenecks(file: string, scratch: string, patterns: boolean) {
   const info = statSync(file);
