@@ -1,6 +1,216 @@
 #!/bin/sh
 set -eu
 
+history_ready() {
+  for route in /sessions /api/v1/sessions; do
+    status=$(curl -fsS --noproxy '*' --max-time 5 -o /dev/null -w '%{http_code}' \
+      -H "Tailscale-User-Login: ${PLOW_COLLECTOR_PROXY_USER:?Set PLOW_COLLECTOR_PROXY_USER}" \
+      "http://127.0.0.1:${PLOW_COLLECTOR_PORT:?Set PLOW_COLLECTOR_PORT}$route") || return 1
+    [ "$status" = 200 ] || return 1
+  done
+}
+
+check_snapshot() {
+  node --input-type=module - "$1" <<'JS'
+import { DatabaseSync } from "node:sqlite";
+const db = new DatabaseSync(process.argv[2], { readOnly: true });
+try {
+  if (db.prepare("PRAGMA quick_check").get().quick_check !== "ok") process.exitCode = 1;
+} finally {
+  db.close();
+}
+JS
+}
+
+deploy_collector() (
+  umask 077
+  base=${PLOW_COLLECTOR_ROOT:?Set PLOW_COLLECTOR_ROOT}
+  repo=tryapparent/plow
+  poller=barnacles-harbor-poller.service
+  export PLOW_BEND_BUNDLE=${PLOW_BEND_BUNDLE:-${BARNACLES_BEND_BUNDLE:-}}
+  exec 9>"$base/deploy.lock"
+  flock -n 9 || exit 0
+  main_sha() {
+    gh api "repos/$repo/git/ref/heads/main" --jq .object.sha
+  }
+  sha=$(main_sha)
+  printf '%s\n' "$sha" | grep -Eq '^[0-9a-f]{40}$'
+  previous=$(readlink -f "$base/current")
+  if [ "$(cat "$previous/revision")" = "$sha" ]; then
+    history_ready
+    exit
+  fi
+  run=$(gh run list --repo "$repo" --workflow verify.yml --branch main --event push \
+    --commit "$sha" --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+  if [ -z "$run" ]; then exit 0; fi
+  published=$(gh run view "$run" --repo "$repo" --json jobs \
+    --jq 'any(.jobs[]; .name == "collector-release" and .conclusion == "success")')
+  if [ "$published" != true ]; then exit 0; fi
+  test -L "$base/history"
+  history_ready
+
+  work=$(mktemp -d /tmp/apparent-dev-plow-deploy-XXXXXX)
+  stage=
+  switching=0
+  keep=0
+  activate() {
+    rm -f "$stage/.next"
+    ln -s "$1" "$stage/.next"
+    mv -Tf "$stage/.next" "$base/current"
+  }
+  cleanup() {
+    result=$?
+    trap - EXIT HUP INT TERM
+    if [ "$switching" = 1 ]; then
+      systemctl --user stop "$poller" || result=1
+      if activate "$previous" && systemctl --user start "$poller"; then
+        printf '%s\n' 'Restored the previous Plow collector release.' >&2
+      else
+        printf '%s\n' 'Could not restore the previous Plow collector release.' >&2
+        keep=1
+        result=1
+      fi
+    fi
+    if [ "$keep" = 0 ] && [ -n "$stage" ]; then rm -rf -- "$stage"; fi
+    rm -rf -- "$work"
+    exit "$result"
+  }
+  trap cleanup EXIT
+  trap 'exit 1' HUP INT TERM
+  stage=$(mktemp -d "$base/releases/$sha-XXXXXX")
+  gh run download "$run" --repo "$repo" --name "plow-collector-$sha" --dir "$work"
+  artifact="$work/plow-collector.tar.gz"
+  gh attestation verify "$artifact" --repo "$repo" --source-ref refs/heads/main \
+    --source-digest "$sha" --signer-workflow "$repo/.github/workflows/verify.yml" \
+    --deny-self-hosted-runners
+  tar -xzf "$artifact" --no-same-owner --same-permissions -C "$stage"
+  test "$(cat "$stage/revision")" = "$sha"
+  (
+    cd "$stage/source"
+    npm ci --ignore-scripts
+    node --input-type=module - "$base/polling/evidence.sqlite" "$work/evidence.sqlite" <<'JS'
+import { backup, DatabaseSync } from "node:sqlite";
+const input = new DatabaseSync(process.argv[2], { readOnly: true });
+try {
+  await backup(input, process.argv[3]);
+} finally {
+  input.close();
+}
+JS
+    PLOW_POLL_SETTINGS="$work/interval" node collector/import-sources.ts \
+      "$work" poll-github "${PLOW_COLLECTOR_REPOSITORY:?Set PLOW_COLLECTOR_REPOSITORY}" "$stage/snapshot" --once
+  )
+  check_snapshot "$stage/snapshot/dashboard.sqlite"
+  if [ "$(main_sha)" != "$sha" ]; then exit 0; fi
+  before=$(stat -c %i "$stage/snapshot/dashboard.sqlite")
+  switching=1
+  systemctl --user stop "$poller"
+  activate "$stage"
+  systemctl --user start "$poller"
+  for attempt in $(seq 1 60); do
+    if systemctl --user is-active --quiet "$poller" &&
+      [ "$(stat -c %i "$stage/snapshot/dashboard.sqlite")" != "$before" ]; then
+      check_snapshot "$stage/snapshot/dashboard.sqlite"
+      history_ready
+      keep=1
+      switching=0
+      printf 'Deployed Plow collector %s from Actions run %s.\n' "$sha" "$run"
+      exit 0
+    fi
+    sleep 2
+  done
+  printf '%s\n' 'Plow collector did not publish a healthy snapshot.' >&2
+  exit 1
+)
+
+install_collector_cutover() (
+  umask 077
+  base=${PLOW_COLLECTOR_ROOT:?Set PLOW_COLLECTOR_ROOT}
+  port=${PLOW_COLLECTOR_PORT:?Set PLOW_COLLECTOR_PORT}
+  bundle=${PLOW_BEND_BUNDLE:?Set PLOW_BEND_BUNDLE}
+  units="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+  dashboard=barnacles-harbor.service
+  poller=barnacles-harbor-poller.service
+  history_override="$units/$dashboard.d/plow-history.conf"
+  poller_override="$units/$poller.d/plow-collector.conf"
+  case "$base$bundle" in *[!A-Za-z0-9./_-]*) exit 2 ;; esac
+  case "$base" in /*) ;; *) exit 2 ;; esac
+  case "$bundle" in /*) ;; *) exit 2 ;; esac
+  printf '%s\n' "$port" | grep -Eq '^[0-9]{1,5}$'
+  test -d "$bundle"
+  exec 9>"$base/deploy.lock"
+  flock 9
+  if [ ! -L "$base/history" ]; then
+    prior=$(readlink -f "$base/current")
+    test -f "$prior/web/index.html"
+    test -f "$prior/source/dashboard/prepare.ts"
+    test -f "$prior/snapshot/session-study.sqlite"
+    ln -s "$prior" "$base/history"
+  fi
+  test -f "$base/history/web/index.html"
+  test -f "$base/history/snapshot/session-study.sqlite"
+  history_ready
+
+  work=$(mktemp -d /tmp/apparent-dev-plow-cutover-XXXXXX)
+  changed=0
+  cleanup() {
+    result=$?
+    trap - EXIT HUP INT TERM
+    if [ "$changed" = 1 ]; then
+      restore "$work/old-history" "$history_override"
+      restore "$work/old-poller" "$poller_override"
+      systemctl --user daemon-reload || result=1
+      systemctl --user restart "$dashboard" || result=1
+      history_ready || result=1
+    fi
+    rm -rf -- "$work"
+    exit "$result"
+  }
+  trap cleanup EXIT
+  trap 'exit 1' HUP INT TERM
+  write_config() {
+    install -D -m 0600 "$1" "$2.next"
+    mv -f "$2.next" "$2"
+  }
+  restore() {
+    if [ -f "$1" ]; then write_config "$1" "$2"; else rm -f "$2"; fi
+  }
+  if [ -f "$history_override" ]; then cp "$history_override" "$work/old-history"; fi
+  if [ -f "$poller_override" ]; then cp "$poller_override" "$work/old-poller"; fi
+  cat >"$work/history" <<EOF
+[Service]
+WorkingDirectory=$base/history/source
+ExecStart=
+ExecStart=/usr/bin/node dashboard/prepare.ts --serve $base/history/snapshot $port $base/history/web
+EOF
+  cat >"$work/poller" <<EOF
+[Service]
+Environment=PLOW_BEND_BUNDLE=$bundle
+Environment=PLOW_POLL_SETTINGS=$base/polling/poll-interval
+EOF
+  if ! cmp -s "$work/history" "$history_override" || ! cmp -s "$work/poller" "$poller_override"; then
+    changed=1
+    write_config "$work/history" "$history_override"
+    write_config "$work/poller" "$poller_override"
+    systemctl --user daemon-reload
+    systemctl --user restart "$dashboard"
+    for attempt in $(seq 1 20); do
+      if history_ready; then break; fi
+      sleep 1
+    done
+    history_ready
+  fi
+  if ! cmp -s "$0" "$base/collector-deploy.sh"; then
+    if [ -f "$base/collector-deploy.sh" ] && [ ! -e "$base/collector-deploy.previous.sh" ]; then
+      install -m 0700 "$base/collector-deploy.sh" "$base/collector-deploy.previous.sh"
+    fi
+    install -m 0700 "$0" "$base/collector-deploy.sh.next"
+    mv -f "$base/collector-deploy.sh.next" "$base/collector-deploy.sh"
+  fi
+  changed=0
+  printf '%s\n' 'Installed source-only collector rollout and verified private Session history.'
+)
+
 manage_t3_otlp() (
   umask 077
   action=$1
@@ -63,10 +273,17 @@ manage_t3_otlp() (
   esac
 )
 
+if [ "$#" -eq 1 ]; then
+  case "$1" in
+    collector-deploy) deploy_collector; exit ;;
+    collector-cutover) install_collector_cutover; exit ;;
+  esac
+fi
+
 if [ "$#" -eq 2 ] && [ "$1" = t3-otlp ]; then
   manage_t3_otlp "$2"
   exit
 fi
 
-printf '%s\n' 'Usage: dashboard/run.sh t3-otlp apply|status|stop' >&2
+printf '%s\n' 'Usage: dashboard/run.sh collector-cutover | collector-deploy | t3-otlp apply|status|stop' >&2
 exit 2
