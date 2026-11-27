@@ -11,7 +11,7 @@ Each adapter extracts bounded provider input and decodes its wire format. Bend2 
 | GitHub | Read PR and commit metadata, exact Actions attempts and jobs, and release assets. Check tag ancestry where applicable. Verify the intended asset with a bounded anonymous range request when the surface is public. Store publication and access observation timestamps. |
 | Local Git | Read commit IDs and changed paths reachable from one revision. Emit a local Changed Code Analysis report. |
 
-Saving a Git scan retains the full observed path inventory. The printed report and local Grafana ranking show the top 25 paths.
+Saving a Git scan retains the full observed path inventory. The printed report shows the top 25 paths.
 
 ## Changed Code Analysis
 
@@ -28,7 +28,7 @@ Bend2 ranks up to 25 paths by commit count, breaking ties by path byte order. Ea
 
 The JSON report includes the resolved revision, commits scanned, whether more commits exist beyond the limit, and whether the checkout is shallow. Shallow boundary commits contribute to scan coverage, and their file counts are omitted because their parent diffs are unavailable. High change frequency is a place to start inspecting coupling and recurring edits. It can also reflect normal work on a busy feature or generated file.
 
-History reads stay local. The command fetches the checksum-pinned Bend2 compiler, writes its temporary build under the job directory, and prints the report to stdout. Add `--save-as OWNER/REPO` to also save the scan to the job's `evidence.sqlite` for [Grafana](../dashboard/provisioning/README.md#changed-code-analysis). Use the same repository name when preparing the dashboard. Each successful import replaces that repository's previous scan atomically. Keep reports for private repositories local.
+History reads stay local. The command fetches the checksum-pinned Bend2 compiler, writes its temporary build under the job directory, and prints the report to stdout. Add `--save-as OWNER/REPO` to also save the scan to the job's `evidence.sqlite` for local snapshot preparation. Use the same repository name when preparing the dashboard. Each successful import replaces that repository's previous scan atomically. Keep reports for private repositories local.
 
 Verify with `PLOW_TEST_DIRECTORY="$job" node --test collector/changed-code.test.ts`.
 
@@ -62,6 +62,11 @@ The interval is inclusive and uses UTC seconds. Set the last two arguments to th
 Successful window imports print a JSON receipt containing the window, requested limits, `pagesRead`, GitHub's `reportedTotal`, `eligible` unique in-window run records validated on those pages, and `captured` exact attempts committed. `inventoryComplete` indicates that the validated listing reached the reported count below GitHub's 1,000-result search ceiling. It describes discovery, so it can be true when the attempt sample cap limits capture. A valid empty result reports zero eligible and captured. If an inventory page or selected attempt is incomplete or changes during its checks, the command exits with an error and writes no attempt rows. Discovery uses offset pagination and can detect inconsistent totals, short pages, and duplicate runs, with no point-in-time guarantee from GitHub.
 
 Run the synthetic checks with `npm run verify -- collector`. They compile the actual Bend2 policy and exercise pagination, partial and changing inventories, the command-line entry point, and SQLite replay.
+
+## GitHub-only Octokit pilot
+
+[Run the isolated Compose pilot](github/README.md) for a one-repository poll or
+an exact-attempt capture with App installation authentication.
 
 ## Poll GitHub
 

@@ -15,7 +15,7 @@ import { buildSourcePolicies, linkedRolloutPoller, t3Snapshot } from "./t3.ts";
 
 async function poll(db: string, scratch: string, repo: string, snapshot: string, policy: SourcePolicy, admission: AdmissionPolicy, once: boolean) {
   const configured = process.env.PLOW_POLL_SETTINGS;
-  if (!configured) throw Error("Set PLOW_POLL_SETTINGS to the shared polling settings file");
+  if (!configured) throw Error("Set PLOW_POLL_SETTINGS");
   const settings = resolve(configured);
   const linked = linkedRolloutPoller(db, policy, admission);
   const publish = snapshotPublisher(resolve(snapshot), repo, scratch);
@@ -26,7 +26,7 @@ async function poll(db: string, scratch: string, repo: string, snapshot: string,
   for (;;) {
     try {
       linked?.assertSeparate();
-      const result = pollGitHub(db, repo, policy, clocks, admission);
+      const result = await pollGitHub(db, repo, policy, clocks, admission);
       const rollout = await linked?.capture();
       await publish(db);
       console.log(JSON.stringify({ ...result, rollout }));
@@ -129,9 +129,9 @@ async function main() {
       console.log(JSON.stringify({ ...receipt, calls: data.calls.length, markers: data.markers.length,
         orphans: data.orphans, quality: data.quality }));
     } else if (command === "github") {
-      const pr = pullRequest(first, positiveInt(second), policy, undefined, true);
+      const pr = await pullRequest(first, positiveInt(second), policy, undefined, true);
       loadEvidence(db, { source: "github-delivery", pullRequest: pr }, admission);
-      const release = third ? releaseEvidence(pr, third, policy, undefined, undefined, true) : undefined;
+      const release = third ? await releaseEvidence(pr, third, policy, undefined, undefined, true) : undefined;
       if (release) loadEvidence(db, { source: "github-delivery", pullRequest: pr, release }, admission);
       console.log(release ? `Imported pull request and release evidence (access: ${release.accessible ? "verified" : "unverified"})`
         : "Imported pull request metadata");

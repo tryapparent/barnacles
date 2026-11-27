@@ -1,4 +1,3 @@
 name: plow
 include:
-  - dashboard/enablement/deploy/compose.yaml
   - public/compose.yaml

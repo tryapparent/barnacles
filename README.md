@@ -15,7 +15,7 @@ Codex JSONL     T3 snapshots     GitHub APIs
                       |
           Evidence reports and snapshots
                       |
-            CLI and local Grafana
+            CLI and local snapshots
 ```
 
 - [Collector](collector/README.md) documents source boundaries and code to adapt from Apparent.
@@ -45,7 +45,7 @@ The smoke command serves the built dashboard with synthetic evidence.
 
 The [Actions import](collector/README.md#run-the-actions-import) and the [T3, Codex, and GitHub delivery imports](collector/README.md#import-t3-codex-and-github-delivery) write local SQLite evidence. Use the delivery report to inspect verified releases and thread-to-release coverage.
 
-The [legacy dashboard notes](dashboard/README.md) document the Grafana and Tempo preview for reference.
+The [dashboard guide](dashboard/README.md) links to the current app, local snapshot contracts, and the historical preview.
 
 [Changed Code Analysis](collector/README.md#changed-code-analysis) ranks files by how often commits touched them. Use it to find frequently edited files worth investigating for maintenance bottlenecks.
 

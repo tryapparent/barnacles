@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
+import { generateKeyPairSync } from "node:crypto";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -8,13 +9,14 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { buildAdmissionPolicy, loadEvidence, sourcePolicy, type SourcePolicy } from "../../evidence/index.ts";
 import { buildPolicy, loadPolicy } from "../../tooling/bend.ts";
-import { collectAttempt, collectWindow, type ClockPolicy } from "./attempt.ts";
+import { collectAttempt, collectWindow, githubReader, type ClockPolicy, type GitHubReader } from "./attempt.ts";
 import { pollGitHub } from "./delivery.ts";
 
+const jobRoot = process.env.PLOW_TEST_DIRECTORY;
+assert.ok(jobRoot);
+
 test("Bend2 clocks reach SQLite through the exact-attempt importer", async () => {
-  const parent = process.env.PLOW_TEST_DIRECTORY;
-  assert.ok(parent, "Set PLOW_TEST_DIRECTORY to a private job directory");
-  const directory = mkdtempSync(join(parent, "test-"));
+  const directory = mkdtempSync(join(jobRoot, "test-"));
   try {
     const policy = await loadPolicy<ClockPolicy>(await buildPolicy(directory, new URL("./clocks.bend", import.meta.url), "clocks.mjs"));
     const admission = await buildAdmissionPolicy(directory);
@@ -46,10 +48,12 @@ test("Bend2 clocks reach SQLite through the exact-attempt importer", async () =>
       { ...allocated, id: 14, conclusion: "skipped", steps: [] },
     ];
     const read = (path: string) => path.includes("/jobs?") ? { total_count: jobs.length, jobs } : run;
-    const observed = collectAttempt(identity, policy, read);
+    const capture = (source: GitHubReader = read) => collectAttempt(identity, policy, source);
+    const observed = await capture();
     const path = join(directory, "evidence.sqlite");
-    loadEvidence(path, { source: "github-actions", attempt: observed }, admission);
-    loadEvidence(path, { source: "github-actions", attempt: observed }, admission);
+    const save = (attempt = observed) => loadEvidence(path, { source: "github-actions", attempt }, admission);
+    save();
+    save();
     const db = new DatabaseSync(path, { readOnly: true });
     try {
       const results = db.prepare("SELECT queue_end-created_at AS queue, execution_end-execution_start AS execution, prior_execution FROM action_jobs ORDER BY job_id").all();
@@ -58,10 +62,10 @@ test("Bend2 clocks reach SQLite through the exact-attempt importer", async () =>
       ]);
       const steps = db.prepare("SELECT label, completed_at-started_at AS seconds FROM action_steps ORDER BY job_id, step_number").all();
       assert.deepEqual(steps.map((row) => Object.values(row)), [
-        ["Build and package the exact Mac candidate for native checks", 30], ["Other steps", null],
-        ["Build and package the exact Mac candidate for native checks", null], ["Other steps", null],
+        [allocated.steps[0].name, 30], ["Other steps", null],
+        [allocated.steps[0].name, null], ["Other steps", null],
       ]);
-      assert.throws(() => loadEvidence(path, { source: "github-actions", attempt: { ...observed, sourceUpdated: 0, jobs: [] } }, admission), /older observation/);
+      assert.throws(() => save({ ...observed, sourceUpdated: 0, jobs: [] }), /older observation/);
       assert.throws(() => loadEvidence(path, { source: "github-actions-window", attempts: [
         { ...observed, runId: 2 }, { ...observed, sourceUpdated: 0 },
       ] }, admission), /older observation/);
@@ -74,78 +78,101 @@ test("Bend2 clocks reach SQLite through the exact-attempt importer", async () =>
       ["evidence/report-actions.ts", path, identity.repository], { encoding: "utf8" }));
     const queue = occupancy.find((row: { clock: string }) => row.clock === "CI queue");
     assert.deepEqual([queue.count, queue.mean_seconds, queue.total_seconds, queue.unmeasured_count], [2, 20.5, 41, 3]);
-    assert.throws(() => collectAttempt(identity, policy, (path) =>
-      path.includes("/jobs?") ? { total_count: 1, jobs: [] } : run), /Partial or changing GitHub job inventory/);
-    assert.throws(() => collectAttempt({ ...identity, sha: "b".repeat(40) }, policy, read), /identity/);
-    assert.throws(() => collectAttempt(identity, policy, (path) => path.includes("/jobs?")
-      ? { total_count: 1, jobs: [{ ...allocated, run_attempt: 1 }] } : run), /job identity/);
+    const attemptWith = (jobs: unknown[], total_count = jobs.length, metadata = run) =>
+      capture((path) => path.includes("/jobs?") ? { total_count, jobs } : metadata);
+    await assert.rejects(attemptWith([], 1), /Partial or changing GitHub job inventory/);
+    await assert.rejects(() => collectAttempt({ ...identity, sha: "b".repeat(40) }, policy, read), /identity/);
+    await assert.rejects(attemptWith([{ ...allocated, run_attempt: 1 }]), /job identity/);
     const pages = Array.from({ length: 100 }, (_, index) => ({ ...allocated, id: 2 ** 32 + index, steps: [] }));
     const secondPage = { ...allocated, id: 2 ** 32 + 100, steps: [] };
-    const pagedRead = (path: string, total: number, pageTwo: unknown[]) => {
+    const pagedRead = (path: string, total: number, pageTwo: readonly unknown[]) => {
       if (!path.includes("/jobs?")) return run;
       return path.endsWith("page=1") ? { total_count: 101, jobs: pages } : { total_count: total, jobs: pageTwo };
     };
-    const paged = collectAttempt(identity, policy, (path) => pagedRead(path, 101, [secondPage]));
+    const key = join(directory, "synthetic.pem");
+    const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    writeFileSync(key, privateKey.export({ type: "pkcs8", format: "pem" }));
+    const authRoutes: string[] = [];
+    const appRead = githubReader(identity.repository, {
+      BARNACLES_GITHUB_AUTH: "app", BARNACLES_GITHUB_CREDENTIAL_FILE: key,
+      BARNACLES_GITHUB_APP_ID: "1", BARNACLES_GITHUB_INSTALLATION_ID: "2",
+    }, async (input, init) => {
+      const url = new URL(String(input));
+      const headers = new Headers(init?.headers);
+      assert.equal(url.origin, "https://api.github.com");
+      if (url.pathname.endsWith("/installation") || init?.method === "POST") {
+        authRoutes.push(`${init?.method} ${url.pathname}`);
+        assert.match(headers.get("authorization")!, /^bearer [^.]+\.[^.]+\.[^.]+$/);
+        if (init?.method === "GET") return Response.json({ id: 2 });
+        assert.deepEqual(JSON.parse(String(init.body)), {
+          repositories: ["example"], permissions: { actions: "read", contents: "read", pull_requests: "read" },
+        });
+        return Response.json({ token: "ghs_synthetic", expires_at: new Date(Date.now() + 3600_000).toISOString() });
+      }
+      assert.equal(init?.method, "GET");
+      assert.equal(headers.get("authorization"), "token ghs_synthetic");
+      assert.match(url.pathname, /^\/repos\/synthetic\/example\/actions\/runs\/1\/attempts\/2(\/jobs)?$/);
+      return Response.json(pagedRead(url.pathname + url.search, 101, [secondPage]));
+    });
+    const paged = await capture(appRead);
+    assert.deepEqual(authRoutes, ["GET /repos/synthetic/example/installation", "POST /app/installations/2/access_tokens"]);
     assert.deepEqual(paged.jobs.map(({ id }) => id), [...pages, secondPage].map(({ id }) => id));
-    assert.throws(() => collectAttempt(identity, policy, (path) => pagedRead(path, 101, [pages[0]])), /Duplicate GitHub job ID/);
-    assert.throws(() => collectAttempt(identity, policy, (path) => pagedRead(path, 102, [secondPage])), /changing GitHub job inventory/);
-    assert.throws(() => collectAttempt(identity, policy, (path) => pagedRead(path, 101, [])), /Partial or changing GitHub job inventory/);
-    assert.throws(() => collectAttempt(identity, policy, (path) => path.includes("/jobs?")
-      ? { total_count: 1, jobs: [{ ...allocated, steps: [allocated.steps[0], allocated.steps[0]] }] } : run), /Duplicate GitHub step number/);
-    const withoutJobAttempt = collectAttempt(identity, policy, (path) => path.includes("/jobs?")
-      ? { total_count: 1, jobs: [{ ...allocated, run_attempt: undefined }] } : run);
-    assert.equal(withoutJobAttempt.jobs.length, 1);
-    const jobless = collectAttempt(identity, policy, (path) =>
-      path.includes("/jobs?") ? { total_count: 0, jobs: [] } : { ...run, status: "queued" });
+    for (const [total, page, error] of [
+      [101, [pages[0]], /Duplicate GitHub job ID/],
+      [102, [secondPage], /changing GitHub job inventory/],
+      [101, [], /Partial or changing GitHub job inventory/],
+    ] as const) {
+      await assert.rejects(capture((path) => pagedRead(path, total, page)), error);
+    }
+    await assert.rejects(attemptWith([{ ...allocated, steps: Array(2).fill(allocated.steps[0]) }]), /Duplicate GitHub step number/);
+    assert.equal((await attemptWith([{ ...allocated, run_attempt: undefined }])).jobs.length, 1);
+    const jobless = await attemptWith([], 0, { ...run, status: "queued" });
     assert.deepEqual(jobless.jobs, []);
     assert.equal(jobless.startedAt, null);
     assert.equal(observed.startedAt, null);
-    const missingCreation = collectAttempt(identity, policy, (path) => path.includes("/jobs?")
-      ? { total_count: 1, jobs: [{ ...allocated, created_at: null }] } : run);
-    assert.equal(missingCreation.jobs[0].executionEnd, null);
+    assert.equal((await attemptWith([{ ...allocated, created_at: null }])).jobs[0].executionEnd, null);
+    const changing = /Changing GitHub attempt or job inventory/;
     let snapshots = 0;
-    assert.throws(() => collectAttempt(identity, policy, (path) => path.includes("/jobs?")
-      ? { total_count: 1, jobs: [{ ...allocated, id: ++snapshots }] } : run), /Changing GitHub attempt or job inventory/);
+    await assert.rejects(capture((path) => path.includes("/jobs?")
+      ? { total_count: 1, jobs: [{ ...allocated, id: ++snapshots }] } : run), changing);
     let metadataReads = 0;
-    assert.throws(() => collectAttempt(identity, policy, (path) => path.includes("/jobs?")
+    await assert.rejects(capture((path) => path.includes("/jobs?")
       ? { total_count: 1, jobs: [allocated] } : { ...run, updated_at: time(55 + metadataReads++) }),
-    /Changing GitHub attempt or job inventory/);
+    changing);
     const pagedJobs = Array.from({ length: 100 }, (_, index) => ({ ...allocated, id: index + 100 }));
-    assert.throws(() => collectAttempt(identity, policy, (path) => path.includes("/jobs?")
+    await assert.rejects(capture((path) => path.includes("/jobs?")
       ? path.endsWith("page=1") ? { total_count: 101, jobs: pagedJobs } : { total_count: 100, jobs: [] }
       : run), /Partial or changing GitHub job inventory/);
 
     const listedRuns = Array.from({ length: 101 }, (_, index) => ({ ...run, id: index + 1, created_at: time(1) }));
-    const pageReads: string[] = [];
     const inventoryRead = (path: string) => {
       if (path.includes("/actions/runs?")) {
-        pageReads.push(path);
         return { total_count: 101, workflow_runs: path.endsWith("page=1") ? listedRuns.slice(0, 100) : listedRuns.slice(100) };
       }
       return read(path);
     };
-    const capped = collectWindow(identity.repository, time(1), time(56), 1, 1, policy, inventoryRead);
+    const window = (pages: number, source: GitHubReader = inventoryRead) =>
+      collectWindow(identity.repository, time(1), time(56), pages, 1, policy, source);
+    const capped = await window(1);
     assert.deepEqual([capped.coverage.reportedTotal, capped.coverage.eligible, capped.coverage.captured,
-      capped.coverage.inventoryComplete, pageReads.length], [101, 100, 1, false, 1]);
-    const full = collectWindow(identity.repository, time(1), time(56), 2, 1, policy, inventoryRead);
-    assert.deepEqual([full.coverage.eligible, full.coverage.captured, full.coverage.inventoryComplete, pageReads.length],
-      [101, 1, true, 3]);
-    assert.throws(() => collectWindow(identity.repository, time(1), time(56), 2, 1, policy, (path) =>
+      capped.coverage.inventoryComplete, capped.coverage.pagesRead], [101, 100, 1, false, 1]);
+    const full = await window(2);
+    assert.deepEqual([full.coverage.eligible, full.coverage.captured, full.coverage.inventoryComplete, full.coverage.pagesRead],
+      [101, 1, true, 2]);
+    await assert.rejects(window(2, (path) =>
       path.endsWith("page=2") ? { total_count: 101, workflow_runs: [listedRuns[0]] } : inventoryRead(path)),
     /Duplicate GitHub workflow run ID/);
-    assert.throws(() => collectWindow(identity.repository, time(1), time(56), 2, 1, policy, (path) =>
+    await assert.rejects(window(2, (path) =>
       path.endsWith("page=2") ? { total_count: 101, workflow_runs: [] } : inventoryRead(path)),
     /Partial or changing GitHub run inventory/);
-    assert.throws(() => collectWindow(identity.repository, time(1), time(56), 11, 1, policy, inventoryRead), /1–10 pages/);
+    await assert.rejects(window(11), /1–10 pages/);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
 });
 
 test("bounded Actions imports report coverage, replay atomically, and preserve jobless attempts", () => {
-  const parent = process.env.PLOW_TEST_DIRECTORY;
-  assert.ok(parent, "Set PLOW_TEST_DIRECTORY to a private job directory");
-  const directory = mkdtempSync(join(parent, "test-"));
+  const directory = mkdtempSync(join(jobRoot, "test-"));
   const from = "2026-01-01T12:00:00Z";
   const to = "2026-01-01T12:01:00Z";
   const database = join(directory, "evidence.sqlite");
@@ -191,16 +218,20 @@ if (url.searchParams.has("created")) {
     const env = { ...process.env, PATH: `${directory}:${process.env.PATH}`, ACTIONS_FIXTURE: join(directory, "fixture.json") };
     const invoke = (fixtureCase: string) =>
       execFileSync(process.execPath, args, { env: { ...env, ACTIONS_CASE: fixtureCase }, encoding: "utf8" });
-    const failed = spawnSync(process.execPath, args, { env: { ...env, ACTIONS_CASE: "partial" }, encoding: "utf8" });
-    assert.equal(failed.status, 1);
-    assert.match(failed.stderr, /Partial or changing GitHub job inventory/);
+    const checkPartial = (args: string[]) => {
+      const result = spawnSync(process.execPath, args, { env: { ...env, ACTIONS_CASE: "partial" }, encoding: "utf8" });
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /Partial or changing GitHub job inventory/);
+    };
+    checkPartial(args);
     assert.equal(existsSync(database), false);
-    assert.deepEqual(JSON.parse(invoke("empty")),
-      { from, to, maxPages: 1, maxAttempts: 2, pagesRead: 1, reportedTotal: 0, eligible: 0, captured: 0, inventoryComplete: true });
-    const coverage =
-      { from, to, maxPages: 1, maxAttempts: 2, pagesRead: 1, reportedTotal: 2, eligible: 2, captured: 2, inventoryComplete: true };
-    assert.deepEqual(JSON.parse(invoke("full")), coverage);
-    assert.deepEqual(JSON.parse(invoke("full")), coverage);
+    for (const fixture of ["empty", "full", "full"]) {
+      const count = fixture === "empty" ? 0 : 2;
+      assert.deepEqual(JSON.parse(invoke(fixture)), {
+        from, to, maxPages: 1, maxAttempts: 2, pagesRead: 1, reportedTotal: count,
+        eligible: count, captured: count, inventoryComplete: true,
+      });
+    }
     const db = new DatabaseSync(database, { readOnly: true });
     try {
       const attempts = db.prepare("SELECT run_id, job_count, started_at FROM action_attempts ORDER BY run_id").all();
@@ -233,9 +264,7 @@ if (url.searchParams.has("created")) {
       seed.close();
     }
     const waitArgs = [cli, directory, "synthetic/example", "--from-waits", from, to];
-    const partial = spawnSync(process.execPath, [...waitArgs, "2"], { env: { ...env, ACTIONS_CASE: "partial" }, encoding: "utf8" });
-    assert.equal(partial.status, 1);
-    assert.match(partial.stderr, /Partial or changing GitHub job inventory/);
+    checkPartial([...waitArgs, "2"]);
     const capture = () => JSON.parse(execFileSync(process.execPath, [...waitArgs, "1"], { env, encoding: "utf8" }));
     assert.deepEqual(capture(), { sourceAvailable: true, missingBeforeCapture: 2, captured: 1 });
     const readBack = new DatabaseSync(database, { readOnly: true });
@@ -281,24 +310,21 @@ test("polling captures changing attempts and excludes unverifiable releases", as
         return responses[path];
       },
       () => accessible ? { http: 206, bytes: 1, range: true } : { http: 404, bytes: 0, range: false });
+    const prsPath = root + "/pulls?state=all&sort=updated&direction=desc&per_page=30";
+    const runsPath = root + "/actions/runs?per_page=30";
+    const releasesPath = root + "/releases?per_page=20";
+    const attemptPath = root + "/actions/runs/20/attempts/1";
     const initial = {
-      [root + "/pulls?state=all&sort=updated&direction=desc&per_page=30"]: [pr],
-      [root + "/actions/runs?per_page=30"]: { workflow_runs: [run] },
-      [root + "/releases?per_page=20"]: [],
+      [prsPath]: [pr], [runsPath]: { workflow_runs: [run] }, [releasesPath]: [],
       [root + "/pulls/17"]: pr,
       [root + "/pulls/17/commits?per_page=100"]: [],
       [root + "/pulls/17/reviews?per_page=100"]: [],
-      [root + "/actions/runs/20/attempts/1"]: run,
-      [root + "/actions/runs/20/attempts/1/jobs?per_page=100&page=1"]: { total_count: 0, jobs: [] },
+      [attemptPath]: run,
+      [attemptPath + "/jobs?per_page=100&page=1"]: { total_count: 0, jobs: [] },
     };
-    assert.deepEqual(invoke(initial), { pullRequestsScanned: 1, workflowRunsScanned: 1, releasesScanned: 0, failed: 0 });
+    assert.deepEqual(await invoke(initial), { pullRequestsScanned: 1, workflowRunsScanned: 1, releasesScanned: 0, failed: 0 });
     const titled = { ...pr, title: "Add release notes" };
-    const current = {
-      ...initial,
-      [root + "/pulls?state=all&sort=updated&direction=desc&per_page=30"]: [titled],
-      [root + "/pulls/17"]: titled,
-    };
-    assert.equal(invoke(current).failed, 0);
+    assert.equal((await invoke({ ...initial, [prsPath]: [titled], [root + "/pulls/17"]: titled })).failed, 0);
     const titles = new DatabaseSync(database, { readOnly: true });
     try {
       assert.equal(titles.prepare("SELECT title FROM github_pr_titles WHERE pr_number=17").get()?.title, titled.title);
@@ -307,13 +333,11 @@ test("polling captures changing attempts and excludes unverifiable releases", as
     }
     const completed = { ...run, status: "completed", conclusion: "success", updated_at: merged };
     const mergedPr = { ...pr, state: "closed", merged: true, merged_at: merged, merge_commit_sha: sha, updated_at: merged };
+    const listings = { [prsPath]: [mergedPr], [runsPath]: { workflow_runs: [completed] }, [releasesPath]: [release] };
     const next = {
-      ...initial,
-      [root + "/pulls?state=all&sort=updated&direction=desc&per_page=30"]: [mergedPr],
-      [root + "/actions/runs?per_page=30"]: { workflow_runs: [completed] },
-      [root + "/releases?per_page=20"]: [release],
+      ...initial, ...listings,
       [root + "/pulls/17"]: mergedPr,
-      [root + "/actions/runs/20/attempts/1"]: completed,
+      [attemptPath]: completed,
       [root + "/releases/tags/" + tag]: release,
       [root + "/git/ref/tags/" + tag]: { object: { type: "commit", sha } },
     };
@@ -329,15 +353,13 @@ test("polling captures changing attempts and excludes unverifiable releases", as
       }
     };
     assert.deepEqual(read(), ["queued", null]);
-    assert.equal(invoke(next, false).failed, 0);
+    assert.equal((await invoke(next, false)).failed, 0);
     assert.deepEqual(read(), ["completed", 0]);
     await sleep(1100);
-    assert.equal(invoke(next).failed, 0);
+    assert.equal((await invoke(next)).failed, 0);
     assert.deepEqual(read(), ["completed", 1]);
-    const listings = Object.fromEntries(Object.entries(next).filter(([path]) =>
-      path.endsWith("per_page=30") || path.endsWith("per_page=20")));
-    assert.equal(invoke(listings).failed, 0);
-    assert.throws(() => invoke({}), /Missing fixture/);
+    assert.equal((await invoke(listings)).failed, 0);
+    await assert.rejects(() => invoke({}), /Missing fixture/);
     assert.deepEqual(read(), ["completed", 1]);
   } finally {
     rmSync(directory, { recursive: true, force: true });
