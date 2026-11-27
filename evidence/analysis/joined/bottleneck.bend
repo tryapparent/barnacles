@@ -1,6 +1,7 @@
 import Base
 import ../bottleneck.bend as Study
 import ../../storage/codex-otel.bend as Otel
+import ./dashboard.bend as Dashboard
 
 type Span is Data:
   Span{id: String, operation: String, start: String, end: String}
@@ -86,3 +87,21 @@ def findings(+result: JoinedAnalysis) -> List<&2, Study.Finding>:
 def patterns(+result: JoinedAnalysis) -> List<&2, Study.RulePattern>:
   match result:
     case JoinedAnalysis{replay, _, _, _, _, _}: Study.replay_patterns(replay)
+
+def window_results(+window: Dashboard.DayWindow, jobs: List<&2, Job>, state: Study.Replay) -> Study.Replay:
+  match jobs:
+    case []: state
+    case Job{+id, _, status, conclusion, prior, _, _, _, completed} <> tail:
+      +at = Nat.mul(U32.to_nat(seconds(completed, 0n)), 1000n)
+      +eligible = Bool.and(Bool.not(prior), Bool.and(String.eq(status, "completed"), Dashboard.within(window, at)))
+      +next = Study.observe_job_result(state, "", id, Bool.pick(String, eligible, conclusion, ""))
+      window_results(window, tail, next)
+
+def observations(findings: List<&2, Study.Finding>) -> List<&2, Dashboard.DayObservation>:
+  match findings:
+    case []: []
+    case Study.Finding{rule, _, id, _, _, _, _, _} <> tail:
+      Dashboard.DayObservation{rule, id} <> observations(tail)
+
+def window_observations(window: Dashboard.DayWindow, jobs: List<&2, Job>) -> List<&2, Dashboard.DayObservation>:
+  observations(Study.replay_findings(window_results(window, jobs, Study.start_replay())))

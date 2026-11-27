@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
-import type { KernelCapture, List, Point, T3Command } from "../evidence/index.ts";
-import { buildPolicy, loadPolicy } from "../tooling/bend.ts";
+import { measureOutcomeDelay, type KernelCapture, type List, type Point, type T3Command } from "../evidence/index.ts";
 
 export type ObjectRow = Record<string, unknown>;
 
@@ -131,13 +130,11 @@ function delayWindow(value: unknown) {
     blockers: bendList(array(w.blockers, 64).map(delayBlocker)) };
 }
 
-export async function replayOutcomeDelays(file: string, scratch: string): Promise<string> {
+export async function replayOutcomeDelays(file: string, scratch: string, window?: { from: number; to: number }): Promise<string> {
   const source = row(JSON.parse(boundedFile(file, 8 * 1024 * 1024).toString("utf8")));
   if (source.version !== 1) throw Error("Expected outcome-delay evidence version 1");
-  const windows = bendList(array(source.windows, 5000).map(delayWindow));
-  const policy = await loadPolicy<{ outcome_delays(windows: typeof windows): unknown }>(
-    await buildPolicy(scratch, new URL("../evidence/analysis/outcome-delay.bend", import.meta.url), "outcome-delay.mjs"));
-  return JSON.stringify(policy.outcome_delays(windows), (key, value) => {
+  const report = await measureOutcomeDelay(bendList(array(source.windows, 5000).map(delayWindow)), scratch, window);
+  return JSON.stringify(report, (key, value) => {
     if (key === "$") return undefined;
     if (value?.$ === "Nil" || value?.$ === "Con") return Array.from(bendValues(value));
     if (value?.$ === "None") return null;

@@ -200,3 +200,61 @@ def finish(replay: Replay) -> Report:
 def outcome_delays(windows: List<&2, Delay.DelayWindow>) -> Report:
   +table = scan(windows, Map.new(&2, List<&2, Delay.DelayWindow>))
   finish(measure(Map.values(&2, List<&2, Delay.DelayWindow>, table), Replay{[], []}))
+
+def within_day(+at: Nat, from: Nat, to: Nat) -> Bool:
+  Bool.and(Nat.is_lt(0n, at), Bool.and(Nat.is_le(from, at), Nat.is_lt(at, to)))
+
+def day_overlap(+start: Nat, +end: Nat, from: Nat, to: Nat) -> Bool:
+  Bool.and(Nat.is_lt(0n, start), Bool.and(Nat.is_lt(start, end), Bool.and(Nat.is_lt(start, to), Nat.is_lt(from, end))))
+
+def day_spans(spans: List<&2, Delay.Span>, +from: Nat, +to: Nat) -> List<&2, Delay.Span>:
+  match spans:
+    case []: []
+    case Delay.Span{+start, +end, conditions} <> tail:
+      +rest = day_spans(tail, from, to)
+      Bool.pick(List<&2, Delay.Span>, day_overlap(start, end, from, to),
+        Delay.Span{Nat.max(start, from), Nat.min(end, to), conditions} <> rest, rest)
+
+def day_outcome(outcome: Delay.Outcome, from: Nat, to: Nat) -> Delay.Outcome:
+  match outcome:
+    case Delay.Outcome{id, scope, stage, spans, _, _}:
+      +inside = day_spans(spans, from, to)
+      +known = Nat.is_lt(0n, List.length(&2, Delay.Span, inside))
+      Delay.Outcome{id, scope, stage, inside, Delay.optional(Delay.confirmed(inside), known), Delay.optional(Delay.shared(inside), known)}
+
+def day_outcomes(outcomes: List<&2, Delay.Outcome>, +from: Nat, +to: Nat) -> List<&2, Delay.Outcome>:
+  match outcomes:
+    case []: []
+    case head <> rest: day_outcome(head, from, to) <> day_outcomes(rest, from, to)
+
+def day_blockers(blockers: List<&2, Delay.Blocker>, +ready: Nat, +possible: Nat, +from: Nat, +to: Nat) -> List<&2, Delay.Blocker>:
+  match blockers:
+    case []: []
+    case +blocker <> tail:
+      match blocker:
+        case Delay.Blocker{_, _, _, _, +start, +end, _, _}:
+          +known = Bool.and(Nat.is_lt(0n, start), Nat.is_lt(start, end))
+          +in_outcome = Bool.and(Nat.is_lt(0n, ready), Nat.is_lt(ready, possible))
+          +left = Bool.pick(Nat, in_outcome, Nat.max(ready, start), start)
+          +right = Bool.pick(Nat, in_outcome, Nat.min(possible, end), end)
+          +measured = day_overlap(left, right, from, to)
+          +partial = Bool.or(Bool.or(within_day(start, from, to), within_day(end, from, to)),
+            Bool.or(day_overlap(ready, possible, from, to), Bool.or(within_day(ready, from, to), within_day(possible, from, to))))
+          +rest = day_blockers(tail, ready, possible, from, to)
+          Bool.pick(List<&2, Delay.Blocker>, Bool.pick(Bool, known, measured, partial), blocker <> rest, rest)
+
+def day_evidence(evidence: List<&2, Delay.Evidence>, +from: Nat, +to: Nat) -> List<&2, Delay.Evidence>:
+  match evidence:
+    case []: []
+    case Delay.Evidence{Delay.DelayWindow{id, outcome, scope, stage, basis, +ready, +possible, readiness, availability, blockers}, measured} <> tail:
+      +inside = day_blockers(blockers, ready, possible, from, to)
+      Delay.Evidence{Delay.DelayWindow{id, outcome, scope, stage, basis, ready, possible, readiness, availability, inside}, measured}
+        <> day_evidence(tail, from, to)
+
+def day_report(replay: Replay, +from: Nat, +to: Nat) -> Report:
+  match replay:
+    case Replay{outcomes, evidence}: report(day_outcomes(outcomes, from, to), day_evidence(evidence, from, to))
+
+def outcome_delays_in_window(windows: List<&2, Delay.DelayWindow>, from: Nat, to: Nat) -> Report:
+  +table = scan(windows, Map.new(&2, List<&2, Delay.DelayWindow>))
+  day_report(measure(Map.values(&2, List<&2, Delay.DelayWindow>, table), Replay{[], []}), from, to)
