@@ -68,7 +68,7 @@ export type Review = {
   operations: { window: string; clock: string; operation: string | null; clockOptions: string[];
     operationOptions: string[]; items: Operation[]; map?: OperationTile[]; mapKind?: "categories" };
   fleet: { from: string; to: string; items: Vessel[] };
-  deliveries: { total: number; limit: number; offset: number; nextOffset: number | null; maxMeasuredMillis: number; items: Delivery[] };
+  deliveries: { total: number; limit: number; offset: number; nextOffset: number | null; timeline?: { from: string; to: string }; items: Delivery[] };
 };
 
 const fields = ["from", "to", "clock", "operation", "limit", "offset"];

@@ -260,7 +260,12 @@ function DeliveryTimeline({ review, selection }: { review: Review; selection: { 
   const [loading, setLoading] = useState(false);
   const sentinel = useRef<HTMLDivElement>(null);
   const request = useRef<AbortController | null>(null);
-  const { items, offset, nextOffset, maxMeasuredMillis } = pages;
+  const { items, offset, nextOffset } = pages;
+  const bounds = pages.timeline ?? review.window;
+  const start = Date.parse(bounds.from);
+  const end = Date.parse(bounds.to);
+  const position = (at: number) => start === end ? 50 : (at - start) * 100 / (end - start);
+  const ticks = start === end ? [start] : [start, Math.floor(start + (end - start) / 2), end];
   const found = selected !== null && items.some((item) => item.number === selected);
   const loadMore = (limit?: number) => {
     if (nextOffset === null || request.current) return;
@@ -323,28 +328,38 @@ function DeliveryTimeline({ review, selection }: { review: Review; selection: { 
   return <>
     {items.length ? <>
       <StageKey />
-      <p className="fine delivery-note">Bars show measured time between milestones. Missing clocks leave gaps in coverage. PRs in the same release can share the time from publication to the access check.</p>
-      <div className="delivery-lanes" aria-hidden="true">
-        <span>Merged or later</span><span>Before merge</span>
+      <p className="fine delivery-note">Bars show measured intervals. Dots mark observed milestones without a positive interval. Open a row for exact timestamps.</p>
+      <div className="delivery-axis">
+        <span className="delivery-clock">Milestone time (UTC)</span>
+        <div className="delivery-ticks" data-single={ticks.length === 1}>
+          {ticks.map((tick, index) => {
+            const at = new Date(tick).toISOString();
+            const time = at.slice(11, end - start >= 86400000 ? 16 : end - start >= 1000 ? 19 : 23);
+            return <time key={index} dateTime={at} title={at}>{dayLabel(at)} <span>{time}</span></time>;
+          })}
+        </div>
       </div>
       <div className="delivery-list">{items.map((item) => {
-        const measured = item.milestones.flatMap((entry) => entry.elapsedMillis !== null && entry.elapsedMillis > 0 ?
-          [{ ...entry, elapsedMillis: entry.elapsedMillis }] : []);
-        const total = measured.reduce((sum, entry) => sum + entry.elapsedMillis, 0);
-        const rowWidth = 100 * Math.log1p(total / 60_000) / Math.log1p(Math.max(1, maxMeasuredMillis) / 60_000);
-        return <details key={item.number} id={`delivery-pr-${item.number}`} className="thread" data-stage={item.stage}>
+        const merge = item.milestones.find((entry) => entry.key === "merged")?.observedAt;
+        return <details key={item.number} id={`delivery-pr-${item.number}`} className="thread">
           <summary>
             <span className="thread-meta">
               <span className="thread-name">{item.title ?? "Pull request title unavailable"}</span>
-              <span className="thread-status">{stageLabel(item.stage)} · <time dateTime={item.lastObservedAt}>{dayLabel(item.lastObservedAt)}</time></span>
+              <span className="thread-status">{merge ? <>Merged <time dateTime={merge} title={utcLabel(merge)}>{dayLabel(merge)}</time></> : "No merge recorded"}
+                {item.stage !== "merged" && ` · ${stageLabel(item.stage)}`}</span>
             </span>
-            <span className="thread-bar" aria-hidden="true">{measured.length ? measured.map((entry) => {
-              const elapsed = entry.elapsedMillis;
-              const label = durationMillis(elapsed);
+            <span className="thread-bar" aria-hidden="true">{item.milestones.map((entry) => {
+              if (!entry.observedAt) return null;
+              const at = Date.parse(entry.observedAt);
+              if (at < start || at > end) return null;
+              const left = position(Math.max(start, at - (entry.elapsedMillis ?? 0)));
+              const width = position(at) - left;
+              const title = `${milestoneLabel(entry.key)} · ${utcLabel(entry.observedAt)}`;
+              const label = entry.elapsedMillis === null ? null : durationMillis(entry.elapsedMillis);
               return <span key={entry.key} className={`stage-segment ${phaseClass(entry)}`}
-                style={{ width: `${rowWidth * elapsed / total}%` }}
-                title={`${milestoneLabel(entry.key)} · ${label}`}><span>{label}</span></span>;
-            }) : <span className="thread-unmeasured">No timed stages</span>}</span>
+                style={{ left: `${left}%`, width: width === 0 ? undefined : `${width}%` }} data-point={width === 0}
+                title={label === null ? title : `${title} · ${label}`}>{width > 0 && <span>{label}</span>}</span>;
+            })}</span>
           </summary>
           {selected === item.number ? <PullRequestEvidence path={item.detailPath} milestones={item.milestones} /> :
             <Waterfall milestones={item.milestones} />}
@@ -437,7 +452,7 @@ function App() {
       <Overview review={review} />
       <DailyStages chart={review.shipments.dailyChart} window={review.window} />
       <section className="delivery" aria-labelledby="delivery-title">
-        <h2 id="delivery-title">Delivery cycle time</h2>
+        <h2 id="delivery-title">Delivery timeline</h2>
         <ProcessTimings />
         <DeliveryTimeline key={review.snapshotAt} review={review} selection={selection} />
       </section>
