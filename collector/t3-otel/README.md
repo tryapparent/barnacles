@@ -80,8 +80,18 @@ priority. The scheduler works one UTC day at a time, newest first.
 Undated continuations follow dated work. T3 cursors carry position, so
 the dates prioritize page requests. A single page can cover multiple days.
 SQLite commits the page, its cursor and its priority together. A restart
-resumes the saved pages. Completed history can reopen when T3 reports a
-newer thread update. A failed discovery leaves progress in place.
+resumes the saved pages. After a complete scan, a known local T3 item ID
+marks the covered history. When a thread changes, the importer reads
+backward until it sees that exact item again. If the item is absent, the
+scan continues through the available pages. Matching timestamps and
+inherited items do not establish overlap.
+
+The poller makes up to 16 exact item checks per refresh for previously
+observed unfinished commands, including commands behind the covered
+boundary. It reads them by T3 thread and item ID and requires matching
+provider identity and a non-regressing item clock before saving a
+terminal observation. Failed and empty lookups retain the prior
+observation. A failed discovery leaves progress in place.
 Each inventory has a 64 MiB response limit and a 50,000-row decoder
 limit. A response outside the limits counts as a discovery failure.
 
@@ -92,6 +102,10 @@ pages, completed scans and failures. Completion covers retained history
 for the configured target at the time of the scan. In `all` mode
 `--once` attempts up to 32 historical pages and preserves progress
 for the next invocation.
+
+The T3-specific TypeScript host handles authenticated transport, response
+decoding, and the poll loop. Bend2 owns overlap admission, checkpoint
+progression, and completion acceptance.
 
 T3 returns a broader history payload to authorized readers. Plow keeps
 only local Codex commands with a strong native item reference and T3

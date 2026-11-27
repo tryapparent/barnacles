@@ -44,6 +44,7 @@ services:
         RUN node --input-type=module -e 'import {prepareCompiler} from "./tooling/bend.ts"; await prepareCompiler("/app")' && chmod -R a+rX /app/compiler
         COPY collector/codex/otel.ts collector/codex/
         COPY collector/t3-otel/history.bend collector/t3-otel/
+        COPY collector/t3-otel/history.ts collector/t3-otel/
         COPY collector/wire.ts collector/
         COPY evidence evidence
     entrypoint: [/bin/sh, -c, 'umask 077 && exec node collector/codex/otel.ts --t3 /evidence/data "$$PLOW_T3_INSTANCE"']
@@ -77,6 +78,7 @@ services:
       PLOW_T3_HISTORY_ORIGIN: ${PLOW_T3_HISTORY_ORIGIN:-}
       PLOW_T3_HISTORY_SCOPE: ${PLOW_T3_HISTORY_SCOPE:-allowlist}
       PLOW_T3_HISTORY_TARGETS_FILE: /run/plow-history-targets
+      PLOW_T3_HISTORY_READY_FILE: /tmp/plow-t3-history-ready
     user: '10001:10001'
     restart: unless-stopped
     read_only: true
@@ -91,6 +93,11 @@ services:
         read_only: true
         bind: {create_host_path: false}
     tmpfs: [/tmp]
+    healthcheck:
+      test: [CMD, test, -f, /tmp/plow-t3-history-ready]
+      interval: 3s
+      timeout: 2s
+      retries: 20
     depends_on:
       volume-init:
         condition: service_completed_successfully

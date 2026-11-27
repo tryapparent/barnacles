@@ -151,6 +151,23 @@ Check the `history` service's pass counters and the command and cursor
 tables on the evidence volume. A running container alone does not show a
 successful read.
 
+The existing Clanker collector deployment timer promotes the history
+container from the same verified main release as the collector. It
+reads `PLOW_T3_DEPLOY_ENV` or defaults to
+`${XDG_CONFIG_HOME:-$HOME/.config}/plow-t3-otel/compose.env`. The
+history profile and an existing history container opt into upgrades.
+The release launcher builds and replaces the history container alone.
+Compose waits for successful discovery or a successful allowlist read
+and retains the existing SQLite volume. If readiness fails, the launcher
+restores the previous tagged image and Compose release. It retries on
+the next timer run. The collector snapshot can advance independently.
+
+On older Clanker installations, apply the attested release's existing
+`dashboard/run.sh collector-cutover` command once with the current
+deployment settings to update the installed launcher. The existing
+timer then uses the new entry point. Reapplying the same healthy
+history release reuses its container.
+
 ### Apply the private history route
 
 For a T3 server bound to Clanker loopback, apply the versioned Tailscale

@@ -41,6 +41,12 @@ rows. Existing cursors remain resumable. Previously saved state without
 a time frontier uses the thread's inventory date until the next page
 supplies item clocks.
 
+`t3_history_anchors` stores the covered local item identity and the
+pending head identity. They advance in the same transaction as the
+cursor. A head observed during an unfinished scan keeps the pending
+coverage boundary. `t3_history_checks` records exact-item check times so
+waiting commands can rotate through the bounded reconciliation budget.
+
 ## Live session links
 
 `t3_live_codex_links` associates a scoped native session with its T3 thread
