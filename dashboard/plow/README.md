@@ -87,6 +87,7 @@ Set these inputs in `~/.config/plow-frontend/compose.env`, mode 0600.
 | `PLOW_FRONTEND_STATE` | Private application state directory for the built release and projected timeline |
 | `PLOW_FRONTEND_PORT` | Optional loopback port, defaults to 3033 |
 | `PLOW_FRONTEND_UID_GID` | Optional container user. Rootless Clanker uses the default `0:0` mapped to the host owner. With rootful Docker, set the feed owner’s numeric UID and GID. |
+| `PLOW_ANALYSIS_API_URL` | Optional private HTTPS URL ending in `/api/v1/bottlenecks` |
 | `PLOW_SESSION_HISTORY_URL` | Optional private HTTPS URL ending in `/sessions` |
 
 Install the generated units from the verified source in the existing collector

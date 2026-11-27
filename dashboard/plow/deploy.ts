@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import { isDeepStrictEqual } from "node:util";
 import { fileURLToPath } from "node:url";
-import { feedPayload, sessionHistoryUrl } from "./worker.mjs";
+import { analysisApiUrl, feedPayload, sessionHistoryUrl } from "./worker.mjs";
 
 const source = fileURLToPath(new URL("../../", import.meta.url));
 const collector = "%h/.local/share/barnacles/harbor";
@@ -50,6 +50,8 @@ async function sync() {
   originPort();
   const history = process.env.PLOW_SESSION_HISTORY_URL;
   if (history && !sessionHistoryUrl(history)) throw Error("Expected a private HTTPS Plow /sessions URL.");
+  const analysis = process.env.PLOW_ANALYSIS_API_URL;
+  if (analysis && !analysisApiUrl(analysis)) throw Error("Expected a private HTTPS analysis API URL.");
   const database = resolve(required("PLOW_EVIDENCE_DATABASE"));
   const state = resolve(required("PLOW_FRONTEND_STATE"));
   const revision = (await readFile(join(source, "..", "revision"), "utf8")).trim();

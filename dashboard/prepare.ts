@@ -1,3 +1,5 @@
+import { createServer } from "node:http";
+import { DatabaseSync } from "node:sqlite";
 import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { snapshotFormatVersion, writeSnapshot } from "../evidence/read.ts";
@@ -59,7 +61,50 @@ async function prepare(args: string[]) {
   }
 }
 
-prepare(process.argv.slice(2)).catch((error: Error) => {
-  console.error(error.message);
-  process.exitCode = 1;
-});
+function serveAnalysis(file: string, port: string) {
+  const user = process.env.PLOW_ANALYSIS_USER;
+  if (!file || !user || !/^[0-9]{1,5}$/.test(port)) throw Error("Expected an analysis database, port and private API identity");
+  const origin = "https://plow.tryapparent.com";
+  createServer((request, response) => {
+    const start = (status: number) => response.writeHead(status, {
+      "Content-Type": "application/json",
+      "Cache-Control": "private, no-store",
+      "X-Content-Type-Options": "nosniff",
+      "Access-Control-Allow-Origin": origin,
+      "Access-Control-Allow-Methods": "GET, OPTIONS",
+      "Access-Control-Allow-Private-Network": "true",
+      Vary: "Origin",
+    });
+    if (request.headers.origin !== undefined && request.headers.origin !== origin) return start(403).end();
+    const path = request.url?.split("?", 1)[0];
+    const summary = path === "/api/v1/bottlenecks";
+    const thread = /^\/api\/v1\/bottlenecks\/threads\/([a-f0-9]{24})$/.exec(path ?? "")?.[1];
+    if (!summary && !thread) return start(404).end();
+    if (request.headers["tailscale-user-login"] !== user) return start(403).end();
+    if (request.method === "OPTIONS") return start(204).end();
+    if (request.method !== "GET") return start(405).end();
+    try {
+      const db = new DatabaseSync(file, { readOnly: true });
+      try {
+        db.exec("PRAGMA busy_timeout=3000");
+        const item = thread
+          ? db.prepare("SELECT payload FROM analysis_threads WHERE id=?").get(thread)
+          : db.prepare("SELECT payload FROM analysis_summary WHERE id=1").get();
+        start(item ? 200 : thread ? 404 : 503).end(item ? String(item.payload) : undefined);
+      } finally {
+        db.close();
+      }
+    } catch {
+      start(503).end();
+    }
+  }).listen(Number(port), process.env.PLOW_ANALYSIS_BIND_HOST ?? "127.0.0.1");
+}
+
+if (process.argv[2] === "--analysis-api") {
+  serveAnalysis(process.argv[3], process.argv[4]);
+} else {
+  prepare(process.argv.slice(2)).catch((error: Error) => {
+    console.error(error.message);
+    process.exitCode = 1;
+  });
+}

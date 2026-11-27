@@ -212,20 +212,32 @@ EOF
 )
 
 restore_history_ingress() (
-  host=${PLOW_COLLECTOR_HISTORY_HOST:?Set PLOW_COLLECTOR_HISTORY_HOST to the existing private host and port}
+  case "$1" in
+    t3)
+      host=${PLOW_T3_HISTORY_SERVE_HOST:?Set the private T3 origin}
+      listener=${PLOW_T3_HISTORY_LOOPBACK_PORT:?Set the T3 port}
+      set -- /api/orchestration /api/auth/websocket-ticket /ws
+      ;;
+    session)
+      host=${PLOW_COLLECTOR_HISTORY_HOST:?Set the private Session history origin}
+      listener=${PLOW_COLLECTOR_PORT:?Set the Session port}
+      history_ready
+      set -- /
+      ;;
+  esac
   port=${host##*:}
-  listener=${PLOW_COLLECTOR_PORT:?Set PLOW_COLLECTOR_PORT}
   printf '%s\n' "$port" "$listener" | grep -vEq '^[0-9]{1,5}$' && exit 2
   self=$(tailscale status --json | jq -er '.Self.DNSName | rtrimstr(".")')
   test "$host" = "$self:$port"
-  history_ready
-  state() {
-    tailscale serve status --json | jq -r --arg host "$host" --arg port "$port" --arg listener "$listener" '
-      if .AllowFunnel[$host] then "conflict"
-      elif .Web[$host].Handlers == {"/": {Proxy: ("http://127.0.0.1:" + $listener)}} and .TCP[$port].HTTPS
-      then "configured"
-      elif .TCP[$port] == null and .Web[$host] == null then "absent"
-      else "conflict" end'
+  backend="http://127.0.0.1:$listener"
+  desired=$(jq -nc --arg backend "$backend" '$ARGS.positional | map({key: ., value: {Proxy: ($backend + (if . == "/" then "" else . end))}}) | from_entries' --args "$@")
+  missing() {
+    tailscale serve status --json | jq -er --arg host "$host" --arg port "$port" --argjson desired "$desired" '
+      (.Web[$host].Handlers // {}) as $current |
+      if .AllowFunnel[$host] or (.TCP[$port] != null and (.TCP[$port].HTTPS != true or (.Web[$host] == null))) or
+         any($current | to_entries[]; .value != $desired[.key])
+      then error("Conflicting private Serve configuration")
+      else ($desired | keys) - ($current | keys) | join(" ") end'
   }
   serve() {
     if [ "${PLOW_COLLECTOR_SERVE_SUDO:-0}" = 1 ]; then
@@ -234,21 +246,22 @@ restore_history_ingress() (
       tailscale serve "$@"
     fi
   }
-  created=0
-  case "$(state)" in
-    absent)
-      serve --bg --https="$port" "http://127.0.0.1:$listener"
-      created=1
-      ;;
-    configured) ;;
-    *) printf '%s\n' 'Existing Serve configuration conflicts with the private Session history route.' >&2; exit 1 ;;
-  esac
-  if [ "$(state)" != configured ]; then
-    if [ "$created" = 1 ]; then serve --https="$port" off; fi
-    printf '%s\n' 'The expected private HTTPS mapping could not be verified.' >&2
-    exit 1
-  fi
-  printf '%s\n' 'Verified the existing private Session history HTTPS mapping. Funnel is off.'
+  absent=$(missing)
+  added=
+  rollback() {
+    for path in $added; do serve --https="$port" --set-path="$path" off; done
+  }
+  trap rollback EXIT
+  trap 'exit 1' HUP INT TERM
+  for path in $absent; do
+    if [ "$path" = / ]; then target="$backend"; else target="$backend$path"; fi
+    serve --bg --https="$port" --set-path="$path" "$target"
+    added="$added $path"
+  done
+  remaining=$(missing)
+  test -z "$remaining"
+  trap - EXIT HUP INT TERM
+  printf '%s\n' 'Verified private HTTPS with Funnel off.'
 )
 
 manage_t3_otlp() (
@@ -286,10 +299,11 @@ manage_t3_otlp() (
         if ! printf '%s\n' "$config" | jq -e '
           (.services.history.environment.PLOW_T3_HISTORY_ORIGIN | length > 0) and
           (.secrets.t3_history_read.file | startswith("/") and . != "/dev/null") and
-          any(.services.history.volumes[];
-            .target == "/run/plow-history-targets" and (.source | startswith("/") and . != "/dev/null"))
+          (.services.history.environment.PLOW_T3_HISTORY_SCOPE as $scope |
+            $scope == "all" or ($scope == "allowlist" and any(.services.history.volumes[];
+              .target == "/run/plow-history-targets" and (.source | startswith("/") and . != "/dev/null"))))
         ' >/dev/null; then
-          printf '%s\n' 'The T3 history profile needs an API origin, read credential file, and targets file.' >&2
+          printf '%s\n' 'Configure the T3 history origin, credential and scope.' >&2
           exit 1
         fi
       else
@@ -313,12 +327,12 @@ manage_t3_otlp() (
                 () => { process.exitCode = 1; }
               );
             ' >/dev/null 2>&1; then
-          printf '%s\n' 'Both T3 OTLP listeners rejected a request without a bearer.'
+          printf '%s\n' 'Both T3 OTLP listeners denied unauthenticated intake.'
           exit 0
         fi
         sleep 1
       done
-      printf '%s\n' 'The T3 Collector and evidence receiver did not both pass the bearer-gate check.' >&2
+      printf '%s\n' 'T3 OTLP bearer-gate verification failed.' >&2
       exit 1
       ;;
     status) compose --profile history ps --all ;;
@@ -331,7 +345,8 @@ if [ "$#" -eq 1 ]; then
   case "$1" in
     collector-deploy) deploy_collector; exit ;;
     collector-cutover) install_collector_cutover; exit ;;
-    collector-history-ingress) restore_history_ingress; exit ;;
+    collector-history-ingress) restore_history_ingress session; exit ;;
+    t3-history-ingress) restore_history_ingress t3; exit ;;
   esac
 fi
 
@@ -340,5 +355,5 @@ if [ "$#" -eq 2 ] && [ "$1" = t3-otlp ]; then
   exit
 fi
 
-printf '%s\n' 'Usage: dashboard/run.sh collector-cutover | collector-deploy | collector-history-ingress | t3-otlp apply|status|stop' >&2
+printf '%s\n' 'Usage: dashboard/run.sh collector-cutover | collector-deploy | collector-history-ingress | t3-history-ingress | t3-otlp apply|status|stop' >&2
 exit 2

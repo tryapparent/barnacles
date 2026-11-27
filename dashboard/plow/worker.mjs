@@ -19,6 +19,11 @@ export function sessionHistoryUrl(value) {
   return new URL(value).href
 }
 
+export function analysisApiUrl(value) {
+  if (typeof value !== 'string' || !/^https:\/\/[a-z0-9.-]+\.ts\.net(?::[0-9]{1,5})?\/api\/v1\/bottlenecks$/.test(value) || !URL.canParse(value)) return
+  return new URL(value)
+}
+
 export function feedPayload(raw) {
   if (typeof raw !== 'string' || Buffer.byteLength(raw) > maxFeedLength) throw Error('Feed unavailable')
   const feed = JSON.parse(raw)
@@ -38,9 +43,13 @@ export function accessVerifier(jwtVerify, keys, issuer, audience) {
   }
 }
 
-export function createDashboardServer({ getFeed, verifyToken, history, revision }) {
+export function createDashboardServer({ getFeed, verifyToken, history, analysisApi, revision }) {
   const destination = sessionHistoryUrl(history)
-  const content = destination ? html.replace('data-session-history=""', `data-session-history="${destination}"`) : html
+  const page = destination ? html.replace('data-session-history=""', `data-session-history="${destination}"`) : html
+  const api = analysisApiUrl(analysisApi)
+  const content = api ? page.replace('data-analysis-api=""', `data-analysis-api="${api.href}"`) : page
+  const pageHeaders = api ? { ...headers, 'Content-Security-Policy':
+    `${headers['Content-Security-Policy']}; connect-src ${api.origin}` } : headers
   return createServer(async (request, response) => {
     const reply = (status, body, additional = {}) => {
       response.writeHead(status, { ...headers, ...additional })
@@ -58,7 +67,7 @@ export function createDashboardServer({ getFeed, verifyToken, history, revision 
     if (path !== '/app' && path !== '/app/') return reply(404)
     if (!(await verifyToken(request.headers['cf-access-jwt-assertion']))) return reply(403, 'Cloudflare Access required')
     if (request.method !== 'GET' && request.method !== 'HEAD') return reply(405, undefined, { Allow: 'GET, HEAD' })
-    const release = { 'X-Plow-Revision': revision }
+    const release = { ...pageHeaders, 'X-Plow-Revision': revision }
     try {
       const payload = await feedPayload(await getFeed())
       reply(200, content.replace(emptyFeed, () => payload), release)
@@ -70,10 +79,11 @@ export function createDashboardServer({ getFeed, verifyToken, history, revision 
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const { createRemoteJWKSet, jwtVerify } = await import('jose')
-  const { PLOW_ACCESS_TEAM, PLOW_ACCESS_AUDIENCE, PLOW_RELEASE, PLOW_SESSION_HISTORY_URL } = process.env
+  const { PLOW_ACCESS_TEAM, PLOW_ACCESS_AUDIENCE, PLOW_RELEASE, PLOW_SESSION_HISTORY_URL, PLOW_ANALYSIS_API_URL } = process.env
   if (!/^[a-z0-9-]+$/.test(PLOW_ACCESS_TEAM ?? '') || !/^[a-f0-9]{64}$/.test(PLOW_ACCESS_AUDIENCE ?? '') ||
-      !/^[a-f0-9]{40}$/.test(PLOW_RELEASE ?? '') || (PLOW_SESSION_HISTORY_URL && !sessionHistoryUrl(PLOW_SESSION_HISTORY_URL))) {
-    throw Error('Invalid Plow Access, release, or session history configuration')
+      !/^[a-f0-9]{40}$/.test(PLOW_RELEASE ?? '') || (PLOW_SESSION_HISTORY_URL && !sessionHistoryUrl(PLOW_SESSION_HISTORY_URL)) ||
+      (PLOW_ANALYSIS_API_URL && !analysisApiUrl(PLOW_ANALYSIS_API_URL))) {
+    throw Error('Invalid Plow Access, release, or private URL configuration')
   }
   const issuer = `https://${PLOW_ACCESS_TEAM}.cloudflareaccess.com`
   const keys = createRemoteJWKSet(new URL('/cdn-cgi/access/certs', issuer))
@@ -81,6 +91,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     getFeed: () => readFile('/feed/timeline.json', 'utf8'),
     verifyToken: accessVerifier(jwtVerify, keys, issuer, PLOW_ACCESS_AUDIENCE),
     history: PLOW_SESSION_HISTORY_URL,
+    analysisApi: PLOW_ANALYSIS_API_URL,
     revision: PLOW_RELEASE,
   }).listen(8080, '0.0.0.0')
 }

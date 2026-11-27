@@ -34,6 +34,11 @@ sequence rolls back the page, including its cursor update. Keep a stable
 instance label for the lifetime of one T3 event store and use a new label
 when replacing it with independently sequenced data.
 
+`t3_history_rotation` keeps the last attempted thread for each instance
+in discovery mode. It is independent of the per-thread older-page
+cursor. The scheduler advances after an attempt so a single failed
+thread read cannot stop the remaining inventory.
+
 ## Live session links
 
 `t3_live_codex_links` associates a scoped native session with its T3 thread
