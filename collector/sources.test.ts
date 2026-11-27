@@ -665,6 +665,9 @@ test("bottleneck replay binds verification and recovery to original receipts", (
     ["nomac-lock", "nomac-queue-busy", 75, "native-mac-queue-lock-busy"],
     ["nomac-lock-legacy", "nomac-queue-busy", 2, "native-mac-queue-lock-busy"],
     ["github-project-scope", "github-project-read-scope", 1, "github-project-read-scope-refused"],
+    ["gitlab-option", "gitlab-unknown-option", 1, "gitlab-cli-option-refused"],
+    ["unknown-tool", "tool-t3-unknown-name", 0xffffffff, "t3-tool-name-unresolved", "failed", "dynamic_tool"],
+    ["delegate-output", "tool-t3-delegate-response-invalid", 0xffffffff, "t3-delegation-response-invalid", "failed", "dynamic_tool"],
   ] as const;
   const auth = { ...refused, id: "vm-auth", receipt: "ssh-authentication-denied", exitCode: 255 };
   const facts = [
@@ -797,7 +800,8 @@ test("bottleneck replay binds verification and recovery to original receipts", (
     { ...commandDeadline, id: "inherited-command", visibility: "inherited" },
     { ...commandDeadline, id: "other-root-command", sourceThread: "other" },
     { ...commandDeadline, id: "running-command", status: "running" },
-    ...refusals.map(([id, receipt, exitCode, , status = "failed"]) => ({ ...refused, id, receipt, exitCode, status })),
+    ...refusals.map(([id, receipt, exitCode, , status = "failed", itemType = "command_execution"]) =>
+      ({ ...refused, id, receipt, exitCode, status, itemType })),
     refused, auth,
     { ...auth, id: "vm-connect", receipt: "ssh-connection-refused" },
     { ...auth, id: "vm-file-permission", receipt: "filesystem-permission-denied" },
@@ -805,6 +809,9 @@ test("bottleneck replay binds verification and recovery to original receipts", (
     { ...auth, id: "replayed-vm-auth", visibility: "inherited" },
     { ...refused, id: "nomac-lock-ambiguous-exit", receipt: "nomac-queue-busy", exitCode: 1 },
     { ...refused, id: "github-project-scope-other", receipt: "github-project-write-scope", exitCode: 1 },
+    { ...refused, id: "gitlab-option-success", receipt: "gitlab-unknown-option", status: "completed", exitCode: 1 },
+    { ...refused, id: "wrong-tool-type", receipt: "tool-t3-unknown-name" },
+    { ...refused, id: "wrong-exit-type", receipt: "tool-t3-delegate-response-invalid", itemType: "dynamic_tool", exitCode: 1 },
     { ...refused, id: "launched-background", exitCode: 1 },
     { ...refused, id: "unknown-github-exit", receipt: "github-view-comment-format" },
     { ...refused, id: "wrong-git-exit", receipt: "git-fork-resource-unavailable", exitCode: 128 },
@@ -1468,22 +1475,22 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
     assert.deepEqual(result.files, [{ $: "FileTotal", path: "README.md", requests: 3, threads: 2, revisits: 1 }]);
     assert.deepEqual(result.costs.sort((a: { clock: string; operation: string }, b: { clock: string; operation: string }) =>
       a.clock.localeCompare(b.clock) || a.operation.localeCompare(b.operation)), [
-      { $: "Cost", clock: "ci-apt-dependency-step", operation: "ffmpeg", count: 1, seconds: 1443, unknown: 0 },
-      { $: "Cost", clock: "ci-apt-dependency-step", operation: "qemu-utils", count: 1, seconds: 25, unknown: 0 },
-      { $: "Cost", clock: "ci-apt-mirror-probe", operation: "ubuntu", count: 1, seconds: 11, unknown: 0 },
-      { $: "Cost", clock: "ci-benchmark-owner-step", operation: "connect-watch", count: 1, seconds: 91, unknown: 0 },
-      { $: "Cost", clock: "ci-benchmark-owner-step", operation: "record-start", count: 3, seconds: 1640, unknown: 0 },
-      { $: "Cost", clock: "ci-benchmark-owner-step", operation: "record-stop", count: 1, seconds: 1300, unknown: 0 },
-      { $: "Cost", clock: "ci-connect-delivery-owner-step", operation: "active-unverified", count: 1, seconds: 8, unknown: 0 },
-      { $: "Cost", clock: "ci-connect-delivery-owner-step", operation: "preflight", count: 1, seconds: 10, unknown: 0 },
-      { $: "Cost", clock: "ci-native-prerequisite-step", operation: "bend-toolchain", count: 1, seconds: 13, unknown: 0 },
-      { $: "Cost", clock: "ci-native-prerequisite-step", operation: "circle-vision", count: 1, seconds: 113, unknown: 0 },
-      { $: "Cost", clock: "ci-workflow-status-gate", operation: "linux needs portable", count: 1, seconds: 120, unknown: 0 },
-      { $: "Cost", clock: "ci-workflow-status-gate", operation: "stream-connect / linux needs portable", count: 1, seconds: 120, unknown: 0 },
-      { $: "Cost", clock: "local-build-admission", operation: "t3-build", count: 2, seconds: 123, unknown: 0 },
-      { $: "Cost", clock: "runner", operation: "build", count: 1, seconds: 129, unknown: 1 },
-      { $: "Cost", clock: "t3-pr-watch-parked", operation: "checks-passed", count: 1, seconds: 80, unknown: 0 },
-    ]);
+      ["ci-apt-dependency-step", "ffmpeg", 1, 1443],
+      ["ci-apt-dependency-step", "qemu-utils", 1, 25],
+      ["ci-apt-mirror-probe", "ubuntu", 1, 11],
+      ["ci-benchmark-owner-step", "connect-watch", 1, 91],
+      ["ci-benchmark-owner-step", "record-start", 3, 1640],
+      ["ci-benchmark-owner-step", "record-stop", 1, 1300],
+      ["ci-connect-delivery-owner-step", "active-unverified", 1, 8],
+      ["ci-connect-delivery-owner-step", "preflight", 1, 10],
+      ["ci-native-prerequisite-step", "bend-toolchain", 1, 13],
+      ["ci-native-prerequisite-step", "circle-vision", 1, 113],
+      ["ci-workflow-status-gate", "linux needs portable", 1, 120],
+      ["ci-workflow-status-gate", "stream-connect / linux needs portable", 1, 120],
+      ["local-build-admission", "t3-build", 2, 123],
+      ["runner", "build", 1, 129, 1],
+      ["t3-pr-watch-parked", "checks-passed", 1, 80],
+    ].map(([clock, operation, count, seconds, unknown = 0]) => ({ $: "Cost", clock, operation, count, seconds, unknown })));
     assert.deepEqual(result.findings.map(({ rule }: { rule: string }) => rule),
       ["ci-hosted-admission-failure", "ci-job-failure", "ci-job-timeout", "staged-verification-prerequisite",
         "pr-merge-conflict-observed", "pr-merge-conflict-observed", "pr-create-http-server-error",

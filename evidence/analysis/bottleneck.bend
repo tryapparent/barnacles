@@ -36,6 +36,12 @@ def start_replay() -> Replay:
 def pair(+a: String, b: String) -> String:
   String.append(Nat.show(String.length(a)), String.append(":", String.append(a, b)))
 
+def local_source(thread: String, source: String, visibility: String) -> Bool:
+  Bool.and(String.eq(thread, source), String.eq(visibility, "local"))
+
+def closed_clock(+start: U32, end: U32) -> Bool:
+  Bool.and(U32.is_gt(start, 0), U32.is_ge(end, start))
+
 def found(~A: Data, value: Map<&2, A> & A) -> A:
   match value:
     case Tuple{_, item}: item
@@ -88,7 +94,7 @@ def observe_timing(state: Replay, id: String, +clock: String, operation: String,
   match state:
     case Replay{+seen, +files, +reads, +costs, +attempts, +cohorts, +status_reads, +findings}:
       +event = pair("timing", pair(clock, id))
-      +closed = Bool.and(U32.is_gt(start, 0), U32.is_ge(end, start))
+      +closed = closed_clock(start, end)
       Bool.pick(Replay, includes(seen, event), Replay{seen, files, reads, costs, attempts, cohorts, status_reads, findings},
         Replay{Map.set(&2, Bool, seen, event, True{}), files, reads,
           add_cost(costs, clock, operation, closed, U32.sub(end, start)), attempts, cohorts, status_reads, findings})
@@ -109,13 +115,12 @@ def record_t3_command_envelope(state: Replay, +thread: String, +id: String, oper
 def observe_t3_command_envelope(state: Replay, +thread: String, id: String, source_thread: String, visibility: String,
   item_type: String, +status: String, operation: String, +started: U32, +completed: U32, observed: U32,
   +elapsed_ms: U32, receipt: String, +limit: U32) -> Replay:
-  +source = Bool.and(String.eq(thread, source_thread), Bool.and(String.eq(visibility, "local"),
-    String.eq(item_type, "command_execution")))
+  +source = Bool.and(local_source(thread, source_thread, visibility), String.eq(item_type, "command_execution"))
   +failed = String.eq(status, "failed")
   +terminal = Bool.or(failed, Bool.or(String.eq(status, "completed"), String.eq(status, "interrupted")))
   +seconds = U32.div(elapsed_ms, 1000)
   +endpoints = U32.sub(completed, started)
-  +ordered = Bool.and(U32.is_gt(started, 0), Bool.and(U32.is_ge(completed, started), U32.is_ge(observed, completed)))
+  +ordered = Bool.and(closed_clock(started, completed), U32.is_ge(observed, completed))
   +consistent = Bool.and(U32.is_ge(endpoints, seconds), U32.is_le(endpoints, U32.inc(seconds)))
   +valid = Bool.and(source, Bool.and(terminal, Bool.and(ordered, consistent)))
   +bound = Bool.and(U32.is_gt(limit, 0), U32.is_le(limit, 86400))
@@ -288,7 +293,7 @@ def observe_peer(state: Replay, thread: String, +id: String, +clock: String, coh
       +past = found(~List<&2, Peer>, Map.get(List<&2, Peer>, [], cohorts, key))
       +seconds = U32.sub(end, start)
       +valid = Bool.and(eligible, Bool.and(Bool.not(includes(seen, event)),
-        Bool.and(U32.is_gt(start, 0), U32.is_ge(end, start))))
+        closed_clock(start, end)))
       Bool.pick(Replay, valid,
         Replay{Map.set(&2, Bool, seen, event, True{}), files, reads, costs, attempts,
           Map.set(&2, List<&2, Peer>, cohorts, key, keep_peer(past, revision, end, seconds)), status_reads,
@@ -317,7 +322,7 @@ def observe_failure_with_duration(state: Replay, +thread: String, +id: String, +
 def observe_failure(state: Replay, thread: String, id: String, label: String, failed: Bool) -> Replay:
   observe_failure_with_duration(state, thread, id, label, failed, 0)
 
-def command_refusal(result: String & String & U32) -> String:
+def refusal_label(result: String & String & U32) -> String:
   match result:
     case ("failed", "foreground-shell-wrapper", 4294967295): "t3-terminal-backgrounding-refused"
     case ("failed", "foreground-ampersand", 4294967295): "t3-terminal-backgrounding-refused"
@@ -328,12 +333,16 @@ def command_refusal(result: String & String & U32) -> String:
     case ("failed", "nomac-queue-busy", 2): "native-mac-queue-lock-busy"
     case ("failed", "nomac-queue-busy", 75): "native-mac-queue-lock-busy"
     case ("failed", "github-project-read-scope", 1): "github-project-read-scope-refused"
+    case ("failed", "gitlab-unknown-option", 1): "gitlab-cli-option-refused"
+    case ("failed", "tool-t3-unknown-name", 4294967295): "t3-tool-name-unresolved"
+    case ("failed", "tool-t3-delegate-response-invalid", 4294967295): "t3-delegation-response-invalid"
     case _: ""
 
 def observe_t3_command_refusal(state: Replay, +thread: String, id: String, source_thread: String, visibility: String,
-  item_type: String, status: String, receipt: String, code: U32) -> Replay:
-  +local = Bool.and(String.eq(thread, source_thread), Bool.and(String.eq(visibility, "local"), String.eq(item_type, "command_execution")))
-  observe_failure(state, thread, id, command_refusal((status, receipt, code)), local)
+  item_type: String, status: String, +receipt: String, code: U32) -> Replay:
+  +expected = Bool.pick(String, String.starts_with(receipt, "tool-"), "dynamic_tool", "command_execution")
+  +local = Bool.and(local_source(thread, source_thread, visibility), String.eq(item_type, expected))
+  observe_failure(state, thread, id, refusal_label((status, receipt, code)), local)
 
 def observe_staged_source_budget(state: Replay, thread: String, id: String, operation: String, phase: String,
   unit: String, path: String, actual: U32, +allowance: U32, failed: Bool) -> Replay:
@@ -448,7 +457,7 @@ def observe_worktree_prepare_failure(state: Replay, thread: String, id: String, 
   +expected = String.append("Could not recreate the worktree for branch '", String.append(branch,
     String.append("' at ", String.append(path, "."))))
   +before_provider = Bool.and(String.eq(run_status, "failed"), Bool.not(provider_started))
-  +known = Bool.and(U32.is_gt(requested, 0), U32.is_ge(failed_at, requested))
+  +known = closed_clock(requested, failed_at)
   observe_failure_with_duration(state, thread, id, "t3-worktree-recreation-failed-before-provider",
     Bool.and(before_provider, Bool.and(known, String.eq(line, expected))), U32.sub(failed_at, requested))
 
@@ -459,7 +468,7 @@ def reengagement_label(+acknowledgement: String) -> String:
 
 def observe_turn_reengagement(state: Replay, +thread: String, id: String, source_thread: String, visibility: String,
   prior_status: String, +prior: U32, next: U32, +closed: U32, +requested: U32, acknowledgement: String) -> Replay:
-  +owned = Bool.and(String.eq(thread, source_thread), String.eq(visibility, "local"))
+  +owned = local_source(thread, source_thread, visibility)
   +completed = Bool.and(String.eq(prior_status, "completed"), Bool.and(U32.is_gt(prior, 0), U32.is_eq(U32.inc(prior), next)))
   +ordered = Bool.and(U32.is_gt(closed, 0), U32.is_gt(requested, closed))
   observe_failure_with_duration(state, thread, id, reengagement_label(acknowledgement),
@@ -467,9 +476,9 @@ def observe_turn_reengagement(state: Replay, +thread: String, id: String, source
 
 def observe_ingress_interruption(state: Replay, +thread: String, id: String, source_thread: String, visibility: String,
   +input_turn: U32, receipt_turn: U32, +submitted: U32, reported: U32, receipt: String) -> Replay:
-  +owned = Bool.and(String.eq(thread, source_thread), String.eq(visibility, "local"))
+  +owned = local_source(thread, source_thread, visibility)
   +same_turn = Bool.and(U32.is_gt(input_turn, 0), U32.is_eq(input_turn, receipt_turn))
-  +ordered = Bool.and(U32.is_gt(submitted, 0), U32.is_ge(reported, submitted))
+  +ordered = closed_clock(submitted, reported)
   +rejected = String.eq(receipt, "interrupted-before-processing")
   observe_failure(state, thread, id, "t3-inbound-message-interrupted",
     Bool.and(Bool.and(owned, same_turn), Bool.and(ordered, rejected)))
@@ -561,7 +570,7 @@ def observe_same_declared_input_rebuild(state: Replay, thread: String, id: Strin
   +events = Bool.and(String.eq(prior_event, "pull_request"), String.eq(landed_event, "push"))
   +verified = Bool.and(String.eq(prior_result, "success"), String.eq(landed_result, "success"))
   +fallback = String.eq(decision, "no qualifying prior artifact")
-  +ordered = Bool.and(U32.is_gt(prior_ended, 0), Bool.and(U32.is_ge(start, prior_ended), U32.is_gt(end, start)))
+  +ordered = Bool.and(closed_clock(prior_ended, start), U32.is_gt(end, start))
   observe_failure_with_duration(state, thread, id, "ci-main-rebuild-same-declared-inputs",
     Bool.and(same_inputs, Bool.and(events, Bool.and(verified, Bool.and(fallback, ordered)))), U32.sub(end, start))
 
@@ -634,7 +643,7 @@ def pr_notice_reason(pr: U32, +message: String) -> String:
 
 def observe_pr_notice(state: Replay, +thread: String, id: String, source_thread: String, visibility: String,
   status: String, truncated: Bool, +pr: U32, message: String) -> Replay:
-  +local = Bool.and(String.eq(source_thread, thread), String.eq(visibility, "local"))
+  +local = local_source(thread, source_thread, visibility)
   +complete = Bool.and(String.eq(status, "completed"), Bool.not(truncated))
   +reason = pr_notice_reason(pr, message)
   +conflict = Bool.or(String.eq(reason, "merge-conflict"), String.eq(reason, "checks-passed-merge-conflict"))
@@ -724,7 +733,7 @@ def observe_pr_watch_wake(state: Replay, thread: String, id: String, watch_id: S
   +registered: U32, +parked: U32, +notified: U32, +prior: U32, next: U32, notice_stamp: String,
   requested_stamp: String) -> Replay:
   +reason = pr_notice_reason(pr, message)
-  +ordered = Bool.and(U32.is_gt(registered, 0), Bool.and(U32.is_ge(parked, registered), U32.is_ge(notified, parked)))
+  +ordered = Bool.and(closed_clock(registered, parked), U32.is_ge(notified, parked))
   +wake = Bool.and(U32.is_gt(prior, 0), Bool.and(U32.is_eq(next, U32.inc(prior)), String.eq(notice_stamp, requested_stamp)))
   +valid = Bool.and(U32.is_gt(pr, 0), Bool.and(Bool.not(String.is_empty(reason)), Bool.and(ordered, wake)))
   record_pr_watch_wake(state, thread, id, watch_id, reason, U32.sub(notified, parked), valid)
@@ -781,7 +790,7 @@ def observe_t3_worktree_missing(state: Replay, thread: String, id: String, expec
 def observe_provider_input_rejection(state: Replay, +thread: String, id: String, source_thread: String,
   visibility: String, item_type: String, item_status: String, truncated: Bool, status: U32,
   error_type: String, parameter: String, code: String, message: String) -> Replay:
-  +original = Bool.and(String.eq(thread, source_thread), Bool.and(String.eq(visibility, "local"), Bool.not(truncated)))
+  +original = Bool.and(local_source(thread, source_thread, visibility), Bool.not(truncated))
   +result = Bool.and(String.eq(item_type, "error"), Bool.and(String.eq(item_status, "failed"), U32.is_eq(status, 400)))
   +shape = Bool.and(String.eq(error_type, "invalid_request_error"),
     Bool.and(String.eq(parameter, "input"), String.eq(code, "unsupported_parameter")))
@@ -805,8 +814,8 @@ def record_provider_lifecycle(state: Replay, +thread: String, +id: String, label
 def observe_provider_lifecycle(state: Replay, +thread: String, id: String, source_thread: String,
   visibility: String, item_type: String, +status: String, +title: String, +category: String, +code: String,
   +retryable: Bool, +attempt: U32, +limit: U32, +started: U32, +completed: U32) -> Replay:
-  +owned = Bool.and(String.eq(thread, source_thread), Bool.and(String.eq(visibility, "local"), String.eq(item_type, "error")))
-  +clock = Bool.and(U32.is_gt(started, 0), U32.is_ge(completed, started))
+  +owned = Bool.and(local_source(thread, source_thread, visibility), String.eq(item_type, "error"))
+  +clock = closed_clock(started, completed)
   +stream = Bool.and(String.eq(category, "transport_error"), String.eq(code, "responseStreamDisconnected"))
   +overloaded = Bool.and(String.eq(category, "provider_error"), String.eq(code, "serverOverloaded"))
   +within_limit = Bool.or(U32.is_eq(limit, 0), U32.is_ge(limit, attempt))
@@ -824,7 +833,7 @@ def observe_provider_lifecycle(state: Replay, +thread: String, id: String, sourc
 
 def observe_provider_no_reply(state: Replay, +thread: String, id: String, source_thread: String,
   visibility: String, item_type: String, status: String, author: String, origin: String, receipt: String) -> Replay:
-  +original = Bool.and(String.eq(thread, source_thread), String.eq(visibility, "local"))
+  +original = local_source(thread, source_thread, visibility)
   +message = Bool.and(String.eq(item_type, "assistant_message"), String.eq(status, "completed"))
   +provider = Bool.and(String.eq(author, "agent"), String.eq(origin, "provider"))
   +reported = String.eq(receipt, "no-reply-after-retries")
@@ -879,8 +888,7 @@ def observe_local_admission_timeout(state: Replay, thread: String, id: String, e
   +diagnostic = String.trim(line)
   +boundary = Bool.or(String.eq(diagnostic, "t3-build: timed out waiting for admission"),
     String.eq(diagnostic, "t3-build: timed out waiting for worker slots"))
-  +timeout = Bool.and(U32.is_eq(exit_code, 124), boundary)
-  observe_failure(state, thread, id, "local-build-admission-timeout", timeout)
+  observe_failure(state, thread, id, "local-build-admission-timeout", Bool.and(U32.is_eq(exit_code, 124), boundary))
 
 def observe_socket_preflight(state: Replay, thread: String, id: String, +required: U32, +limit: U32,
   line: String, origin: String) -> Replay:
@@ -975,7 +983,7 @@ def observe_hosted_selector_base(state: Replay, thread: String, id: String, even
 
 def observe_local_exec_launch(state: Replay, +thread: String, id: String, source_thread: String,
   visibility: String, item_type: String, status: String, truncated: Bool, line: String) -> Replay:
-  +original = Bool.and(String.eq(thread, source_thread), Bool.and(String.eq(visibility, "local"), Bool.not(truncated)))
+  +original = Bool.and(local_source(thread, source_thread, visibility), Bool.not(truncated))
   +failed = Bool.and(String.eq(item_type, "command_execution"), String.eq(status, "failed"))
   +launcher = String.eq(line, "Failed to create unified exec process: No such file or directory (os error 2)")
   observe_failure(state, thread, id, "local-exec-launch-enoent", Bool.and(original, Bool.and(failed, launcher)))
@@ -1184,7 +1192,7 @@ def observe_connect_deployment(+state: Replay, thread: String, +id: String, conc
   +failed = Bool.and(String.eq(conclusion, "failure"), U32.is_eq(exit_code, 1))
   +label = connect_deployment_label(phase, line, origin, previous, compared)
   +valid = Bool.and(failed, Bool.and(String.eq(revision, receipt_revision), Bool.not(String.is_empty(label))))
-  +closed = Bool.and(U32.is_gt(start, 0), U32.is_ge(end, start))
+  +closed = closed_clock(start, end)
   +seconds = Bool.pick(U32, closed, U32.sub(end, start), 0)
   Bool.pick(Replay, valid,
     observe_failure_with_duration(observe_timing(state, id, "ci-connect-delivery-owner-step", phase, start, end),
