@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { buildPolicies, loadPolicy } from "../../tooling/bend.ts";
-import type { ActionAttempt } from "../storage/actions.ts";
+import { openHistory, type ActionAttempt, type HistoryFact } from "../storage/actions.ts";
 import { admissionPolicy, buildAdmissionPolicy, loadEvidence, type AdmissionPolicy, type EvidenceBatch } from "../storage/load.ts";
 import type { RolloutEvidence, ThreadEvidence } from "../storage/sources.ts";
 import { deliveryPolicy, deliveryReport, type DeliveryPolicy, type PullRequest, type ReleaseEvidence } from "./delivery.ts";
@@ -158,6 +158,45 @@ test("equal revisions replay and rejected revisions leave their stored evidence 
       db.close();
     }
   } finally {
+    rmSync(job, { recursive: true, force: true });
+  }
+});
+
+test("historical page evidence and its cursor commit together", () => {
+  const parent = process.env.BARNACLES_TEST_DIRECTORY;
+  assert.ok(parent);
+  const job = mkdtempSync(join(parent, "history-commit-"));
+  const path = join(job, "evidence.sqlite");
+  const target = "thread";
+  const repository = "synthetic/example";
+  const first = openHistory(path, "t3-activity", repository, [target]);
+  const second = openHistory(path, "t3-activity", repository, [target]);
+  const fact = (id: string, position: number): HistoryFact => ({
+    $: "Fact", id, position, kind: "dynamic_tool", status: "waiting", seconds: 1760000000, millis: 123,
+  });
+  const evidence = (...facts: HistoryFact[]) => ({ environment: "fixture", thread: target, facts });
+  try {
+    const starting = first.read(target);
+    const page = { ...starting.progress, position: 1, total: 3, revision: "1", status: "partial" };
+    assert.equal(first.commit(target, starting.generation, page, evidence(fact("one", 1))), true);
+    assert.equal(second.commit(target, starting.generation, page, evidence(fact("stale", 1))), false);
+    const saved = second.read(target);
+    const complete = { ...page, position: 3, status: "complete" };
+    assert.throws(() => second.commit(target, saved.generation, complete, evidence(fact("two", 2), fact("one", 3))),
+      /UNIQUE constraint failed/);
+    assert.deepEqual(first.read(target), saved);
+    assert.equal(first.commit(target, saved.generation, complete, evidence(fact("two", 2), fact("three", 3))), true);
+    const db = new DatabaseSync(path, { readOnly: true });
+    try {
+      const rows = db.prepare("SELECT position, item, status, updated_at_ms FROM history_t3_activity ORDER BY position").all();
+      assert.deepEqual(rows.map(Object.values), ["one", "two", "three"].map((id, position) =>
+        [position, id, "waiting", 1760000000123]));
+    } finally {
+      db.close();
+    }
+  } finally {
+    second.close();
+    first.close();
     rmSync(job, { recursive: true, force: true });
   }
 });

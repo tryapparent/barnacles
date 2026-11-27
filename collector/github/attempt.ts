@@ -5,7 +5,7 @@ import { createAppAuth } from "@octokit/auth-app";
 import { Octokit } from "@octokit/core";
 
 import type { ActionAttempt, AttemptIdentity, List } from "../../evidence/index.ts";
-import { bendList } from "../wire.ts";
+import { bendList, boundedResponse, SourceReadError } from "../wire.ts";
 
 type Inventory = { $: "More" | "Complete" | "Invalid" | "Duplicate" | "Partial" };
 type Json = Record<string, unknown>;
@@ -85,7 +85,7 @@ export function readGitHub(path: string): unknown {
 
 export type GitHubReader = (path: string) => unknown;
 
-export function githubReader(repository: string, env = process.env, send = fetch): GitHubReader {
+export function githubReader(repository: string, env = process.env, send = fetch, budget = { requests: 300, milliseconds: 300_000 }): GitHubReader {
   const mode = env.PLOW_GITHUB_AUTH;
   if (!mode) return readGitHub;
   if (mode !== "app" && mode !== "token" && mode !== "public") throw Error("Invalid GitHub authentication mode");
@@ -99,8 +99,8 @@ export function githubReader(repository: string, env = process.env, send = fetch
     }
   }
 
-  const deadline = performance.now() + 300_000;
-  let remaining = 300;
+  const deadline = performance.now() + budget.milliseconds;
+  let remaining = budget.requests;
   let limited = false;
   const octokit = new Octokit({
     auth: mode === "token" ? credential : undefined,
@@ -108,21 +108,12 @@ export function githubReader(repository: string, env = process.env, send = fetch
     request: {
       fetch: async (input, init) => {
         const timeLeft = Math.floor(deadline - performance.now());
-        if (remaining-- <= 0 || limited || timeLeft <= 0) throw Error("GitHub request budget exhausted");
+        if (limited || remaining-- <= 0 || timeLeft <= 0) throw new SourceReadError(0, limited, false, true);
         const response = await send(input,
           { ...init, redirect: "error", signal: AbortSignal.timeout(Math.min(timeLeft, 30_000)) });
         limited = response.headers.get("x-ratelimit-remaining") === "0" || response.status === 429 ||
           (response.status === 403 && response.headers.has("retry-after"));
-        if (!response.body) return response;
-        let bytes = 0;
-        const bounded = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
-          transform(chunk, stream) {
-            bytes += chunk.byteLength;
-            if (bytes > 16 * 1024 * 1024) stream.error(Error("GitHub response exceeded the size limit"));
-            else stream.enqueue(chunk);
-          },
-        }));
-        return new Response(bounded, { status: response.status, headers: response.headers });
+        return boundedResponse(response, 16 * 1024 * 1024);
       },
     },
   });
@@ -141,7 +132,8 @@ export function githubReader(repository: string, env = process.env, send = fetch
     if (url.origin !== origin || !url.pathname.startsWith(`/repos/${repository}/`)) {
       throw Error("GitHub request outside the configured repository");
     }
-    if (limited || remaining <= 0 || performance.now() >= deadline) throw Error("GitHub request budget exhausted or API rate limited");
+    if (limited || remaining <= 0 || performance.now() >= deadline) throw new SourceReadError(0, limited, false, true);
+    let readingAttempt = false;
     try {
       if (auth && !verified) {
         const { token } = await auth({ type: "app" });
@@ -155,13 +147,16 @@ export function githubReader(repository: string, env = process.env, send = fetch
         type: "installation", repositoryNames: [repository.split("/")[1]],
         permissions: { actions: "read", contents: "read", pull_requests: "read" },
       });
+      readingAttempt = true;
       const { data } = await request(`GET ${url.pathname}${url.search}`,
         installation ? { headers: { authorization: `token ${installation.token}` } } : {});
       return data;
     } catch (error) {
-      const status = (error as { status?: number }).status;
+      if (error instanceof SourceReadError) throw error;
+      const status = (error as { status?: number }).status ?? 0;
       if (status === 403 && /secondary rate limit/i.test((error as Error).message)) limited = true;
-      throw Error(`GitHub read failed${status ? ` (HTTP ${status})` : ""}. Check authentication, read access, and API limits.`);
+      throw new SourceReadError(status === 404 && !readingAttempt ? 403 : status, limited && !readingAttempt ||
+        status === 429 || status === 403 && limited, false, remaining < 0 || performance.now() >= deadline);
     }
   };
 }
