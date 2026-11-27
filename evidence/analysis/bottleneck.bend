@@ -1,4 +1,5 @@
 import Base
+import ./tool-refusals.bend as Tools
 
 type FileTotal is Data:
   FileTotal{path: String, requests: U32, threads: U32, revisits: U32}
@@ -99,35 +100,42 @@ def observe_timing(state: Replay, id: String, +clock: String, operation: String,
         Replay{Map.set(&2, Bool, seen, event, True{}), files, reads,
           add_cost(costs, clock, operation, closed, U32.sub(end, start)), attempts, cohorts, status_reads, findings})
 
-def record_t3_command_envelope(state: Replay, +thread: String, +id: String, operation: String, +seconds: U32,
-  valid: Bool, deadline: Bool) -> Replay:
+def record_t3_envelope(state: Replay, +thread: String, +id: String, +clock: String, operation: String, +seconds: U32,
+  valid: Bool, deadline: Bool, rule: String) -> Replay:
   match state:
     case Replay{+seen, +files, +reads, +costs, +attempts, +cohorts, +status_reads, +findings}:
-      +key = pair("t3-command-envelope", pair(thread, id))
+      +key = pair(clock, pair(thread, id))
       +accept = Bool.and(valid, Bool.not(includes(seen, key)))
       +recorded = Bool.pick(List<&2, Finding>, deadline,
-        Finding{"t3-terminal-tool-deadline", thread, id, "", seconds, 0, 0, 0} <> findings, findings)
+        Finding{rule, thread, id, "", seconds, 0, 0, 0} <> findings, findings)
       Bool.pick(Replay, accept,
         Replay{Map.set(&2, Bool, seen, key, True{}), files, reads,
-          add_cost(costs, "t3-command-envelope", operation, True{}, seconds), attempts, cohorts, status_reads, recorded},
+          add_cost(costs, clock, operation, True{}, seconds), attempts, cohorts, status_reads, recorded},
         Replay{seen, files, reads, costs, attempts, cohorts, status_reads, findings})
 
 def observe_t3_command_envelope(state: Replay, +thread: String, id: String, source_thread: String, visibility: String,
-  item_type: String, +status: String, operation: String, +started: U32, +completed: U32, observed: U32,
-  +elapsed_ms: U32, receipt: String, +limit: U32) -> Replay:
-  +source = Bool.and(local_source(thread, source_thread, visibility), String.eq(item_type, "command_execution"))
+  +item_type: String, +status: String, +operation: String, +started: U32, +completed: U32, observed: U32,
+  +elapsed_ms: U32, +receipt: String, +limit: U32) -> Replay:
+  +local = local_source(thread, source_thread, visibility)
+  +command = String.eq(item_type, "command_execution")
+  +mcp = String.eq(item_type, "dynamic_tool")
+  +known_call = Bool.or(String.eq(operation, "t3-thread-wait"), String.eq(operation, "t3-delegate-task"))
   +failed = String.eq(status, "failed")
   +terminal = Bool.or(failed, Bool.or(String.eq(status, "completed"), String.eq(status, "interrupted")))
   +seconds = U32.div(elapsed_ms, 1000)
   +endpoints = U32.sub(completed, started)
   +ordered = Bool.and(closed_clock(started, completed), U32.is_ge(observed, completed))
   +consistent = Bool.and(U32.is_ge(endpoints, seconds), U32.is_le(endpoints, U32.inc(seconds)))
-  +valid = Bool.and(source, Bool.and(terminal, Bool.and(ordered, consistent)))
   +bound = Bool.and(U32.is_gt(limit, 0), U32.is_le(limit, 86400))
   +expected = U32.mul(limit, 1000)
   +close = Bool.and(U32.is_ge(U32.add(elapsed_ms, 2000), expected), U32.is_le(elapsed_ms, U32.add(expected, 2000)))
-  +deadline = Bool.and(failed, Bool.and(String.eq(receipt, "terminal-tool-deadline"), Bool.and(bound, close)))
-  record_t3_command_envelope(state, thread, id, operation, seconds, valid, deadline)
+  +receipt_ok = String.eq(receipt, Bool.pick(String, mcp, "mcp-tool-deadline", "terminal-tool-deadline"))
+  +deadline = Bool.and(failed, Bool.and(receipt_ok, Bool.and(bound, close)))
+  +source = Bool.and(local, Bool.or(command, Bool.and(mcp, Bool.and(known_call, deadline))))
+  +valid = Bool.and(source, Bool.and(terminal, Bool.and(ordered, consistent)))
+  +clock = Bool.pick(String, mcp, "t3-mcp-tool-envelope", "t3-command-envelope")
+  +rule = Bool.pick(String, mcp, "t3-mcp-tool-deadline", "t3-terminal-tool-deadline")
+  record_t3_envelope(state, thread, id, clock, operation, seconds, valid, deadline, rule)
 
 def observe_local_admission(state: Replay, +thread: String, +id: String, +wait_ms: U32, bound_ms: U32,
   +allocated: U32, capacity: U32) -> Replay:
@@ -322,27 +330,11 @@ def observe_failure_with_duration(state: Replay, +thread: String, +id: String, +
 def observe_failure(state: Replay, thread: String, id: String, label: String, failed: Bool) -> Replay:
   observe_failure_with_duration(state, thread, id, label, failed, 0)
 
-def refusal_label(result: String & String & U32) -> String:
-  match result:
-    case ("failed", "foreground-shell-wrapper", 4294967295): "t3-terminal-backgrounding-refused"
-    case ("failed", "foreground-ampersand", 4294967295): "t3-terminal-backgrounding-refused"
-    case ("failed", "github-view-comment-format", 1): "github-view-comment-format-conflict"
-    case ("failed", "git-fork-resource-unavailable", 255): "git-child-process-spawn-refused"
-    case ("completed", "shell-fork-retry", 0): "local-shell-fork-retry-observed"
-    case ("failed", "ssh-authentication-denied", 255): "ssh-authentication-refused"
-    case ("failed", "nomac-queue-busy", 2): "native-mac-queue-lock-busy"
-    case ("failed", "nomac-queue-busy", 75): "native-mac-queue-lock-busy"
-    case ("failed", "github-project-read-scope", 1): "github-project-read-scope-refused"
-    case ("failed", "gitlab-unknown-option", 1): "gitlab-cli-option-refused"
-    case ("failed", "tool-t3-unknown-name", 4294967295): "t3-tool-name-unresolved"
-    case ("failed", "tool-t3-delegate-response-invalid", 4294967295): "t3-delegation-response-invalid"
-    case _: ""
-
 def observe_t3_command_refusal(state: Replay, +thread: String, id: String, source_thread: String, visibility: String,
   item_type: String, status: String, +receipt: String, code: U32) -> Replay:
   +expected = Bool.pick(String, String.starts_with(receipt, "tool-"), "dynamic_tool", "command_execution")
   +local = Bool.and(local_source(thread, source_thread, visibility), String.eq(item_type, expected))
-  observe_failure(state, thread, id, refusal_label((status, receipt, code)), local)
+  observe_failure(state, thread, id, Tools.refusal_label((status, receipt, code)), local)
 
 def observe_staged_source_budget(state: Replay, thread: String, id: String, operation: String, phase: String,
   unit: String, path: String, actual: U32, +allowance: U32, failed: Bool) -> Replay:
@@ -530,8 +522,7 @@ def observe_pr_repository_recovery(state: Replay, thread: String, id: String, +c
   +closure = Bool.and(String.eq(created_repo, closed_repo), Bool.and(U32.is_eq(created_pr, closed_pr), U32.is_gt(created_pr, 0)))
   +changed = Bool.and(implicit, Bool.and(Bool.not(String.eq(created_repo, repaired_repo)), U32.is_gt(repaired_pr, 0)))
   +elapsed = U32.sub(repaired, created)
-  +ordered = Bool.and(U32.is_gt(created, 0),
-    Bool.and(U32.is_ge(closed, created), Bool.and(U32.is_ge(repaired, closed), U32.is_le(elapsed, 600))))
+  +ordered = Bool.and(closed_clock(created, closed), Bool.and(U32.is_ge(repaired, closed), U32.is_le(elapsed, 600)))
   observe_failure_with_duration(state, thread, id, "github-pr-default-repository-recovered",
     Bool.and(closure, Bool.and(changed, Bool.and(ordered, String.eq(title, repaired_title)))), elapsed)
 
@@ -944,8 +935,7 @@ def observe_failed_step(+state: Replay, thread: String, +id: String, clock: Stri
 
 def observe_workflow_gate(+state: Replay, thread: String, +id: String, +workflow: String, +job: String, +prerequisite: String,
   +attempt_started: U32, +earliest_job: U32, +previous: U32, +gate: U32, started: U32) -> Replay:
-  +original = Bool.and(U32.is_gt(attempt_started, 0), Bool.and(U32.is_ge(earliest_job, attempt_started),
-    U32.is_ge(previous, earliest_job)))
+  +original = Bool.and(closed_clock(attempt_started, earliest_job), U32.is_ge(previous, earliest_job))
   +seconds = U32.sub(gate, previous)
   +ordered = Bool.and(U32.is_ge(gate, previous), Bool.and(U32.is_ge(started, gate), U32.is_ge(seconds, 60)))
   +distinct = Bool.not(String.eq(job, prerequisite))
@@ -1061,8 +1051,8 @@ def observe_apt_job_deadline(+state: Replay, thread: String, +id: String, +step:
   +disk = Bool.and(String.eq(step, "Install disk-image contract dependency (no KVM required)"), String.eq(package, "qemu-utils"))
   +timeout = Bool.and(U32.is_gt(budget, 0), Bool.and(String.eq(job_conclusion, "cancelled"),
     U32.is_ge(U32.sub(job_end, job_start), budget)))
-  +ordered = Bool.and(U32.is_gt(attempt, 0), Bool.and(U32.is_ge(job_start, attempt),
-    Bool.and(U32.is_ge(start, job_start), Bool.and(U32.is_ge(job_end, end), U32.is_gt(end, start)))))
+  +ordered = Bool.and(closed_clock(attempt, job_start),
+    Bool.and(U32.is_ge(start, job_start), Bool.and(U32.is_ge(job_end, end), U32.is_gt(end, start))))
   +cancelled = String.eq(step_conclusion, "cancelled")
   +success = String.eq(step_conclusion, "success")
   +seconds = U32.sub(end, start)
