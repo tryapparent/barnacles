@@ -12,6 +12,13 @@ Build the Plow interface in React with the shared [shadcn controls](dashboard/we
 
 Keep the dependency direction from collector to evidence and from dashboard to evidence views. Keep source clients and credentials out of evidence queries and dashboards. Put commands and focused verification instructions in the owning directory as they become runnable.
 
+## Infrastructure as code
+
+- Define all Plow infrastructure in version-controlled code and configuration. Cover services and containers, systemd units and timers, deployment workflows, runtime configuration schemas, persistent storage, networking, DNS, TLS, access policies, and monitoring. Use the tooling appropriate to each component, including tracked systemd units for host services and Compose for services deployed through Compose.
+- Keep a single version-controlled source of truth for each component. Provision, update, and roll back through the tracked entry points. Host files and provider settings must be reproducible from those definitions and documented environment inputs. Apply authorized external changes from code even when a provider requires a separate apply step.
+- Declare required secret references, environment inputs, and storage locations in code. Inject real secrets and environment-specific private values at deployment time. Keep credentials, private values, and runtime data out of Git.
+- When changing existing infrastructure, bring any manual configuration needed for that change under version control before calling the work complete. For new or changed infrastructure, verify the tracked definition on a clean target or isolated candidate and check that reapplying it converges without duplicate resources or data loss.
+
 ## Plow hosting
 
 - Follow the [Plow deployment guide](dashboard/plow/README.md#deployment) for the Cloudflare Worker at `plow.tryapparent.com/app`. Keep candidate checks on loopback.

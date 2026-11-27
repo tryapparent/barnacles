@@ -7,6 +7,8 @@ import { projectPlowFeed } from "../../evidence/read.ts";
 import { buildPolicies } from "../../tooling/bend.ts";
 
 if (process.argv[2] === "--project-feed") {
+  const installedCompiler = process.env.BARNACLES_BEND_BUNDLE;
+  if (installedCompiler && !process.env.PLOW_BEND_BUNDLE) process.env.PLOW_BEND_BUNDLE = installedCompiler;
   const [database, destination, ...extra] = process.argv.slice(3);
   if (!database || !destination || extra.length) throw Error("Pass the input evidence database and a new feed file.");
   const scratch = await mkdtemp(join(tmpdir(), "apparent-dev-plow-projection-"));
