@@ -82,27 +82,6 @@ export function hideTimelineTooltip() {
   timelineTooltip.close();
 }
 
-export const fieldPalettes = [
-  { name: "Soil", color: "#543b2a", kind: "workflow" },
-  { name: "Crops", color: "#91ad5f", kind: "agent" },
-  { name: "Unobserved", color: "#dfbf89", kind: "unclear" },
-];
-
-export function FieldSettings() {
-  return <details className="field-settings" id="field-settings" hidden
-    onKeyDown={event => {
-      if (event.key !== "Escape" || !event.currentTarget.open) return;
-      event.currentTarget.open = false;
-      event.currentTarget.querySelector("summary")?.focus();
-    }}>
-    <summary>Field colors</summary>
-    <div className="field-settings-controls">
-      {fieldPalettes.map(({ name, color }) => <label key={name}>{name}<input type="color" defaultValue={color} /></label>)}
-      <label>Wind<input type="checkbox" defaultChecked /></label>
-    </div>
-  </details>;
-}
-
 type ChartInput = {
   viewport: HTMLElement;
   ruler: HTMLElement;

@@ -6,7 +6,7 @@ import { generateKeyPair, jwtVerify, SignJWT } from 'jose'
 import { chromium } from 'playwright'
 
 const directory = process.argv[2]
-const { accessVerifier, createDashboardServer, sessionHistoryUrl } = await import(pathToFileURL(resolve(directory, 'worker.mjs')).href)
+const { accessVerifier, createDashboardServer } = await import(pathToFileURL(resolve(directory, 'worker.mjs')).href)
 const audience = 'fixture-audience'
 const demo = [
   {startUtcMs: 1795726800000, work: [[12960, 16920, "Release verification"]], wait: [[0, 12960, "Publish artifacts"]], end: 16920},
@@ -20,15 +20,12 @@ const demo = [
   {startUtcMs: 1795676400000, work: [[0, 5400, "Local testing"]], wait: [[5400, 14760, "CI checks"]], end: 14760},
   {startUtcMs: 1795608000000, work: [[0, 4680, "Code changes"]], wait: [[4680, 14760, "CI checks"]], end: 17280},
 ]
-const fixtureTimes = Array.from({ length: 30 }, (_, i) => ({
-  work: i === 0 ? 10 : i >= 20 ? 40 : 0,
-  workflow: i === 1 ? 10000 : i >= 20 ? 60 : 0,
-}))
-const feed = { observed: 1795730400000, traces: demo.map((trace, index) => ({ ...trace, errors: index ? [] : [600, 601] })),
-  history: { first: 11, threads: fixtureTimes } }
+const traces = demo.map((trace, index) => ({ ...trace, errors: index ? [] : [600, 601] }))
+traces[0].detail = [[13000, 14200, 'Model sampling']]
+traces[0].ci = [[2000, 2100, 'CI watcher observation']]
+const feed = { observed: 1795730400000, traces, overview: { to: 1795744800000, traces } }
 let storedFeed = JSON.stringify(feed)
 let reads = 0
-const history = 'https://preview.tail-fixture.ts.net:19531/sessions'
 const issuer = 'https://fixture.cloudflareaccess.com'
 const { privateKey, publicKey } = await generateKeyPair('RS256')
 const sign = (aud, iss = issuer, exp = '5m') => new SignJWT({})
@@ -40,7 +37,6 @@ const origin = createDashboardServer({
     return storedFeed
   },
   verifyToken: accessVerifier(jwtVerify, publicKey, issuer, audience),
-  history,
   revision: 'a'.repeat(40),
 })
 origin.listen(0, '127.0.0.1')
@@ -67,7 +63,6 @@ try {
   equal(allowed.headers.get('Cache-Control'), 'private, no-store')
   equal(allowed.headers.get('X-Plow-Revision'), 'a'.repeat(40))
   match(await allowed.text(), /1795730400000/)
-  equal(sessionHistoryUrl('https://test.ts.net'), undefined)
   equal(await (await request(token, '/app/', 'HEAD')).text(), '')
   browser = await chromium.launch({ channel: 'chrome' })
   for (const width of [1024, 1120, 1440, 1920]) {
@@ -87,14 +82,16 @@ try {
     const screenshot = async name => {
       if (process.env.PLOW_SCREENSHOTS) await page.screenshot({ path: resolve(directory, `${width}-${name}.png`), fullPage: true, animations: 'disabled' })
     }
-    const link = page.getByRole('link', { name: 'Session history' })
-    await page.keyboard.press('Tab')
-    equal(await link.evaluate(element => element.matches(':focus-visible')), true)
+    equal(await page.getByRole('link', { name: 'Session history' }).count(), 0)
+    equal(await page.getByText('Field colors', { exact: true }).count(), 0)
+    await page.getByText('Last 24 hours', { exact: true }).waitFor()
+    await screenshot('overview')
     const summary = page.locator('#summary-panel')
     const timeline = page.locator('#timeline-panel')
     const minimap = page.locator('#minimap')
-    const range = () => minimap.getAttribute('aria-valuetext')
-    const reset = () => minimap.press('Home')
+    const settle = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    const range = async () => { await settle(); return minimap.getAttribute('aria-valuetext') }
+    const reset = async () => { await minimap.press('Home'); await settle() }
     const initial = await range()
     const workflow = summary.locator('#tiles .workflow')
     const publish = summary.getByRole('button', { name: /Publish artifacts/ })
@@ -119,7 +116,9 @@ try {
     const assertPacked = async count => deepEqual(await rowSlots(), originalSlots.slice(0, count))
     const overview = await geometry()
     const assertStable = async state => deepEqual(await geometry(), overview, `${width}px · ${state}`)
-    match(await page.locator('#summary-total').innerText(), /43h 24m across 10 threads/)
+    const total = () => page.locator('#summary-total').innerText()
+    const initialTotal = await total()
+    match(initialTotal, /across 9 threads/)
     equal(await timeline.getByRole('button', { name: /Zoom in|Zoom out|Fit all/ }).count(), 0)
     const rangeStart = timeline.getByRole('slider', { name: 'Visible range start' })
     const rangeEnd = timeline.getByRole('slider', { name: 'Visible range end' })
@@ -130,6 +129,7 @@ try {
       await page.mouse.down()
       await page.mouse.move(box.x + box.width / 2 + dx, box.y + box.height / 2, { steps: 4 })
       await page.mouse.up()
+      await settle()
     }
     const rightEdge = await rangeEnd.getAttribute('aria-valuetext')
     await dragHandle(rangeStart, 40)
@@ -144,18 +144,12 @@ try {
     await reset()
     await assertStable('resize either edge and reset')
     const trend = page.getByRole('region', { name: 'Agent work share' })
-    const batchData = trend.getByRole('button', { name: 'Batch values' })
-    await batchData.focus()
-    await page.keyboard.press('Enter')
-    equal(await batchData.getAttribute('aria-expanded'), 'true')
-    await assertStable('open batch data')
-    const batchRows = trend.getByRole('row')
-    match(await batchRows.nth(1).innerText(), /50\.0%\s+2 of 10/)
-    match(await batchRows.nth(2).innerText(), /Unknown\s+0 of 10/)
-    await page.keyboard.press('Space')
-    equal(await batchData.getAttribute('aria-expanded'), 'false')
+    const trendLabel = () => trend.getByRole('img').getAttribute('aria-label')
+    const initialTrend = await trendLabel()
+    match(initialTrend, /UTC: [\d.]+%/)
+    equal(await trend.getByRole('button', { name: 'Batch values' }).count(), 0)
     const view = page.locator('#timeline-viewport')
-    const window = () => view.evaluate(el => [+el.dataset.start, +el.dataset.end])
+    const window = async () => { await settle(); return view.evaluate(el => [+el.dataset.start, +el.dataset.end]) }
     const fit = timeline.getByRole('button', { name: /^Fit Thread 1\./ })
     await fit.press('Space')
     deepEqual(await window(), [demo[0].startUtcMs, demo[0].startUtcMs + demo[0].end * 1000])
@@ -164,7 +158,12 @@ try {
     await page.mouse.move(tick.x + tick.width / 2, tick.y + tick.height / 2)
     const tooltip = page.getByRole('tooltip')
     match(await tooltip.innerText(), /2 recorded failures\s+21:10:00 UTC\s+21:10:01 UTC/)
-    await screenshot('failure-tooltip')
+    await timeline.getByRole('button', { name: 'Inspect Thread 1', exact: true }).press('Enter')
+    const detail = page.getByRole('region', { name: 'Thread 1 · Recorded timeline' })
+    match(await detail.innerText(), /Model sampling/)
+    match(await detail.innerText(), /CI watcher observation/)
+    await detail.press('Escape')
+    await settle()
     const fitted = await window()
     await view.press('Control+ArrowUp')
     ok((await window())[1] - (await window())[0] < fitted[1] - fitted[0])
@@ -177,11 +176,15 @@ try {
     notEqual(await range(), initial)
     await reset()
 
+    equal(await total(), initialTotal)
+    equal(await trendLabel(), initialTrend)
+
     await workflow.focus()
     await page.keyboard.press('Enter')
     equal(await summary.getByRole('heading').textContent(), 'Admission wait')
     equal((await titles()).length, 10)
     await assertStable('open operation breakdown')
+    await screenshot('breakdown')
 
     await publish.focus()
     await page.keyboard.press('Space')
@@ -217,6 +220,7 @@ try {
       await page.mouse.down()
       await move(to)
       await page.mouse.up()
+      await settle()
     }
     await brush(.065, .17)
     equal((await titles()).length, 0)
@@ -254,6 +258,7 @@ try {
     match(await inspector.innerText(), /Publish artifacts/)
     equal(await inspector.evaluate(element => element === document.activeElement), true)
     await assertStable('open thread inspector')
+    await screenshot('inspector')
     await page.keyboard.press('Escape')
     equal(await inspect.getAttribute('aria-expanded'), 'false')
     equal(await inspect.evaluate(element => element === document.activeElement), true)
@@ -288,10 +293,6 @@ try {
     storedFeed = JSON.stringify(feed)
     await page.reload()
     await timeline.waitFor()
-    await page.route(history, route => route.fulfill({ contentType: 'text/html', body: '<h1>Plow session history</h1>' }))
-    await link.press('Enter')
-    await page.waitForURL(history)
-    ok(await page.getByRole('heading', { name: 'Plow session history' }).isVisible())
     deepEqual(errors, [])
     await page.close()
   }
