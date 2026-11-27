@@ -130,3 +130,26 @@ export function duration(seconds: number | null, signed = false) {
 }
 
 export const processMillis = (microseconds: number) => policy.process_label(microseconds);
+
+export type HistoryEvent = { $: "HistoryEvent"; index: number; lane: number; start: number;
+  end: { $: "None" } | { $: "Some"; value: number }; label: string; source: string; state: string; relation: string; clipped: boolean };
+export type HistoryEntry = { $: "HistoryEntry"; thread: { $: "HistoryThread"; id: string; sample: number;
+  title: string; source: string; start: number; cutoff: number; rollout_count: number };
+  end: number; count: number; signals: number };
+export type HistoryLane = { index: number; name: string; events: HistoryEvent[] };
+export type HistoryTrace = { entry: HistoryEntry; lanes: HistoryLane[];
+  signals: { rule: string; id: string; seconds: number; median: number; peers: number; event: HistoryEvent["end"] }[] };
+
+type SessionPolicy = {
+  session_matches(entry: HistoryEntry, query: string): boolean;
+  order_events(events: ChangeList<HistoryEvent>): ChangeList<HistoryEvent>;
+  session_events(events: ChangeList<HistoryEvent>, from: number, to: number, query: string, offset: number):
+    { total: number; rows: ChangeList<HistoryEvent> };
+  trace_elapsed(ms: number): string;
+};
+
+const sessionModules = import.meta.glob<SessionPolicy>("../../evidence/analysis/session-history.bend", { eager: true, import: "default" });
+export const sessionPolicy = sessionModules["../../evidence/analysis/session-history.bend"];
+export function sessionEventList(events: HistoryEvent[]) {
+  return events.reduceRight<ChangeList<HistoryEvent>>((tail, head) => ({ $: "Con", head, tail }), { $: "Nil" });
+}

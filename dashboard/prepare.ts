@@ -2,7 +2,7 @@ import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, 
 import { once } from "node:events";
 import { createServer, type ServerResponse } from "node:http";
 import { dirname, extname, join, resolve } from "node:path";
-import { openShippingReview, readPollMinutes, savePollMinutes, snapshotFormatVersion, writeSnapshot } from "../evidence/read.ts";
+import { openShippingReview, readPollMinutes, savePollMinutes, snapshotFormatVersion, writeSnapshot, readSessionStudy, writeSessionStudy } from "../evidence/read.ts";
 import { dashboards } from "./panels.ts";
 
 function validateSnapshot(directory: string) {
@@ -149,7 +149,7 @@ function pollingSettings(file: string, url: URL, method: string | undefined,
 }
 
 function serveWeb(root: string, path: string, response: ServerResponse) {
-  const page = path === "/" || path === "/changed-code";
+  const page = path === "/" || path === "/changed-code" || path === "/sessions";
   if (!page && !/^\/assets\/[a-zA-Z0-9_-]+[.][a-z0-9]+$/.test(path)) return false;
   const file = page ? "index.html" : path.slice(1);
   const type = webTypes[extname(file)];
@@ -210,11 +210,19 @@ async function serve(args: string[]) {
           endpoints: {
             shipping: { path: "/api/v1/shipping", parameters: ["from", "to", "clock", "operation", "limit", "offset"] },
             changedCode: { path: "/api/v1/changed-code" },
+            sessionHistory: { path: "/api/v1/sessions", parameters: ["session"] },
             processTimings: { path: "/api/v1/process-timings" },
             pullRequest: { path: "/api/v1/pull-requests/{number}", parameters: ["asOf"] },
           },
           timeFormat: "UTC ISO 8601 (YYYY-MM-DD or timestamp ending in Z)",
         });
+      }
+      if (url.pathname === "/api/v1/sessions") {
+        const session = queryParams(url.searchParams, ["session"]).get("session");
+        if (session !== undefined && !/^[a-f0-9]{64}$/.test(session)) throw new InvalidRequest("Use a session ID from /api/v1/sessions.");
+        const result = readSessionStudy(resolve(directory), session);
+        if (session && !result.trace) return error(response, 404, "session_not_observed", "This session is missing from the loaded study.");
+        return json(response, 200, result);
       }
       if (url.pathname === "/api/v1/process-timings") {
         queryParams(url.searchParams, []);
@@ -257,7 +265,17 @@ async function serve(args: string[]) {
 }
 
 const args = process.argv.slice(2);
-const action = args[0] === "--serve" ? serve(args.slice(1)) : prepare(args);
+async function importStudy([directory, capture, replay, ...extra]: string[]) {
+  if (!directory || !capture || extra.length) {
+    throw Error("Usage: node dashboard/prepare.ts --session-study SNAPSHOT_DIRECTORY WATERFALL_JSON [MATCHING_REPLAY_JSON]");
+  }
+  if (!existsSync(join(directory, "review-policy.mjs"))) throw Error("Prepare a Harbor snapshot before loading a study.");
+  await writeSessionStudy(resolve(directory), capture, replay);
+  console.log("Prepared private session history");
+}
+
+const action = args[0] === "--serve" ? serve(args.slice(1))
+  : args[0] === "--session-study" ? importStudy(args.slice(1)) : prepare(args);
 action.catch((error: Error) => {
   console.error(error.message);
   process.exitCode = 1;

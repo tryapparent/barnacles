@@ -223,3 +223,78 @@ has no verified lineage from that call to a PR. It shows captured local
 commands independently of the selected PR or shipping date filter. See
 [local process timing](../evidence/README.md#local-process-timing) for
 provenance and coverage.
+
+## Session history
+
+Open **Session history** from Shipping review or at `/sessions`.
+The source is a frozen, privately collected thread study. Search thread titles,
+select a thread, and inspect T3, Codex tool, observed process, CI, and Git
+records on the same elapsed-time axis. Clock labels filter the record list.
+Select a record for its UTC timestamp, provenance, and zoom control. The zoomed view
+shows the selected window on a full-trace ruler. A slash
+marks a known start with an unknown end. Intervals can overlap. A mentioned
+run or PR is shown with that relationship in its record details.
+
+The Plow treatment uses neutral off-white for the page, Wet Earth and Cream
+for the plot, Meadow for observed intervals, and Toasted Straw for admission
+and queue intervals. Lane labels and mark shapes identify the underlying
+evidence. The dashboard bundles Young Serif and Geist from the [Plow brand
+assets](../public/brand.md).
+
+### Load a private study
+
+Load the waterfall projection from the bottleneck study into an existing
+private Harbor snapshot. Use the original exported JSON payload, without
+the surrounding HTML and JavaScript. The original locally retained
+`waterfalls.html` stores it in its single `const data=…;` line. Copy the JSON
+without evaluating the HTML or script. An optional `MATCHING_REPLAY_JSON`
+is the original sample's JSON output from the
+[bottleneck replay](../collector/README.md#replay-bottleneck-evidence).
+
+```sh
+node dashboard/prepare.ts --session-study "$job/grafana" "$job/waterfall.json" "$job/replay.json"
+```
+
+The loader accepts the frozen capture cutoff and its `threads` array. Each
+thread supplies `i` (the original sample number), `link`, `title`, `start`
+(UTC epoch milliseconds), `cutoff` (milliseconds from creation to the
+capture cutoff), `rollouts`, and `events`. Each event tuple is
+`[lane, start, end, label, source, state, relationship, clipped]`. Times
+are millisecond offsets from thread creation, and null ends stay unknown.
+The lane order is T3 admission, T3 active, T3 activity, Codex tool, observed
+local process, kernel process, CI queue, CI execution, CI step, Git reflog,
+Git commit, pull request, PR review.
+
+The optional replay shows CI queue and execution signals when the
+`sample-N` thread key, run/job IDs, and clock all match a retained interval.
+Select **Show in trace** to inspect the corresponding record. Peer counts
+and medians come from the replay. Signals describe observed timing and
+carry the replay's coverage limits. The original study's raw transcripts,
+tool arguments, and tool outputs are outside the projection.
+
+The loader publishes a private `session-study.sqlite` alongside the Shipping
+review snapshot. It replaces the previous study atomically after successful
+projection, and the shipping poller can refresh its database independently.
+The history has its own cutoff and retains incomplete lanes. Keep the export,
+snapshot, and title-bearing API responses private.
+
+`GET /api/v1/sessions` returns the study cutoff, replay availability, and
+thread summaries newest first. Supply `?session=ID` using a summary's ID to
+read its lanes, interval records, and bound signals. The detail route returns
+404 if the session is missing from the loaded study. Without a study, the
+collection is empty. Both routes share Harbor's access controls and use
+`Cache-Control: no-store`.
+
+Run `BARNACLES_TEST_DIRECTORY="$job" npm run verify -- dashboard evidence`
+to test the import and read-only HTTP routes. The synthetic fixture covers
+missing study data, clock ordering, partial endpoints, signal binding,
+authorization, and atomic replacement on import failure.
+
+Grafana Explore's trace minimap, Jaeger's per-span rows, and Langfuse's
+session-to-trace navigation informed the inspection flow. The existing
+[Grafana rollout waterfall](provisioning/README.md#read-the-evidence)
+continues to consume the separate Codex OTLP projection. Harbor keeps
+the original study's clocks, source relationships, and incomplete ends.
+[Grafana Explore](https://grafana.com/docs/grafana/latest/visualizations/explore/trace-integration/),
+[Jaeger trace view](https://www.jaegertracing.io/docs/2.23/features/#trace-view),
+[Langfuse trace structure](https://langfuse.com/docs/observability/best-practices).
