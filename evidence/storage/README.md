@@ -11,3 +11,7 @@ Run `npm run verify -- evidence` to compile both policies and exercise SQLite wi
 ## Live Codex traces
 
 The [Codex OTLP boundary](../../collector/codex/README.md) uses [its own admission policy](codex-otel.bend). It preserves nanosecond timestamps as canonical decimal strings and treats a span as an immutable observation identified by the configured instance, trace ID and span ID. Parent IDs may reference spans not yet observed. Event rows retain the selected event time and optional provider-reported duration. Exact repeats reuse the existing row. A conflict rolls back every write in the request. Rollout facts and live telemetry keep their own provenance.
+
+## Live T3 Code traces
+
+The [T3 OTLP intake](../../collector/t3-otel/README.md) writes a separate SQLite database. The `t3_otel_spans` primary key is the configured source instance, trace ID and span ID. The writer keeps an optional parent span ID even if that span has never been observed. Source clocks are exact decimal Unix nanosecond strings. The first committed observation keeps a writer-side Unix millisecond ingest clock. Identical normalized evidence leaves the existing row and its ingest clock intact, even when sent in a different batch. A conflicting observation rolls back the entire incoming write transaction. An admitted operation or command type records source evidence for that span. It establishes no run, notification, process exit or delivery outcome.

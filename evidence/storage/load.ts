@@ -136,3 +136,70 @@ export function saveCodexOtel(path: string, instance: string, facts: CodexOtelFa
     }
   });
 }
+
+export type T3OtelSpan = {
+  $: "T3Span"; trace_id: string; span_id: string; parent_id: string; operation: string;
+  start_ns: string; end_ns: string; thread_id: string; command_id: string; command_type: string;
+};
+
+export type T3OtelPolicy = {
+  source_service(service: string): boolean;
+  source_instance(expected: string, received: string): boolean;
+  observe_span(trace: string, span: string, parent: string, operation: string, start: string, end: string,
+    thread: string, command: string, commandType: string):
+    { $: "UnrecognizedSpan" | "InvalidSpan" } | { $: "ObservedSpan"; fact: T3OtelSpan };
+  admit_replay(saved: string, received: string): boolean;
+};
+
+export const t3OtelPolicy = new URL("./t3-otel.bend", import.meta.url);
+export class T3OtelConflict extends Error {}
+
+export function openT3Otel(path: string, instance: string, policy: T3OtelPolicy) {
+  closeSync(openSync(path, "a", 0o600));
+  const db = new DatabaseSync(path);
+  db.exec(`
+    PRAGMA busy_timeout = 5000;
+    PRAGMA synchronous = FULL;
+    CREATE TABLE IF NOT EXISTS t3_otel_spans (
+      instance TEXT NOT NULL,
+      trace_id TEXT NOT NULL,
+      span_id TEXT NOT NULL,
+      parent_span_id TEXT,
+      operation TEXT NOT NULL,
+      start_ns TEXT NOT NULL,
+      end_ns TEXT NOT NULL,
+      thread_id TEXT,
+      command_id TEXT,
+      command_type TEXT,
+      ingested_ms INTEGER NOT NULL,
+      PRIMARY KEY (instance, trace_id, span_id)
+    ) STRICT, WITHOUT ROWID;
+  `);
+  const read = db.prepare(`SELECT parent_span_id, operation, start_ns, end_ns, thread_id, command_id, command_type
+    FROM t3_otel_spans WHERE instance=? AND trace_id=? AND span_id=?`);
+  const insert = db.prepare(`INSERT INTO t3_otel_spans (instance, trace_id, span_id, parent_span_id, operation,
+    start_ns, end_ns, thread_id, command_id, command_type, ingested_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  const save = (facts: T3OtelSpan[], ingestedMs: number) => {
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      for (const fact of facts) {
+        const identity = [instance, fact.trace_id, fact.span_id] as const;
+        const values = [fact.parent_id || null, fact.operation, fact.start_ns, fact.end_ns,
+          fact.thread_id || null, fact.command_id || null, fact.command_type || null];
+        const previous = read.get(...identity);
+        if (previous) {
+          const saved = [previous.parent_span_id, previous.operation, previous.start_ns, previous.end_ns,
+            previous.thread_id, previous.command_id, previous.command_type];
+          if (!policy.admit_replay(JSON.stringify(saved), JSON.stringify(values))) throw new T3OtelConflict();
+        } else {
+          insert.run(...identity, ...values, ingestedMs);
+        }
+      }
+      db.exec("COMMIT");
+    } catch (error) {
+      if (db.isTransaction) db.exec("ROLLBACK");
+      throw error;
+    }
+  };
+  return { save, close: () => db.close() };
+}
