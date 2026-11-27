@@ -291,6 +291,10 @@ type ReplayPolicy = {
     line: string, failed: boolean): unknown;
   observe_worktree_prepare_failure(state: unknown, thread: string, id: string, branch: string, path: string,
     line: string, runStatus: string, providerStarted: boolean, requested: number, failedAt: number): unknown;
+  observe_turn_reengagement(state: unknown, thread: string, id: string, sourceThread: string, visibility: string,
+    priorStatus: string, priorOrdinal: number, nextOrdinal: number, closed: number, requested: number, acknowledgement: string): unknown;
+  observe_ingress_interruption(state: unknown, thread: string, id: string, sourceThread: string, visibility: string,
+    inputTurn: number, receiptTurn: number, submitted: number, reported: number, receipt: string): unknown;
   observe_local_build_memory_gate(state: unknown, thread: string, id: string, cause: string,
     available: number, capacity: number, minimum: number): unknown;
   replay_files(state: unknown): List<Record<string, unknown>>;
@@ -485,6 +489,14 @@ async function replayBottlenecks(file: string, scratch: string, patterns: boolea
         state = policy.observe_worktree_prepare_failure(state, token(value.thread), id, factText(value.branch),
           factText(value.path), factText(value.line), token(value.runStatus), bendBool(value.providerStarted),
           clockSecond(value.requested), clockSecond(value.failedAt));
+      } else if (value.kind === "t3-turn-reengagement") {
+        state = policy.observe_turn_reengagement(state, token(value.thread), id, token(value.sourceThread),
+          token(value.visibility), token(value.priorStatus), clockSecond(value.priorOrdinal),
+          clockSecond(value.nextOrdinal), clockSecond(value.closed), clockSecond(value.requested), token(value.acknowledgement));
+      } else if (value.kind === "t3-ingress-interruption") {
+        state = policy.observe_ingress_interruption(state, token(value.thread), id, token(value.sourceThread),
+          token(value.visibility), clockSecond(value.inputTurn), clockSecond(value.receiptTurn), clockSecond(value.submitted),
+          clockSecond(value.reported), token(value.receipt));
       } else if (value.kind === "local-build-memory-gate") {
         state = policy.observe_local_build_memory_gate(state, token(value.thread), id, token(value.cause),
           clockSecond(value.available), clockSecond(value.capacity), clockSecond(value.minimum));
