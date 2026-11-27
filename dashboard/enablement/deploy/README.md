@@ -51,5 +51,7 @@ process. With authorization to restore the existing route, set
 and port, then run `dashboard/run.sh collector-history-ingress` using the
 same collector port and proxy identity as the cutover. The command targets
 only that node's exact tailnet hostname and HTTPS port. It refuses a
-different existing listener or a Funnel mapping. Verify both routes from
-an authorized tailnet client after applying.
+different existing listener or a Funnel mapping. On hosts where Tailscale
+requires elevated access, set `PLOW_COLLECTOR_SERVE_SUDO=1` to apply the
+exact mapping with noninteractive sudo. Verify both routes from an
+authorized tailnet client after applying.

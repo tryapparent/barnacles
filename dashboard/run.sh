@@ -227,17 +227,24 @@ restore_history_ingress() (
       elif .TCP[$port] == null and .Web[$host] == null then "absent"
       else "conflict" end'
   }
+  serve() {
+    if [ "${PLOW_COLLECTOR_SERVE_SUDO:-0}" = 1 ]; then
+      sudo -n tailscale serve "$@"
+    else
+      tailscale serve "$@"
+    fi
+  }
   created=0
   case "$(state)" in
     absent)
-      tailscale serve --bg --https="$port" "http://127.0.0.1:$listener"
+      serve --bg --https="$port" "http://127.0.0.1:$listener"
       created=1
       ;;
     configured) ;;
     *) printf '%s\n' 'Existing Serve configuration conflicts with the private Session history route.' >&2; exit 1 ;;
   esac
   if [ "$(state)" != configured ]; then
-    if [ "$created" = 1 ]; then tailscale serve --https="$port" off; fi
+    if [ "$created" = 1 ]; then serve --https="$port" off; fi
     printf '%s\n' 'The expected private HTTPS mapping could not be verified.' >&2
     exit 1
   fi
