@@ -170,3 +170,55 @@ test("the ordinary refresh reads a persisted stock T3 projection and joins exact
     assert.equal(refresh().recomputed, 0);
   } finally { rmSync(job, { recursive: true, force: true }); }
 });
+
+test("analysis promotion restores each service from its own prior Compose release", () => {
+  const job = mkdtempSync(join(process.env.PLOW_TEST_DIRECTORY!, "analysis-split-release-"));
+  const settings = join(job, "compose.env");
+  const stack = join(job, "compose.yaml");
+  const api = join(job, "previous-api.yaml");
+  const refresh = join(job, "previous-refresh.yaml");
+  const state = join(job, "state.json");
+  const log = join(job, "actions");
+  for (const file of [settings, stack, api, refresh, log]) writeFileSync(file, "");
+  const old = { "analysis-api": api, "analysis-refresh": refresh };
+  writeFileSync(state, JSON.stringify(old));
+  writeFileSync(join(job, "docker"), `#!${process.execPath}
+const fs=require('node:fs'), args=process.argv.slice(4);
+const state=JSON.parse(fs.readFileSync(process.env.STATE,'utf8'));
+if (args[0]==='inspect') {
+  const name=args[1];
+  console.log(JSON.stringify([{Image:'sha256:'+name,Config:{Image:name,
+    Labels:{'com.docker.compose.project.config_files':state[name]}},State:{Health:{Status:'healthy'}}}]));
+} else if (args.includes('config')) {
+  console.log(JSON.stringify({services:{
+    'analysis-api':{ports:[{host_ip:'127.0.0.1'}],healthcheck:{}},
+    'analysis-refresh':{environment:{PLOW_ANALYSIS_T3_HISTORY_DB:'/test.sqlite'},healthcheck:{}},
+  }}));
+} else if (args.includes('ps')) console.log(args.at(-1));
+else {
+  fs.appendFileSync(process.env.ACTIONS,JSON.stringify(args)+'\\n');
+  if (args.includes('up')) {
+    if (!args.includes('--no-build')) process.exit(2);
+    const start=args.indexOf('analysis-refresh');
+    for (const name of args.slice(start<0 ? args.length-1 : start)) state[name]=args[args.indexOf('-f')+1];
+    fs.writeFileSync(process.env.STATE,JSON.stringify(state));
+    if (args.includes('--wait')&&process.env.BREAK_READY==='1') process.exit(1);
+  }
+}
+`, { mode: 0o700 });
+  const prepare = new URL("../../dashboard/prepare.ts", import.meta.url);
+  const deploy = (fail = false) => execFileSync(process.execPath, [prepare.pathname, "--deploy-t3-history", job], {
+    env: { ...process.env, PATH: `${job}:${process.env.PATH}`, STATE: state, ACTIONS: log,
+      PLOW_T3_DEPLOY_ENV: join(job, "absent"), PLOW_ANALYSIS_DEPLOY_ENV: settings, BREAK_READY: fail ? "1" : "" },
+  });
+  try {
+    assert.throws(() => deploy(true));
+    assert.deepEqual(JSON.parse(readFileSync(state, "utf8")), old);
+    assert.match(readFileSync(log, "utf8"), /--wait/);
+    deploy();
+    assert.deepEqual(JSON.parse(readFileSync(state, "utf8")), { "analysis-api": stack, "analysis-refresh": stack });
+    const after = readFileSync(log, "utf8");
+    deploy();
+    assert.equal(readFileSync(log, "utf8"), after);
+  } finally { rmSync(job, { recursive: true, force: true }); }
+});
