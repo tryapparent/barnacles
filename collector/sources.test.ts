@@ -643,6 +643,11 @@ test("bottleneck replay binds verification and recovery to original receipts", (
     repository: emptyRollup.repository, revision: emptyRollup.revision, event: "workflow_dispatch",
     path: ".github/workflows/verification.yml", status: "completed", conclusion: "success", attempt: 2,
     executedJobs: 1, totalJobs: 4, completed: 100 };
+  const mergeHttp = { kind: "github-pr-merge-response", id: "merge-http", thread: "t", repository: "example/repo",
+    pr: 42, status: 502, receipt: "gh-cli-merge-http", followingRepository: "", followingPr: 0, followingState: "",
+    followingMergeCommit: "" };
+  const readAfterError = { ...mergeHttp, id: "read-after-merge-error", followingRepository: mergeHttp.repository,
+    followingPr: mergeHttp.pr, followingState: "OPEN" };
   const facts = [
     worktree, worktree,
     { ...worktree, id: "same-removal", at: 110 },
@@ -753,6 +758,15 @@ test("bottleneck replay binds verification and recovery to original receipts", (
     { ...emptyRollup, id: "unknown-read-start", pr: 16, started: 0, observed: 185 },
     { ...emptyRollup, id: "read-spans-completion", pr: 17, started: 99, observed: 190 },
     { ...emptyRollup, id: "same-second-start", pr: 18, started: 100, observed: 200 },
+    mergeHttp, mergeHttp,
+    { ...mergeHttp, id: "merge-without-target", pr: 0 },
+    { ...mergeHttp, id: "merge-rate-limit", status: 429 },
+    { ...mergeHttp, id: "request-without-merge-response", receipt: "gh-pr-view" },
+    readAfterError,
+    { ...readAfterError, id: "merged-despite-error", followingState: "MERGED", followingMergeCommit: "c".repeat(40) },
+    { ...readAfterError, id: "merge-no-commit", followingState: "MERGED" },
+    { ...readAfterError, id: "merge-wrong-pr", followingPr: 43 },
+    { ...readAfterError, id: "merge-wrong-repo", followingRepository: "other/repo", receipt: "gh-rest-merge-http" },
   ];
   try {
     writeFileSync(file, facts.map(fact => JSON.stringify(fact)).join("\n") + "\n");
@@ -792,6 +806,12 @@ test("bottleneck replay binds verification and recovery to original receipts", (
       ["unknown-read-start", "t3-pr-check-rollup-empty", 0],
       ["read-spans-completion", "t3-pr-check-rollup-empty", 0],
       ["same-second-start", "t3-pr-check-rollup-empty", 0],
+      ["merge-http", "pr-merge-http-server-error", 0],
+      ["read-after-merge-error", "pr-merge-http-error-observed-open", 0],
+      ["merged-despite-error", "pr-merge-http-error-observed-merged", 0],
+      ["merge-no-commit", "pr-merge-http-server-error", 0],
+      ["merge-wrong-pr", "pr-merge-http-server-error", 0],
+      ["merge-wrong-repo", "pr-merge-http-server-error", 0],
     ]);
     const { patterns, costs } = JSON.parse(text);
     assert.deepEqual(costs.find((r: { clock: string }) => r.clock === "native-mac-ticket-readiness"),

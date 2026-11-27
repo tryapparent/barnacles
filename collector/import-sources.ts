@@ -169,6 +169,9 @@ type ReplayPolicy = {
     noticeStamp: string, requestedStamp: string): unknown;
   observe_forge_response(state: unknown, thread: string, id: string, operation: string, status: number,
     failed: boolean, identified: boolean): unknown;
+  observe_pr_merge_response(state: unknown, thread: string, id: string, repository: string, pr: number,
+    status: number, receipt: string, followingRepository: string, followingPr: number, followingState: string,
+    followingMergeCommit: string): unknown;
   observe_actions_rate_limit(state: unknown, thread: string, id: string, operation: string, status: number,
     line: string, failed: boolean): unknown;
   observe_job_rerun(state: unknown, thread: string, id: string, job: string, line: string, failed: boolean): unknown;
@@ -394,6 +397,12 @@ async function replayBottlenecks(file: string, scratch: string, patterns: boolea
       } else if (value.kind === "forge-response") {
         state = policy.observe_forge_response(state, token(value.thread), id, token(value.operation),
           clockSecond(value.status), bendBool(value.failed), bendBool(value.identified));
+      } else if (value.kind === "github-pr-merge-response") {
+        state = policy.observe_pr_merge_response(state, token(value.thread), id, factText(value.repository),
+          clockSecond(value.pr), clockSecond(value.status), token(value.receipt),
+          value.followingRepository === "" ? "" : factText(value.followingRepository), clockSecond(value.followingPr),
+          value.followingState === "" ? "" : token(value.followingState),
+          value.followingMergeCommit === "" ? "" : sha(value.followingMergeCommit));
       } else if (value.kind === "actions-rate-limit") {
         state = policy.observe_actions_rate_limit(state, token(value.thread), id, token(value.operation),
           clockSecond(value.status), factText(value.line), bendBool(value.failed));
