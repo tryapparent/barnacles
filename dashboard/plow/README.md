@@ -48,10 +48,11 @@ PLOW_SCREENSHOTS=1 node dashboard/plow/smoke.mjs "$plow_build_dir"
 
 The smoke check runs the built Worker with a simulated Access session, verifies
 denial with an absent or mismatched audience, and exercises the exact HTML and
-response policy through Chrome at 320, 390, 728, 1120, 1440, and 1920 pixels. It checks the
+response policy through Chrome at 320, 390, 640, 728, 1120, 1440, and 1920 pixels. It checks the
 full-width layout and header artwork. It compares document dimensions, section
-bounds, and thread row positions across disclosure, filtering, zoom, and pan
-states, including empty results and keyboard operation. The operation breakdown,
+bounds, and time controls across disclosure, filtering, zoom, and pan states,
+including empty results and keyboard operation. Matching threads appear consecutively
+inside the fixed timeline viewport. The operation breakdown,
 shared thread inspector, and chart help use space reserved on initial render and
 scroll internally as needed. Screenshots are optional. Open the generated
 `index.html` for a standalone local preview.
@@ -68,6 +69,9 @@ Configure the environment with `PLOW_CLOUDFLARE_ACCOUNT_ID` and
 `PLOW_ACCESS_AUDIENCE` variables and a `PLOW_WORKER_TOKEN` secret with Individual
 Workers Editor access scoped to the existing `plow-private-preview` Worker.
 The deployed module checks the Cloudflare Access context for that audience.
+Set the optional `PLOW_SESSION_HISTORY_URL` environment secret to a verified
+private HTTPS tailnet `/sessions` endpoint. The dashboard shows the link after
+Cloudflare Access authorizes the request. The session view is hosted separately.
 Cloudflare Access policies, host routes, and alternate URL settings stay in
 Cloudflare. The workflow checks that alternate URLs are disabled and signed-out
 requests go to Access before and after activation. The workflow summary ties

@@ -1,12 +1,16 @@
 import { execFileSync } from "node:child_process";
 import { appendFile, readFile } from "node:fs/promises";
 import { setTimeout } from "node:timers/promises";
+import { sessionHistoryUrl } from "./worker.mjs";
 
 const account = process.env.CLOUDFLARE_ACCOUNT_ID;
 const token = process.env.PLOW_WORKER_TOKEN;
 const audience = process.env.PLOW_ACCESS_AUDIENCE;
 const sha = process.env.GITHUB_SHA;
 const workerPath = process.argv[2];
+const configuredHistory = process.env.PLOW_SESSION_HISTORY_URL;
+const history = sessionHistoryUrl(configuredHistory);
+if (configuredHistory && !history) throw new Error("Expected a private HTTPS Plow /sessions URL.");
 if (!account || !/^[a-f0-9]{32}$/.test(account) || !token || !audience ||
     !/^[a-f0-9]{64}$/.test(audience) || !sha || !/^[a-f0-9]{40}$/.test(sha) || !workerPath) {
   throw new Error("Missing Plow deployment configuration.");
@@ -81,7 +85,10 @@ const bundle = new FormData();
 bundle.set("metadata", new Blob([JSON.stringify({
   main_module: "worker.mjs",
   compatibility_date: "2026-11-27",
-  bindings: [{ type: "plain_text", name: "PLOW_ACCESS_AUDIENCE", text: audience }],
+  bindings: [
+    { type: "plain_text", name: "PLOW_ACCESS_AUDIENCE", text: audience },
+    ...(history ? [{ type: "secret_text", name: "PLOW_SESSION_HISTORY_URL", text: history }] : []),
+  ],
   annotations: { "workers/tag": sha, "workers/message": `Plow main ${sha}` },
 })], { type: "application/json" }));
 bundle.set("worker.mjs", new Blob([await readFile(workerPath)], {

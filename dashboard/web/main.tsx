@@ -7,14 +7,17 @@ import { Summary } from "./visual/charts";
 export { renderAgentWorkTrend } from "./visual/agent-work-trend";
 export { renderSummary } from "./visual/charts";
 
-function Dashboard({ field }: { field: string }) {
+function Dashboard({ field, sessionHistory }: { field: string; sessionHistory?: string }) {
   return <>
     <main>
       <header className="activity-header">
         <img src={field} alt="" />
         <div className="activity-meta">
           <p className="wordmark">plow</p>
-          <Badge className="prototype">Sample data</Badge>
+          <div className="activity-links">
+            <Badge className="prototype">Sample data</Badge>
+            {sessionHistory && <a id="session-history-link" href={sessionHistory}>Session history</a>}
+          </div>
         </div>
         <h1>Thread activity</h1>
       </header>
@@ -23,6 +26,14 @@ function Dashboard({ field }: { field: string }) {
         <section id="timeline-panel" aria-labelledby="timeline-heading">
           <div className="timeline-heading-row">
             <div><h2 id="timeline-heading">Timeline</h2><p id="timeline-selection" role="status" /></div>
+          </div>
+          <div className="time-strip">
+            <div className="navigator">
+              <div id="minimap" className="minimap" tabIndex={0} role="slider" aria-label="Position of visible time range"
+                aria-description="Use the left and right arrow keys to pan when zoomed in." aria-valuemin={0} aria-valuemax={100} aria-valuenow={50}>
+                <div className="mini-threads" /><div className="mini-window" /><div className="mini-brush" hidden />
+              </div>
+            </div>
             <div className="controls zoom-tools" role="group" aria-label="Zoom time range">
               <Button type="button" id="zoom-out" aria-label="Zoom out" title="Zoom out">−</Button>
               <Button type="button" id="zoom-in" aria-label="Zoom in" title="Zoom in">+</Button>
@@ -30,19 +41,15 @@ function Dashboard({ field }: { field: string }) {
               <output id="zoom-mode" aria-live="polite" />
             </div>
           </div>
-          <div className="navigator">
-            <div id="minimap" className="minimap" tabIndex={0} role="slider" aria-label="Position of visible time range"
-              aria-description="Use the left and right arrow keys to pan when zoomed in." aria-valuemin={0} aria-valuemax={100} aria-valuenow={50}>
-              <div className="mini-threads" /><div className="mini-window" /><div className="mini-brush" hidden />
-            </div>
+          <div className="time-caption">
+            <p className="utc-window" id="utc-window" aria-live="polite" />
+            <ul className="chart-key" aria-label="Chart key">
+              <li><i className="work-key" />Agent work</li>
+              <li><i className="wait-key" />Workflows or waits</li>
+              <li><i className="unclear-key" />Unclear (blended)</li>
+              <li id="failure-key" hidden><i className="failure-key" />Failure</li>
+            </ul>
           </div>
-          <p className="utc-window" id="utc-window" aria-live="polite" />
-          <ul className="chart-key" aria-label="Chart key">
-            <li><i className="work-key" />Agent work</li>
-            <li><i className="wait-key" />Workflows or waits</li>
-            <li><i className="unclear-key" />Unclear (blended)</li>
-            <li id="failure-key" hidden><i className="failure-key" />Failure</li>
-          </ul>
           <div className="timeline-viewport" id="timeline-viewport" tabIndex={0} role="region" aria-label="Scrollable UTC timelines">
             <div className="timeline-grid" id="timeline-grid">
               <div className="table-head">
@@ -73,8 +80,9 @@ function Dashboard({ field }: { field: string }) {
 export function mountDashboard() {
   const element = document.getElementById("plow-root");
   if (!element?.dataset.field) throw Error("Missing Plow dashboard assets");
-  const field = element.dataset.field;
+  const { field, sessionHistory } = element.dataset;
   element.removeAttribute("data-field");
+  element.removeAttribute("data-session-history");
   const root = createRoot(element);
-  flushSync(() => root.render(<Dashboard field={field} />));
+  flushSync(() => root.render(<Dashboard field={field} sessionHistory={sessionHistory} />));
 }
