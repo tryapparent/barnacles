@@ -216,6 +216,19 @@ type ReplayPolicy = {
     unit: string, path: string, actual: number, allowance: number, failed: boolean): unknown;
   observe_hosted_bun_test_deadline(state: unknown, thread: string, id: string, step: string, conclusion: string,
     diagnostic: string, path: string, test: string, exitCode: number, budgetMs: number, elapsedMs: number): unknown;
+  observe_github_pr_ref_resolution(state: unknown, thread: string, id: string, base: string, head: string,
+    line: string, failed: boolean): unknown;
+  observe_github_workflow_scope(state: unknown, thread: string, id: string, operation: string, workflow: string,
+    diagnostic: string, failed: boolean): unknown;
+  observe_t3_worktree_missing(state: unknown, thread: string, id: string, expected: string, path: string,
+    operation: string, diagnostic: string, failed: boolean): unknown;
+  observe_provider_input_rejection(state: unknown, thread: string, id: string, sourceThread: string,
+    visibility: string, itemType: string, itemStatus: string, truncated: boolean, status: number,
+    errorType: string, parameter: string, code: string, message: string): unknown;
+  observe_hosted_status_write(state: unknown, thread: string, id: string, step: string, conclusion: string,
+    writer: string, method: string, endpoint: string, revision: string, status: number, reason: string, exitCode: number): unknown;
+  observe_hosted_macos_probe(state: unknown, thread: string, id: string, step: string, conclusion: string,
+    fixture: string, command: string, failure: string, exitCode: number): unknown;
   replay_files(state: unknown): List<Record<string, unknown>>;
   replay_costs(state: unknown): List<Record<string, unknown>>;
   replay_findings(state: unknown): List<Record<string, unknown>>;
@@ -346,6 +359,26 @@ async function replayBottlenecks(file: string, scratch: string) {
         state = policy.observe_hosted_bun_test_deadline(state, token(value.thread), id, factText(value.step),
           token(value.conclusion), token(value.diagnostic), factText(value.path), factText(value.test),
           clockSecond(value.exitCode), clockSecond(value.budgetMs), clockSecond(value.elapsedMs));
+      } else if (value.kind === "github-pr-ref-resolution") {
+        state = policy.observe_github_pr_ref_resolution(state, token(value.thread), id, factText(value.base),
+          factText(value.head), factText(value.line), bendBool(value.failed));
+      } else if (value.kind === "github-workflow-scope-refusal") {
+        state = policy.observe_github_workflow_scope(state, token(value.thread), id, token(value.operation),
+          factText(value.workflow), token(value.diagnostic), bendBool(value.failed));
+      } else if (value.kind === "t3-worktree-missing") {
+        state = policy.observe_t3_worktree_missing(state, token(value.thread), id, sha(value.expected), sha(value.path),
+          token(value.operation), token(value.diagnostic), bendBool(value.failed));
+      } else if (value.kind === "provider-input-rejection") {
+        state = policy.observe_provider_input_rejection(state, token(value.thread), id, token(value.sourceThread),
+          token(value.visibility), token(value.itemType), token(value.itemStatus), bendBool(value.truncated),
+          clockSecond(value.status), token(value.errorType), token(value.parameter), token(value.code), factText(value.message));
+      } else if (value.kind === "hosted-status-write-rejected") {
+        state = policy.observe_hosted_status_write(state, token(value.thread), id, factText(value.step),
+          token(value.conclusion), token(value.writer), token(value.method), token(value.endpoint), sha(value.revision),
+          clockSecond(value.status), token(value.reason), clockSecond(value.exitCode));
+      } else if (value.kind === "hosted-macos-automation-probe") {
+        state = policy.observe_hosted_macos_probe(state, token(value.thread), id, factText(value.step),
+          token(value.conclusion), factText(value.fixture), token(value.command), token(value.failure), clockSecond(value.exitCode));
       } else if (value.kind === "hermes-validator-cache-copy") {
         state = policy.observe_hermes_cache_merge(state, token(value.thread), id, factText(value.step),
           token(value.conclusion), clockSecond(value.exitCode), token(value.code), token(value.syscall),

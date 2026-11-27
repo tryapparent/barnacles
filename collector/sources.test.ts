@@ -740,6 +740,24 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
     const bunTimeout = { kind: "hosted-bun-test-deadline", thread: "t", id: "fixture-deadline", step: "Run bun test tests/",
       conclusion: "failure", diagnostic: "done-callback-deadline", path: "tests/workflow.test.ts", test: "Missing tools stay fail-closed",
       exitCode: 1, budgetMs: 5000, elapsedMs: 5159 };
+    const prRefs = { kind: "github-pr-ref-resolution", thread: "t", id: "pr-unresolved-refs", base: "main", head: "t3/example", failed: true,
+      line: "pull request create failed: GraphQL: Head sha can't be blank, Base sha can't be blank, No commits between main and t3/example, Head ref must be a branch (createPullRequest)" };
+    const workflowScope = { kind: "github-workflow-scope-refusal", thread: "t", id: "push-scope", operation: "git-push-https",
+      workflow: ".github/workflows/release.yml", diagnostic: "oauth-workflow-scope", failed: true };
+    const missingWorktree = { kind: "t3-worktree-missing", thread: "t", id: "missing-checkout", expected: "a".repeat(40),
+      path: "a".repeat(40), operation: "ls-worktree", diagnostic: "enoent", failed: true };
+    const providerAudio = { kind: "provider-input-rejection", thread: "t", id: "rejected-audio", sourceThread: "t",
+      visibility: "local", itemType: "error", itemStatus: "failed", truncated: false, status: 400,
+      errorType: "invalid_request_error", parameter: "input", code: "unsupported_parameter", message: "Audio input is not supported for this request." };
+    const reporterWrite = { kind: "hosted-status-write-rejected", thread: "t", id: "reconcile-quota", writer: "verification-status-reporter",
+      step: "Reconcile all PRs using trusted default-branch policy", conclusion: "failure", method: "POST", endpoint: "commit-status",
+      revision: "a".repeat(40), status: 403, reason: "installation-rate-limit", exitCode: 1 };
+    const nativeProbe = { kind: "hosted-macos-automation-probe", thread: "t", id: "system-events-probe",
+      step: "Native Mac Storage and error-reporting controls against the installed Rust GUI", conclusion: "failure",
+      fixture: "capture/desktop/ui/frontend/tests/mac-storage-native.cjs", command: "system-events-ui-elements-enabled",
+      failure: "ERR_TEST_FAILURE", exitCode: 1 };
+    const runRead = { kind: "actions-rate-limit", thread: "t", id: "run-read-quota", operation: "actions-run-read",
+      status: 403, failed: true, line: "failed to get run: HTTP 403: API rate limit exceeded" };
     const facts = [
       admission, admission,
       { ...admission, id: "superseded", annotation: "Canceling since a higher priority waiting request exists" },
@@ -1004,6 +1022,30 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       { ...bunTimeout, id: "early-exit", elapsedMs: 4999 },
       { ...bunTimeout, id: "hosted-cancelled", conclusion: "cancelled" },
       { ...bunTimeout, id: "wrong-test-tool", step: "Run npm test tests/" },
+      prRefs, prRefs,
+      { ...prRefs, id: "mismatched-branch", head: "other" },
+      { ...prRefs, id: "simple-empty-pr", line: "No commits between main and t3/example" },
+      { ...prRefs, id: "recovered-pr-command", failed: false },
+      workflowScope, workflowScope,
+      { ...workflowScope, id: "wrong-transport", operation: "git-push-ssh" },
+      { ...workflowScope, id: "non-workflow", workflow: "docs/release.yaml" },
+      missingWorktree, missingWorktree,
+      { ...missingWorktree, id: "missing-unrelated-file", path: "b".repeat(40) },
+      { ...missingWorktree, id: "missing-script", operation: "exec-script" },
+      providerAudio, providerAudio,
+      { ...providerAudio, id: "copied-provider-message", itemType: "assistant_message" },
+      { ...providerAudio, id: "unresolved-provider-response", truncated: true },
+      { ...providerAudio, id: "other-thread-response", sourceThread: "other" },
+      { ...providerAudio, id: "other-model-input", message: "Image input is not supported for this request." },
+      reporterWrite, reporterWrite,
+      { ...reporterWrite, id: "reporter-read-status", method: "GET" },
+      { ...reporterWrite, id: "reporter-scope", reason: "missing-scope" },
+      { ...reporterWrite, id: "reporter-recovered", conclusion: "success" },
+      nativeProbe, nativeProbe,
+      { ...nativeProbe, id: "mac-assertion", command: "click-storage-control" },
+      { ...nativeProbe, id: "mac-unknown-fixture", fixture: "tests/mac-alternate.cjs" },
+      runRead, runRead,
+      { ...runRead, id: "run-read-other-error", line: "failed to get run: HTTP 403: Permission denied" },
       read, read, { ...read, id: "b", at: 160 }, { ...read, thread: "t2", at: 170 },
       timing, timing, { ...timing, id: "unpaired", end: 0 },
       attempt, { ...attempt, id: "changed", key: "gate:v2", start: 115, end: 120, failed: false, succeeded: true },
@@ -1065,6 +1107,9 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
         "local-push-issue-trailer-refused", "ci-pr-check-observer-exact-head", "ci-selector-compared-older-base",
         "local-exec-launch-enoent", "ci-local-run-observer-deadline", "ci-manual-status-read-repeated",
         "ci-manual-status-read-repeated", "staged-source-token-budget", "ci-bun-test-deadline",
+        "pr-create-graphql-ref-resolution", "git-push-github-workflow-scope-refused", "local-t3-worktree-path-missing",
+        "provider-audio-input-unsupported", "ci-status-reporter-rate-limited", "ci-macos-system-events-probe-failed",
+        "ci-observer-rate-limited",
         "recovered-attempt", "runner"]);
     assert.ok(!first.includes("installed tools"));
     assert.ok(!first.includes("#42:"));
@@ -1095,6 +1140,9 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       ["exec-launch", "", 0, 0], ["run-watch-expired", "", 1802, 0],
       ["manual-third", "manual-second", 0, 0], ["manual-third-after-gap", "manual-follow-up", 0, 0],
       ["budget-refusal", "", 0, 0], ["fixture-deadline", "", 5, 0],
+      ["pr-unresolved-refs", "", 0, 0], ["push-scope", "", 0, 0], ["missing-checkout", "", 0, 0],
+      ["rejected-audio", "", 0, 0], ["reconcile-quota", "", 0, 0], ["system-events-probe", "", 0, 0],
+      ["run-read-quota", "", 0, 0],
       ["recovered", "first", 20, 0], ["tail", "", 250, 10],
     ]);
   } finally {
