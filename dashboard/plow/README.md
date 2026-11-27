@@ -57,6 +57,9 @@ Configure the environment with `PLOW_CLOUDFLARE_ACCOUNT_ID` and
 `PLOW_ACCESS_AUDIENCE` variables and a `PLOW_WORKER_TOKEN` secret with Individual
 Workers Editor access scoped to the existing `plow-private-preview` Worker.
 The deployed module checks the Cloudflare Access context for that audience.
+Set the optional `PLOW_SESSION_HISTORY_URL` environment secret to a verified
+private HTTPS tailnet `/sessions` endpoint. The dashboard shows the link after
+Cloudflare Access authorizes the request. The session view is hosted separately.
 Cloudflare Access policies, host routes, and alternate URL settings stay in
 Cloudflare. The workflow checks that alternate URLs are disabled and signed-out
 requests go to Access before and after activation. The workflow summary ties

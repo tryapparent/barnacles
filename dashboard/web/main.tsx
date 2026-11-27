@@ -5,14 +5,17 @@ import { Summary } from "./visual/charts";
 
 export { renderSummary } from "./visual/charts";
 
-function Dashboard({ field }: { field: string }) {
+function Dashboard({ field, sessionHistory }: { field: string; sessionHistory?: string }) {
   return <>
     <main>
       <header className="activity-header">
         <img src={field} alt="" />
         <div className="activity-meta">
           <p className="wordmark">plow</p>
-          <Badge className="prototype">Sample data</Badge>
+          <div className="activity-links">
+            <Badge className="prototype">Sample data</Badge>
+            {sessionHistory && <a id="session-history-link" href={sessionHistory}>Session history</a>}
+          </div>
         </div>
         <h1>Thread activity</h1>
       </header>
@@ -71,8 +74,9 @@ function Dashboard({ field }: { field: string }) {
 export function mountDashboard() {
   const element = document.getElementById("plow-root");
   if (!element?.dataset.field) throw Error("Missing Plow dashboard assets");
-  const field = element.dataset.field;
+  const { field, sessionHistory } = element.dataset;
   element.removeAttribute("data-field");
+  element.removeAttribute("data-session-history");
   const root = createRoot(element);
-  flushSync(() => root.render(<Dashboard field={field} />));
+  flushSync(() => root.render(<Dashboard field={field} sessionHistory={sessionHistory} />));
 }
