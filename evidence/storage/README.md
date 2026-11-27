@@ -34,10 +34,12 @@ sequence rolls back the page, including its cursor update. Keep a stable
 instance label for the lifetime of one T3 event store and use a new label
 when replacing it with independently sequenced data.
 
-`t3_history_rotation` keeps the last attempted thread for each instance
-in discovery mode. It is independent of the per-thread older-page
-cursor. The scheduler advances after an attempt so a single failed
-thread read cannot stop the remaining inventory.
+`t3_history_backfill` stores the observed time frontier and thread
+revision for each instance and thread in discovery mode. The writer
+updates it in the same transaction as the older-page cursor and command
+rows. Existing cursors remain resumable. Previously saved state without
+a time frontier uses the thread's inventory date until the next page
+supplies item clocks.
 
 ## Live session links
 

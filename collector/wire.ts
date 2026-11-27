@@ -1,8 +1,6 @@
 import { createHash } from "node:crypto";
-import { closeSync, constants, fstatSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import type { KernelCapture, List, Point } from "../evidence/index.ts";
-import { join } from "node:path";
-import { backupAnalysisInput, joinedTargets, publishJoinedAnalysis } from "../evidence/index.ts";
+import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
+import type { KernelCapture, List, Point, T3Command } from "../evidence/index.ts";
 import { buildPolicy, loadPolicy } from "../tooling/bend.ts";
 
 export type ObjectRow = Record<string, unknown>;
@@ -217,7 +215,7 @@ export function stockT3Id(value: unknown) {
   return typeof value === "string" && value.length <= 512 && /^[A-Za-z0-9][A-Za-z0-9:._%-]*$/.test(value) ? value : "";
 }
 
-function requireStockT3Id(value: unknown) {
+export function requireStockT3Id(value: unknown) {
   const id = stockT3Id(value);
   if (!id) throw Error("Invalid T3 history identifier");
   return id;
@@ -299,51 +297,59 @@ export function stockT3HistoryReader(endpoint: string, credential: string) {
       get(new URL("/api/orchestration/shell", origin), bytes, 15000),
       stockT3Rpc(origin, secret, "orchestration.getArchivedShellSnapshot", {}, bytes, 15000),
     ]);
-    const threads = (snapshot: ObjectRow) => array(snapshot.threads, 50_000).map(item => requireStockT3Id(row(item).id));
+    const threads = (snapshot: ObjectRow) => array(snapshot.threads, 50_000).map(input => {
+      const item = row(input);
+      const updated = millis(item.updatedAt) || millis(item.createdAt);
+      return { $: "Target" as const, id: requireStockT3Id(item.id), updated };
+    });
     return [...threads(active), ...threads(archived)];
   } };
 }
 
-export function t3HistoryTargets(env = process.env) {
-  switch (env.PLOW_T3_HISTORY_SCOPE ?? "allowlist") {
-    case "all": return null;
-    case "allowlist": {
-      const ids = [...new Set(array(JSON.parse(boundedFile(env.PLOW_T3_HISTORY_TARGETS_FILE ?? "", 20_000)
-        .toString("utf8")), 32).map(requireStockT3Id))];
-      if (!ids.length) throw Error("Configure at least one T3 history thread");
-      return ids;
-    }
-    default: throw Error("Invalid T3 history scope");
+export type HistoryCodec = {
+  observe(thread: string, kind: string, driver: string, strength: string, item: T3Command):
+    { $: "Invalid" | "Skip" } | { $: "Keep"; command: T3Command };
+  local_row(thread: string, owner: string, visibility: string): boolean;
+  page_valid(previous: string, next: string, more: boolean): boolean;
+  earliest(saved: number, at: number): number;
+};
+
+export function historyPage(policy: HistoryCodec, thread: string, page: ReturnType<typeof row>, cursor: string) {
+  const next = cursor ? page.nextCursor : page.historyCursor;
+  const sequence = page.snapshotSequence;
+  if (!(next === null || typeof next === "string" && next.length <= 4096) ||
+      typeof page.hasMoreHistory !== "boolean" || !policy.page_valid(cursor, next ?? "", page.hasMoreHistory) ||
+      typeof sequence !== "number" || !Number.isInteger(sequence) || sequence < 0 || sequence > 0xffffffff) {
+    throw Error("Invalid stock T3 page coordinates");
   }
+  let items: unknown[];
+  if (cursor) {
+    items = array(page.items, 4096).map(row)
+      .filter(item => policy.local_row(thread, str(item.sourceThreadId), str(item.visibility)))
+      .map(item => item.item);
+  } else {
+    const projection = row(page.projection);
+    if (row(projection.thread).id !== thread) throw Error("T3 snapshot belongs to another thread");
+    items = array(projection.turnItems, 4096);
+  }
+  const commands: T3Command[] = [];
+  let oldest = 0;
+  for (const input of items) {
+    const item = row(input);
+    const ref = row(item.nativeItemRef ?? {});
+    oldest = policy.earliest(oldest, millis(item.startedAt) || millis(item.completedAt) || millis(item.updatedAt));
+    const result = policy.observe(thread, str(item.type), str(ref.driver), str(ref.strength), {
+      $: "Command", id: stockT3Id(item.id), thread: stockT3Id(item.threadId), run: stockT3Id(item.runId),
+      provider_thread: stockT3Id(item.providerThreadId), provider_turn: stockT3Id(item.providerTurnId),
+      native_item: stockT3Id(ref.nativeId), status: str(item.status),
+      exit_code: Number.isSafeInteger(item.exitCode) ? String(item.exitCode) : "",
+      started: String(millis(item.startedAt)), completed: String(millis(item.completedAt)), updated: String(millis(item.updatedAt)),
+    });
+    if (result.$ === "Invalid") throw Error("Invalid native Codex command in T3 history");
+    if (result.$ === "Keep") commands.push(result.command);
+  }
+  return { sequence, next: next ?? "", oldest, commands };
 }
 
 
-async function refreshAnalysis() {
-  const [root, input, traces, receipts, output] = process.argv.slice(2);
-  const { importLiveSession } = await import("./t3.ts");
-  const bearer = process.env.PLOW_T3_READ_TOKEN_FILE;
-  if (bearer) process.env.PLOW_T3_READ_TOKEN = readFileSync(bearer, "utf8").trim();
-  const scratch = mkdtempSync(join(root, "analysis-refresh-"));
-  try {
-    const path = join(scratch, "joined.sqlite");
-    await backupAnalysisInput(input, path);
-    const files = readdirSync(receipts).filter((name) => name.endsWith(".json")).sort();
-    if (files.length > 50) throw Error("Too many join receipts");
-    for (const file of files) await importLiveSession(path, scratch, join(receipts, file), traces);
-    const codexInstance = process.env.PLOW_ANALYSIS_CODEX_INSTANCE;
-    const t3Instance = process.env.PLOW_ANALYSIS_T3_INSTANCE;
-    if (codexInstance && t3Instance && process.env.PLOW_T3_ORIGIN) {
-      const targetPath = join(scratch, "target.json");
-      for (const { thread } of await joinedTargets(path, scratch, t3Instance)) {
-        writeFileSync(targetPath, JSON.stringify({ t3Instance, threadId: thread, codexInstance }), { mode: 0o600 });
-        try { await importLiveSession(path, scratch, targetPath, traces); }
-        catch (error) { if (!(error instanceof Error) || !/\((NoBinding|Ambiguous)\)$/.test(error.message)) throw error; }
-      }
-    }
-    console.log(await publishJoinedAnalysis(path, output, scratch));
-  } finally {
-    rmSync(scratch, { recursive: true, force: true });
-  }
-}
-
-if (import.meta.main) refreshAnalysis();
+if (import.meta.main) import("./t3.ts").then(module => module.refreshAnalysis());

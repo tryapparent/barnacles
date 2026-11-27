@@ -63,29 +63,35 @@ The configured files must be readable by service UID `10001`. Mount them
 read-only and keep them out of Git. Use a separate credential from the
 two OTLP bearers. See the [Clanker rollout guide](../../dashboard/enablement/deploy/t3-otlp.md#enable-stock-t3-history).
 
-The service polls on startup and waits 15 minutes after each pass.
-In `all` mode each pass discovers the active inventory through the
+The service starts on launch. In `all` mode it refreshes the active inventory through the
 shell API and the archived inventory through the stock read-scoped
-`orchestration.getArchivedShellSnapshot` WebSocket call. Discovery
-requires both inventories. Plow retains thread IDs for scheduling only.
-It deduplicates threads present in both snapshots and attempts up to
-32 threads in ID order per pass, wrapping after the last ID. Each
-attempt advances the durable rotation, including a failed thread read.
-Failed reads get another attempt on the next rotation. If inventory
-retrieval fails, the pass reports failure without moving the rotation.
+`orchestration.getArchivedShellSnapshot` WebSocket call every 15
+minutes. Discovery requires both inventories. Plow deduplicates threads
+present in both snapshots and rechecks the newest 32 head windows on
+each refresh. It drains historical work continuously between refreshes
+with up to two concurrent page reads. A read that takes over a second
+or fails triggers a single reader and an increasing pause up to a minute.
+Healthy reads reduce that pause. Failed reads are retried at the next
+inventory refresh.
+
+Historical work starts with the most recently updated threads. Once a
+page is saved, its oldest observed item time sets the next page's
+priority. The scheduler works one UTC day at a time, newest first.
+Undated continuations follow dated work. T3 cursors carry position, so
+the dates prioritize page requests. A single page can cover multiple days.
+SQLite commits the page, its cursor and its priority together. A restart
+resumes the saved pages. Completed history can reopen when T3 reports a
+newer thread update. A failed discovery leaves progress in place.
 Each inventory has a 64 MiB response limit and a 50,000-row decoder
 limit. A response outside the limits counts as a discovery failure.
 
-Each target gets a fresh head snapshot and at most one older page per
-pass. The history cursor and evidence for each successful page commit
-together. On source failure the cursor stays in place for retry, except
-when T3 rejects the cursor with HTTP 400. In that case the next pass
-starts again at the head. A completed scan starts a fresh sweep on a
-later pass so updates to older commands can be picked up. Cycle logs
-give counts for head pages, older pages, completed scans and failures.
-Completion covers retained history for the configured target at the time
-of the scan. In `all` mode the poller also logs the count of distinct
-discovered threads. A rotation of 1,000 threads takes at least 32 passes.
+In `allowlist` mode each target gets a head and at most one older page
+every 15 minutes. In either mode a rejected cursor with HTTP 400
+restarts that thread at the head. Cycle logs give head pages, older
+pages, completed scans and failures. Completion covers retained history
+for the configured target at the time of the scan. In `all` mode
+`--once` attempts up to 32 historical pages and preserves progress
+for the next invocation.
 
 T3 returns a broader history payload to authorized readers. Plow keeps
 only local Codex commands with a strong native item reference and T3

@@ -6,8 +6,8 @@ import { CodexOtelConflict, codexOtelPolicy, saveCodexOtel, type CodexOtelFact, 
 import { T3OtelConflict, openT3Otel, t3OtelPolicy, type T3OtelSpan, type T3OtelPolicy } from "../../evidence/index.ts";
 import { buildPolicy, loadPolicy } from "../../tooling/bend.ts";
 import { setTimeout as sleep } from "node:timers/promises";
-import { openT3History, type T3Command } from "../../evidence/index.ts";
-import { array, bendList, bendValues, millis, row, SourceReadError, stockT3HistoryReader, stockT3Id, str, token, t3HistoryTargets } from "../wire.ts";
+import { openT3History } from "../../evidence/index.ts";
+import { array, bendList, bendValues, boundedFile, historyPage, row, SourceReadError, stockT3HistoryReader, requireStockT3Id, str, token, type HistoryCodec } from "../wire.ts";
 import type { List } from "../../evidence/index.ts";
 
 const bodyLimit = 8 * 1024 * 1024;
@@ -184,50 +184,32 @@ async function serveT3([job, instance, ...extra]: string[]) {
   process.once("SIGTERM", () => server.close(close));
 }
 
-type HistoryPolicy = {
-  observe(thread: string, kind: string, driver: string, strength: string, item: T3Command):
-    { $: "Invalid" | "Skip" } | { $: "Keep"; command: T3Command };
-  local_row(thread: string, owner: string, visibility: string): boolean;
-  page_valid(previous: string, next: string, more: boolean): boolean;
+function t3HistoryTargets(env = process.env) {
+  switch (env.PLOW_T3_HISTORY_SCOPE ?? "allowlist") {
+    case "all": return null;
+    case "allowlist": {
+      const ids = [...new Set(array(JSON.parse(boundedFile(env.PLOW_T3_HISTORY_TARGETS_FILE ?? "", 20_000)
+        .toString("utf8")), 32).map(requireStockT3Id))];
+      if (!ids.length) throw Error("Configure at least one T3 history thread");
+      return ids;
+    }
+    default: throw Error("Invalid T3 history scope");
+  }
+}
+
+type Target = { $: "Target"; id: string; updated: number };
+type Task = { $: "Task"; id: string; cursor: string; priority: number; revision: number; keep: boolean };
+export type HistoryPolicy = HistoryCodec & {
   begin_scan(saved: string, head: string): string;
   replay: Parameters<typeof openT3History>[2];
-  rotation(after: string, ids: List<string>): { total: number; threads: List<string> };
+  inventory(input: List<Target>): List<Target>;
+  recent(input: List<Target>): List<Target>;
+  plan(target: Target, cursor: string, known: boolean, revision: number, frontier: number, refresh: boolean):
+    { $: "Some"; value: Task } | { $: "None" };
+  batch(input: List<Task>): List<Task>;
+  older_frontier(previous: number, oldest: number): number;
+  pacing(previous: number, elapsed: number, failed: boolean): { workers: number; pause: number };
 };
-
-function historyPage(policy: HistoryPolicy, thread: string, page: ReturnType<typeof row>, cursor: string) {
-  const next = cursor ? page.nextCursor : page.historyCursor;
-  const sequence = page.snapshotSequence;
-  if (!(next === null || typeof next === "string" && next.length <= 4096) ||
-      typeof page.hasMoreHistory !== "boolean" || !policy.page_valid(cursor, next ?? "", page.hasMoreHistory) ||
-      typeof sequence !== "number" || !Number.isInteger(sequence) || sequence < 0 || sequence > 0xffffffff) {
-    throw Error("Invalid stock T3 page coordinates");
-  }
-  let items: unknown[];
-  if (cursor) {
-    items = array(page.items, 4096).map(row)
-      .filter(item => policy.local_row(thread, str(item.sourceThreadId), str(item.visibility)))
-      .map(item => item.item);
-  } else {
-    const projection = row(page.projection);
-    if (row(projection.thread).id !== thread) throw Error("T3 snapshot belongs to another thread");
-    items = array(projection.turnItems, 4096);
-  }
-  const commands: T3Command[] = [];
-  for (const input of items) {
-    const item = row(input);
-    const ref = row(item.nativeItemRef ?? {});
-    const result = policy.observe(thread, str(item.type), str(ref.driver), str(ref.strength), {
-      $: "Command", id: stockT3Id(item.id), thread: stockT3Id(item.threadId), run: stockT3Id(item.runId),
-      provider_thread: stockT3Id(item.providerThreadId), provider_turn: stockT3Id(item.providerTurnId),
-      native_item: stockT3Id(ref.nativeId), status: str(item.status),
-      exit_code: Number.isSafeInteger(item.exitCode) ? String(item.exitCode) : "",
-      started: String(millis(item.startedAt)), completed: String(millis(item.completedAt)), updated: String(millis(item.updatedAt)),
-    });
-    if (result.$ === "Invalid") throw Error("Invalid native Codex command in T3 history");
-    if (result.$ === "Keep") commands.push(result.command);
-  }
-  return { sequence, next: next ?? "", commands };
-}
 
 async function pollT3History([job, instance, flag, ...extra]: string[]) {
   if (!job || !instance || flag && flag !== "--once" || extra.length) throw Error("Invalid T3 history invocation");
@@ -239,56 +221,100 @@ async function pollT3History([job, instance, flag, ...extra]: string[]) {
   const store = openT3History(join(resolve(job), "evidence.sqlite"), token(instance), policy.replay);
   const stop = new AbortController();
   process.once("SIGTERM", () => stop.abort());
+  const wait = (ms: number) => sleep(ms, undefined, { signal: stop.signal }).catch(() => {});
+  const read = async (id: string, cursor: string) => {
+    try {
+      return historyPage(policy, id, await source.page(id, cursor), cursor);
+    } catch (error) {
+      if (cursor && error instanceof SourceReadError && error.status === 400) store.commit(id, cursor, "", 0, [], null);
+      throw error;
+    }
+  };
+  let pace = policy.pacing(0, 0, false);
   try {
     do {
+      const deadline = performance.now() + 900_000;
       const coverage = { headPages: 0, olderPages: 0, complete: 0, failed: 0 };
-      let last = store.rotation();
-      let threads: Iterable<string> = targets ?? [];
-      if (targets === null) {
+      if (targets) {
+        for (const id of targets) {
+          if (stop.signal.aborted) break;
+          try {
+            const saved = store.cursor(id);
+            const head = await read(id, "");
+            const cursor = policy.begin_scan(saved, head.next);
+            store.commit(id, saved, cursor, head.sequence, head.commands);
+            coverage.headPages++;
+            if (cursor && !stop.signal.aborted) {
+              const older = await read(id, cursor);
+              store.commit(id, cursor, older.next, older.sequence, older.commands);
+              coverage.olderPages++;
+            }
+            if (!store.cursor(id)) coverage.complete++;
+          } catch { coverage.failed++; }
+        }
+      } else {
+        let inventory: List<Target> = { $: "Nil" };
         try {
-          const inventory = policy.rotation(last, bendList(await source.inventory()));
-          threads = bendValues(inventory.threads);
-          console.log(JSON.stringify({ discovered: Number(inventory.total) }));
+          inventory = policy.inventory(bendList(await source.inventory()));
         } catch {
           console.error("T3 thread discovery failed");
           coverage.failed++;
+          pace = policy.pacing(pace.pause, 0, true);
         }
-      }
-      for (const thread of threads) {
-        if (stop.signal.aborted) break;
-        try {
-          const saved = store.cursor(thread);
-          const head = historyPage(policy, thread, await source.page(thread, ""), "");
-          const cursor = policy.begin_scan(saved, head.next);
-          store.commit(thread, saved, cursor, head.sequence, head.commands);
-          coverage.headPages++;
-          if (cursor && !stop.signal.aborted) {
-            try {
-              const older = historyPage(policy, thread, await source.page(thread, cursor), cursor);
-              store.commit(thread, cursor, older.next, older.sequence, older.commands);
-              coverage.olderPages++;
-            } catch (error) {
-              if (error instanceof SourceReadError && error.status === 400) {
-                store.commit(thread, cursor, "", head.sequence, []);
-              }
-              throw error;
-            }
+        const all = [...bendValues(inventory)];
+        const refresh = new Set(flag ? [] : [...bendValues(policy.recent(inventory))].map(item => item.id));
+        const deferred = new Set<string>();
+        const checkpoints = store.checkpoints();
+        console.log(JSON.stringify({ discovered: all.length }));
+        let used = 0;
+        const running = () => !stop.signal.aborted && performance.now() < deadline && (!flag || used < 32);
+        while (running()) {
+          const tasks: Task[] = [];
+          for (const target of all) {
+            if (deferred.has(target.id)) continue;
+            const saved = checkpoints.get(target.id);
+            const task = policy.plan(target, saved?.cursor ?? "", !!saved?.mark,
+              saved?.mark?.revision ?? 0, saved?.mark?.frontier ?? 0, refresh.has(target.id));
+            if (task.$ === "Some") tasks.push(task.value);
           }
-          if (!store.cursor(thread)) coverage.complete++;
-        } catch {
-          coverage.failed++;
-        }
-        if (targets === null) {
-          if (!store.advance(last, thread)) break;
-          last = thread;
+          const batch = [...bendValues(policy.batch(bendList(tasks)))];
+          if (!batch.length) break;
+          for (let start = 0; start < batch.length && running();) {
+            const wave = batch.slice(start, start + Math.min(pace.workers, flag ? 32 - used : pace.workers));
+            start += wave.length;
+            used += wave.length;
+            const began = performance.now();
+            const results = await Promise.all(wave.map(async ({ id, cursor, priority, revision, keep }) => {
+              const saved = checkpoints.get(id)?.cursor ?? "";
+              refresh.delete(id);
+              try {
+                const page = await read(id, cursor);
+                const next = keep ? saved : page.next;
+                const mark = { revision, frontier: policy.older_frontier(priority, page.oldest) };
+                store.commit(id, saved, next, page.sequence, page.commands, keep ? undefined : mark);
+                if (!keep) checkpoints.set(id, { cursor: next, mark });
+                if (cursor) coverage.olderPages++;
+                else coverage.headPages++;
+                if (!next) coverage.complete++;
+                return true;
+              } catch {
+                deferred.add(id);
+                coverage.failed++;
+                return false;
+              }
+            }));
+            pace = policy.pacing(pace.pause, Math.floor(performance.now() - began), results.includes(false));
+            if (running()) await wait(pace.pause);
+          }
+          console.log(JSON.stringify({ backfill: used, ...coverage }));
         }
       }
       console.log(JSON.stringify(coverage));
-      if (flag === "--once") {
+      if (flag) {
         if (coverage.failed) process.exitCode = 1;
         return;
       }
-      await sleep(900_000, undefined, { signal: stop.signal }).catch(() => {});
+      await wait(targets ? 900_000 : Math.max(0, deadline - performance.now()));
     } while (!stop.signal.aborted);
   } finally {
     store.close();

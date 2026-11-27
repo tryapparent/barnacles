@@ -1,7 +1,8 @@
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { buildPolicies, buildPolicy, loadPolicy } from "../tooling/bend.ts";
+import { backupAnalysisInput, joinedTargets, publishJoinedAnalysis } from "../evidence/index.ts";
 import { admissionPolicy, joinSession, loadEvidence, repository, sessionJoinPolicy, sourcePolicy, type AdmissionPolicy, type NativeBinding, type SessionJoinPolicy, type Point, type SourcePolicy, type ThreadEvidence } from "../evidence/index.ts";
 import { array, bendList, boundedFile, millis, point, row, sha, stockT3Origin, stockT3Rpc, str, timeParts, toMillis, token } from "./wire.ts";
 import { positiveInt } from "./github/attempt.ts";
@@ -267,4 +268,32 @@ if (import.meta.main) {
     console.error(error instanceof Error ? error.message : "T3 rollout import failed");
     process.exitCode = 1;
   });
+}
+
+
+export async function refreshAnalysis() {
+  const [root, input, traces, receipts, output] = process.argv.slice(2);
+  const bearer = process.env.PLOW_T3_READ_TOKEN_FILE;
+  if (bearer) process.env.PLOW_T3_READ_TOKEN = readFileSync(bearer, "utf8").trim();
+  const scratch = mkdtempSync(join(root, "analysis-refresh-"));
+  try {
+    const path = join(scratch, "joined.sqlite");
+    await backupAnalysisInput(input, path);
+    const files = readdirSync(receipts).filter((name) => name.endsWith(".json")).sort();
+    if (files.length > 50) throw Error("Too many join receipts");
+    for (const file of files) await importLiveSession(path, scratch, join(receipts, file), traces);
+    const codexInstance = process.env.PLOW_ANALYSIS_CODEX_INSTANCE;
+    const t3Instance = process.env.PLOW_ANALYSIS_T3_INSTANCE;
+    if (codexInstance && t3Instance && process.env.PLOW_T3_ORIGIN) {
+      const targetPath = join(scratch, "target.json");
+      for (const { thread } of await joinedTargets(path, scratch, t3Instance)) {
+        writeFileSync(targetPath, JSON.stringify({ t3Instance, threadId: thread, codexInstance }), { mode: 0o600 });
+        try { await importLiveSession(path, scratch, targetPath, traces); }
+        catch (error) { if (!(error instanceof Error) || !/\((NoBinding|Ambiguous)\)$/.test(error.message)) throw error; }
+      }
+    }
+    console.log(await publishJoinedAnalysis(path, output, scratch));
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
 }

@@ -111,6 +111,8 @@ export type T3Command = {
   native_item: string; status: string; exit_code: string; started: string; completed: string; updated: string;
 };
 
+export type T3HistoryCheckpoint = { frontier: number; revision: number };
+
 export function openT3History(path: string, instance: string,
   replay: (saved: number, incoming: number, previous: string, next: string) => { $: "Write" | "Ignore" | "Conflict" }) {
   closeSync(openSync(path, "a", 0o600));
@@ -123,8 +125,9 @@ export function openT3History(path: string, instance: string,
         instance TEXT NOT NULL, thread_id TEXT NOT NULL, cursor TEXT NOT NULL,
         PRIMARY KEY (instance, thread_id)
       ) STRICT, WITHOUT ROWID;
-      CREATE TABLE IF NOT EXISTS t3_history_rotation (
-        instance TEXT PRIMARY KEY, last_thread_id TEXT NOT NULL
+      CREATE TABLE IF NOT EXISTS t3_history_backfill (
+        instance TEXT NOT NULL, thread_id TEXT NOT NULL, frontier INTEGER NOT NULL, revision INTEGER NOT NULL,
+        PRIMARY KEY (instance, thread_id)
       ) STRICT, WITHOUT ROWID;
       CREATE TABLE IF NOT EXISTS t3_history_commands (
         instance TEXT NOT NULL, thread_id TEXT NOT NULL, item_id TEXT NOT NULL, snapshot_sequence INTEGER NOT NULL,
@@ -134,9 +137,11 @@ export function openT3History(path: string, instance: string,
       ) STRICT, WITHOUT ROWID;
     `);
     const cursor = db.prepare("SELECT cursor FROM t3_history_progress WHERE instance=? AND thread_id=?");
-    db.prepare("INSERT OR IGNORE INTO t3_history_rotation VALUES (?, '')").run(instance);
-    const rotation = db.prepare("SELECT last_thread_id FROM t3_history_rotation WHERE instance=?");
-    const advance = db.prepare("UPDATE t3_history_rotation SET last_thread_id=? WHERE instance=? AND last_thread_id=?");
+    const resume = db.prepare(`SELECT thread_id,cursor,frontier,revision FROM t3_history_progress
+      LEFT JOIN t3_history_backfill USING (instance,thread_id) WHERE instance=?`);
+    const checkpoint = db.prepare(`INSERT INTO t3_history_backfill VALUES (?, ?, ?, ?)
+      ON CONFLICT DO UPDATE SET frontier=excluded.frontier,revision=excluded.revision`);
+    const clear = db.prepare("DELETE FROM t3_history_backfill WHERE instance=? AND thread_id=?");
     const progress = db.prepare("INSERT INTO t3_history_progress VALUES (?, ?, ?) ON CONFLICT DO UPDATE SET cursor=excluded.cursor");
     const read = db.prepare(`SELECT snapshot_sequence, run_id, provider_thread_id, provider_turn_id, native_item_id,
       status, exit_code, t3_started_ms, t3_completed_ms, t3_updated_ms
@@ -150,9 +155,14 @@ export function openT3History(path: string, instance: string,
     const readCursor = (thread: string) => String(cursor.get(instance, thread)?.cursor ?? "");
     return {
       cursor: readCursor,
-      rotation: () => String(rotation.get(instance)!.last_thread_id),
-      advance: (expected: string, thread: string) => advance.run(thread, instance, expected).changes > 0,
-      commit(thread: string, expected: string, next: string, sequence: number, commands: T3Command[]) {
+      checkpoints() {
+        return new Map(resume.all(instance).map(({ thread_id, cursor, frontier, revision }) =>
+          [String(thread_id), { cursor: String(cursor), mark: frontier === null ? null : {
+            frontier: Number(frontier), revision: Number(revision),
+          } }] as const));
+      },
+      commit(thread: string, expected: string, next: string, sequence: number, commands: T3Command[],
+        mark?: T3HistoryCheckpoint | null) {
         db.exec("BEGIN IMMEDIATE");
         try {
           if (readCursor(thread) !== expected) throw Error("T3 history cursor changed during capture");
@@ -167,6 +177,8 @@ export function openT3History(path: string, instance: string,
             if (outcome === "Write") save.run(...key, sequence, ...values);
           }
           progress.run(instance, thread, next);
+          if (mark) checkpoint.run(instance, thread, mark.frontier, mark.revision);
+          if (mark === null) clear.run(instance, thread);
           db.exec("COMMIT");
         } catch (error) {
           db.exec("ROLLBACK");
