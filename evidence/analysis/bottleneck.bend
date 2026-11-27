@@ -287,6 +287,11 @@ def observe_local_admission_timeout(state: Replay, thread: String, id: String, e
     String.eq(String.trim(line), "t3-build: timed out waiting for admission"))
   observe_failure(state, thread, id, "local-build-admission-timeout", timeout)
 
+def observe_capture_access(state: Replay, thread: String, id: String, +operation: String, line: String, failed: Bool) -> Replay:
+  +lookup = Bool.or(String.eq(operation, "apparent-inspect"), String.eq(operation, "apparent-connect-files"))
+  +unavailable = String.starts_with(String.trim(line), "Error: Capture unavailable (not_found).")
+  observe_failure(state, thread, id, "capture-reference-unavailable", Bool.and(failed, Bool.and(lookup, unavailable)))
+
 def publication_label(+publisher: String, +line: String, +status: U32) -> String:
   +onboarding = Bool.and(String.eq(publisher, "onboarding-release"), Bool.and(U32.is_eq(status, 0),
     Bool.and(String.starts_with(line, "Error: Onboarding release onboarding-v"),
@@ -304,11 +309,33 @@ def observe_hosted_publish(state: Replay, thread: String, id: String, publisher:
   +failed = Bool.and(String.eq(conclusion, "failure"), U32.is_eq(exit_code, 1))
   observe_failure(state, thread, id, publication_label(publisher, String.trim(line), status), failed)
 
-def observe_benchmark_failure(+state: Replay, thread: String, +id: String, lane: String, label: String, valid: Bool,
-  start: U32, end: U32) -> Replay:
+def observe_failed_step(+state: Replay, thread: String, +id: String, clock: String, operation: String, label: String,
+  valid: Bool, start: U32, end: U32) -> Replay:
   Bool.pick(Replay, valid,
-    observe_failure(observe_timing(state, id, "ci-benchmark-owner-step", lane, start, end), thread, id, label, True{}),
+    observe_failure(observe_timing(state, id, clock, operation, start, end), thread, id, label, True{}),
     state)
+
+def observe_native_model_fetch(state: Replay, thread: String, id: String, step: String, conclusion: String,
+  exit_code: U32, +status: U32, revision: String, +line: String, origin: String, start: U32, end: U32) -> Replay:
+  +failed = Bool.and(String.eq(conclusion, "failure"), U32.is_eq(exit_code, 1))
+  +native_step = String.eq(step, "Prepare locked native prerequisites before first Cargo")
+  +source = String.eq(origin, "download:record/media/circle-vision/build.ts")
+  +server_error = Bool.and(U32.is_ge(status, 500), U32.is_lt(status, 600))
+  +suffix = String.append(".onnx (", String.append(U32.show(status), ")"))
+  resolve = String.append("/resolve/", String.append(revision, "/"))
+  +download = Bool.and(String.starts_with(line, "Error: Download failed for https://huggingface.co/"),
+    Bool.and(String.contains(line, resolve), String.ends_with(line, suffix)))
+  +valid = Bool.and(failed, Bool.and(native_step, Bool.and(source, Bool.and(server_error, download))))
+  observe_failed_step(state, thread, id, "ci-native-prerequisite-step", "circle-vision",
+    "ci-model-prerequisite-http-server-error", valid, start, end)
+
+def observe_benchmark_admission(state: Replay, thread: String, id: String, +lane: String, conclusion: String,
+  exit_code: U32, line: String, origin: String, start: U32, end: U32) -> Replay:
+  +failed = Bool.and(String.eq(conclusion, "failure"), U32.is_eq(exit_code, 1))
+  +connect = Bool.and(String.eq(lane, "connect-watch"), String.eq(origin, "main:connect/enablement/benchmark/hosted.ts"))
+  +subset = String.eq(line, "AssertionError [ERR_ASSERTION]: No complete SMT subset qualified during replay probing")
+  observe_failed_step(state, thread, id, "ci-benchmark-owner-step", lane, "ci-benchmark-no-qualified-smt-subset",
+    Bool.and(failed, Bool.and(connect, subset)), start, end)
 
 def observed_calibration_failure(conclusion: String, exit_code: U32, same_build: Bool) -> Bool:
   Bool.and(same_build, Bool.and(String.eq(conclusion, "failure"), U32.is_eq(exit_code, 1)))
@@ -319,7 +346,8 @@ def observe_benchmark_marker(state: Replay, thread: String, id: String, +lane: S
     String.eq(line, "Error: Startup benchmark timed out at revision-specific frame acknowledgement"))
   +failed = observed_calibration_failure(conclusion, exit_code, same_build)
   +valid = Bool.and(failed, Bool.and(String.eq(lane, "record-start"), marker))
-  observe_benchmark_failure(state, thread, id, lane, "ci-benchmark-calibration-marker-timeout", valid, start, end)
+  observe_failed_step(state, thread, id, "ci-benchmark-owner-step", lane,
+    "ci-benchmark-calibration-marker-timeout", valid, start, end)
 
 def observe_benchmark_pressure(state: Replay, thread: String, id: String, +lane: String, +source: String,
   conclusion: String, exit_code: U32, same_build: Bool, qualified: Bool, score_present: Bool, pressure_rejected: Bool,
@@ -329,7 +357,8 @@ def observe_benchmark_pressure(state: Replay, thread: String, id: String, +lane:
   +rejected = Bool.and(pressure_rejected, Bool.not(Bool.or(qualified, score_present)))
   +failed = observed_calibration_failure(conclusion, exit_code, same_build)
   +valid = Bool.and(failed, Bool.and(Bool.or(start_source, stop_source), rejected))
-  observe_benchmark_failure(state, thread, id, lane, "ci-benchmark-calibration-pressure-rejected", valid, start, end)
+  observe_failed_step(state, thread, id, "ci-benchmark-owner-step", lane,
+    "ci-benchmark-calibration-pressure-rejected", valid, start, end)
 
 def deployment_label(+service: String, +line: String, +phase_line: String, accepted: Bool) -> String:
   +admission_frame = Bool.and(String.starts_with(phase_line, "at admission (file:"),

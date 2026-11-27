@@ -10,7 +10,7 @@ import { buildPolicy, buildPolicies, loadPolicy } from "../tooling/bend.ts";
 import { positiveInt, type ClockPolicy } from "./github/attempt.ts";
 import { pollGitHub, pullRequest, releaseEvidence } from "./github/delivery.ts";
 import { inspectRollout } from "./codex/rollout.ts";
-import { bendValues, kernelCapture, kernelInteger, row, str, token } from "./wire.ts";
+import { bendValues, kernelCapture, kernelInteger, row, sha, str, token } from "./wire.ts";
 import { t3Snapshot } from "./t3.ts";
 
 async function poll(db: string, scratch: string, repo: string, snapshot: string, policy: SourcePolicy, admission: AdmissionPolicy, once: boolean) {
@@ -162,7 +162,11 @@ type ReplayPolicy = {
     allocated: number, capacity: number): unknown;
   observe_hosted_apt(state: unknown, thread: string, id: string, conclusion: string, exitCode: number,
     httpStatus: number, archive: string, summary: string): unknown;
+  observe_native_model_fetch(state: unknown, thread: string, id: string, step: string, conclusion: string,
+    exitCode: number, status: number, revision: string, line: string, origin: string, started: number, ended: number): unknown;
   observe_local_admission_timeout(state: unknown, thread: string, id: string, exitCode: number, line: string): unknown;
+  observe_capture_access(state: unknown, thread: string, id: string, operation: string, line: string,
+    failed: boolean): unknown;
   observe_hosted_publish(state: unknown, thread: string, id: string, publisher: string, conclusion: string,
     exitCode: number, status: number, line: string): unknown;
   observe_benchmark_marker(state: unknown, thread: string, id: string, lane: string, conclusion: string,
@@ -170,6 +174,8 @@ type ReplayPolicy = {
   observe_benchmark_pressure(state: unknown, thread: string, id: string, lane: string, source: string, conclusion: string,
     exitCode: number, sameBuild: boolean, qualified: boolean, scorePresent: boolean, pressureRejected: boolean,
     started: number, ended: number): unknown;
+  observe_benchmark_admission(state: unknown, thread: string, id: string, lane: string, conclusion: string,
+    exitCode: number, line: string, origin: string, started: number, ended: number): unknown;
   observe_hosted_deploy(state: unknown, thread: string, id: string, service: string, conclusion: string,
     exitCode: number, line: string, phaseLine: string, accepted: boolean): unknown;
   observe_job_result(state: unknown, thread: string, id: string, conclusion: string): unknown;
@@ -245,9 +251,16 @@ async function replayBottlenecks(file: string, scratch: string) {
       } else if (value.kind === "hosted-apt-result") {
         state = policy.observe_hosted_apt(state, token(value.thread), id, token(value.conclusion),
           clockSecond(value.exitCode), clockSecond(value.httpStatus), factText(value.archive), factText(value.summary));
+      } else if (value.kind === "native-model-fetch-result") {
+        state = policy.observe_native_model_fetch(state, token(value.thread), id, factText(value.step), token(value.conclusion),
+          clockSecond(value.exitCode), clockSecond(value.status), sha(value.revision), factText(value.line), factText(value.origin),
+          clockSecond(value.started), clockSecond(value.ended));
       } else if (value.kind === "local-admission-timeout") {
         state = policy.observe_local_admission_timeout(state, token(value.thread), id, clockSecond(value.exitCode),
           factText(value.line));
+      } else if (value.kind === "capture-access-result") {
+        state = policy.observe_capture_access(state, token(value.thread), id, token(value.operation), factText(value.line),
+          bendBool(value.failed));
       } else if (value.kind === "hosted-publish-result") {
         state = policy.observe_hosted_publish(state, token(value.thread), id, token(value.publisher),
           token(value.conclusion), clockSecond(value.exitCode), clockSecond(value.status), factText(value.line));
@@ -259,6 +272,10 @@ async function replayBottlenecks(file: string, scratch: string) {
         state = policy.observe_benchmark_pressure(state, token(value.thread), id, token(value.lane), token(value.source),
           token(value.conclusion), clockSecond(value.exitCode), bendBool(value.sameBuild), bendBool(value.qualified),
           bendBool(value.scorePresent), bendBool(value.pressureRejected), clockSecond(value.started), clockSecond(value.ended));
+      } else if (value.kind === "benchmark-admission") {
+        state = policy.observe_benchmark_admission(state, token(value.thread), id, token(value.lane), token(value.conclusion),
+          clockSecond(value.exitCode), factText(value.line), factText(value.origin), clockSecond(value.started),
+          clockSecond(value.ended));
       } else if (value.kind === "hosted-deploy-result") {
         state = policy.observe_hosted_deploy(state, token(value.thread), id, token(value.service),
           token(value.conclusion), clockSecond(value.exitCode), factText(value.line), factText(value.phaseLine), bendBool(value.accepted));
