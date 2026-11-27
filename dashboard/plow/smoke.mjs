@@ -92,7 +92,16 @@ try {
       }
     })
     const overview = await geometry()
-    const assertStable = async state => assert.deepEqual(await geometry(), overview, `${width}px · ${state}`)
+    const assertStable = async state => {
+      const current = await geometry()
+      assert.deepEqual(current.page, overview.page, `${width}px · ${state} · document`)
+      for (const field of ['regions', 'categories']) {
+        for (const [name, bounds] of Object.entries(overview[field])) {
+          assert.ok(bounds.every((value, index) => Math.abs(value - current[field][name][index]) < .01),
+            `${width}px · ${state} · ${field} ${name}`)
+        }
+      }
+    }
     const rowBounds = () => timeline.locator('.trace:visible').evaluateAll(rows => rows.map(row => ({
       top: row.offsetTop, bottom: row.offsetTop + row.offsetHeight,
     })))

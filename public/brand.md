@@ -40,8 +40,8 @@ Start with **The Long Field**. Keep the horizon low, leave room for the headline
 
 At a given viewport size, keep the document dimensions and the outer bounds of page regions stable during interactions. Apply this rule to pointer and keyboard interactions and to every state they trigger, including animations, loading, and errors. The layout can adapt when the viewport changes or the user navigates to another page.
 
-- Reserve an empty slot in the initial layout for each dropdown or disclosure panel. When it opens, it may fill only that slot. Keep the slot the same size when the panel closes, and keep it clear of other content and controls.
-- Size regions for controls, results, and feedback in advance. Inside a bounded scroll region, let content reflow as results change. A filtered list should close up around its remaining items. Its content height and scroll position can change while the scroll region keeps its outer bounds. Keep scrollbar space stable.
+- Reserve an empty slot in the initial layout for dropdowns and disclosures at page level. When one opens, it may fill only that slot. Keep the slot the same size when the panel closes, and keep it clear of other content and controls.
+- Size regions for controls, results, and feedback in advance. Inside a bounded scroll region, let content reflow as items expand, collapse, or are filtered. A filtered list should close up around its remaining items. Its content height and scroll position can change while the scroll region keeps its outer bounds. Keep scrollbar space stable.
 - Verify at each supported breakpoint. Compare document dimensions and outer region bounds in document coordinates before, during, and after interactions. Check the content and scroll behavior inside each scroll region separately.
 
 ## Homepage copy
