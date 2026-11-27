@@ -31,6 +31,13 @@ CREATE TABLE IF NOT EXISTS codex_rollouts (
   PRIMARY KEY (instance, session_id)
 ) STRICT;
 
+CREATE TABLE IF NOT EXISTS t3_codex_links (
+  t3_instance TEXT NOT NULL, thread_id TEXT NOT NULL,
+  codex_instance TEXT NOT NULL, session_id TEXT NOT NULL,
+  PRIMARY KEY (t3_instance, thread_id, codex_instance, session_id),
+  FOREIGN KEY (codex_instance, session_id) REFERENCES codex_rollouts
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS codex_calls (
   instance TEXT NOT NULL, session_id TEXT NOT NULL, call_id TEXT NOT NULL,
   source_line INTEGER NOT NULL, tool TEXT NOT NULL, started_ms INTEGER, ended_ms INTEGER,

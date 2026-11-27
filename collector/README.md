@@ -149,6 +149,49 @@ Include the optional `title` only for threads whose titles can be shared with th
 
 Use a stable instance name per T3 environment. Follow and combine link pages before setting the cursor to null. A non-null cursor is rejected. Thread run data covers the runs in the read response. The importer keeps the provider's link source and treats `created` and `agent` as ownership evidence. Manual links, multiple candidate owners, and chronological conflicts remain visible as coverage gaps. Direct web or mobile user creation supports the manual T3 origin. Other origins stay unknown until the provider supplies explicit evidence.
 
+### Plow local T3–Codex pilot
+
+Choose one T3 thread and one permitted Codex rollout on the same host. Use
+the corresponding T3 data home and stable instance names. Run the pilot in a
+private job directory with the pinned Node dependencies installed.
+
+```sh
+node collector/t3.ts "$job" "$T3CODE_HOME/userdata/statev2.sqlite" \
+  local-t3 "$T3CODE_THREAD_ID" local-codex "$rollout"
+```
+
+The pilot reads at most 64 provider-thread records for the chosen T3 thread.
+It requires exactly one strong Codex native reference matching the session
+identity admitted by the rollout parser. The provider session ID is a T3
+identifier. The native reference contains the ID from Codex session metadata.
+Missing, duplicate, weak, mismatched, or over-limit references fail without
+writing evidence. The T3 projection schema is tied to the local installation.
+This path was checked against T3 nightly `0.1.10-nightly.20261113.4643`.
+
+Inspect the private database by joining `t3_codex_links` to `codex_rollouts`
+on `codex_instance = instance` and `session_id`. The link is written after the
+rollout commits. If the link write fails, rerun to complete it. Replaying the
+same input leaves one link. The pilot prints counts and keeps raw transcripts
+in Codex storage. T3 run and PR metadata still use the separate T3 import.
+The pilot runs once and leaves its output in the supplied job directory.
+
+To refresh the same selection on the GitHub poller's schedule, save a
+private JSON file with `t3Database`, `t3Instance`, `threadId`, `codexInstance`,
+and `rollout` fields matching the five inputs after the job directory above.
+Use absolute paths for the database and rollout. Set
+`PLOW_T3_ROLLOUT_CONFIG` to the JSON file path when starting
+`poll-github`. Restart the collector to change the selection. The optional
+pilot uses the same evidence database and interval as GitHub. With no
+configuration, the poller runs with GitHub alone.
+
+The poller imports the selected rollout after the GitHub listings succeed and
+before publishing the snapshot. If the rollout import fails, it retains
+the last stored link and publishes the valid GitHub evidence. The pass logs
+`rollout.failed` and retries on the next scheduled pass. A `--once` check
+exits nonzero for that failure after publication. Use the standalone pilot
+command to diagnose the import. The link is stored in the evidence database
+for later consumers.
+
 ### Codex rollout
 
 Set `rollout` to one permitted retained JSONL file by exact session or workspace evidence. Install the pinned syntax parsers with `npm ci --ignore-scripts` before importing. The reader uses the size observed at open, rejects files over 128 MiB, and retains complete LF-delimited UTF-8 JSON records of at most 8 MiB each. It records oversized lines and trailing bytes without LF separately. A short read rejects the snapshot. Call and reasoning line numbers are one-based physical lines in the original file.

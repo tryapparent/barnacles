@@ -15,36 +15,39 @@
   <h1>Thread activity</h1>
 </header>
 <div class="board">
-
 <p class="summary-note" id="feed-status">Session data is temporarily unavailable. Reload to try again.</p>
 <div id="feed-content" hidden>
+
+<section class="summary-panel" id="summary-panel" aria-labelledby="summary-heading">
+  <div class="summary-top">
+    <h2 id="summary-heading">Where time went</h2>
+    <p id="summary-total"></p>
+  </div>
+  <p id="summary-note" class="summary-note"></p>
+  <div id="tiles" class="treemap"></div>
+  <section id="operation-panel" hidden aria-labelledby="operation-heading">
+    <div class="operation-heading"><h3 id="operation-heading"></h3><button type="button" id="collapse">Close breakdown <span aria-hidden="true">×</span></button></div>
+    <div id="operation-tiles" role="group" aria-label="Operations"></div>
+    <p id="operation-empty" class="summary-note" hidden>No operations in this range. Try zooming out.</p>
+  </section>
+</section>
+<section id="timeline-panel" aria-labelledby="timeline-heading">
+<div class="timeline-heading-row">
+<div><h2 id="timeline-heading">Timeline</h2><p id="timeline-selection" role="status"></p></div>
 <div class="controls zoom-tools" role="group" aria-label="Zoom time range">
   <button type="button" id="zoom-out" aria-label="Zoom out" title="Zoom out">−</button>
   <button type="button" id="zoom-in" aria-label="Zoom in" title="Zoom in">+</button>
   <button type="button" id="zoom-fit">Fit all</button>
   <output id="zoom-mode" aria-live="polite"></output>
 </div>
-<div class="navigator"><div id="minimap" class="minimap" tabindex="0" role="slider" aria-label="Position of visible time range" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50"><div class="mini-threads"></div><div class="mini-window"></div><div class="mini-brush" hidden></div></div><p class="navigation-hint">Drag to select a range. Use the arrow keys to pan when zoomed in.</p></div>
+</div>
+<div class="navigator"><div id="minimap" class="minimap" tabindex="0" role="slider" aria-label="Position of visible time range" aria-description="Use the left and right arrow keys to pan when zoomed in." aria-valuemin="0" aria-valuemax="100" aria-valuenow="50"><div class="mini-threads"></div><div class="mini-window"></div><div class="mini-brush" hidden></div></div></div>
 <p class="utc-window" id="utc-window" aria-live="polite"></p>
-<section class="summary-panel" id="summary-panel" aria-labelledby="summary-heading">
-  <div class="summary-top">
-    <div><button type="button" class="back" id="all-categories" hidden>← All categories</button><h2 id="summary-heading" tabindex="-1">Where time went</h2></div>
-    <p id="summary-total"></p>
-  </div>
-  <p id="summary-note" class="summary-note"></p>
-  <div id="tiles" class="treemap"></div>
-  <section id="occurrences" hidden aria-labelledby="occurrence-heading">
-    <h3 id="occurrence-heading">Matching spans</h3>
-    <div id="span-list"></div>
-  </section>
-</section>
-<section id="timeline-panel" aria-labelledby="timeline-heading">
-<h2 id="timeline-heading">Timeline</h2>
-<p id="timeline-selection" class="summary-note" hidden></p>
 <ul class="chart-key" aria-label="Chart key"><li><i class="work-key"></i>Provider run</li><li><i class="wait-key"></i>Admission wait</li><li><i class="unclear-key"></i>Unobserved</li><li id="failure-key" hidden><i class="failure-key"></i>Failure</li></ul>
 <div class="timeline-viewport" id="timeline-viewport" tabindex="0" role="region" aria-label="Scrollable UTC timelines"><div class="timeline-grid" id="timeline-grid"><div class="table-head"><span class="pinned-heading">Thread</span><span id="chart-ruler" class="chart-ruler" aria-label="Timeline axis in UTC"><span class="utc-meta">UTC</span><span id="scale-caption" class="utc-scale"></span></span></div>
 <ol class="rows" id="traces" aria-label="Observed thread timelines"></ol></div></div>
-<details class="reading-help"><summary>How to read the chart</summary><p>These are the ten newest imported threads with measured run or admission time. A provider run can include idle time, tool calls, or workflows. Admission is the time from a run request until it starts. Unobserved gaps have no confirmed activity. The rows share a UTC clock. Select a shorter range to inspect individual intervals.</p></details>
+<p id="timeline-empty" class="summary-note" hidden>No matching threads in this range. Zoom out or deselect the operation.</p>
+<details class="reading-help"><summary>How to read the chart</summary><p>These are the ten newest imported threads with measured run or admission time. A provider run can include idle time, tool calls, or workflows. Admission lasts from run request to provider start. Unobserved gaps have no confirmed activity. Drag the minimap to select a UTC range, or use its arrow keys to pan. Select a thread at six hours or less to inspect its intervals.</p></details>
 </section>
 </div></div></main>
 <span class="measure" aria-hidden="true"></span>

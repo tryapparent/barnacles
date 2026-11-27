@@ -9,7 +9,10 @@ end. The observation timestamp comes from the selected thread records.
 Time summary and Timeline share a UTC viewport. The summary clips each thread's
 disjoint evidence intervals to that viewport, then sums and ranks them across
 threads. Different threads can overlap on the clock. A category opens its
-operations and selecting a span highlights it in the timeline.
+operation breakdown below the category tiles. Selecting an operation shows
+only threads with matching spans in the visible UTC range and outlines those
+spans on the same clock. Selecting it again clears the filter. Changing the
+time range updates the matches while preserving the selected operation.
 
 The pinned Bend2 compiler builds the interval, grouping, ranking, and timeline
 policies under `policy/`. The registered host paths provide HTML, embedded
@@ -34,9 +37,9 @@ PLOW_SCREENSHOTS=1 node dashboard/plow/smoke.mjs "$plow_build_dir"
 
 The smoke check runs the built Worker with a simulated Access session, verifies
 denial with an absent or mismatched audience, and exercises the exact HTML and
-response policy through Chrome at 320, 728, 1120, and 1920 pixels. It checks
-the projector, empty and unavailable states, responsive layout, and header
-artwork. Screenshots are optional.
+response policy through Chrome at 320, 390, 728, 1120, 1440 and 1920 pixels.
+It exercises the projector, operation filtering, empty and unavailable states,
+responsive layout, and header artwork. Screenshots are optional.
 
 ## Deployment
 

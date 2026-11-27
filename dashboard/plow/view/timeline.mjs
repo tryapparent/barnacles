@@ -180,15 +180,9 @@ function render(trace, width, measurements, index) {
     bar.append(marker)
   }
   rail.append(bar)
-  if (selectedSpan?.index === index) {
-    const mark = makeElement('span', 'span-selection')
-    mark.style.left = percent(selectedSpan.start - frame.start, scale)
-    mark.style.width = percent(selectedSpan.end - selectedSpan.start, scale)
-    rail.append(mark)
-    row.classList.add('selected-trace')
-  }
   row.dataset.traceIndex = index
   row.append(header, rail)
+  paintThreadMatch(row, rail, index)
   if(details) row.append(panel)
   return row
 }

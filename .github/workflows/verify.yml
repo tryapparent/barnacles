@@ -49,6 +49,37 @@ jobs:
           path: ${{ runner.temp }}/plow/worker.mjs
           if-no-files-found: error
           retention-days: 3
+  collector-release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository_id == '1473191494'
+    needs: [verify, compose, plow]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts
+      - run: |
+          stage="$RUNNER_TEMP/collector"
+          mkdir -p "$stage/source"
+          git archive "$GITHUB_SHA" | tar -x -C "$stage/source"
+          npm run build:harbor -- --outDir "$stage/web"
+          printf '%s\n' "$GITHUB_SHA" > "$stage/revision"
+          tar -C "$stage" -czf "$RUNNER_TEMP/plow-collector.tar.gz" revision source web
+        shell: bash
+      - uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a
+        with:
+          subject-path: ${{ runner.temp }}/plow-collector.tar.gz
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: plow-collector-${{ github.sha }}
+          path: ${{ runner.temp }}/plow-collector.tar.gz
+          if-no-files-found: error
   deploy-plow:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository_id == '1473191494'
     needs: [verify, compose, plow]
