@@ -61,27 +61,43 @@ def observe_file(state: Replay, +thread: String, +id: String, +path: String, +at
           costs, attempts, cohorts, findings},
         Replay{seen, files, reads, costs, attempts, cohorts, findings})
 
-def update_cost(costs: Map<&2, Cost>, key: String, clock: String, operation: String, +start: U32, +end: U32,
+def update_cost(costs: Map<&2, Cost>, key: String, clock: String, operation: String, +closed: Bool, duration: U32,
   total: Cost) -> Map<&2, Cost>:
   match total:
     case Cost{_, _, count, seconds, unknown}:
-      +closed = Bool.and(U32.is_gt(start, 0), U32.is_ge(end, start))
       Map.set(&2, Cost, costs, key, Cost{clock, operation,
         U32.add(count, Bool.pick(U32, closed, 1, 0)),
-        U32.add(seconds, Bool.pick(U32, closed, U32.sub(end, start), 0)),
+        U32.add(seconds, Bool.pick(U32, closed, duration, 0)),
         U32.add(unknown, Bool.pick(U32, closed, 0, 1))})
 
-def add_cost(+costs: Map<&2, Cost>, +clock: String, +operation: String, +start: U32, +end: U32) -> Map<&2, Cost>:
+def add_cost(+costs: Map<&2, Cost>, +clock: String, +operation: String, closed: Bool, duration: U32) -> Map<&2, Cost>:
   +key = pair(clock, operation)
-  update_cost(costs, key, clock, operation, start, end, found(~Cost, Map.get(Cost, Cost{clock, operation, 0, 0, 0}, costs, key)))
+  update_cost(costs, key, clock, operation, closed, duration,
+    found(~Cost, Map.get(Cost, Cost{clock, operation, 0, 0, 0}, costs, key)))
 
-def observe_timing(state: Replay, id: String, +clock: String, operation: String, start: U32, end: U32) -> Replay:
+def observe_timing(state: Replay, id: String, +clock: String, operation: String, +start: U32, +end: U32) -> Replay:
   match state:
     case Replay{+seen, +files, +reads, +costs, +attempts, +cohorts, +findings}:
       +event = pair("timing", pair(clock, id))
+      +closed = Bool.and(U32.is_gt(start, 0), U32.is_ge(end, start))
       Bool.pick(Replay, includes(seen, event), Replay{seen, files, reads, costs, attempts, cohorts, findings},
         Replay{Map.set(&2, Bool, seen, event, True{}), files, reads,
-          add_cost(costs, clock, operation, start, end), attempts, cohorts, findings})
+          add_cost(costs, clock, operation, closed, U32.sub(end, start)), attempts, cohorts, findings})
+
+def observe_local_admission(state: Replay, +thread: String, +id: String, +wait_ms: U32, bound_ms: U32,
+  +allocated: U32, capacity: U32) -> Replay:
+  match state:
+    case Replay{+seen, +files, +reads, +costs, +attempts, +cohorts, +findings}:
+      +event = pair("local-admission", pair(thread, id))
+      +allocation_valid = Bool.and(U32.is_gt(allocated, 0), U32.is_ge(capacity, allocated))
+      +valid = Bool.and(Bool.not(includes(seen, event)), Bool.and(allocation_valid, U32.is_ge(bound_ms, wait_ms)))
+      +seconds = U32.div(wait_ms, 1000)
+      Bool.pick(Replay, valid,
+        Replay{Map.set(&2, Bool, seen, event, True{}), files, reads,
+          add_cost(costs, "local-build-admission", "t3-build", True{}, seconds), attempts, cohorts,
+          Bool.pick(List<&2, Finding>, U32.is_ge(wait_ms, 60000),
+            Finding{"local-build-admission-slow", thread, id, "", seconds, 0, 0, 0} <> findings, findings)},
+        Replay{seen, files, reads, costs, attempts, cohorts, findings})
 
 def update_attempt(state: Replay, thread: String, +id: String, +start: U32, +end: U32, failed: Bool,
   succeeded: Bool, +event: String, target: String, prior: Attempt) -> Replay:
@@ -169,11 +185,13 @@ def observe_peer(state: Replay, thread: String, +id: String, +clock: String, coh
           with_outlier(findings, earlier_peers(past, revision, start), clock, thread, id, seconds)},
         Replay{seen, files, reads, costs, attempts, cohorts, findings})
 
-def prerequisite_label(+line: String) -> String:
+def diagnostic_label(+line: String) -> String:
   +missing_checker = String.starts_with(line, "Staged checker could not load installed tools")
   +missing_typescript = Bool.and(String.starts_with(line, "Dependency policy failed: Staged TypeScript "),
     String.contains(line, ": locked TypeScript dependencies are missing for staged"))
-  Bool.pick(String, Bool.or(missing_checker, missing_typescript), "staged-verification-prerequisite", "")
+  +directory_width = String.starts_with(String.append(line, " "), "pre-commit: staged candidate exceeds the directory-width limit: ")
+  Bool.pick(String, directory_width, "staged-directory-width",
+    Bool.pick(String, Bool.or(missing_checker, missing_typescript), "staged-verification-prerequisite", ""))
 
 def observe_failure(state: Replay, +thread: String, +id: String, +label: String, failed: Bool) -> Replay:
   match state:
@@ -186,7 +204,7 @@ def observe_failure(state: Replay, +thread: String, +id: String, +label: String,
         Replay{seen, files, reads, costs, attempts, cohorts, findings})
 
 def observe_diagnostic(state: Replay, thread: String, id: String, line: String, failed: Bool) -> Replay:
-  observe_failure(state, thread, id, prerequisite_label(String.trim(line)), failed)
+  observe_failure(state, thread, id, diagnostic_label(String.trim(line)), failed)
 
 def observe_job_result(state: Replay, thread: String, id: String, +conclusion: String) -> Replay:
   +timeout = String.eq(conclusion, "timed_out")
@@ -220,6 +238,14 @@ def observe_forge_response(state: Replay, thread: String, id: String, operation:
 def observe_job_rerun(state: Replay, thread: String, id: String, job: String, line: String, failed: Bool) -> Replay:
   +rejected = String.eq(String.trim(line), String.append("job ", String.append(job, " cannot be rerun")))
   observe_failure(state, thread, id, "ci-job-rerun-rejected", Bool.and(failed, rejected))
+
+def observe_hosted_apt(state: Replay, thread: String, id: String, conclusion: String, exit_code: U32,
+  http_status: U32, +archive: String, summary: String) -> Replay:
+  +failed = Bool.and(String.eq(conclusion, "failure"), U32.is_eq(exit_code, 100))
+  +package = Bool.and(String.starts_with(archive, "/"), Bool.and(String.contains(archive, "/pool/"),
+    String.ends_with(archive, ".deb")))
+  +missing = Bool.and(U32.is_eq(http_status, 404), String.starts_with(summary, "E: Unable to fetch some archives"))
+  observe_failure(state, thread, id, "ci-apt-package-not-found", Bool.and(failed, Bool.and(package, missing)))
 
 def replay_files(state: Replay) -> List<&2, FileTotal>:
   match state:

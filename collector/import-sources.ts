@@ -154,6 +154,10 @@ type ReplayPolicy = {
   observe_forge_response(state: unknown, thread: string, id: string, operation: string, status: number,
     failed: boolean, identified: boolean): unknown;
   observe_job_rerun(state: unknown, thread: string, id: string, job: string, line: string, failed: boolean): unknown;
+  observe_local_admission(state: unknown, thread: string, id: string, waitMs: number, boundMs: number,
+    allocated: number, capacity: number): unknown;
+  observe_hosted_apt(state: unknown, thread: string, id: string, conclusion: string, exitCode: number,
+    httpStatus: number, archive: string, summary: string): unknown;
   observe_job_result(state: unknown, thread: string, id: string, conclusion: string): unknown;
   observe_diagnostic(state: unknown, thread: string, id: string, line: string, failed: boolean): unknown;
   replay_files(state: unknown): List<Record<string, unknown>>;
@@ -214,6 +218,12 @@ async function replayBottlenecks(file: string, scratch: string) {
       } else if (value.kind === "job-rerun-response") {
         state = policy.observe_job_rerun(state, token(value.thread), id, token(value.job),
           factText(value.line), bendBool(value.failed));
+      } else if (value.kind === "local-build-admission") {
+        state = policy.observe_local_admission(state, token(value.thread), id, clockSecond(value.waitMs),
+          clockSecond(value.boundMs), clockSecond(value.allocated), clockSecond(value.capacity));
+      } else if (value.kind === "hosted-apt-result") {
+        state = policy.observe_hosted_apt(state, token(value.thread), id, token(value.conclusion),
+          clockSecond(value.exitCode), clockSecond(value.httpStatus), factText(value.archive), factText(value.summary));
       } else if (value.kind === "job-result") {
         state = policy.observe_job_result(state, token(value.thread), id, token(value.conclusion));
       } else if (value.kind === "diagnostic") {
