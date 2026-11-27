@@ -155,11 +155,12 @@ export function Bottlenecks({ api }: { api: string }) {
         </table>}
       </> : <p className="summary-note">Confirmed outcome delay is unknown for this window.</p>)}
       {data.ranking.length ? <table><caption>Findings ranked by affected threads</caption>
-        <thead><tr><th scope="col">Finding</th><th scope="col">Threads</th><th scope="col">Occurrences</th></tr></thead>
+        <thead><tr><th scope="col">Finding</th><th scope="col">Threads</th><th scope="col">Events</th></tr></thead>
         <tbody>{data.ranking.map(item => <tr key={item.rule}><th scope="row">{label(item.rule)}</th>
           <td>{item.threads}</td><td>{item.occurrences}</td></tr>)}</tbody>
-      </table> : <p>{data.threads.length ? "No findings in the observed evidence."
-        : data.window ? "No captured T3 activity in this window." : "No joined threads yet."}</p>}
+      </table> : <p>{data.window
+        ? data.threads.length ? "No linked CI failures or timeouts were observed." : "No captured T3 activity in this window."
+        : data.threads.length ? "No findings in the observed evidence." : "No joined threads yet."}</p>}
       {data.threads.length > 0 && <label className="analysis-thread">Thread details
         <select value={thread} onChange={event => {
           setDetail(undefined);
