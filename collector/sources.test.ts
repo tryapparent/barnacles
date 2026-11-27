@@ -773,6 +773,20 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       previousHead: "a".repeat(40), nextHead: "a".repeat(40), previousJob: "contracts", nextJob: "contracts", previousConclusion: "cancelled",
       annotation: "Canceling since a higher priority waiting request for repository-checks-pull_request-51 exists",
       assigned: true, previousStarted: 100, previousEnded: 180, nextCreated: 170 };
+    const controlConflict = { kind: "actions-jobless-control-conflict", thread: "t", id: "control-conflict",
+      run: "12345678901", jobsRun: "12345678901", cancelRun: "12345678901", forceRun: "12345678901", status: "queued", jobs: 0,
+      normalError: "Cannot cancel a workflow run that is completed", forceStatus: 409,
+      forceError: "Cannot cancel a workflow run that has not been queued yet.",
+      jobsObserved: 100, cancelDenied: 110, statusObserved: 115, forceDenied: 120 };
+    const startupFailure = { kind: "hosted-workflow-startup-failure", thread: "t", id: "jobless-startup",
+      status: "completed", conclusion: "startup_failure", jobCount: 0, attempt: 1 };
+    const deadline = { kind: "hosted-job-deadline-confirmed", thread: "t", id: "confirmed-deadline", conclusion: "cancelled",
+      assigned: true, annotation: "The job has exceeded the maximum execution time of 15m0s", deadlineSeconds: 900,
+      started: 1000, ended: 2200 };
+    const electronDownload = { kind: "hosted-electron-download-error", thread: "t", id: "electron-http-504",
+      step: "Prepare Electron before timed renderer tests", conclusion: "failure", status: 504, exitCode: 1,
+      artifact: "https://github.com/electron/electron/releases/download/v45.2.1/electron-v45.2.1-linux-x64.zip",
+      origin: "electron-get-fetch-downloader", renderer: "skipped" };
     const facts = [
       admission, admission,
       { ...admission, id: "superseded", annotation: "Canceling since a higher priority waiting request exists" },
@@ -1082,6 +1096,26 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       { ...supersession, id: "unassigned-cancellation", assigned: false },
       { ...supersession, id: "replacement-after-cancel", nextCreated: 181 },
       { ...supersession, id: "actor-cancelled-run", annotation: "The run was canceled by @example." },
+      controlConflict, controlConflict,
+      { ...controlConflict, id: "older-queued-read", statusObserved: 105 },
+      { ...controlConflict, id: "different-force-run", forceRun: "12345678902" },
+      { ...controlConflict, id: "confirmed-queued-job", jobs: 1 },
+      { ...controlConflict, id: "force-accepted", forceStatus: 202 },
+      { ...controlConflict, id: "normal-throttled", normalError: "API rate limit exceeded" },
+      startupFailure, startupFailure,
+      { ...startupFailure, id: "run-admission-wait", status: "queued" },
+      { ...startupFailure, id: "job-started", jobCount: 1 },
+      { ...startupFailure, id: "no-attempt", attempt: 0 },
+      deadline, deadline,
+      { ...deadline, id: "short-job", ended: 1899 },
+      { ...deadline, id: "job-no-runner", assigned: false },
+      { ...deadline, id: "mismatched-limit", deadlineSeconds: 901 },
+      { ...deadline, id: "job-operator-cancelled", annotation: "The run was canceled by @example." },
+      electronDownload, electronDownload,
+      { ...electronDownload, id: "download-forbidden", status: 403 },
+      { ...electronDownload, id: "product-renderer-failure", renderer: "failure" },
+      { ...electronDownload, id: "wrong-archive-origin", artifact: "https://example.test/electron.zip" },
+      { ...electronDownload, id: "generic-download", origin: "curl" },
       read, read, { ...read, id: "b", at: 160 }, { ...read, thread: "t2", at: 170 },
       timing, timing, { ...timing, id: "unpaired", end: 0 },
       attempt, { ...attempt, id: "changed", key: "gate:v2", start: 115, end: 120, failed: false, succeeded: true },
@@ -1146,7 +1180,8 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
         "pr-create-graphql-ref-resolution", "git-push-github-workflow-scope-refused", "local-t3-worktree-path-missing",
         "provider-audio-input-unsupported", "ci-status-reporter-rate-limited", "ci-macos-system-events-probe-failed",
         "ci-observer-rate-limited", "local-verification-fixture-measured-speedup", "local-rust-config-ancestry-refused",
-        "local-electron-display-unavailable", "ci-same-head-job-superseded",
+        "local-electron-display-unavailable", "ci-same-head-job-superseded", "ci-jobless-run-state-conflict",
+        "ci-workflow-startup-failure", "ci-job-deadline-confirmed", "ci-electron-prerequisite-http-server-error",
         "recovered-attempt", "runner"]);
     assert.ok(!first.includes("installed tools"));
     assert.ok(!first.includes("#42:"));
@@ -1181,6 +1216,8 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       ["rejected-audio", "", 0, 0], ["reconcile-quota", "", 0, 0], ["system-events-probe", "", 0, 0],
       ["run-read-quota", "", 0, 0], ["measured-fixture", "", 35, 0], ["rust-config-refused", "", 0, 0],
       ["missing-test-display", "", 0, 0], ["same-head-cancelled", "", 80, 0],
+      ["control-conflict", "", 0, 0], ["jobless-startup", "", 0, 0], ["confirmed-deadline", "", 1200, 0],
+      ["electron-http-504", "", 0, 0],
       ["recovered", "first", 20, 0], ["tail", "", 250, 10],
     ]);
   } finally {
