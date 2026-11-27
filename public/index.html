@@ -6,11 +6,12 @@
 <title>Plow · Know your ground.</title>
 <style>
 @font-face{font-family:"Young Serif";src:url("./assets/youngserif.woff2") format("woff2");font-weight:400;font-style:normal}
-@font-face{font-family:Geist;src:url("./assets/geist.woff2") format("woff2");font-weight:400 650;font-style:normal}
+@font-face{font-family:"Source Serif 4";src:url("./assets/source-serif-4.woff2") format("woff2");font-weight:400;font-style:normal}
 :root{--ink:#1a130d;--mist:#f2f5f6;--earth:#392820;--meadow:#6a934f;--cream:#fff4df;--storm:#60564d}
 *{box-sizing:border-box}
 body{margin:0}
-.plow{font:400 16px/1.5 Geist,system-ui,sans-serif;color:var(--ink);font-synthesis:none}
+.plow{font:400 16px/1.5 "Young Serif",Georgia,serif;color:var(--ink);font-synthesis:none}
+:root{--small:"Source Serif 4",Georgia,serif}
 .plow h1,.plow h2,.plow p,.plow figure{margin:0}
 .scene{position:relative;container-type:inline-size;isolation:isolate;overflow:hidden;aspect-ratio:16/9}
 .scene>img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:-2}
@@ -22,9 +23,10 @@ body{margin:0}
 .field .copy{position:absolute;left:6.4%;right:6.4%;top:43%}
 .plow h1,.plow h2{font-family:"Young Serif",Georgia,serif;font-weight:400;line-height:1.04;letter-spacing:-.035em;text-wrap:balance}
 .plow h1{font-size:clamp(39px,7.25cqw,100px)}
-.scene p{margin-top:.65em;font-size:clamp(14px,2.2cqw,23px);line-height:1.42;text-wrap:pretty}
+.scene p{margin-top:.65em;font-size:clamp(17px,2.2cqw,23px);line-height:1.42;text-wrap:pretty}
 .field p{max-width:44ch}
-.cta{display:inline-flex;align-items:center;gap:10px;min-height:44px;margin-top:clamp(12px,2.2cqw,26px);padding:7px 14px;border-radius:3px;background:var(--ink);color:var(--mist);font-size:clamp(13px,1.75cqw,17px);font-weight:600;text-decoration:none}
+.example :is(.context,.duration,.checkpoints,.finding){font-family:var(--small)}
+.cta{display:inline-flex;align-items:center;gap:10px;min-height:44px;margin-top:clamp(12px,2.2cqw,26px);padding:7px 14px;border-radius:3px;background:var(--ink);color:var(--mist);font-family:var(--small);font-size:14px;font-weight:400;text-decoration:none}
 .cta:hover{background:var(--earth)}
 .cta:focus-visible{outline:3px solid var(--mist);outline-offset:2px;box-shadow:0 0 0 7px var(--ink)}
 .blade{background:var(--earth);color:var(--cream)}
@@ -57,7 +59,7 @@ body{margin:0}
  .blade>img{object-position:24% center}
  .blade .copy{left:42%;top:17%;right:5%;text-shadow:0 1px 7px var(--ink)}
  .blade h2{font-size:clamp(24px,6.8cqw,39px)}
- .blade p{font-size:14px}
+ .blade p{font-family:var(--small);font-size:14px}
  .delivery{grid-template-columns:1fr}
  .hands{aspect-ratio:2/1;min-height:0}
  .hands img{width:195%;height:100%;object-position:left 46%}

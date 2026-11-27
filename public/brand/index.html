@@ -7,10 +7,11 @@
 <title>Brand guide · Plow</title>
 <style>
 @font-face{font-family:"Young Serif";src:url("../assets/youngserif.woff2") format("woff2");font-weight:400;font-style:normal;font-display:swap}
-@font-face{font-family:Geist;src:url("../assets/geist.woff2") format("woff2");font-weight:400 650;font-style:normal;font-display:swap}
+@font-face{font-family:"Source Serif 4";src:url("../assets/source-serif-4.woff2") format("woff2");font-weight:400;font-style:normal;font-display:swap}
 :root{--ink:#1a130d;--mist:#f2f5f6;--earth:#392820;--meadow:#6a934f;--cream:#fff4df;--rule:color-mix(in srgb,var(--mist) 78%,var(--earth));--display:"Young Serif",Georgia,serif}
 *{box-sizing:border-box}
-.guide{width:min(100%,1120px);margin-inline:auto;padding-inline:clamp(16px,5vw,56px);color:var(--ink);background:var(--mist);font:400 16px/1.55 Geist,system-ui,sans-serif;font-synthesis:none}
+.guide{width:min(100%,1120px);margin-inline:auto;padding-inline:clamp(16px,5vw,56px);color:var(--ink);background:var(--mist);font:400 16px/1.55 "Young Serif",Georgia,serif;font-synthesis:none}
+:root{--small:"Source Serif 4",Georgia,serif}
 .guide :is(p,h1,h2,h3,h4,figure,blockquote,ul){margin:0}
 .guide a{color:inherit;text-underline-offset:.22em;text-decoration-thickness:1px}
 .guide a:hover{text-decoration-thickness:2px}
@@ -31,6 +32,8 @@
 .section{padding-block:clamp(35px,7vw,78px);scroll-margin-block-start:18px}
 .section+.section{border-top:1px solid var(--rule)}
 .section .lead{margin-block-start:12px;max-width:57ch;color:var(--earth)}
+.guide :is(.masthead a:last-child,.contents,.downloads,.usage,.license,.swatches small,.art-note,.sample-action,.small-specimen){font:400 14px/1.55 var(--small);font-optical-sizing:auto}
+.guide .small-specimen{margin-block:14px;font-size:12px}
 .section :is(.identity,.type-grid,.swatches,.art,.sample){margin-block-start:clamp(22px,4vw,42px)}
 .identity{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:clamp(14px,3vw,28px)}
 .logo-panel{display:grid;place-items:center;min-height:clamp(110px,18vw,206px);padding:16px;background:var(--mist);border:1px solid var(--rule)}
@@ -40,7 +43,7 @@
 .type-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:clamp(16px,4vw,34px)}
 .type-grid article{padding-block-start:15px;border-top:1px solid var(--rule)}
 .specimen{font-family:var(--display);font-size:clamp(26px,4.8vw,56px);line-height:1.12;letter-spacing:-.035em}
-.specimen.body{font-family:Geist,system-ui,sans-serif;font-size:clamp(19px,3vw,30px);letter-spacing:-.02em}
+.specimen.body{font-family:var(--display);font-size:17px;letter-spacing:normal}
 .type-grid .specimen{margin-block:14px}
 .type-grid .usage,.art-note{color:var(--earth);font-size:14px}
 .type-grid .license{display:inline-flex;align-items:center;min-height:44px;font-size:14px}
@@ -58,7 +61,7 @@
 .sample{padding:clamp(18px,4.5vw,40px);background:var(--earth);color:var(--cream)}
 .sample .sample-head{font:400 clamp(27px,5vw,55px)/1.08 var(--display);letter-spacing:-.035em}
 .sample .sample-body{margin-block-start:12px;max-width:45ch}
-.sample .sample-action{display:inline-block;margin-block-start:18px;padding:7px 14px;background:var(--meadow);color:var(--ink);font-weight:600}
+.sample .sample-action{display:inline-block;margin-block-start:18px;padding:7px 14px;background:var(--meadow);color:var(--ink)}
 @media(max-width:760px){
  .swatches{grid-template-columns:repeat(3,minmax(0,1fr))}
 }
@@ -117,14 +120,15 @@
    <article>
     <h3>Young Serif</h3>
     <p class="specimen">Know your ground.</p>
-    <p class="usage">Regular 400 for wordmarks and display headings. The landing-page headline is 100 px at 1,440 px and 34 px at 375 px.</p>
+    <p class="specimen body">See where your coding agents get stuck, from the first message to a feature in customers’ hands.</p>
+    <p class="usage">Regular 400 for the wordmark, headings, and main copy. Set the landing-page intro at 17–23 px.</p>
     <a class="license" href="../assets/youngserif-ofl.txt">Young Serif license</a>
    </article>
    <article>
-    <h3>Geist</h3>
-    <p class="specimen body">See where your coding agents get stuck.</p>
-    <p class="usage">Regular 400 for supporting copy. Semibold 600 for actions and emphasis. The landing-page supporting copy ranges from 14 to 23 px.</p>
-    <a class="license" href="../assets/geist-ofl.txt">Geist license</a>
+    <h3>Source Serif 4</h3>
+    <p class="small-specimen">Cycle time · 17 of 29 shipments measured</p>
+    <p class="usage">Regular 400 at 12–14 px for labels, times, and controls. Keep optical sizing enabled.</p>
+    <a class="license" href="../assets/source-serif-4-ofl.txt">Source Serif 4 license</a>
    </article>
   </div>
  </section>
