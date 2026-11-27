@@ -585,6 +585,12 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
     const jobResult = { kind: "job-result", thread: "t", id: "run:2:job", conclusion: "failure" };
     const admission = { kind: "hosted-admission", thread: "t", id: "run:7:job", conclusion: "cancelled",
       assigned: false, steps: 0, annotation: "The job was not acquired by Runner of type hosted even after multiple attempts" };
+    const notice = { kind: "t3-pr-notice", thread: "t", sourceThread: "t", id: "notice-1", visibility: "local",
+      status: "completed", truncated: false, linkedPr: 42, message: "#42: merge conflict" };
+    const forge = { kind: "forge-response", thread: "t", id: "request", operation: "github-pr-create",
+      status: 500, failed: true, identified: true };
+    const rerun = { kind: "job-rerun-response", thread: "t", id: "rerun", job: "123456789012",
+      line: "job 123456789012 cannot be rerun", failed: true };
     const facts = [
       admission, admission,
       { ...admission, id: "superseded", annotation: "Canceling since a higher priority waiting request exists" },
@@ -600,6 +606,26 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       { ...diagnostic, id: "copied-success", failed: false },
       { ...diagnostic, id: "reprinted-context", line: "Copied guidance: Staged checker could not load installed tools" },
       { ...diagnostic, id: "other-policy", line: "Dependency policy failed: Staged TypeScript fake/tsconfig.json: invalid option" },
+      notice, notice,
+      { ...notice, id: "notice-2", message: "#42: checks passed, merge conflict" },
+      { ...notice, id: "other-pr", linkedPr: 43 },
+      { ...notice, id: "unlinked", linkedPr: 0 },
+      { ...notice, id: "inherited", visibility: "inherited" },
+      { ...notice, id: "different-thread", sourceThread: "other" },
+      { ...notice, id: "truncated", truncated: true },
+      { ...notice, id: "pending", status: "pending" },
+      { ...notice, id: "checks-only", message: "#42: checks passed" },
+      { ...notice, id: "extra-text", message: "#42: merge conflict already resolved" },
+      forge, forge,
+      { ...forge, id: "unidentified-response", identified: false },
+      { ...forge, id: "accepted", status: 201 },
+      { ...forge, id: "rate-limited", status: 429 },
+      { ...forge, id: "wrong-operation", operation: "github-pr-read" },
+      { ...forge, id: "recovered-response", failed: false },
+      rerun, rerun,
+      { ...rerun, id: "wrong-job", job: "123456789013" },
+      { ...rerun, id: "rerun-succeeded", failed: false },
+      { ...rerun, id: "unrelated-failure", line: "failed to connect to GitHub" },
       read, read, { ...read, id: "b", at: 160 }, { ...read, thread: "t2", at: 170 },
       timing, timing, { ...timing, id: "unpaired", end: 0 },
       attempt, { ...attempt, id: "changed", key: "gate:v2", start: 115, end: 120, failed: false, succeeded: true },
@@ -617,11 +643,18 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
     const result = JSON.parse(first);
     assert.deepEqual(result.files, [{ $: "FileTotal", path: "README.md", requests: 3, threads: 2, revisits: 1 }]);
     assert.deepEqual(result.costs, [{ $: "Cost", clock: "runner", operation: "build", count: 1, seconds: 129, unknown: 1 }]);
-    assert.deepEqual(result.findings.slice(0, 4).map(({ rule }: { rule: string }) => rule),
-      ["ci-hosted-admission-failure", "ci-job-failure", "ci-job-timeout", "staged-verification-prerequisite"]);
+    assert.deepEqual(result.findings.map(({ rule }: { rule: string }) => rule),
+      ["ci-hosted-admission-failure", "ci-job-failure", "ci-job-timeout", "staged-verification-prerequisite",
+        "pr-merge-conflict-observed", "pr-merge-conflict-observed", "pr-create-http-server-error",
+        "ci-job-rerun-rejected", "recovered-attempt", "runner"]);
     assert.ok(!first.includes("installed tools"));
+    assert.ok(!first.includes("#42:"));
     assert.deepEqual(result.findings.map(({ id, previous, seconds, median }: Record<string, unknown>) =>
-      [id, previous, seconds, median]), [["run:7:job", "", 0, 0], ["run:2:job", "", 0, 0], ["run:4:job", "", 0, 0], ["checker", "", 0, 0], ["recovered", "first", 20, 0], ["tail", "", 250, 10]]);
+      [id, previous, seconds, median]), [
+      ["run:7:job", "", 0, 0], ["run:2:job", "", 0, 0], ["run:4:job", "", 0, 0], ["checker", "", 0, 0],
+      ["notice-1", "", 0, 0], ["notice-2", "", 0, 0], ["request", "", 0, 0], ["rerun", "", 0, 0],
+      ["recovered", "first", 20, 0], ["tail", "", 250, 10],
+    ]);
   } finally {
     rmSync(job, { recursive: true, force: true });
   }

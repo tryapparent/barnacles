@@ -200,6 +200,27 @@ def observe_hosted_admission(state: Replay, thread: String, id: String, conclusi
   +reason = String.eq(String.trim(annotation), "The job was not acquired by Runner of type hosted even after multiple attempts")
   observe_failure(state, thread, id, "ci-hosted-admission-failure", Bool.and(cancelled, Bool.and(unallocated, reason)))
 
+def observe_pr_notice(state: Replay, +thread: String, id: String, source_thread: String, visibility: String,
+  status: String, truncated: Bool, +pr: U32, +message: String) -> Replay:
+  +local = Bool.and(String.eq(source_thread, thread), String.eq(visibility, "local"))
+  +complete = Bool.and(String.eq(status, "completed"), Bool.not(truncated))
+  +prefix = String.append("#", String.append(Nat.show(U32.to_nat(pr)), ": "))
+  +conflict = Bool.or(String.eq(message, String.append(prefix, "merge conflict")),
+    String.eq(message, String.append(prefix, "checks passed, merge conflict")))
+  +valid = Bool.and(U32.is_gt(pr, 0), Bool.and(local, Bool.and(complete, conflict)))
+  observe_failure(state, thread, id, "pr-merge-conflict-observed", valid)
+
+def observe_forge_response(state: Replay, thread: String, id: String, operation: String, +status: U32,
+  failed: Bool, identified: Bool) -> Replay:
+  +server_error = Bool.and(U32.is_ge(status, 500), U32.is_lt(status, 600))
+  +create = String.eq(operation, "github-pr-create")
+  +valid = Bool.and(Bool.and(create, server_error), Bool.and(failed, identified))
+  observe_failure(state, thread, id, "pr-create-http-server-error", valid)
+
+def observe_job_rerun(state: Replay, thread: String, id: String, job: String, line: String, failed: Bool) -> Replay:
+  +rejected = String.eq(String.trim(line), String.append("job ", String.append(job, " cannot be rerun")))
+  observe_failure(state, thread, id, "ci-job-rerun-rejected", Bool.and(failed, rejected))
+
 def replay_files(state: Replay) -> List<&2, FileTotal>:
   match state:
     case Replay{_, files, _, _, _, _, _}: Map.values(&2, FileTotal, files)

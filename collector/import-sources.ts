@@ -149,6 +149,11 @@ type ReplayPolicy = {
     start: number, end: number, eligible: boolean): unknown;
   observe_hosted_admission(state: unknown, thread: string, id: string, conclusion: string,
     assigned: boolean, steps: number, annotation: string): unknown;
+  observe_pr_notice(state: unknown, thread: string, id: string, sourceThread: string, visibility: string,
+    status: string, truncated: boolean, linkedPr: number, message: string): unknown;
+  observe_forge_response(state: unknown, thread: string, id: string, operation: string, status: number,
+    failed: boolean, identified: boolean): unknown;
+  observe_job_rerun(state: unknown, thread: string, id: string, job: string, line: string, failed: boolean): unknown;
   observe_job_result(state: unknown, thread: string, id: string, conclusion: string): unknown;
   observe_diagnostic(state: unknown, thread: string, id: string, line: string, failed: boolean): unknown;
   replay_files(state: unknown): List<Record<string, unknown>>;
@@ -199,6 +204,16 @@ async function replayBottlenecks(file: string, scratch: string) {
       } else if (value.kind === "hosted-admission") {
         state = policy.observe_hosted_admission(state, token(value.thread), id, token(value.conclusion),
           bendBool(value.assigned), clockSecond(value.steps), factText(value.annotation));
+      } else if (value.kind === "t3-pr-notice") {
+        state = policy.observe_pr_notice(state, token(value.thread), id, token(value.sourceThread),
+          token(value.visibility), token(value.status), bendBool(value.truncated), clockSecond(value.linkedPr),
+          factText(value.message));
+      } else if (value.kind === "forge-response") {
+        state = policy.observe_forge_response(state, token(value.thread), id, token(value.operation),
+          clockSecond(value.status), bendBool(value.failed), bendBool(value.identified));
+      } else if (value.kind === "job-rerun-response") {
+        state = policy.observe_job_rerun(state, token(value.thread), id, token(value.job),
+          factText(value.line), bendBool(value.failed));
       } else if (value.kind === "job-result") {
         state = policy.observe_job_result(state, token(value.thread), id, token(value.conclusion));
       } else if (value.kind === "diagnostic") {
