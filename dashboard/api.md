@@ -122,6 +122,7 @@ up to 366 days. The response includes both `snapshotAt` and its effective
 | `snapshotCoverage` | Unique observed PRs, verified Linux Main x86_64 shipments, and shipments with an attributable thread-to-publication cycle in the prepared sample. |
 | `cycleComparison` | The comparison of the latest two completed UTC weeks at snapshot time, with direction, signed delta, and each week's measured mean and sample count. An insufficient comparison has a null delta. |
 | `shipments` | PRs with publication inside the selected window and verified access by its cutoff. Weekly buckets use Mondays in UTC. A missing bucket means the selected sample supplied no verified shipment for that week. |
+| `shipments.meanCycleSeconds` | Mean thread-start-to-publication time over the attributed, verified PRs in the effective review window. Its denominator is `shipments.attributed`. A null mean indicates no eligible measurements. |
 | `shipments.dailyStages` | The same verified PRs grouped by UTC publication day, newest first. Each consecutive stage reports its measured PR count and mean seconds. A null mean indicates missing coverage. Older prepared review policies omit this field. |
 | `shipments.dailyChart` | Chart start and verified publication days within the latest 31 UTC dates of the effective window. Earlier prepared review policies omit this field. |
 | `operations` | Ranked elapsed times ending at the snapshot cutoff, using the default 24-hour reporting window. Available clocks and operation names are included. Cumulative spans can overlap. |
@@ -139,6 +140,10 @@ of its measured steps. Tool clocks expand **Waiting**, **Process I/O**, and
 retain their labels. Untimed spans remain in **Recorded operations**.
 All areas use cumulative measured time and spans can overlap.
 
+The waiting drilldown shows measured and untimed counts for unidentified waits
+when the selected clock has those rows. Those waits have no confirmed link to a
+task identity.
+
 The `operations.map` field contains the visible tiles for the selected
 clock and operation. Each tile includes its cumulative seconds, palette
 index, grouped item count and children. The `operations.mapKind` value
@@ -151,13 +156,13 @@ for all rows of the selected clock, or use an exact name from
 `operations.operationOptions`. A clock without evidence returns an empty list.
 Use `limit` (1–100, default 25) and `offset` (default 0) to page through
 deliveries. Advance using `deliveries.nextOffset`, which is null at the end.
-The harbor's **Mean delivery stages by day** chart uses the full shipment
+The harbor's **Mean time to publication by stage** chart uses the full shipment
 selection across all pages for the latest 31 UTC dates in the selected window.
 Days with verified shipments take equal space. Select a column to view its
 stage means and coverage. Narrow screens scroll within the chart.
 Each mean uses PRs with both stage clocks in order. The stack shows the sum
-of the stage means, whose sample counts can differ. The access check is shown
-as its own interval after publication.
+of the stage means, whose sample counts can differ. The selected day’s table shows
+the separate interval from publication to the observed access check.
 `deliveries.maxMeasuredMillis` is the longest sum of observed consecutive
 intervals across the selected delivery rows, independent of pagination.
 
@@ -169,7 +174,8 @@ These API bounds stay fixed across pages.
 Each row shows the merge date or “No merge recorded” and any other latest
 milestone. Colored bars connect measured consecutive clocks. A dot marks a
 milestone without a positive interval. PRs from the same release can share a
-publication-to-access-check interval at the same position on the axis.
+publication-to-access-check interval at the same position on the axis. The
+timeline draws that interval as a dashed segment ending at the observed check.
 Selecting a ship opens its milestone waterfall. A PR outside the ten appears in
 a separate detail section. The link keeps the PR number and cutoff so it can
 be opened directly.

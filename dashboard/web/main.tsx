@@ -316,7 +316,7 @@ function DeliveryTimeline({ review, selection }: { review: Review; selection: { 
     {items.length ? <>
       <p className="fine delivery-scope">{items.length === 10 ? "Latest 10 pull requests" : `${items.length} pull requests in this window`}</p>
       <StageKey />
-      <p className="fine delivery-note">Bars show measured intervals. Dots mark observed milestones without a positive interval. Open a row for exact timestamps.</p>
+      <p className="fine delivery-note">Bars show measured intervals. Dashed green spans show time from publication to the access check. Open a row for exact timestamps.</p>
       <div className="delivery-axis">
         <span className="delivery-clock">Milestone time (UTC)</span>
         <div className="delivery-ticks" data-single={ticks.length === 1}>
@@ -346,7 +346,7 @@ function DeliveryTimeline({ review, selection }: { review: Review; selection: { 
               const label = entry.elapsedMillis === null ? null : durationMillis(entry.elapsedMillis);
               return <span key={entry.key} className={`stage-segment ${phaseClass(entry)}`}
                 style={{ left: `${left}%`, width: width === 0 ? undefined : `${width}%` }} data-point={width === 0}
-                title={label === null ? title : `${title} · ${label}`}>{width > 0 && <span>{label}</span>}</span>;
+                title={label === null ? title : `${title} · ${label}`}>{width > 0 && entry.key !== "access-verified" && <span>{label}</span>}</span>;
             })}</span>
           </summary>
           {selected === item.number ? <PullRequestEvidence path={item.detailPath} milestones={item.milestones} /> :

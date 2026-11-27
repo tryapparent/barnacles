@@ -730,6 +730,8 @@ test("shipping API preserves historical and partial evidence and reads a replace
     assert.equal(report.snapshotAt, iso(cutoff));
     assert.deepEqual(report.snapshotCoverage, { observedPullRequests: 2, verifiedShipments: 1, attributedShipments: 1 });
     assert.equal(report.shipments.weekly[0].meanCycleSeconds, 600);
+    assert.equal(report.shipments.meanCycleSeconds, 600);
+    assert.equal(report.shipments.attributed, 1);
     const publicationDay = iso(proof.published).slice(0, 10) + "T00:00:00.000Z";
     assert.deepEqual(report.shipments.dailyStages, [{
       startsAt: publicationDay, verified: 1,
@@ -790,6 +792,7 @@ test("shipping API preserves historical and partial evidence and reads a replace
 
     const historical = await get("/api/v1/shipping?to=" + time(at - 399));
     assert.equal(historical.shipments.verified, 0);
+    assert.equal(historical.shipments.meanCycleSeconds, null);
     assert.deepEqual(historical.shipments.weekly, []);
     assert.deepEqual(historical.shipments.dailyStages, []);
     assert.deepEqual(historical.shipments.dailyChart.days, []);

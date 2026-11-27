@@ -64,7 +64,7 @@ export type Review = {
   repository: string; surface: string; snapshotAt: string; window: { from: string; to: string };
   snapshotCoverage: { observedPullRequests: number; verifiedShipments: number; attributedShipments: number };
   cycleComparison: { deltaSeconds: number | null; direction: string; prior: ComparisonWeek; recent: ComparisonWeek };
-  shipments: { verified: number; attributed: number; weekly: Week[]; dailyChart?: DeliveryChart };
+  shipments: { verified: number; attributed: number; meanCycleSeconds?: number | null; weekly: Week[]; dailyChart?: DeliveryChart };
   operations: { window: string; clock: string; operation: string | null; clockOptions: string[];
     operationOptions: string[]; items: Operation[]; map?: OperationTile[]; mapKind?: "categories" };
   fleet: { from: string; to: string; items: Vessel[] };
