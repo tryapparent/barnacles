@@ -62,13 +62,7 @@ function Dashboard({ field, sessionHistory }: { field: string; sessionHistory?: 
               </div>
             </div>
             <div className="inspector-slot">
-              <section className="inspect-panel" id="thread-inspector" tabIndex={0} aria-labelledby="inspector-heading" hidden>
-                <div className="inspector-header">
-                  <h3 id="inspector-heading" />
-                  <Button asChild variant="outline"><a id="trace-t3-link" rel="noreferrer" hidden>Open in T3</a></Button>
-                </div>
-                <div id="inspector-evidence" />
-              </section>
+              <section className="inspect-panel" id="thread-inspector" tabIndex={0} aria-labelledby="inspector-heading" hidden />
             </div>
             <details className="reading-help">
               <summary>How to read the chart</summary>
