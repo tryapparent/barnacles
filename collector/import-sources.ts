@@ -227,6 +227,11 @@ type ReplayPolicy = {
   observe_provider_input_rejection(state: unknown, thread: string, id: string, sourceThread: string,
     visibility: string, itemType: string, itemStatus: string, truncated: boolean, status: number,
     errorType: string, parameter: string, code: string, message: string): unknown;
+  observe_provider_lifecycle(state: unknown, thread: string, id: string, sourceThread: string, visibility: string,
+    itemType: string, status: string, title: string, category: string, code: string, retryable: boolean,
+    attempt: number, maxAttempts: number, started: number, completed: number): unknown;
+  observe_provider_no_reply(state: unknown, thread: string, id: string, sourceThread: string, visibility: string,
+    itemType: string, status: string, author: string, origin: string, receipt: string): unknown;
   observe_hosted_status_write(state: unknown, thread: string, id: string, step: string, conclusion: string,
     writer: string, method: string, endpoint: string, revision: string, status: number, reason: string, exitCode: number): unknown;
   observe_hosted_macos_probe(state: unknown, thread: string, id: string, step: string, conclusion: string,
@@ -448,6 +453,15 @@ async function replayBottlenecks(file: string, scratch: string, patterns: boolea
         state = policy.observe_provider_input_rejection(state, token(value.thread), id, token(value.sourceThread),
           token(value.visibility), token(value.itemType), token(value.itemStatus), bendBool(value.truncated),
           clockSecond(value.status), token(value.errorType), token(value.parameter), token(value.code), factText(value.message));
+      } else if (value.kind === "t3-provider-lifecycle") {
+        state = policy.observe_provider_lifecycle(state, token(value.thread), id, token(value.sourceThread),
+          token(value.visibility), token(value.type), token(value.status), factText(value.title), token(value.category),
+          token(value.code), bendBool(value.retryable), clockSecond(value.attempt), clockSecond(value.maxAttempts),
+          clockSecond(value.started), clockSecond(value.completed));
+      } else if (value.kind === "t3-provider-no-reply") {
+        state = policy.observe_provider_no_reply(state, token(value.thread), id, token(value.sourceThread),
+          token(value.visibility), token(value.type), token(value.status), token(value.author), token(value.origin),
+          token(value.receipt));
       } else if (value.kind === "hosted-status-write-rejected") {
         state = policy.observe_hosted_status_write(state, token(value.thread), id, factText(value.step),
           token(value.conclusion), token(value.writer), token(value.method), token(value.endpoint), sha(value.revision),

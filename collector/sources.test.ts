@@ -630,6 +630,13 @@ test("bottleneck replay binds verification and recovery to original receipts", (
     phase: "queued", session: null, created: 100, observed: 110, deadline: 3700 };
   const macReady = { ...macQueue, id: "mac-ready", phase: "ready", session: "session",
     created: 0, observed: 160, deadline: 0 };
+  const providerRecovery = { kind: "t3-provider-lifecycle", thread: "t", sourceThread: "t", id: "stream-recovered",
+    visibility: "local", type: "error", status: "completed", title: "Provider recovered", category: "transport_error",
+    code: "responseStreamDisconnected", retryable: true, attempt: 2, maxAttempts: 5, started: 100, completed: 125 };
+  const providerLimit = { ...providerRecovery, id: "usage-limit", status: "failed", title: "Usage limit reached",
+    category: "usage_limit", code: "usageLimitExceeded", retryable: false, attempt: 0, maxAttempts: 0 };
+  const noReply = { kind: "t3-provider-no-reply", id: "no-reply", thread: "t", sourceThread: "t", visibility: "local",
+    type: "assistant_message", status: "completed", author: "agent", origin: "provider", receipt: "no-reply-after-retries" };
   const facts = [
     worktree, worktree,
     { ...worktree, id: "same-removal", at: 110 },
@@ -707,6 +714,23 @@ test("bottleneck replay binds verification and recovery to original receipts", (
     { ...macQueue, id: "second-queue", created: 410, observed: 415, deadline: 4010 },
     { ...macReady, id: "old-session-reprinted", observed: 440 },
     { ...macReady, id: "short-ready", observed: 450, session: "second-session" },
+    providerRecovery, providerRecovery,
+    { ...providerRecovery, id: "overload-recovered", category: "provider_error", code: "serverOverloaded" },
+    { ...providerRecovery, id: "failed-stream", status: "failed" },
+    { ...providerRecovery, id: "wrong-type", type: "assistant_message" },
+    { ...providerRecovery, id: "wrong-category", category: "unknown" },
+    { ...providerRecovery, id: "unbound-provider", sourceThread: "foreign" },
+    { ...providerRecovery, id: "inherited-provider", visibility: "inherited" },
+    { ...providerRecovery, id: "unknown-max-retries", maxAttempts: 0 },
+    { ...providerRecovery, id: "invalid-retry-plan", maxAttempts: 1 },
+    { ...providerRecovery, id: "no-retry-progress", attempt: 0 },
+    { ...providerRecovery, id: "missing-recovery-clock", started: 0 },
+    { ...providerRecovery, id: "reversed-recovery-clock", completed: 99 },
+    providerLimit, providerLimit,
+    { ...providerLimit, id: "unexpected-usage-retry", retryable: true },
+    noReply, noReply,
+    { ...noReply, id: "user-quoted-reply", origin: "web" },
+    { ...noReply, id: "inherited-no-reply", visibility: "inherited" },
   ];
   try {
     writeFileSync(file, facts.map(fact => JSON.stringify(fact)).join("\n") + "\n");
@@ -735,10 +759,18 @@ test("bottleneck replay binds verification and recovery to original receipts", (
       ["legacy-capture-inspect", "capture-reference-unavailable", 0],
       ["implicit-pr-number", "github-pr-implicit-number-unresolved", 0],
       ["mac-ready", "native-mac-ticket-readiness-slow", 60],
+      ["stream-recovered", "t3-provider-stream-recovered", 25],
+      ["overload-recovered", "t3-provider-overload-recovered", 25],
+      ["unknown-max-retries", "t3-provider-stream-recovered", 25],
+      ["usage-limit", "t3-provider-usage-limit-refused", 0],
+      ["no-reply", "t3-provider-no-reply-reported", 0],
     ]);
     const { patterns, costs } = JSON.parse(text);
     assert.deepEqual(costs.find((r: { clock: string }) => r.clock === "native-mac-ticket-readiness"),
       { $: "Cost", clock: "native-mac-ticket-readiness", operation: "nomac-wait", count: 2, seconds: 100, unknown: 0 });
+    assert.deepEqual(costs.filter((r: { clock: string }) => r.clock === "t3-provider-recovery"),
+      [{ $: "Cost", clock: "t3-provider-recovery", operation: "response-stream-disconnected", count: 2, seconds: 50, unknown: 0 },
+        { $: "Cost", clock: "t3-provider-recovery", operation: "server-overloaded", count: 1, seconds: 25, unknown: 0 }]);
     assert.deepEqual(patterns[0], { $: "RulePattern", rule: "local-build-memory-gate-with-worker-slots",
       threads: 2, findings: 3, timed: 0, largestSeconds: 0 });
     assert.deepEqual(patterns.find((p: { rule: string }) => p.rule === "t3-worktree-recreation-failed-before-provider"),

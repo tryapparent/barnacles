@@ -659,6 +659,48 @@ def observe_provider_input_rejection(state: Replay, +thread: String, id: String,
   observe_failure(state, thread, id, "provider-audio-input-unsupported",
     Bool.and(original, Bool.and(result, Bool.and(shape, audio))))
 
+def record_provider_lifecycle(state: Replay, +thread: String, +id: String, label: String,
+  operation: String, +recovered: Bool, +seconds: U32, valid: Bool) -> Replay:
+  match state:
+    case Replay{+seen, +files, +reads, +costs, +attempts, +cohorts, +status_reads, +findings}:
+      +event = pair("t3-provider-lifecycle", pair(thread, id))
+      +accept = Bool.and(valid, Bool.not(includes(seen, event)))
+      Bool.pick(Replay, accept,
+        Replay{Map.set(&2, Bool, seen, event, True{}), files, reads,
+          Bool.pick(Map<&2, Cost>, recovered, add_cost(costs, "t3-provider-recovery", operation, True{}, seconds), costs),
+          attempts, cohorts, status_reads,
+          Finding{label, thread, id, "", Bool.pick(U32, recovered, seconds, 0), 0, 0, 0} <> findings},
+        Replay{seen, files, reads, costs, attempts, cohorts, status_reads, findings})
+
+def observe_provider_lifecycle(state: Replay, +thread: String, id: String, source_thread: String,
+  visibility: String, item_type: String, +status: String, +title: String, +category: String, +code: String,
+  +retryable: Bool, +attempt: U32, +limit: U32, +started: U32, +completed: U32) -> Replay:
+  +owned = Bool.and(String.eq(thread, source_thread), Bool.and(String.eq(visibility, "local"), String.eq(item_type, "error")))
+  +clock = Bool.and(U32.is_gt(started, 0), U32.is_ge(completed, started))
+  +stream = Bool.and(String.eq(category, "transport_error"), String.eq(code, "responseStreamDisconnected"))
+  +overloaded = Bool.and(String.eq(category, "provider_error"), String.eq(code, "serverOverloaded"))
+  +within_limit = Bool.or(U32.is_eq(limit, 0), U32.is_ge(limit, attempt))
+  +retry_plan = Bool.and(retryable, Bool.and(U32.is_gt(attempt, 0), within_limit))
+  +recovery_receipt = Bool.and(String.eq(title, "Provider recovered"), String.eq(status, "completed"))
+  +recovered = Bool.and(Bool.or(stream, overloaded), Bool.and(retry_plan, recovery_receipt))
+  +usage_receipt = Bool.and(String.eq(title, "Usage limit reached"), String.eq(status, "failed"))
+  +usage_limit = Bool.and(String.eq(category, "usage_limit"), String.eq(code, "usageLimitExceeded"))
+  +refused = Bool.and(Bool.not(retryable), Bool.and(usage_receipt, usage_limit))
+  +valid = Bool.and(owned, Bool.and(clock, Bool.or(recovered, refused)))
+  +label = Bool.pick(String, stream, "t3-provider-stream-recovered",
+    Bool.pick(String, overloaded, "t3-provider-overload-recovered", "t3-provider-usage-limit-refused"))
+  +operation = Bool.pick(String, stream, "response-stream-disconnected", "server-overloaded")
+  record_provider_lifecycle(state, thread, id, label, operation, recovered, U32.sub(completed, started), valid)
+
+def observe_provider_no_reply(state: Replay, +thread: String, id: String, source_thread: String,
+  visibility: String, item_type: String, status: String, author: String, origin: String, receipt: String) -> Replay:
+  +original = Bool.and(String.eq(thread, source_thread), String.eq(visibility, "local"))
+  +message = Bool.and(String.eq(item_type, "assistant_message"), String.eq(status, "completed"))
+  +provider = Bool.and(String.eq(author, "agent"), String.eq(origin, "provider"))
+  +reported = String.eq(receipt, "no-reply-after-retries")
+  observe_failure(state, thread, id, "t3-provider-no-reply-reported",
+    Bool.and(Bool.and(original, message), Bool.and(provider, reported)))
+
 def observe_hosted_status_write(state: Replay, thread: String, id: String, step: String, conclusion: String,
   writer: String, method: String, endpoint: String, revision: String, status: U32, reason: String, exit_code: U32) -> Replay:
   +reporter = Bool.and(String.eq(step, "Reconcile all PRs using trusted default-branch policy"),
