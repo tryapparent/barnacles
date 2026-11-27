@@ -190,6 +190,7 @@
 }
 
 .timeline-footer { display: flex; gap: 8px 16px; align-items: start; flex-wrap: wrap; margin-block-start: 10px; }
+.timeline-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .timeline-footer details { margin-inline-end: auto; font-size: 13px; max-inline-size: 65ch; }
 .timeline-footer summary { cursor: pointer; font-weight: 650; }
 .timeline-footer p { margin-block: 5px 0; }

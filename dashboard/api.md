@@ -232,6 +232,10 @@ without changing the time range. Drag across the chart or minimap to zoom,
 drag the UTC ruler to pan, or select a bar to fit its observed window.
 Ctrl+scroll zooms around the pointer. Ctrl+↑ and Ctrl+↓ zoom in steps. Escape
 fits all ten threads. Hover over a slice or failure mark to see its label.
+Select a thread bar to reveal **Open in T3** beside **Open trace waterfall**.
+The waterfall also offers **Open in T3** in its thread header. The action uses
+the collected thread reference to open T3's browser link for that environment
+and thread.
 
 The Timeline tab uses the existing session collection and detail endpoints.
 Bend2 combines completed tool envelopes, admission waits, and GitHub job
