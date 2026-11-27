@@ -28,16 +28,21 @@ export default {
       return new Response(null, { status: 405, headers: { Allow: 'GET, HEAD' } })
     }
     const destination = sessionHistoryUrl(env.PLOW_SESSION_HISTORY_URL)
-    const content = destination ? html.replace('data-session-history=""', `data-session-history="${destination}"`) : html
+    const page = destination ? html.replace('data-session-history=""', `data-session-history="${destination}"`) : html
+    const api = env.PLOW_ANALYSIS_API_URL
+    const enabled = typeof api === 'string' && /^https:\/\/[a-z0-9.-]+\.ts\.net(?::[0-9]{1,5})?\/api\/v1\/bottlenecks$/.test(api) && URL.canParse(api)
+    const content = enabled ? page.replace('data-analysis-api=""', `data-analysis-api="${api}"`) : page
+    const pageHeaders = enabled ? { ...headers, 'Content-Security-Policy':
+      `${headers['Content-Security-Policy']}; connect-src ${new URL(api).origin}` } : headers
     try {
       const raw = await env.PLOW_SESSION_FEED?.get('session-timeline-v1')
       if (!raw || raw.length > maxFeedLength) throw Error('Feed unavailable')
       const feed = JSON.parse(raw)
       if (!Number.isSafeInteger(feed.observed) || !Array.isArray(feed.traces)) throw Error('Invalid feed')
       const payload = JSON.stringify(feed).replaceAll('<', '\\u003c')
-      return new Response(request.method === 'HEAD' ? null : content.replace(emptyFeed, () => payload), { headers })
+      return new Response(request.method === 'HEAD' ? null : content.replace(emptyFeed, () => payload), { headers: pageHeaders })
     } catch {
-      return new Response(request.method === 'HEAD' ? null : content, { status: 503, headers })
+      return new Response(request.method === 'HEAD' ? null : content, { status: 503, headers: pageHeaders })
     }
   },
 }

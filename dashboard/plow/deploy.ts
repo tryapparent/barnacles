@@ -43,6 +43,7 @@ const audience = process.env.PLOW_ACCESS_AUDIENCE;
 const sha = process.env.GITHUB_SHA;
 const workerPath = process.argv[2];
 const configuredHistory = process.env.PLOW_SESSION_HISTORY_URL;
+const analysisApi = process.env.PLOW_ANALYSIS_API_URL;
 const history = sessionHistoryUrl(configuredHistory);
 if (configuredHistory && !history) throw new Error("Expected a private HTTPS Plow /sessions URL.");
 if (!account || !/^[a-f0-9]{32}$/.test(account) || !token || !audience ||
@@ -123,6 +124,7 @@ bundle.set("metadata", new Blob([JSON.stringify({
     { type: "plain_text", name: "PLOW_ACCESS_AUDIENCE", text: audience },
     { type: "kv_namespace", name: "PLOW_SESSION_FEED", namespace_id: namespace },
     ...(history ? [{ type: "secret_text", name: "PLOW_SESSION_HISTORY_URL", text: history }] : []),
+    ...(analysisApi ? [{ type: "secret_text", name: "PLOW_ANALYSIS_API_URL", text: analysisApi }] : []),
   ],
   annotations: { "workers/tag": sha, "workers/message": `Plow main ${sha}` },
 })], { type: "application/json" }));

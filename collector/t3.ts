@@ -243,7 +243,7 @@ async function fetchNativeReferences(endpoint: string, bearer: string, threadId:
   }
 }
 
-async function importLiveSession(evidence: string, scratch: string, bindingPath: string, traces: string) {
+export async function importLiveSession(evidence: string, scratch: string, bindingPath: string, traces: string) {
   const binding = statSync(bindingPath);
   if (!binding.isFile() || binding.size > 1024 * 1024) throw Error("Expected a bounded T3 session binding");
   const traceSource = statSync(traces, { bigint: true });
