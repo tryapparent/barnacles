@@ -195,6 +195,38 @@ exits nonzero for that failure after publication. Use the standalone pilot
 command to diagnose the import. The link is stored in the evidence database
 for later consumers.
 
+### Join a live Codex session to T3 and GitHub
+
+Run the join in a private job directory holding one workspace's evidence. First
+import the selected T3 thread using the metadata command above. For an exact CI
+observation, import the GitHub attempt using `import-actions.ts`. Start with an
+existing private Codex OTLP evidence database from the same workspace.
+
+```sh
+node collector/t3.ts "$job" join-session "$job/binding.json" "$trace_job/evidence.sqlite"
+```
+
+The input is a trusted projection with `t3Instance`, `threadId`, and
+`codexInstance`. The instance values are the workspace's configured T3 and OTLP
+source namespaces. With `PLOW_T3_ORIGIN` and a short-lived
+`PLOW_T3_READ_TOKEN` with `orchestration:read` scope, the join reads
+`orchestration.getThreadProjection` over an authenticated v2 WebSocket. Use
+an HTTPS origin or loopback HTTP for a local test. The adapter retains only
+the provider-thread binding fields. A replay can instead supply the bounded
+`references` array in the input, with each original reference's `id`,
+`appThreadId`, `driver`, and `nativeThreadRef` fields
+(`driver`, `nativeId`, `strength`). A `sessionId` can select one specific
+native session when the thread has more than one strong binding.
+
+For an independently evidenced GitHub observation on the thread, supply
+`ci` with `observationId`, `kind` (`query` or `watch`), `repository`,
+`runId`, `attempt`, and `headSha`. Use the original observation ID that
+links the thread activity to that attempt. PR association alone does not
+supply a CI observation. Visit
+[the SQLite link contract](../evidence/storage/README.md) for replay and
+coverage behavior. This is a one-session command. The poller and dashboard
+have separate refresh and projection paths.
+
 ### Codex rollout
 
 Set `rollout` to one permitted retained JSONL file by exact session or workspace evidence. Install the pinned syntax parsers with `npm ci --ignore-scripts` before importing. The reader uses the size observed at open, rejects files over 128 MiB, and retains complete LF-delimited UTF-8 JSON records of at most 8 MiB each. It records oversized lines and trailing bytes without LF separately. A short read rejects the snapshot. Call and reasoning line numbers are one-based physical lines in the original file.

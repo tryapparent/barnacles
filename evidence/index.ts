@@ -11,3 +11,4 @@ export { readPollMinutes, repository } from "./repository.ts";
 export { actionsWaitCapturePlan, snapshotPublisher } from "./projection/snapshot.ts";
 export { githubPollRows } from "./storage/load.ts";
 export { CodexOtelConflict, codexOtelPolicy, saveCodexOtel, type CodexOtelFact, type CodexOtelPolicy } from "./storage/load.ts";
+export { joinSession, sessionJoinPolicy, type NativeBinding, type SessionJoinPolicy } from "./storage/load.ts";

@@ -219,3 +219,32 @@ CREATE TABLE IF NOT EXISTS codex_otel_span_events (
   PRIMARY KEY (instance, trace_id, span_id, event_index),
   FOREIGN KEY (instance, trace_id, span_id) REFERENCES codex_otel_spans
 ) STRICT;
+
+CREATE TABLE IF NOT EXISTS t3_live_codex_links (
+  codex_instance TEXT NOT NULL, session_id TEXT NOT NULL,
+  t3_instance TEXT NOT NULL, thread_id TEXT NOT NULL, reference_id TEXT NOT NULL,
+  PRIMARY KEY (codex_instance, session_id),
+  FOREIGN KEY (t3_instance, thread_id) REFERENCES t3_threads (instance, thread_id)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS t3_ci_observations (
+  t3_instance TEXT NOT NULL, thread_id TEXT NOT NULL, observation_id TEXT NOT NULL,
+  kind TEXT NOT NULL, repository TEXT NOT NULL, run_id INTEGER NOT NULL, attempt INTEGER NOT NULL,
+  head_sha TEXT NOT NULL,
+  PRIMARY KEY (t3_instance, thread_id, observation_id),
+  FOREIGN KEY (t3_instance, thread_id) REFERENCES t3_threads (instance, thread_id)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS t3_ci_links (
+  t3_instance TEXT NOT NULL, thread_id TEXT NOT NULL, observation_id TEXT NOT NULL,
+  PRIMARY KEY (t3_instance, thread_id, observation_id),
+  FOREIGN KEY (t3_instance, thread_id, observation_id)
+    REFERENCES t3_ci_observations (t3_instance, thread_id, observation_id)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS t3_live_codex_span_links (
+  codex_instance TEXT NOT NULL, trace_id TEXT NOT NULL, span_id TEXT NOT NULL, session_id TEXT NOT NULL,
+  PRIMARY KEY (codex_instance, trace_id, span_id),
+  FOREIGN KEY (codex_instance, trace_id, span_id) REFERENCES codex_otel_spans (instance, trace_id, span_id),
+  FOREIGN KEY (codex_instance, session_id) REFERENCES t3_live_codex_links (codex_instance, session_id)
+) STRICT;
