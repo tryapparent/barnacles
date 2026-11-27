@@ -148,7 +148,7 @@ function makeTile(group, total, subcategory) {
   button.type = 'button'
   const name = makeElement('span', 'tile-name', group.name)
   const duration = makeElement('span', 'tile-duration', durationLabel(group.duration))
-  duration.append(makeElement('span', 'tile-share', Math.round(group.duration / total * 100) + '%'))
+  duration.append(makeElement('span', 'tile-share', shareLabel.format(group.duration / total)))
   const icon = makeElement('span', 'tile-icon', subcategory ? '' : '↗')
   icon.setAttribute('aria-hidden', 'true')
   button.append(name, duration, icon)
