@@ -154,6 +154,66 @@ Include the optional `title` only for threads whose titles can be shared with th
 
 Use a stable instance name per T3 environment. Follow and combine link pages before setting the cursor to null. A non-null cursor is rejected. Thread run data covers the runs in the read response. The importer keeps the provider's link source and treats `created` and `agent` as ownership evidence. Manual links, multiple candidate owners, and chronological conflicts remain visible as coverage gaps. Direct web or mobile user creation supports the manual T3 origin. Other origins stay unknown until the provider supplies explicit evidence.
 
+### PR watch pickup replay
+
+Read one exact thread through T3's authenticated, read-only RPCs.
+`orchestration.subscribeThread` can replay `message.updated` from a known
+retained sequence. Use its conversation message payload for creation time
+and the PR stamp. Read the matching run from `orchestration.getThreadProjection`
+and use the `run.updated` transition to `running` to verify its start clock
+when the transition is available. Bounded snapshots can omit conversation
+records, and turn-item clocks can reflect dequeue. Require the original
+message or leave notification creation unknown.
+
+Keep only the fields below in the private capture. Set `version` to `1`
+and put the requested `host`,
+`repository` (owner/name), `number`, full `headSha` and `messageId` in
+`expected`. Put the allowlisted records in `projection`.
+
+| Source | Retained fields |
+| --- | --- |
+| `thread` | `id` |
+| `messages[]` | `id`, `threadId`, `runId`, `createdAt`, `notification.source.kind`, and the primary `notification.source.pullRequest` stamp (`host`, `repository`, `number`, `headSha`, `watchStartedAt`) |
+| `runs[]` | `id`, `threadId`, `userMessageId`, `status`, `startedAt`, `completedAt` |
+
+```sh
+node collector/t3.ts --replay-pr-watch "$job" "$capture" > "$job/pr-watch-pickup.json"
+```
+
+The replay reads up to 4 MiB and at most 4,096 message and run records each.
+It emits one receipt or `null`. The Bend2 policy requires a
+`message:pr-watch:` monitor notification stamped for the exact GitHub PR
+and head, with a completed T3 run in the same thread linked in both
+directions. It retains watch start, notification creation, run start and
+run completion as distinct UTC millisecond clocks. Identical admitted
+records can be repeated. Conflicting records for the same selected message
+or run result in `null`. Run start establishes T3 pickup. Provider input
+acceptance and GitHub workflow job or attempt attribution require their own
+source evidence. The replay keeps its output local and uses no device store.
+
+On T3 nightly `0.1.10-nightly.20261113.4643`, the activity view of
+`t3_thread_read` exposed a historical PR-watch turn item and a matching
+completed run. The item exposed an encoded message ID, a run ID and
+`updatedAt`. It omitted the message creation clock and the notification's
+PR and head stamp. The recent run included `startedAt` and omitted
+`userMessageId`. A thread-level PR link gives no notification revision.
+To make this join portable through MCP or native trace export, project the
+message ID, creation time and PR stamp alongside the notification, and
+project `userMessageId` and `startedAt` alongside the run and thread IDs.
+Where available, expose a distinct provider input acknowledgement tied to
+the exact attempt or turn. Keep message prose and provider response bodies
+out of the capture.
+
+On the same build, an isolated local GitHub fixture changed a check result
+for one exact head. The native reactor created one wake. The replayed
+`message.updated` record and the completed run linked to each other. The
+start clock matched the run's `running` transition. A mock Codex peer
+acknowledged the matching native turn separately. This exercised neither
+real GitHub writes nor a paid provider.
+
+Run `npm run verify -- collector` for the replay entry point's synthetic
+positive, negative and duplicate cases.
+
 ### Plow local T3–Codex pilot
 
 Choose one T3 thread and one permitted Codex rollout on the same host. Use

@@ -89,7 +89,7 @@ export function kernelInteger(value: unknown): number {
   return number;
 }
 
-function boundedFile(path: string, limit: number) {
+export function boundedFile(path: string, limit: number) {
   const fd = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK);
   try {
     const info = fstatSync(fd);
