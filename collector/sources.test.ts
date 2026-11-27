@@ -633,6 +633,18 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       lane: "connect-watch", conclusion: "failure", exitCode: 1, started: 700, ended: 791,
       origin: "main:connect/enablement/benchmark/hosted.ts",
       line: "AssertionError [ERR_ASSERTION]: No complete SMT subset qualified during replay probing" };
+    const watchWake = { kind: "t3-pr-watch-wake", thread: "t", id: "wake", watchId: "watch-start", number: 42,
+      message: "#42: checks passed", registeredAt: 90, parkedAt: 100, priorOrdinal: 1, nextOrdinal: 2,
+      noticeStamp: "1970-01-01T00:03:00.005Z", requestedStamp: "1970-01-01T00:03:00.005Z" };
+    const toolchainFetch = { kind: "toolchain-fetch-result", thread: "t", id: "bend-source",
+      step: "Prepare locked native prerequisites before first Cargo", conclusion: "failure", exitCode: 1, status: 503,
+      asset: "base.bend", line: "Error: Bend toolchain download failed for base.bend: 503",
+      origin: "prepareBend:shared/enablement/bend/toolchain.ts", started: 100, ended: 113 };
+    const socketPreflight = { kind: "socket-preflight", thread: "t", id: "socket-limit", required: 112, limit: 107,
+      line: "RuntimeError: verification TMPDIR preflight: socket fixture needs 112 pathname bytes; platform permits 107.",
+      origin: "check_temp_environment:enablement/verification.py" };
+    const fanout = { kind: "hosted-test-fanout", thread: "t", id: "fanout-first", scope: "pr-42",
+      lane: "lane-one", revision: "f".repeat(40), failure: "assertion", conclusion: "failure", at: 200 };
     const facts = [
       admission, admission,
       { ...admission, id: "superseded", annotation: "Canceling since a higher priority waiting request exists" },
@@ -747,6 +759,29 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       { ...benchmarkAdmission, id: "different-entry", origin: "render:connect/enablement/benchmark/hosted.ts" },
       { ...benchmarkAdmission, id: "different-exit", exitCode: 124 },
       { ...benchmarkAdmission, id: "qualified-with-warning", conclusion: "success" },
+      watchWake, watchWake,
+      { ...watchWake, id: "other-pr", number: 41 },
+      { ...watchWake, id: "unrelated-wake", message: "#42: comment" },
+      { ...watchWake, id: "intervening-turn", nextOrdinal: 3 },
+      { ...watchWake, id: "different-instant", requestedStamp: "1970-01-01T00:03:00.007Z" },
+      { ...watchWake, id: "after-park", registeredAt: 101 },
+      { ...watchWake, id: "before-park", parkedAt: 181 },
+      toolchainFetch, toolchainFetch,
+      { ...toolchainFetch, id: "other-step", step: "Cargo test" },
+      { ...toolchainFetch, id: "wrong-status", status: 502 },
+      { ...toolchainFetch, id: "wrong-asset", asset: "main.ts" },
+      { ...toolchainFetch, id: "recovered-toolchain", conclusion: "success" },
+      socketPreflight, socketPreflight,
+      { ...socketPreflight, id: "other-python", origin: "check_temp_environment:another.py" },
+      { ...socketPreflight, id: "wrong-limit", limit: 112 },
+      { ...socketPreflight, id: "within-limit", required: 106, line: socketPreflight.line.replace("112", "106") },
+      fanout,
+      { ...fanout, id: "same-lane-retry", at: 203 },
+      { ...fanout, id: "another-revision", lane: "lane-two", revision: "e".repeat(40), at: 205 },
+      { ...fanout, id: "another-assertion", lane: "lane-two", failure: "different-assertion", at: 206 },
+      { ...fanout, id: "unrelated-pr", lane: "lane-two", scope: "pr-43", at: 207 },
+      { ...fanout, id: "successful-lane", lane: "lane-two", conclusion: "success", at: 208 },
+      { ...fanout, id: "fanout-second", lane: "lane-two", at: 210 },
       read, read, { ...read, id: "b", at: 160 }, { ...read, thread: "t2", at: 170 },
       timing, timing, { ...timing, id: "unpaired", end: 0 },
       attempt, { ...attempt, id: "changed", key: "gate:v2", start: 115, end: 120, failed: false, succeeded: true },
@@ -768,9 +803,11 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       { $: "Cost", clock: "ci-benchmark-owner-step", operation: "connect-watch", count: 1, seconds: 91, unknown: 0 },
       { $: "Cost", clock: "ci-benchmark-owner-step", operation: "record-start", count: 3, seconds: 1640, unknown: 0 },
       { $: "Cost", clock: "ci-benchmark-owner-step", operation: "record-stop", count: 1, seconds: 1300, unknown: 0 },
+      { $: "Cost", clock: "ci-native-prerequisite-step", operation: "bend-toolchain", count: 1, seconds: 13, unknown: 0 },
       { $: "Cost", clock: "ci-native-prerequisite-step", operation: "circle-vision", count: 1, seconds: 113, unknown: 0 },
       { $: "Cost", clock: "local-build-admission", operation: "t3-build", count: 2, seconds: 123, unknown: 0 },
       { $: "Cost", clock: "runner", operation: "build", count: 1, seconds: 129, unknown: 1 },
+      { $: "Cost", clock: "t3-pr-watch-parked", operation: "checks-passed", count: 1, seconds: 80, unknown: 0 },
     ]);
     assert.deepEqual(result.findings.map(({ rule }: { rule: string }) => rule),
       ["ci-hosted-admission-failure", "ci-job-failure", "ci-job-timeout", "staged-verification-prerequisite",
@@ -783,6 +820,8 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
         "ci-test-failure-repeated", "ci-test-failure-repeated", "ci-package-build-repeated",
         "ci-model-prerequisite-http-server-error", "capture-reference-unavailable", "capture-reference-unavailable",
         "ci-benchmark-no-qualified-smt-subset",
+        "t3-pr-watch-parked", "ci-toolchain-prerequisite-http-server-error",
+        "local-verification-socket-path-limit", "ci-test-failure-cross-lane",
         "recovered-attempt", "runner"]);
     assert.ok(!first.includes("installed tools"));
     assert.ok(!first.includes("#42:"));
@@ -797,6 +836,8 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       ["second-test", "first-test", 0, 0], ["third-test", "second-test", 0, 0], ["second-build", "first-build", 30, 0],
       ["model-download", "", 0, 0], ["unavailable-capture", "", 0, 0], ["unavailable-files", "", 0, 0],
       ["smt-subset", "", 0, 0],
+      ["wake", "watch-start", 80, 0], ["bend-source", "", 0, 0], ["socket-limit", "", 0, 0],
+      ["fanout-second", "fanout-first", 0, 0],
       ["recovered", "first", 20, 0], ["tail", "", 250, 10],
     ]);
   } finally {

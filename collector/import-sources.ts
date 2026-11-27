@@ -10,7 +10,7 @@ import { buildPolicy, buildPolicies, loadPolicy } from "../tooling/bend.ts";
 import { positiveInt, type ClockPolicy } from "./github/attempt.ts";
 import { pollGitHub, pullRequest, releaseEvidence } from "./github/delivery.ts";
 import { inspectRollout } from "./codex/rollout.ts";
-import { bendValues, kernelCapture, kernelInteger, row, sha, str, token } from "./wire.ts";
+import { bendValues, kernelCapture, kernelInteger, row, seconds, sha, str, token } from "./wire.ts";
 import { t3Snapshot } from "./t3.ts";
 
 async function poll(db: string, scratch: string, repo: string, snapshot: string, policy: SourcePolicy, admission: AdmissionPolicy, once: boolean) {
@@ -147,6 +147,8 @@ type ReplayPolicy = {
     failed: boolean, succeeded: boolean): unknown;
   observe_hosted_test_failure(state: unknown, thread: string, id: string, scope: string, lane: string, test: string,
     execution: string, conclusion: string, at: number): unknown;
+  observe_hosted_test_fanout(state: unknown, thread: string, id: string, scope: string, lane: string, revision: string,
+    failure: string, conclusion: string, at: number): unknown;
   observe_package_build(state: unknown, thread: string, id: string, scope: string, tool: string, digest: string,
     assets: number, reportedMs: number, start: number, end: number): unknown;
   observe_peer(state: unknown, thread: string, id: string, clock: string, cohort: string, revision: string,
@@ -155,6 +157,9 @@ type ReplayPolicy = {
     assigned: boolean, steps: number, annotation: string): unknown;
   observe_pr_notice(state: unknown, thread: string, id: string, sourceThread: string, visibility: string,
     status: string, truncated: boolean, linkedPr: number, message: string): unknown;
+  observe_pr_watch_wake(state: unknown, thread: string, id: string, watchId: string, number: number, message: string,
+    registered: number, parked: number, notified: number, priorOrdinal: number, nextOrdinal: number,
+    noticeStamp: string, requestedStamp: string): unknown;
   observe_forge_response(state: unknown, thread: string, id: string, operation: string, status: number,
     failed: boolean, identified: boolean): unknown;
   observe_job_rerun(state: unknown, thread: string, id: string, job: string, line: string, failed: boolean): unknown;
@@ -164,7 +169,11 @@ type ReplayPolicy = {
     httpStatus: number, archive: string, summary: string): unknown;
   observe_native_model_fetch(state: unknown, thread: string, id: string, step: string, conclusion: string,
     exitCode: number, status: number, revision: string, line: string, origin: string, started: number, ended: number): unknown;
+  observe_toolchain_fetch(state: unknown, thread: string, id: string, step: string, conclusion: string,
+    exitCode: number, status: number, asset: string, line: string, origin: string, started: number, ended: number): unknown;
   observe_local_admission_timeout(state: unknown, thread: string, id: string, exitCode: number, line: string): unknown;
+  observe_socket_preflight(state: unknown, thread: string, id: string, required: number, limit: number,
+    line: string, origin: string): unknown;
   observe_capture_access(state: unknown, thread: string, id: string, operation: string, line: string,
     failed: boolean): unknown;
   observe_hosted_publish(state: unknown, thread: string, id: string, publisher: string, conclusion: string,
@@ -228,6 +237,9 @@ async function replayBottlenecks(file: string, scratch: string) {
       } else if (value.kind === "hosted-test-failure") {
         state = policy.observe_hosted_test_failure(state, token(value.thread), id, token(value.scope), token(value.lane),
           token(value.test), token(value.execution), token(value.conclusion), clockSecond(value.at));
+      } else if (value.kind === "hosted-test-fanout") {
+        state = policy.observe_hosted_test_fanout(state, token(value.thread), id, token(value.scope), token(value.lane),
+          sha(value.revision), token(value.failure), token(value.conclusion), clockSecond(value.at));
       } else if (value.kind === "package-build-result") {
         state = policy.observe_package_build(state, token(value.thread), id, token(value.scope), token(value.tool),
           token(value.digest), clockSecond(value.assets), clockSecond(value.reportedMs), clockSecond(value.start),
@@ -239,6 +251,12 @@ async function replayBottlenecks(file: string, scratch: string) {
         state = policy.observe_pr_notice(state, token(value.thread), id, token(value.sourceThread),
           token(value.visibility), token(value.status), bendBool(value.truncated), clockSecond(value.linkedPr),
           factText(value.message));
+      } else if (value.kind === "t3-pr-watch-wake") {
+        const noticeStamp = factText(value.noticeStamp);
+        state = policy.observe_pr_watch_wake(state, token(value.thread), id, token(value.watchId),
+          clockSecond(value.number), factText(value.message), clockSecond(value.registeredAt), clockSecond(value.parkedAt),
+          seconds(noticeStamp), clockSecond(value.priorOrdinal), clockSecond(value.nextOrdinal),
+          noticeStamp, factText(value.requestedStamp));
       } else if (value.kind === "forge-response") {
         state = policy.observe_forge_response(state, token(value.thread), id, token(value.operation),
           clockSecond(value.status), bendBool(value.failed), bendBool(value.identified));
@@ -255,9 +273,16 @@ async function replayBottlenecks(file: string, scratch: string) {
         state = policy.observe_native_model_fetch(state, token(value.thread), id, factText(value.step), token(value.conclusion),
           clockSecond(value.exitCode), clockSecond(value.status), sha(value.revision), factText(value.line), factText(value.origin),
           clockSecond(value.started), clockSecond(value.ended));
+      } else if (value.kind === "toolchain-fetch-result") {
+        state = policy.observe_toolchain_fetch(state, token(value.thread), id, factText(value.step), token(value.conclusion),
+          clockSecond(value.exitCode), clockSecond(value.status), factText(value.asset), factText(value.line),
+          factText(value.origin), clockSecond(value.started), clockSecond(value.ended));
       } else if (value.kind === "local-admission-timeout") {
         state = policy.observe_local_admission_timeout(state, token(value.thread), id, clockSecond(value.exitCode),
           factText(value.line));
+      } else if (value.kind === "socket-preflight") {
+        state = policy.observe_socket_preflight(state, token(value.thread), id, clockSecond(value.required),
+          clockSecond(value.limit), factText(value.line), factText(value.origin));
       } else if (value.kind === "capture-access-result") {
         state = policy.observe_capture_access(state, token(value.thread), id, token(value.operation), factText(value.line),
           bendBool(value.failed));
