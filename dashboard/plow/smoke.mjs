@@ -61,6 +61,24 @@ try {
     const ci = summary.getByRole('button', { name: /CI checks/ })
     const titles = () => timeline.locator('.trace:visible .sample-title').allTextContents()
     const matchingThreads = ['Release packaging', 'Export retries']
+    const geometry = () => page.evaluate(() => {
+      const bounds = element => {
+        const { x, y, width, height } = element.getBoundingClientRect()
+        return [x + scrollX, y + scrollY, width, height]
+      }
+      const selectors = ['.activity-header', '#summary-panel', '.summary-top', '#summary-total',
+        '#summary-note', '#tiles', '#operation-panel', '#timeline-panel', '.timeline-heading-row',
+        '#timeline-selection', '.zoom-tools', '#zoom-mode', '.navigator', '#utc-window', '.chart-key',
+        '#timeline-viewport', '.inspector-slot', '.reading-help']
+      return {
+        page: [document.documentElement.scrollWidth, document.documentElement.scrollHeight],
+        regions: Object.fromEntries(selectors.map(selector => [selector, bounds(document.querySelector(selector))])),
+        categories: [...document.querySelectorAll('.category-tile')].map(bounds),
+        rows: [...document.querySelectorAll('.trace')].map(row => [row.offsetTop, row.offsetHeight]),
+      }
+    })
+    const overview = await geometry()
+    const assertStable = async state => assert.deepEqual(await geometry(), overview, `${width}px · ${state}`)
     assert.equal(await summary.locator('.category-tile').count(), 3)
     assert.equal((await titles()).length, 10)
     assert.match(await total.innerText(), /43h 24m across 10 threads/)
@@ -73,6 +91,7 @@ try {
     assert.equal(await workflow.getAttribute('aria-expanded'), 'true')
     assert.equal((await titles()).length, 10)
     assert.equal(await workflow.evaluate(element => element === document.activeElement), true)
+    await assertStable('open operation breakdown')
     await screenshot('category')
 
     await publish.focus()
@@ -83,13 +102,16 @@ try {
     assert.equal(await timeline.locator('.match-span:visible').count(), 2)
     assert.match(await page.locator('#timeline-selection').innerText(), /Publish artifacts · 2 threads shown/)
     assert.equal(await range.innerText(), initial)
+    await assertStable('filter to Publish artifacts')
     await screenshot('filtered')
 
     await ci.click()
     assert.equal((await titles()).length, 8)
     assert.equal(await timeline.locator('.match-span:visible').count(), 8)
+    await assertStable('switch filter to CI checks')
     await page.keyboard.press('Escape')
     assert.equal((await titles()).length, 10)
+    await assertStable('clear filter with Escape')
     await publish.click()
     await publish.click()
     assert.equal((await titles()).length, 10)
@@ -108,7 +130,11 @@ try {
     assert.equal((await titles()).length, 0)
     assert.match(await timeline.innerText(), /No matching threads in this range/)
     assert.match(await page.locator('#zoom-mode').innerText(), /Details/)
+    await assertStable('empty filtered range')
     await screenshot('empty')
+    await page.getByRole('slider').focus()
+    await page.keyboard.press('ArrowRight')
+    await assertStable('pan with keyboard')
 
     await fit.click()
     assert.equal(await range.innerText(), initial)
@@ -116,7 +142,17 @@ try {
     await workflow.click()
     assert.equal(await workflow.getAttribute('aria-expanded'), 'false')
     assert.equal((await titles()).length, 10)
+    await assertStable('reset zoom and close operation breakdown')
     await screenshot('recovered')
+
+    await summary.getByRole('button', { name: /^Agent work/ }).click()
+    const operationButtons = summary.getByRole('group', { name: 'Operations' }).getByRole('button')
+    assert.ok(await operationButtons.count() > 2)
+    await operationButtons.last().focus()
+    if (width === 320) {
+      assert.ok(await summary.locator('#operation-panel').evaluate(element => element.scrollTop > 0))
+    }
+    await assertStable('focus the last operation in the breakdown')
 
     await workflow.click()
     await publish.click()
@@ -125,8 +161,37 @@ try {
     const inspect = timeline.getByRole('button', { name: /^Inspect Export retries/ })
     await inspect.click()
     assert.equal(await inspect.getAttribute('aria-expanded'), 'true')
-    assert.match(await timeline.locator('.inspect-panel:visible').innerText(), /Publish artifacts/)
+    const inspector = timeline.getByRole('region', { name: /Export retries · Recorded timeline/ })
+    assert.match(await inspector.innerText(), /Publish artifacts/)
+    assert.equal(await inspector.evaluate(element => element === document.activeElement), true)
+    await assertStable('open thread inspector')
     await screenshot('details')
+    await page.keyboard.press('Escape')
+    assert.equal(await inspect.getAttribute('aria-expanded'), 'false')
+    assert.equal(await inspect.evaluate(element => element === document.activeElement), true)
+    await assertStable('close thread inspector with Escape')
+    await page.keyboard.press('Enter')
+    assert.equal(await inspector.isVisible(), true)
+    await brush(.01, .12)
+    assert.equal(await inspector.isVisible(), false)
+    await assertStable('filter excludes inspected thread')
+
+    const help = page.locator('.reading-help summary')
+    const instructions = page.getByRole('region', { name: 'Chart instructions' })
+    await help.focus()
+    await page.keyboard.press('Enter')
+    assert.equal(await instructions.isVisible(), true)
+    if (width === 320) {
+      await instructions.focus()
+      await page.keyboard.press('End')
+      await page.waitForFunction(() => document.querySelector('.help-copy').scrollTop > 0)
+      await help.focus()
+    }
+    await assertStable('open chart help')
+    await screenshot('help')
+    await page.keyboard.press('Enter')
+    assert.equal(await instructions.count(), 0)
+    await assertStable('close chart help')
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
     assert.deepEqual(errors, [])
     await page.close()
@@ -135,4 +200,4 @@ try {
   await browser.close()
 }
 
-console.log('Plow Worker access guard and timeline filtering passed at 320, 390, 728, 1120, 1440 and 1920 pixels.')
+console.log('Plow Worker access guard, timeline filtering, and stable layout passed at 320, 390, 728, 1120, 1440 and 1920 pixels.')

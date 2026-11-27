@@ -52,10 +52,14 @@ function Dashboard({ field }: { field: string }) {
               <ol className="rows" id="traces" aria-label="Sample thread timelines" />
             </div>
           </div>
-          <p id="timeline-empty" className="summary-note" hidden>No matching threads in this range. Zoom out or deselect the operation.</p>
+          <div className="inspector-slot">
+            <section className="inspect-panel" id="thread-inspector" tabIndex={0} aria-labelledby="inspector-heading" hidden />
+          </div>
           <details className="reading-help">
             <summary>How to read the chart</summary>
-            <p>The rows share a UTC clock. Scroll up and down through threads, and horizontally to pan when zoomed in. Drag the minimap to select a range, or use its arrow keys to pan when zoomed in. You can also drag the UTC axis. Details appear at six hours or less. Each evidence list shows elapsed time from that thread’s first message. Brown can include time when a workflow ran alongside other work. Unclear intervals blend with nearby colors. A blended interval can look like the workflow around it. Very short slices merge at this zoom level. X1 also uses reviewed phase boundaries. The other nine rows use captured timestamps.</p>
+            <div className="help-copy" tabIndex={0} role="region" aria-label="Chart instructions">
+              <p>The rows share a UTC clock. Scroll up and down through threads, and horizontally to pan when zoomed in. Drag the minimap to select a range, or use its arrow keys to pan when zoomed in. You can also drag the UTC axis. At six hours or less, select a thread to see its recorded events below the chart, timed from its first message. Brown can include time when a workflow ran alongside other work. Unclear intervals blend with nearby colors. A blended interval can look like the workflow around it. Very short slices merge at this zoom level. X1 also uses reviewed phase boundaries. The other nine rows use captured timestamps.</p>
+            </div>
           </details>
         </section>
       </div>
