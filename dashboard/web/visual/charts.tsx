@@ -1,65 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { countLabel, dayLabel, duration, pagePath, stages, type DeliveryChart, type DeliveryDay, type Review, type OperationTile, type Week } from "../api";
-
-function sector(inner: number, outer: number, from: number, to: number) {
-  function point(radius: number, degrees: number) {
-    const angle = degrees * Math.PI / 180;
-    return `${(120 + radius * Math.sin(angle)).toFixed(2)} ${(117 - radius * Math.cos(angle)).toFixed(2)}`;
-  }
-  return `M${point(outer, from)} A${outer} ${outer} 0 0 1 ${point(outer, to)} L${point(inner, to)}
-    A${inner} ${inner} 0 0 0 ${point(inner, from)} Z`;
-}
-
-function Gauge({ comparison }: { comparison: Review["cycleComparison"] }) {
-  const { deltaSeconds, prior, recent } = comparison;
-  const weeks = <dl className="comparison">{[prior, recent].map((week) => <div key={week.startsAt}>
-    <dt>Week of {dayLabel(week.startsAt)}</dt>
-    <dd>{week.meanSeconds === null ? "No measured shipments" :
-      <>{duration(week.meanSeconds)} <span>· {countLabel(week.attributedShipments)} measured</span></>}</dd>
-  </div>)}</dl>;
-  if (deltaSeconds === null) return <section className="panel cycle" aria-labelledby="cycle-title">
-    <h2 id="cycle-title">Thread to release</h2>
-    <p className="cycle-unavailable">Weekly comparison unavailable</p>
-    <p className="fine">Both completed UTC weeks need a verified shipment linked to a thread start.</p>
-    {weeks}
-  </section>;
-  const bound = Math.max(20, Math.ceil(Math.abs(deltaSeconds) / 3600 / 10) * 10);
-  const amount = Math.abs(deltaSeconds) / (bound * 3600);
-  const negative = comparison.direction === "Gardening";
-  const label = duration(deltaSeconds, true);
-  const segmentCount = 15;
-  const blocks = Array.from({ length: segmentCount }, (_, index) => {
-    const start = index * 6 + .65;
-    const end = start + 4.7;
-    const filled = amount * segmentCount - index;
-    const extent = start + Math.min(1, Math.max(0, filled)) * 4.7;
-    const tone = index < 5 ? "neutral" : index < 10 ? "mid" : "edge";
-    return <g key={index}>
-      <path className={`track gardening ${tone}`} d={sector(90, 111, -end, -start)} />
-      <path className={`track shipping ${tone}`} d={sector(90, 111, start, end)} />
-      {filled > 0 && <path className="segment" fill={filled > 1 ? "url(#gauge-dots)" : "currentColor"}
-        d={negative ? sector(90, 111, -extent, -start) : sector(90, 111, start, extent)} />}
-    </g>;
-  });
-  return <section className="panel cycle" aria-labelledby="cycle-title">
-    <h2 id="cycle-title">Thread to release</h2>
-    <div className="gauge" data-direction={deltaSeconds === 0 ? "steady" :
-      negative ? "gardening" : "shipping"}>
-      <svg viewBox="0 0 240 126" aria-hidden="true">
-        <defs><pattern id="gauge-dots" width="5" height="5" patternUnits="userSpaceOnUse">
-          <rect width="5" height="5" fill="currentColor" /><rect width="2" height="2" fill="var(--surface)" />
-        </pattern></defs>
-        {blocks}<path className="center-tick" d="M120 2v24" />
-      </svg>
-      <span className="readout" style={{ "--label-length": label.length } as CSSProperties}>{label}</span>
-      <div className="scale" aria-hidden="true">
-        <span>{duration(bound * 3600, true)}</span><span>{duration(0)}</span><span>{duration(-bound * 3600, true)}</span>
-        <span>Gardening</span><span /><span>Shipping</span>
-      </div>
-    </div>
-    {weeks}
-  </section>;
-}
+import { countLabel, dayLabel, duration, pagePath, stages, type DeliveryChart, type DeliveryDay, type Review, type OperationTile, type Operation } from "../api";
 
 type Rectangle = { x: number; y: number; w: number; h: number };
 type Tile = Rectangle & { item: OperationTile };
@@ -203,7 +143,7 @@ function DelayedBursts() {
   return <canvas className="operation-dither" ref={canvas} />;
 }
 
-function OperationMap({ items, clock }: { items: OperationTile[]; clock: string }) {
+function OperationMap({ items, clock, unidentifiedWait }: { items: OperationTile[]; clock: string; unidentifiedWait?: Operation }) {
   const [path, setPath] = useState<OperationTile[]>([]);
   const [width, setWidth] = useState(0);
   const scope = useRef<HTMLDivElement>(null);
@@ -240,6 +180,10 @@ function OperationMap({ items, clock }: { items: OperationTile[]; clock: string 
         ← {path.length > 1 ? name(path[path.length - 2]) : "All operations"}
       </button>}
     </div>
+    {path[0]?.label === "Waiting" && unidentifiedWait && <p className="fine wait-coverage">
+      {countLabel(unidentifiedWait.measuredSpans)} measured waits · {countLabel(unidentifiedWait.unmeasuredSpans)} untimed.
+      {" "}The source does not link these waits to a confirmed task.
+    </p>}
     <div className="operation-map" key={path.length}>{tiles.map((tile) => {
       const { item, x, y, w, h } = tile;
       const style = { left: x + "%", top: y + "%", width: w + "%", height: h + "%",
@@ -266,7 +210,8 @@ function Operations({ operations }: { operations: Review["operations"] }) {
   const map = operations.mapKind === "categories" ? operations.map : undefined;
   return <section className="panel time" aria-labelledby="operations-title">
     <h2 id="operations-title">Where time went</h2>
-    {map?.length ? <OperationMap key={JSON.stringify([operations.clock, operations.operation, map])} items={map} clock={operations.clock} />
+    {map?.length ? <OperationMap key={JSON.stringify([operations.clock, operations.operation, map])} items={map} clock={operations.clock}
+      unidentifiedWait={items.find(({ operation }) => operation === "Waiting for an unidentified task")} />
       : <p className="empty-chart">{map ? "No measured time for this selection." : "The time map needs a refreshed evidence snapshot."}</p>}
     {!!items.length && <details className="chart-details" open={map === undefined ? true : undefined}>
       <summary>Recorded operations</summary>
@@ -282,56 +227,10 @@ function Operations({ operations }: { operations: Review["operations"] }) {
   </section>;
 }
 
-function Weekly({ weeks }: { weeks: Week[] }) {
-  const start = Date.parse(weeks[0]?.startsAt ?? "");
-  const end = Date.parse(weeks.at(-1)?.startsAt ?? "");
-  const highest = Math.max(2, ...weeks.map((week) => week.verified));
-  const points = weeks.map((week) => ({ ...week, time: Date.parse(week.startsAt),
-    x: start === end ? 50 : 7 + 86 * (Date.parse(week.startsAt) - start) / (end - start),
-    y: 100 - 100 * week.verified / highest }));
-  const groups: Array<typeof points> = [];
-  for (const point of points) {
-    const last = groups.at(-1)?.at(-1);
-    if (!last || point.time - last.time !== 7 * 86400_000) groups.push([]);
-    groups.at(-1)!.push(point);
-  }
-  return <figure className="panel history" aria-labelledby="history-title">
-    <figcaption id="history-title">Weekly shipments</figcaption>
-    {points.length ? <>
-      <div className="history-chart" aria-hidden="true">
-        <div className="plot-axis"><span>{highest}</span><span>{Math.round(highest / 2)}</span><span>0</span></div>
-        <div className="plot">
-          <svg viewBox="0 0 100 100" preserveAspectRatio="none">
-            <defs><pattern id="shipment-dots" width="2" height="4" patternUnits="userSpaceOnUse">
-              <rect width="1" height="2" fill="var(--green)" />
-              <rect x="1" y="2" width="1" height="2" fill="var(--green)" />
-            </pattern></defs>
-            <path className="grid-lines" d="M0 0H100 M0 50H100 M0 100H100" />
-            {groups.filter((group) => group.length > 1).map((group) => {
-              const path = group.map(({ x, y }) => `${x} ${y}`).join(" L");
-              return <g key={group[0].startsAt}><path fill="url(#shipment-dots)"
-                d={`M${group[0].x} 100 L${path} L${group.at(-1)!.x} 100Z`} />
-                <path className="plot-line" d={"M" + path} /></g>;
-            })}
-          </svg>
-          <ol className="weeks">{points.map((point, index) =>
-            <li key={point.startsAt} className={`week${index === points.length - 1 ? " current" : ""}`}
-              style={{ "--x": point.x + "%", "--y": point.y + "%" } as CSSProperties}>
-              {(points.length <= 5 || index === 0 || index === points.length - 1) &&
-                <><time dateTime={point.startsAt}>{dayLabel(point.startsAt)}</time><span className="value">{point.verified}</span></>}
-            </li>)}</ol>
-        </div>
-      </div>
-      <ul className="sr-only" aria-label="Weekly shipments by date">
-        {weeks.map((week) => <li key={week.startsAt}><time dateTime={week.startsAt}>{dayLabel(week.startsAt)}</time>
-          <span>{countLabel(week.verified)} verified · {countLabel(week.attributed)} attributed</span></li>)}
-      </ul>
-    </> : <p className="empty-chart">No verified shipments in this window.</p>}
-  </figure>;
-}
+const publicationStages = stages.filter(([phase]) => phase !== "access-verified");
 
-export function StageKey() {
-  return <ul className="stage-key" aria-label="Delivery stages">{stages.map(([key, label, color]) =>
+export function StageKey({ includeAccessCheck = true }: { includeAccessCheck?: boolean }) {
+  return <ul className="stage-key" aria-label="Delivery stages">{(includeAccessCheck ? stages : publicationStages).map(([key, label, color]) =>
     <li key={key} className={`stage-${color}`}>{label}</li>)}</ul>;
 }
 
@@ -343,7 +242,7 @@ function DailyValues({ day }: { day: DeliveryDay }) {
     <thead><tr><th scope="col">Stage</th><th scope="col">Mean</th><th scope="col">Measured</th></tr></thead>
     <tbody>{stages.map(([phase, label, color]) => {
       const sample = day.stages.find((stage) => stage.phase === phase);
-      return <tr key={phase}><th scope="row" className={`stage-${color}`}>{label}</th>
+      return <tr key={phase}><th scope="row" className={`stage-${color}`}>{phase === "access-verified" ? "Publication to access check" : label}</th>
         <td>{duration(sample?.meanSeconds ?? null)}</td>
         <td>{countLabel(sample?.measured ?? 0)} / {countLabel(day.verified)}</td></tr>;
     })}</tbody>
@@ -354,14 +253,15 @@ function DailyColumns({ days }: { days: DeliveryDay[] }) {
   const [selected, setSelected] = useState<string | null>(null);
   const count = days.length;
   const stacks = [...days].reverse().map((day) => ({
-    day, height: day.stages.reduce((total, stage) => total + (stage.meanSeconds ?? 0), 0),
+    day, height: publicationStages.reduce((total, [phase]) => total +
+      (day.stages.find((stage) => stage.phase === phase)?.meanSeconds ?? 0), 0),
   }));
   const detail = days.find((day) => day.startsAt === selected);
   const longest = Math.max(...stacks.map(({ height }) => height));
   const step = longest >= 3600 ? 1800 : 60;
   const scale = Math.max(1, Math.ceil(longest / (2 * step))) * 2 * step;
   return <>
-    <StageKey />
+    <StageKey includeAccessCheck={false} />
     <div className="daily-figure">
       <div className="daily-axis" aria-hidden="true">
         <span>{duration(scale)}</span><span>{duration(scale / 2)}</span><span>{duration(0)}</span>
@@ -381,13 +281,13 @@ function DailyColumns({ days }: { days: DeliveryDay[] }) {
                 onClick={() => setSelected(pressed ? null : date)}>
                 {stack.height > 0 ? <span className="daily-stack" aria-hidden="true"
                   style={{ height: `${100 * stack.height / scale}%` }}>
-                  {stages.map(([phase, name, color]) => {
+                  {publicationStages.map(([phase, name, color]) => {
                     const mean = stack.day.stages.find((stage) => stage.phase === phase)?.meanSeconds;
                     return mean ? <span key={phase} className={`daily-segment stage-${color}`}
                       style={{ height: `${100 * mean / stack.height}%` }} title={`${name} · ${duration(mean)}`} /> : null;
                   })}
                 </span> : <span className="daily-zero" aria-hidden="true"
-                  title={stack.day.stages.some(({ meanSeconds }) => meanSeconds === 0) ? `${duration(0)} measured` : "Stage times unknown"} />}
+                  title={stack.day.stages.some(({ phase, meanSeconds }) => phase !== "access-verified" && meanSeconds === 0) ? `${duration(0)} measured` : "Stage times unknown"} />}
               </button>
               {tick && <time className="daily-tick" dateTime={date} aria-hidden="true">{dayLabel(date)}</time>}
             </div>;
@@ -402,25 +302,27 @@ function DailyColumns({ days }: { days: DeliveryDay[] }) {
 export function DailyStages({ chart, window }: { chart: DeliveryChart | undefined; window: Review["window"] }) {
   const bounded = chart && chart.from !== window.from;
   return <section className="delivery daily-chart" aria-labelledby="daily-title">
-    <h2 id="daily-title">Mean delivery stages by day</h2>
+    <h2 id="daily-title">Mean time to publication by stage</h2>
     {bounded && <p className="fine">Chart window · {dayLabel(chart.from)}–{dayLabel(window.to)} UTC</p>}
     {chart === undefined ? <p className="fine">Daily stage data needs a refreshed evidence snapshot.</p> :
       chart.days.length ? <>
-        <p className="fine daily-intro">Publication days with verified shipments (UTC). Select a column for stage means and counts.</p>
+        <p className="fine daily-intro">Verified shipments by publication day (UTC). Select a day for stage coverage and time to the access check.</p>
         <DailyColumns days={chart.days} />
       </> : <p className="fine">No verified shipments in this chart window.</p>}
   </section>;
 }
 
 export function Overview({ review }: { review: Review }) {
+  const { meanCycleSeconds, attributed, verified } = review.shipments;
   return <div className="board">
-    <Gauge comparison={review.cycleComparison} />
-    <Operations operations={review.operations} />
-    <section className="panel shipped" aria-labelledby="ship-title">
-      <h2 id="ship-title">Shipped to users</h2>
-      <p className="shipped-count">{countLabel(review.shipments.verified)}</p>
-      <p className="fine">Verified PRs in the review window</p>
+    <section className="panel cycle" aria-labelledby="cycle-title">
+      <h2 id="cycle-title">Average thread to publication</h2>
+      {meanCycleSeconds === null || meanCycleSeconds === undefined
+        ? <p className="cycle-empty">{attributed ? "Refresh the evidence snapshot to see the average." : "No measured deliveries in this window."}</p>
+        : <p className="cycle-average">{duration(meanCycleSeconds)}</p>}
+      <p className="fine">{countLabel(attributed)} of {countLabel(verified)} verified PRs measured in the review window</p>
+      <p className="fine">From the linked thread’s start to release publication. Harbor verifies access separately.</p>
     </section>
-    <Weekly weeks={review.shipments.weekly} />
+    <Operations operations={review.operations} />
   </div>;
 }

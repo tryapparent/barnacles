@@ -661,6 +661,7 @@ export async function openShippingReview(directory: string) {
             recent: weekCoverage(Number(coverage.recent_week)) },
           shipments: {
             verified: report.verified.shipped, attributed: report.verified.cycles.count,
+            meanCycleSeconds: seconds(policy.mean(report.verified.cycles)),
             weekly: rows(report.weeks).map(({ start, sample }) => ({ startsAt: utc(start * 1000), verified: sample.shipped,
               attributed: sample.cycles.count, meanCycleSeconds: seconds(policy.mean(sample.cycles)) })),
             dailyStages: report.days && encodeDays(report.days),
