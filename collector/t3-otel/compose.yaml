@@ -1,0 +1,80 @@
+name: plow-t3-otel
+services:
+  volume-init:
+    image: node:22.23.0-bookworm-slim@sha256:d9f850096136edbc402debdd8729579a288aac64574ada0ff4db26b6ae58b0b2
+    command: [install, -d, -m, '0700', -o, '10001', -g, '10001', /queue/data, /evidence/data]
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - queue:/queue
+      - evidence:/evidence
+
+  traces:
+    image: otel/opentelemetry-collector-contrib:0.166.0@sha256:3e18fe04181de50bdd72e23ad4a4d6214b54351e63d496f1c58127cc4541ad7f
+    command: [--config=/etc/plow/t3.yaml]
+    user: '10001:10001'
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    ports:
+      - '127.0.0.1:${PLOW_T3_OTLP_PORT:-4319}:4318'
+    environment:
+      PLOW_T3_INSTANCE: ${PLOW_T3_INSTANCE:?Set the trusted T3 instance identifier}
+    networks: [default, storage]
+    secrets: [t3_ingress, t3_backend]
+    volumes:
+      - ./otelcol.yaml:/etc/plow/t3.yaml:ro
+      - queue:/queue
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
+
+  evidence:
+    build:
+      context: ../..
+      dockerfile_inline: |
+        FROM node:22.23.0-bookworm-slim@sha256:d9f850096136edbc402debdd8729579a288aac64574ada0ff4db26b6ae58b0b2
+        WORKDIR /app
+        COPY package.json ./
+        COPY tooling/bend.ts tooling/
+        RUN node --input-type=module -e 'import {prepareCompiler} from "./tooling/bend.ts"; await prepareCompiler("/app")' && chmod -R a+rX /app/compiler
+        COPY collector/codex/otel.ts collector/codex/
+        COPY collector/wire.ts collector/
+        COPY evidence evidence
+    entrypoint: [/bin/sh, -c, 'umask 077 && exec node collector/codex/otel.ts --t3 /evidence/data "$$PLOW_T3_INSTANCE"']
+    environment:
+      PLOW_BEND_BUNDLE: /app/compiler
+      TMPDIR: /tmp
+      PLOW_T3_EVIDENCE_HOST: 0.0.0.0
+      PLOW_T3_INSTANCE: ${PLOW_T3_INSTANCE:?Set the trusted T3 instance identifier}
+    user: '10001:10001'
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [storage]
+    secrets: [t3_backend]
+    volumes:
+      - evidence:/evidence
+    tmpfs: [/tmp]
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
+
+networks:
+  storage:
+    internal: true
+
+volumes:
+  queue:
+  evidence:
+
+secrets:
+  t3_ingress:
+    file: ${PLOW_T3_INGRESS_SECRET_FILE:?Set the private T3 ingress token file}
+  t3_backend:
+    file: ${PLOW_T3_BACKEND_SECRET_FILE:?Set the private T3 backend token file}

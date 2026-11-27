@@ -1,8 +1,9 @@
 import { timingSafeEqual } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer, type IncomingMessage } from "node:http";
 import { join, resolve } from "node:path";
 import { CodexOtelConflict, codexOtelPolicy, saveCodexOtel, type CodexOtelFact, type CodexOtelPolicy } from "../../evidence/index.ts";
+import { T3OtelConflict, openT3Otel, t3OtelPolicy, type T3OtelSpan, type T3OtelPolicy } from "../../evidence/index.ts";
 import { buildPolicy, loadPolicy } from "../../tooling/bend.ts";
 import { array, row, str, token } from "../wire.ts";
 
@@ -54,6 +55,30 @@ function decodeSpans(value: unknown, policy: CodexOtelPolicy) {
   return facts;
 }
 
+function decodeT3Spans(value: unknown, policy: T3OtelPolicy, instance: string) {
+  const facts: T3OtelSpan[] = [];
+  for (const input of arrayField(row(value).resourceSpans)) {
+    const resource = row(input);
+    const resourceAttributes = resource.resource === undefined ? undefined : row(resource.resource).attributes;
+    const attributes = decodeAttributes(resourceAttributes);
+    if (!policy.source_service(attributes("service.name"))) continue;
+    if (!policy.source_instance(instance, attributes("plow.t3.instance"))) throw Error("Invalid trace source binding");
+    for (const scope of arrayField(resource.scopeSpans)) {
+      for (const input of arrayField(row(scope).spans)) {
+        const span = row(input);
+        const attribute = decodeAttributes(span.attributes);
+        const parent = span.parentSpanId === undefined || span.parentSpanId === "" ? "" : str(span.parentSpanId) || "!";
+        const result = policy.observe_span(str(span.traceId), str(span.spanId), parent, str(span.name),
+          str(span.startTimeUnixNano), str(span.endTimeUnixNano), attribute("orchestration_v2.thread_id"),
+          attribute("orchestration_v2.command_id"), attribute("orchestration_v2.command_type"));
+        if (result.$ === "InvalidSpan") throw Error("Invalid trace span");
+        if (result.$ === "ObservedSpan") facts.push(result.fact);
+      }
+    }
+  }
+  return facts;
+}
+
 async function readBody(request: IncomingMessage) {
   let bytes = 0;
   const chunks: Buffer[] = [];
@@ -69,23 +94,18 @@ function verifyBearer(received: string | undefined, expected: Buffer) {
   return header.length === expected.length && timingSafeEqual(header, expected);
 }
 
-async function serve() {
-  const [job, instance, ...extra] = process.argv.slice(2);
-  const port = Number(process.env.PLOW_OTLP_EVIDENCE_PORT ?? "4320");
-  const secret = process.env.PLOW_OTLP_EVIDENCE_TOKEN ?? "";
-  if (!job || !instance || extra.length || !Number.isInteger(port) || port < 0 || port > 65535 || secret.length < 32) {
-    throw Error("Usage: PLOW_OTLP_EVIDENCE_TOKEN=<private secret of at least 32 characters> node collector/codex/otel.ts JOB_DIRECTORY INSTANCE");
-  }
-  const scope = token(instance);
-  const directory = resolve(job);
-  const database = join(directory, "evidence.sqlite");
-  const scratch = mkdtempSync(join(directory, "codex-otel-"));
-  let policy: CodexOtelPolicy;
+async function compile<T>(directory: string, source: URL, name: string): Promise<T> {
+  const scratch = mkdtempSync(join(directory, name + "-"));
   try {
-    policy = await loadPolicy(await buildPolicy(scratch, codexOtelPolicy, "codex-otel.mjs"));
+    return await loadPolicy(await buildPolicy(scratch, source, name + ".mjs"));
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
+}
+
+type EvidenceWriter = (value: unknown) => () => void;
+
+function receive(port: number, host: string, secret: string, source: string, prepare: EvidenceWriter) {
   const bearer = Buffer.from(`Bearer ${secret}`);
   const server = createServer({ requestTimeout: 15_000, headersTimeout: 10_000 }, async (request, response) => {
     if (request.method !== "POST" || request.url !== "/v1/traces") return response.writeHead(404).end();
@@ -94,27 +114,83 @@ async function serve() {
       return response.writeHead(415).end();
     }
     if (Number(request.headers["content-length"]) > bodyLimit) return response.writeHead(413).end();
-    let facts: CodexOtelFact[];
+    let write: () => void;
     try {
       const body = await readBody(request);
       if (!body) return response.writeHead(413).end();
-      facts = decodeSpans(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body)), policy);
+      write = prepare(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body)));
     } catch {
+      if (source === "T3") console.warn("T3 OTLP rejected an invalid batch");
       return response.writeHead(400).end();
     }
     try {
-      if (facts.length) saveCodexOtel(database, scope, facts, policy);
+      write();
     } catch (error) {
-      if (error instanceof CodexOtelConflict) return response.writeHead(409).end();
-      console.error("Codex OTLP evidence write failed");
+      if (error instanceof T3OtelConflict) console.warn("T3 OTLP rejected a conflicting batch");
+      if (error instanceof CodexOtelConflict || error instanceof T3OtelConflict) return response.writeHead(409).end();
+      console.error(`${source} OTLP evidence write failed`);
       return response.writeHead(503).end();
     }
     return response.writeHead(200, { "Content-Type": "application/json" }).end("{}");
   });
-  server.listen(port, "127.0.0.1", () => {
+  server.listen(port, host, () => {
     const address = server.address();
-    if (address && typeof address !== "string") console.log(`Codex OTLP evidence ready on 127.0.0.1:${address.port}`);
+    if (address && typeof address !== "string") console.log(`${source} OTLP evidence ready on ${host}:${address.port}`);
+  });
+  return server;
+}
+
+async function serveCodex([job, instance, ...extra]: string[]) {
+  const port = Number(process.env.PLOW_OTLP_EVIDENCE_PORT ?? "4320");
+  const secret = process.env.PLOW_OTLP_EVIDENCE_TOKEN ?? "";
+  if (!job || !instance || extra.length || !Number.isInteger(port) || port < 0 || port > 65535 || secret.length < 32) {
+    throw Error("Usage: PLOW_OTLP_EVIDENCE_TOKEN=<private secret of at least 32 characters> node collector/codex/otel.ts JOB_DIRECTORY INSTANCE");
+  }
+  const scope = token(instance);
+  const directory = resolve(job);
+  const database = join(directory, "evidence.sqlite");
+  const policy = await compile<CodexOtelPolicy>(directory, codexOtelPolicy, "codex-otel");
+  receive(port, "127.0.0.1", secret, "Codex", (value) => {
+    const facts = decodeSpans(value, policy);
+    return () => {
+      if (facts.length) saveCodexOtel(database, scope, facts, policy);
+    };
   });
 }
 
-if (import.meta.main) await serve();
+async function serveT3([job, instance, ...extra]: string[]) {
+  const port = Number(process.env.PLOW_T3_EVIDENCE_PORT ?? "4320");
+  const host = process.env.PLOW_T3_EVIDENCE_HOST ?? "127.0.0.1";
+  const credential = process.env.PLOW_T3_EVIDENCE_TOKEN_FILE ?? "/run/secrets/t3_backend";
+  const secret = readFileSync(credential, "utf8").trim();
+  if (!job || !instance || extra.length || !Number.isInteger(port) || port < 0 || port > 65535 ||
+    !/^[A-Za-z0-9_-]{32,256}$/.test(secret) || !["127.0.0.1", "0.0.0.0"].includes(host)) {
+    throw Error("Invalid T3 OTLP evidence settings");
+  }
+  const scope = token(instance);
+  const directory = resolve(job);
+  const policy = await compile<T3OtelPolicy>(process.env.TMPDIR ?? directory, t3OtelPolicy, "t3-otel");
+  const { save, close } = openT3Otel(join(directory, "evidence.sqlite"), scope, policy);
+  const server = receive(port, host, secret, "T3", (value) => {
+    const facts = decodeT3Spans(value, policy, scope);
+    const ingestedMs = Date.now();
+    return () => {
+      if (facts.length) save(facts, ingestedMs);
+    };
+  });
+  process.once("SIGTERM", () => server.close(close));
+}
+
+if (import.meta.main) {
+  const args = process.argv.slice(2);
+  if (args[0] === "--t3") {
+    try {
+      await serveT3(args.slice(1));
+    } catch {
+      console.error("T3 OTLP evidence startup failed");
+      process.exitCode = 1;
+    }
+  } else {
+    await serveCodex(args);
+  }
+}
