@@ -50,7 +50,7 @@ jobs:
           if-no-files-found: error
           retention-days: 3
   deploy-plow:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'tryapparent/barnacles'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository_id == '1473191494'
     needs: [verify, compose, plow]
     runs-on: ubuntu-latest
     timeout-minutes: 6
