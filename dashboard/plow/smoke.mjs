@@ -12,18 +12,18 @@ const { default: worker } = await import(pathToFileURL(resolve(directory, 'worke
 const app = 'https://plow.tryapparent.com/app'
 const audience = 'fixture-audience'
 const demo = [
-  {"startUtcMs": 1795726800000, "work": [[12960, 16920, "Release verification"]], "wait": [[0, 12960, "Publish artifacts"]], "errors": [], "end": 16920},
-  {"startUtcMs": 1795719600000, "work": [[0, 5040, "Code changes"]], "wait": [[5040, 18360, "CI checks"]], "errors": [], "end": 20700},
-  {"startUtcMs": 1795712400000, "work": [[0, 3240, "Code changes"], [13680, 16920, "Local testing"]], "wait": [[3240, 13680, "CI checks"]], "errors": [], "end": 16920},
-  {"startUtcMs": 1795705200000, "work": [], "wait": [[0, 12240, "CI checks"]], "errors": [], "end": 16200},
-  {"startUtcMs": 1795698000000, "work": [[0, 8640, "Code changes"]], "wait": [[8640, 15480, "CI checks"]], "errors": [], "end": 15480},
-  {"startUtcMs": 1795694400000, "work": [], "wait": [[5940, 17280, "Publish artifacts"]], "errors": [], "end": 17280},
-  {"startUtcMs": 1795687200000, "work": [[0, 2880, "Code changes"]], "wait": [[2880, 7380, "CI checks"]], "errors": [], "end": 7380},
-  {"startUtcMs": 1795680000000, "work": [[10440, 13320, "Local testing"]], "wait": [[0, 10440, "CI checks"]], "errors": [], "end": 13320},
-  {"startUtcMs": 1795676400000, "work": [[0, 5400, "Local testing"]], "wait": [[5400, 14760, "CI checks"]], "errors": [], "end": 14760},
-  {"startUtcMs": 1795608000000, "work": [[0, 4680, "Code changes"]], "wait": [[4680, 14760, "CI checks"]], "errors": [], "end": 17280},
+  {startUtcMs: 1795726800000, work: [[12960, 16920, "Release verification"]], wait: [[0, 12960, "Publish artifacts"]], end: 16920},
+  {startUtcMs: 1795719600000, work: [[0, 5040, "Code changes"]], wait: [[5040, 18360, "CI checks"]], end: 20700},
+  {startUtcMs: 1795712400000, work: [[0, 3240, "Code changes"], [13680, 16920, "Local testing"]], wait: [[3240, 13680, "CI checks"]], end: 16920},
+  {startUtcMs: 1795705200000, work: [], wait: [[0, 12240, "CI checks"]], end: 16200},
+  {startUtcMs: 1795698000000, work: [[0, 8640, "Code changes"]], wait: [[8640, 15480, "CI checks"]], end: 15480},
+  {startUtcMs: 1795694400000, work: [], wait: [[5940, 17280, "Publish artifacts"]], end: 17280},
+  {startUtcMs: 1795687200000, work: [[0, 2880, "Code changes"]], wait: [[2880, 7380, "CI checks"]], end: 7380},
+  {startUtcMs: 1795680000000, work: [[10440, 13320, "Local testing"]], wait: [[0, 10440, "CI checks"]], end: 13320},
+  {startUtcMs: 1795676400000, work: [[0, 5400, "Local testing"]], wait: [[5400, 14760, "CI checks"]], end: 14760},
+  {startUtcMs: 1795608000000, work: [[0, 4680, "Code changes"]], wait: [[4680, 14760, "CI checks"]], end: 17280},
 ]
-const feed = { observed: 1795730400000, traces: demo }
+const feed = { observed: 1795730400000, traces: demo.map(trace => ({ ...trace, errors: [] })) }
 let storedFeed = JSON.stringify(feed)
 let reads = 0
 const env = { PLOW_ACCESS_AUDIENCE: audience, PLOW_SESSION_FEED: { get: async key => {
@@ -79,7 +79,7 @@ assert.equal(await head.text(), '')
 
 const browser = await chromium.launch({ channel: 'chrome' })
 try {
-  for (const width of [320, 390, 728, 1120, 1440, 1920]) {
+  for (const width of [320, 390, 640, 728, 1120, 1440, 1920]) {
     const page = await browser.newPage({ viewport: { width, height: 900 } })
     const errors = []
     page.on('pageerror', error => errors.push(error.message))
@@ -128,15 +128,19 @@ try {
       }
       const selectors = ['.activity-header', '#summary-panel', '.summary-top', '#summary-total',
         '#summary-note', '#tiles', '#operation-panel', '#timeline-panel', '.timeline-heading-row',
-        '#timeline-selection', '.zoom-tools', '#zoom-mode', '.navigator', '#utc-window', '.chart-key',
+        '#timeline-selection', '.time-strip', '.zoom-tools', '#zoom-out', '#zoom-in', '#zoom-fit',
+        '#zoom-mode', '.navigator', '#minimap', '.time-caption', '#utc-window', '.chart-key',
         '#timeline-viewport', '.inspector-slot', '.reading-help']
       return {
         page: [document.documentElement.scrollWidth, document.documentElement.scrollHeight],
         regions: Object.fromEntries(selectors.map(selector => [selector, bounds(document.querySelector(selector))])),
         categories: [...document.querySelectorAll('.category-tile')].map(bounds),
-        rows: [...document.querySelectorAll('.trace')].map(row => [row.offsetTop, row.offsetHeight]),
       }
     })
+    const rowSlots = () => page.locator('.trace:visible').evaluateAll(rows =>
+      rows.map(row => [row.offsetTop, row.offsetHeight]))
+    const originalSlots = await rowSlots()
+    const assertPacked = async count => assert.deepEqual(await rowSlots(), originalSlots.slice(0, count))
     const overview = await geometry()
     const assertStable = async state => assert.deepEqual(await geometry(), overview, `${width}px · ${state}`)
     assert.equal(await summary.locator('.category-tile').count(), 3)
@@ -162,16 +166,24 @@ try {
     assert.equal(await timeline.locator('.match-span:visible').count(), 2)
     assert.match(await page.locator('#timeline-selection').innerText(), /Publish artifacts · 2 threads shown/)
     assert.equal(await range.innerText(), initial)
+    await assertPacked(2)
     await assertStable('filter to Publish artifacts')
     await screenshot('filtered')
 
     await ci.click()
     assert.equal((await titles()).length, 8)
     assert.equal(await timeline.locator('.match-span:visible').count(), 8)
+    await assertPacked(8)
     await assertStable('switch filter to CI checks')
     await page.keyboard.press('Escape')
     assert.equal((await titles()).length, 10)
+    await assertPacked(10)
     await assertStable('clear filter with Escape')
+    const scrollport = timeline.getByRole('region', { name: 'Scrollable UTC timelines' })
+    await scrollport.focus()
+    await page.keyboard.press('End')
+    await page.waitForFunction(() => document.getElementById('timeline-viewport').scrollTop > 0)
+    await assertStable('scroll inside the timeline')
     await publish.click()
     await publish.click()
     assert.equal((await titles()).length, 10)
@@ -188,6 +200,7 @@ try {
     }
     await brush(.01, .12)
     assert.equal((await titles()).length, 0)
+    await assertPacked(0)
     assert.match(await timeline.innerText(), /No matching threads in this range/)
     assert.match(await page.locator('#zoom-mode').innerText(), /Details/)
     await assertStable('empty filtered range')
@@ -199,9 +212,11 @@ try {
     await fit.click()
     assert.equal(await range.innerText(), initial)
     assert.deepEqual(await titles(), matchingThreads)
-    await workflow.click()
+    await summary.getByRole('button', { name: 'Close breakdown' }).click()
     assert.equal(await workflow.getAttribute('aria-expanded'), 'false')
+    assert.equal(await workflow.evaluate(element => element === document.activeElement), true)
     assert.equal((await titles()).length, 10)
+    await assertPacked(10)
     await assertStable('reset zoom and close operation breakdown')
     await screenshot('recovered')
 
@@ -213,6 +228,11 @@ try {
       assert.ok(await summary.locator('#operation-panel').evaluate(element => element.scrollTop > 0))
     }
     await assertStable('focus the last operation in the breakdown')
+    await summary.getByRole('button', { name: /^Local testing/ }).click()
+    assert.deepEqual(await titles(), ['Settings cleanup', 'Runner diagnostics', 'Dependency update'])
+    await assertPacked(3)
+    await assertStable('filter to Local testing')
+    await screenshot('local-testing')
 
     await workflow.click()
     await publish.click()
@@ -277,4 +297,4 @@ try {
   await browser.close()
 }
 
-console.log('Plow Worker access guard, timeline filtering, and stable layout passed at 320, 390, 728, 1120, 1440 and 1920 pixels.')
+console.log('Plow Worker access guard, timeline filtering, and stable layout passed at 320, 390, 640, 728, 1120, 1440 and 1920 pixels.')
