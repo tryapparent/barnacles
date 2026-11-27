@@ -334,6 +334,49 @@ def observe_hosted_same_head_supersession(state: Replay, thread: String, id: Str
   observe_failure_with_duration(state, thread, id, "ci-same-head-job-superseded",
     Bool.and(same_work, Bool.and(cancelled, overlap)), U32.sub(previous_ended, previous_started))
 
+def observe_jobless_run_control_conflict(state: Replay, thread: String, id: String, +run: String,
+  jobs_run: String, cancel_run: String, force_run: String, status: String, jobs: U32,
+  normal_error: String, force_status: U32, force_error: String,
+  +jobs_observed: U32, +cancel_denied: U32, +status_observed: U32, force_denied: U32) -> Replay:
+  +same_run = Bool.and(String.eq(run, jobs_run), Bool.and(String.eq(run, cancel_run), String.eq(run, force_run)))
+  +queued = Bool.and(String.eq(status, "queued"), U32.is_eq(jobs, 0))
+  +normal = String.eq(normal_error, "Cannot cancel a workflow run that is completed")
+  +forced = Bool.and(U32.is_eq(force_status, 409), String.eq(force_error, "Cannot cancel a workflow run that has not been queued yet."))
+  +before = Bool.and(U32.is_gt(jobs_observed, 0), U32.is_ge(cancel_denied, jobs_observed))
+  +after = Bool.and(U32.is_ge(status_observed, cancel_denied), U32.is_ge(force_denied, status_observed))
+  observe_failure(state, thread, id, "ci-jobless-run-state-conflict",
+    Bool.and(same_run, Bool.and(queued, Bool.and(Bool.and(normal, forced), Bool.and(before, after)))))
+
+def observe_hosted_workflow_startup_failure(state: Replay, thread: String, id: String, status: String,
+  conclusion: String, job_count: U32, attempt: U32) -> Replay:
+  +ended = Bool.and(String.eq(status, "completed"), String.eq(conclusion, "startup_failure"))
+  +jobless = Bool.and(U32.is_eq(job_count, 0), U32.is_gt(attempt, 0))
+  observe_failure(state, thread, id, "ci-workflow-startup-failure", Bool.and(ended, jobless))
+
+def observe_hosted_job_deadline_confirmed(state: Replay, thread: String, id: String, conclusion: String,
+  assigned: Bool, annotation: String, +deadline: U32, +started: U32, +ended: U32) -> Replay:
+  +minutes = U32.div(deadline, 60)
+  +seconds = U32.sub(deadline, U32.mul(minutes, 60))
+  +expected = String.append("The job has exceeded the maximum execution time of ",
+    String.append(U32.show(minutes), String.append("m", String.append(U32.show(seconds), "s"))))
+  +confirmed = Bool.and(assigned, Bool.and(String.eq(conclusion, "cancelled"), String.eq(annotation, expected)))
+  +elapsed = U32.sub(ended, started)
+  +ordered = Bool.and(U32.is_gt(started, 0), U32.is_gt(ended, started))
+  +bounded = Bool.and(U32.is_gt(deadline, 0), U32.is_ge(elapsed, deadline))
+  observe_failure_with_duration(state, thread, id, "ci-job-deadline-confirmed",
+    Bool.and(confirmed, Bool.and(ordered, bounded)), elapsed)
+
+def observe_hosted_electron_download(state: Replay, thread: String, id: String, step: String,
+  conclusion: String, +status: U32, exit_code: U32, +artifact: String, origin: String, renderer: String) -> Replay:
+  +phase = Bool.and(String.eq(step, "Prepare Electron before timed renderer tests"), String.eq(renderer, "skipped"))
+  +failed = Bool.and(String.eq(conclusion, "failure"), U32.is_eq(exit_code, 1))
+  +publisher = Bool.and(String.starts_with(artifact, "https://github.com/electron/electron/releases/download/v"),
+    String.ends_with(artifact, ".zip"))
+  +fetch = Bool.and(publisher, String.eq(origin, "electron-get-fetch-downloader"))
+  +server = Bool.and(U32.is_ge(status, 500), U32.is_lt(status, 600))
+  observe_failure(state, thread, id, "ci-electron-prerequisite-http-server-error",
+    Bool.and(phase, Bool.and(failed, Bool.and(fetch, server))))
+
 def observe_hosted_bun_test_deadline(state: Replay, thread: String, id: String, step: String, conclusion: String,
   diagnostic: String, +path: String, test: String, exit_code: U32, +budget_ms: U32, +elapsed_ms: U32) -> Replay:
   +suite = Bool.and(String.starts_with(step, "Run bun test "), Bool.and(String.eq(conclusion, "failure"), U32.is_eq(exit_code, 1)))

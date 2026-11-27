@@ -240,6 +240,15 @@ type ReplayPolicy = {
     previousRun: string, nextRun: string, previousWorkflow: string, nextWorkflow: string,
     previousHead: string, nextHead: string, previousJob: string, nextJob: string, previousConclusion: string,
     annotation: string, assigned: boolean, previousStarted: number, previousEnded: number, nextCreated: number): unknown;
+  observe_jobless_run_control_conflict(state: unknown, thread: string, id: string, run: string, jobsRun: string,
+    cancelRun: string, forceRun: string, status: string, jobs: number, normalError: string, forceStatus: number,
+    forceError: string, jobsObserved: number, cancelDenied: number, statusObserved: number, forceDenied: number): unknown;
+  observe_hosted_workflow_startup_failure(state: unknown, thread: string, id: string, status: string,
+    conclusion: string, jobCount: number, attempt: number): unknown;
+  observe_hosted_job_deadline_confirmed(state: unknown, thread: string, id: string, conclusion: string,
+    assigned: boolean, annotation: string, deadline: number, started: number, ended: number): unknown;
+  observe_hosted_electron_download(state: unknown, thread: string, id: string, step: string, conclusion: string,
+    status: number, exitCode: number, artifact: string, origin: string, renderer: string): unknown;
   replay_files(state: unknown): List<Record<string, unknown>>;
   replay_costs(state: unknown): List<Record<string, unknown>>;
   replay_findings(state: unknown): List<Record<string, unknown>>;
@@ -407,6 +416,22 @@ async function replayBottlenecks(file: string, scratch: string) {
           sha(value.previousHead), sha(value.nextHead), factText(value.previousJob), factText(value.nextJob), token(value.previousConclusion),
           factText(value.annotation), bendBool(value.assigned), clockSecond(value.previousStarted), clockSecond(value.previousEnded),
           clockSecond(value.nextCreated));
+      } else if (value.kind === "actions-jobless-control-conflict") {
+        state = policy.observe_jobless_run_control_conflict(state, token(value.thread), id, token(value.run),
+          token(value.jobsRun), token(value.cancelRun), token(value.forceRun), token(value.status), clockSecond(value.jobs),
+          factText(value.normalError), clockSecond(value.forceStatus), factText(value.forceError),
+          clockSecond(value.jobsObserved), clockSecond(value.cancelDenied), clockSecond(value.statusObserved), clockSecond(value.forceDenied));
+      } else if (value.kind === "hosted-workflow-startup-failure") {
+        state = policy.observe_hosted_workflow_startup_failure(state, token(value.thread), id, token(value.status),
+          token(value.conclusion), clockSecond(value.jobCount), clockSecond(value.attempt));
+      } else if (value.kind === "hosted-job-deadline-confirmed") {
+        state = policy.observe_hosted_job_deadline_confirmed(state, token(value.thread), id, token(value.conclusion),
+          bendBool(value.assigned), factText(value.annotation), clockSecond(value.deadlineSeconds),
+          clockSecond(value.started), clockSecond(value.ended));
+      } else if (value.kind === "hosted-electron-download-error") {
+        state = policy.observe_hosted_electron_download(state, token(value.thread), id, factText(value.step),
+          token(value.conclusion), clockSecond(value.status), clockSecond(value.exitCode), factText(value.artifact),
+          token(value.origin), token(value.renderer));
       } else if (value.kind === "hermes-validator-cache-copy") {
         state = policy.observe_hermes_cache_merge(state, token(value.thread), id, factText(value.step),
           token(value.conclusion), clockSecond(value.exitCode), token(value.code), token(value.syscall),
