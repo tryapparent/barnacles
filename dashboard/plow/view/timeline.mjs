@@ -57,12 +57,12 @@ const scale = frame.end - frame.start
 const utcDay = new Intl.DateTimeFormat('en-US', { timeZone:'UTC', month:'short', day:'numeric' })
 const utcClock = new Intl.DateTimeFormat('en-GB', { timeZone:'UTC', hour:'2-digit',minute:'2-digit', hourCycle:'h23' })
 const axis = document.getElementById('scale-caption')
-function drawTicks(visibleMillis) {
+function drawTicks() {
   axis.replaceChildren()
-  for (const time of values(policy.chart_ticks(frame,visibleMillis,baseWidth))) {
+  for (const time of values(policy.chart_ticks(visibleWindow, duration(), baseWidth))) {
     const tick = makeElement('span','utc-tick')
-    tick.style.left = percent(policy.utc_offset(frame,time),scale)
-    tick.append(makeElement('span','',utcDay.format(time)), makeElement('strong','',utcClock.format(time)))
+    tick.style.left = percent(time - visibleWindow.start, duration())
+    tick.append(makeElement('span','',utcDay.format(time)), makeElement('strong','', (duration() < 300000 ? exactClock : utcClock).format(time)))
     axis.append(tick)
   }
 }
@@ -140,7 +140,6 @@ inspector.addEventListener('keydown', event => {
 })
 
 function render(trace, width, measurements, index) {
-  const plan = policy.layout(trace.evidence, scale, width, details, measurements, trace.failures)
   const row = makeElement('li', 'trace')
   const header = makeElement('header')
   const link = makeElement('strong', 'sample-title', trace.shortTitle)
@@ -173,34 +172,45 @@ function render(trace, width, measurements, index) {
   rail.dataset.description = 'Elapsed ' + elapsed(trace.end) + '. Provider run ' + elapsed(trace.totals.work) +
     '. Admission wait ' + elapsed(trace.totals.workflow) + '. Unobserved ' + elapsed(trace.totals.unclear) +
     '. ' + trace.recordedFailures.length + ' recorded failures.'
-  const bar = makeElement('span','bar')
-  bar.style.setProperty('--length', percent(trace.end, scale))
-  bar.style.left = percent(policy.utc_offset(frame,trace.startUtcMs),scale)
-  const paint = [...values(plan.paint)]
-  const stops = paint.map(slice => slice.paint + ' ' + percent(slice.a, trace.end) + ' ' + percent(slice.b, trace.end))
-  bar.style.background = 'linear-gradient(to right,' + stops.join(',') + ')'
-  for (const label of values(plan.labels)) {
-    const box = makeElement('span', 'label')
-    box.style.setProperty('--at', percent(label.a, trace.end))
-    box.style.setProperty('--width', percent(label.b - label.a, trace.end))
-    const text = makeElement('span', '', label.text)
-    text.style.color = label.ink
-    text.style.background = label.background
-    box.append(text)
-    bar.append(box)
-  }
-  for (const time of values(policy.failure_points(details, trace.end, trace.failures))) {
-    const marker = makeElement('i', 'marker')
-    marker.style.setProperty('--at', percent(time, trace.end))
-    bar.append(marker)
-  }
-  bar.setAttribute('aria-hidden', 'true')
   const action = makeElement('span', 'fit-target')
-  const clipStart = Math.max(visibleWindow.start, trace.startUtcMs)
-  const clipEnd = Math.min(visibleWindow.end, trace.startUtcMs + trace.end)
-  action.style.left = percent(clipStart - frame.start, scale)
-  action.style.width = percent(Math.max(0, clipEnd - clipStart), scale)
-  rail.append(bar, action)
+  const clipStart = Math.max(0, visibleWindow.start - trace.startUtcMs)
+  const clipEnd = Math.min(trace.end, visibleWindow.end - trace.startUtcMs)
+  if (clipEnd > clipStart) {
+    const length = clipEnd - clipStart
+    const left = percent(trace.startUtcMs + clipStart - visibleWindow.start, duration())
+    const widthInView = percent(length, duration())
+    const bar = makeElement('span', 'bar')
+    bar.setAttribute('aria-hidden', 'true')
+    bar.style.setProperty('--length', widthInView)
+    bar.style.left = left
+    const plan = policy.layout(trace.evidence, duration(), width, details, measurements, trace.failures)
+    const clip = ({ a, b }) => ({ a: Math.max(a, clipStart) - clipStart, b: Math.min(b, clipEnd) - clipStart })
+    const paint = [...values(plan.paint)].map(slice => ({ ...slice, ...clip(slice) })).filter(slice => slice.a < slice.b)
+    const stops = paint.map(slice => slice.paint + ' ' + percent(slice.a, length) + ' ' + percent(slice.b, length))
+    bar.style.background = 'linear-gradient(to right,' + stops.join(',') + ')'
+    for (const label of values(plan.labels)) {
+      const { a, b } = clip(label)
+      if (a >= b) continue
+      const box = makeElement('span', 'label')
+      box.style.setProperty('--at', percent(a, length))
+      box.style.setProperty('--width', percent(b - a, length))
+      const text = makeElement('span', '', label.text)
+      text.style.color = label.ink
+      text.style.background = label.background
+      box.append(text)
+      bar.append(box)
+    }
+    for (const time of values(policy.failure_points(details, trace.end, trace.failures))) {
+      if (time < clipStart || time > clipEnd) continue
+      const marker = makeElement('i', 'marker')
+      marker.style.setProperty('--at', percent(time - clipStart, length))
+      bar.append(marker)
+    }
+    action.style.left = 'min(' + left + ',calc(100% - 8px))'
+    action.style.width = widthInView
+    rail.append(bar)
+  }
+  rail.append(action)
   row.dataset.traceIndex = index
   row.append(header, rail)
   paintThreadMatch(row, rail, index)
@@ -229,7 +239,7 @@ function draw() {
   if (row && part) rows.querySelector('[data-trace-index="'+row.dataset.traceIndex+'"] [data-focus-part="'+part+'"]')?.focus({preventScroll:true})
 }
 function chartPlot() {
-  return { left: ruler.getBoundingClientRect().left + viewport.scrollLeft, width: baseWidth }
+  return { left: ruler.getBoundingClientRect().left, width: baseWidth }
 }
 function paintWindow() {
   const { left, width } = chartPlot()
@@ -253,10 +263,9 @@ function applyWindow(next, focused = false) {
   zoom = scale / duration()
   fitted = focused
   details = policy.trace_details(duration(), fitted)
-  grid.style.setProperty('--timeline-width', (baseWidth * zoom) + 'px')
-  viewport.scrollLeft = (next.start - frame.start) * baseWidth / duration()
+  grid.style.setProperty('--timeline-width', baseWidth + 'px')
   clearTooltip()
-  drawTicks(duration())
+  drawTicks()
   draw()
   paintRange()
   paintWindow()

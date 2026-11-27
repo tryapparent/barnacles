@@ -64,7 +64,7 @@ button[aria-pressed=true]{background:var(--earth);border-color:var(--earth);colo
 .trace .rail{grid-column:2;height:39px;min-width:0}
 
 .trace .bar{outline:1px solid #60564d45;outline-offset:-1px}
-.trace .label span,.measure{font-size:clamp(13px,1.8vw,16px)}
+
 
 @media(max-width:720px){.board{--thread-width:clamp(115px,29vw,180px);--column-gap:15px}.trace{min-height:67px}}
 @media(max-width:430px){.board{--thread-width:105px;--column-gap:12px}.table-head{font-size:11px}.trace small{font-size:11px}.trace .meta{display:grid;gap:1px}.trace .rail{height:35px}.trace .label span,.measure{font-size:13px}.trace{min-height:66px}}
@@ -108,7 +108,7 @@ button[aria-pressed=true]{background:var(--earth);border-color:var(--earth);colo
 
 .board{--thread-width:clamp(183px,16vw,210px);--column-gap:20px}
 .trace{grid-template-rows:44px;block-size:44px;padding-block:0}
-.trace .bar{top:13px;height:18px;border-radius:2px;pointer-events:none}
+.trace .bar{top:13px;height:18px;border-radius:2px;pointer-events:none;min-width:1px}
 .trace .label span{font:600 11px Geist,system-ui;padding:1px 3px}
 .trace:not(:hover):not(:focus-within) .label{opacity:0}
 .trace .rail:is(:hover,:focus-within) .bar{top:11px;height:22px}
@@ -133,6 +133,7 @@ button[aria-pressed=true]{background:var(--earth);border-color:var(--earth);colo
 .inspect-close{position:absolute;inset:4px 4px auto auto;min-width:44px;padding:0;border:0;font-size:21px}
 #timeline-panel .time-strip{margin-block-start:0}
 .fit-target,.control-button.fit-thread{position:absolute;inset-block:0}
+.bar + .fit-target{min-width:8px}
 .control-button.fit-thread{inset-inline:0;width:100%;min-width:0;height:100%;padding:0;border:0;background:transparent}
 .fit-thread:focus-visible{outline-offset:-2px}
 .rail{touch-action:pan-y}

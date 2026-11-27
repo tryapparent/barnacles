@@ -204,8 +204,8 @@ function paintThreadMatch(row, rail, index) {
   header.prepend(check)
   for (const span of values(spans)) {
     const mark = makeElement('span', 'match-span')
-    mark.style.left = percent(span.start - frame.start, scale)
-    mark.style.width = percent(span.end - span.start, scale)
+    mark.style.left = percent(span.start - visibleWindow.start, duration())
+    mark.style.width = percent(span.end - span.start, duration())
     rail.append(mark)
   }
 }

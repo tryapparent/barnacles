@@ -234,9 +234,10 @@ def trace_details(visible_millis: Nat, focused: Bool) -> Bool:
   Bool.or(detail_zoom(visible_millis),focused)
 
 def chart_step(+visible_millis: Nat) -> Nat:
-  Bool.pick(Nat,Nat.is_le(visible_millis,3600000n),300000n,
+  Bool.pick(Nat,Nat.is_le(visible_millis,60000n),1000n,Bool.pick(Nat,Nat.is_le(visible_millis,300000n),10000n,
+    Bool.pick(Nat,Nat.is_le(visible_millis,3600000n),300000n,
     Bool.pick(Nat,Nat.is_le(visible_millis,21600000n),1800000n,
-      Bool.pick(Nat,Nat.is_le(visible_millis,43200000n),7200000n,21600000n)))
+      Bool.pick(Nat,Nat.is_le(visible_millis,43200000n),7200000n,21600000n)))))
 
 def chart_tick_list(fuel: Nat, +at: Nat, +stop: Nat, +step: Nat) -> List<&2,Nat>:
   match fuel:
