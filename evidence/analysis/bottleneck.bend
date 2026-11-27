@@ -193,6 +193,13 @@ def observe_job_result(state: Replay, thread: String, id: String, +conclusion: S
   +failed = Bool.or(timeout, String.eq(conclusion, "failure"))
   observe_failure(state, thread, id, Bool.pick(String, timeout, "ci-job-timeout", "ci-job-failure"), failed)
 
+def observe_hosted_admission(state: Replay, thread: String, id: String, conclusion: String, assigned: Bool,
+  steps: U32, annotation: String) -> Replay:
+  +cancelled = String.eq(conclusion, "cancelled")
+  +unallocated = Bool.and(Bool.not(assigned), U32.is_eq(steps, 0))
+  +reason = String.eq(String.trim(annotation), "The job was not acquired by Runner of type hosted even after multiple attempts")
+  observe_failure(state, thread, id, "ci-hosted-admission-failure", Bool.and(cancelled, Bool.and(unallocated, reason)))
+
 def replay_files(state: Replay) -> List<&2, FileTotal>:
   match state:
     case Replay{_, files, _, _, _, _, _}: Map.values(&2, FileTotal, files)
