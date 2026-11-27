@@ -38,11 +38,11 @@ Start with **The Long Field**. Keep the horizon low, leave room for the headline
 
 ## Stable page layout
 
-At a given viewport size, interactions within a page must preserve the position and size of its existing regions and the full width and height of the document. Apply this rule to pointer and keyboard interactions and to every state they trigger, including animations, loading, and errors. The layout can adapt when the viewport changes or the user navigates to another page.
+At a given viewport size, keep the document dimensions and the outer bounds of page regions stable during interactions. Apply this rule to pointer and keyboard interactions and to every state they trigger, including animations, loading, and errors. The layout can adapt when the viewport changes or the user navigates to another page.
 
 - Reserve an empty slot in the initial layout for each dropdown or disclosure panel. When it opens, it may fill only that slot. Keep the slot the same size when the panel closes, and keep it clear of other content and controls.
-- Size replaceable regions in advance for controls, results, and feedback. Keep long content within its assigned region using wrapping, internal scrolling, or pagination. Keep scrollbar space stable wherever a scrollbar can appear.
-- Verify the rule at each supported breakpoint. Compare region bounds and document dimensions before, during, and after opening, closing, and updating controls. Include the longest supported content and keyboard operation. The bounds and dimensions must match at the same viewport size.
+- Size regions for controls, results, and feedback in advance. Inside a bounded scroll region, let content reflow as results change. A filtered list should close up around its remaining items. Its content height and scroll position can change while the scroll region keeps its outer bounds. Keep scrollbar space stable.
+- Verify at each supported breakpoint. Compare document dimensions and outer region bounds in document coordinates before, during, and after interactions. Check the content and scroll behavior inside each scroll region separately.
 
 ## Homepage copy
 

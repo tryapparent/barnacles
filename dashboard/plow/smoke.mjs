@@ -89,11 +89,19 @@ try {
         page: [document.documentElement.scrollWidth, document.documentElement.scrollHeight],
         regions: Object.fromEntries(selectors.map(selector => [selector, bounds(document.querySelector(selector))])),
         categories: [...document.querySelectorAll('.category-tile')].map(bounds),
-        rows: [...document.querySelectorAll('.trace')].map(row => [row.offsetTop, row.offsetHeight]),
       }
     })
     const overview = await geometry()
     const assertStable = async state => assert.deepEqual(await geometry(), overview, `${width}px · ${state}`)
+    const rowBounds = () => timeline.locator('.trace:visible').evaluateAll(rows => rows.map(row => ({
+      top: row.offsetTop, bottom: row.offsetTop + row.offsetHeight,
+    })))
+    const firstRowTop = (await rowBounds())[0].top
+    const assertCompact = async () => {
+      const rows = await rowBounds()
+      assert.equal(rows[0].top, firstRowTop)
+      for (let i = 1; i < rows.length; i++) assert.equal(rows[i].top, rows[i - 1].bottom)
+    }
     assert.equal(await summary.locator('.category-tile').count(), 3)
     assert.equal((await titles()).length, 10)
     assert.match(await total.innerText(), /43h 24m across 10 threads/)
@@ -118,15 +126,19 @@ try {
     assert.match(await page.locator('#timeline-selection').innerText(), /Publish artifacts · 2 threads shown/)
     assert.equal(await range.innerText(), initial)
     await assertStable('filter to Publish artifacts')
+    await assertCompact()
+    assert.equal(await timeline.locator('#timeline-viewport').evaluate(element => element.scrollHeight === element.clientHeight), true)
     await screenshot('filtered')
 
     await ci.click()
     assert.equal((await titles()).length, 8)
     assert.equal(await timeline.locator('.match-span:visible').count(), 8)
     await assertStable('switch filter to CI checks')
+    await assertCompact()
     await page.keyboard.press('Escape')
     assert.equal((await titles()).length, 10)
     await assertStable('clear filter with Escape')
+    await assertCompact()
     await publish.click()
     await publish.click()
     assert.equal((await titles()).length, 10)
