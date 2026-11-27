@@ -158,6 +158,8 @@ type ReplayPolicy = {
   observe_t3_command_envelope(state: unknown, thread: string, id: string, sourceThread: string, visibility: string,
     itemType: string, status: string, operation: string, started: number, completed: number, observed: number,
     elapsedMs: number, receipt: string, limitSeconds: number): unknown;
+  observe_t3_command_refusal(state: unknown, thread: string, id: string, sourceThread: string, visibility: string,
+    itemType: string, status: string, receipt: string, exitCode: number): unknown;
   observe_hosted_admission(state: unknown, thread: string, id: string, conclusion: string,
     assigned: boolean, steps: number, annotation: string): unknown;
   observe_pr_notice(state: unknown, thread: string, id: string, sourceThread: string, visibility: string,
@@ -365,6 +367,9 @@ async function replayBottlenecks(file: string, scratch: string, patterns: boolea
           token(value.visibility), token(value.itemType), token(value.status), token(value.operation),
           clockSecond(value.started), clockSecond(value.completed), clockSecond(value.observed), clockSecond(value.elapsedMs),
           value.receipt === "" ? "" : token(value.receipt), clockSecond(value.limitSeconds));
+      } else if (value.kind === "t3-command-refusal") {
+        state = policy.observe_t3_command_refusal(state, token(value.thread), id, token(value.sourceThread),
+          token(value.visibility), token(value.itemType), token(value.status), token(value.receipt), clockSecond(value.exitCode));
       } else if (value.kind === "attempt") {
         state = policy.observe_attempt(state, token(value.thread), id, factText(value.key),
           clockSecond(value.start), clockSecond(value.end), bendBool(value.failed), bendBool(value.succeeded));
