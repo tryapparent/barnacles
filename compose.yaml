@@ -1,3 +1,4 @@
 name: barnacles
 include:
   - dashboard/enablement/deploy/compose.yaml
+  - public/compose.yaml

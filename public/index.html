@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plow · Know your ground.</title>
+<style>
+@font-face{font-family:"Young Serif";src:url("./assets/youngserif.woff2") format("woff2");font-weight:400;font-style:normal}
+@font-face{font-family:Geist;src:url("./assets/geist.woff2") format("woff2");font-weight:400 650;font-style:normal}
+:root{--ink:#1a130d;--paper:#f4ebdd;--cream:#fff4df;--earth:#392820;--straw:#d6aa70;--storm:#60564d}
+*{box-sizing:border-box}
+.plow{max-width:1440px;margin-inline:auto;font:400 16px/1.5 Geist,system-ui,sans-serif;color:var(--ink);font-synthesis:none}
+.plow h1,.plow h2,.plow p,.plow figure{margin:0}
+.scene{position:relative;container-type:inline-size;isolation:isolate;overflow:hidden;aspect-ratio:16/9}
+.scene img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:-2}
+.field{background:#c8ad8a}
+.mark{position:absolute;top:8%;left:6.4%;font:400 clamp(24px,3.5cqw,42px)/1 "Young Serif",Georgia,serif;letter-spacing:-.025em;color:var(--cream)}
+.field .copy{position:absolute;left:6.4%;right:6.4%;top:43%}
+.plow h1,.plow h2{font-family:"Young Serif",Georgia,serif;font-weight:400;line-height:1.04;letter-spacing:-.035em;text-wrap:balance}
+.plow h1{font-size:clamp(39px,7.25cqw,100px)}
+.scene p{margin-top:.65em;font-size:clamp(14px,2.2cqw,23px);line-height:1.42;text-wrap:pretty}
+.field p{max-width:44ch}
+.cta{display:inline-flex;align-items:center;gap:10px;min-height:44px;margin-top:clamp(12px,2.2cqw,26px);padding:7px 14px;border-radius:3px;background:var(--ink);color:var(--cream);font-size:clamp(13px,1.75cqw,17px);font-weight:600;text-decoration:none}
+.cta:hover{background:var(--earth)}
+.cta:focus-visible{outline:3px solid var(--cream);outline-offset:2px;box-shadow:0 0 0 7px var(--ink)}
+.blade{background:var(--earth);color:var(--cream)}
+.blade::before{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(90deg,transparent 32%,#1a130d73 42%)}
+.blade .copy{position:absolute;top:28%;left:50%;right:6.4%}
+.blade h2{font-size:clamp(28px,5.8cqw,76px)}
+.blade p{max-width:34ch}
+.delivery{display:grid;grid-template-columns:minmax(0,.65fr) minmax(0,1.35fr);background:var(--paper);color:var(--ink)}
+.hands{position:relative;overflow:hidden;min-height:290px;background:var(--earth)}
+.hands img{position:absolute;width:195%;height:100%;object-fit:cover;object-position:left center}
+.example{padding:clamp(24px,5vw,54px);min-width:0}
+.example .context{font-size:13px;color:var(--storm);margin-bottom:5px}
+.example h2{font-size:clamp(30px,5vw,54px)}
+.example .duration{margin-top:8px;color:var(--storm);font-size:14px}
+.stages{display:flex;height:10px;margin:20px 0 9px;border-radius:2px;overflow:hidden;gap:2px}
+.stages span:first-child{flex:25;background:var(--storm)}
+.stages span:nth-child(2){flex:135;background:var(--earth)}
+.stages span:last-child{flex:30;background:var(--straw)}
+.checkpoints{margin:12px 0 0;padding:0;list-style:none}
+.checkpoints li{display:flex;justify-content:space-between;gap:12px;padding:4px 0;border-bottom:1px solid #d8c6ad;font-size:14px}
+.checkpoints time{font-variant-numeric:tabular-nums}
+.example .finding{margin-top:15px;font-size:14px;line-height:1.5;text-wrap:pretty}
+@media(max-width:600px){
+ .field{aspect-ratio:auto;min-height:345px}
+ .field img{object-position:78% center}
+ .field .copy{position:relative;padding:135px 6.4% 50px;left:auto;right:auto;top:auto}
+ .field h1{font-size:clamp(34px,8.8cqw,48px)}
+ .field p{max-width:34ch}
+ .blade{aspect-ratio:4/3}
+ .blade img{object-position:24% center}
+ .blade .copy{left:42%;top:17%;right:5%;text-shadow:0 1px 7px var(--ink)}
+ .blade h2{font-size:clamp(24px,6.8cqw,39px)}
+ .blade p{font-size:14px}
+ .delivery{grid-template-columns:1fr}
+ .hands{aspect-ratio:2/1;min-height:0}
+ .hands img{width:195%;height:100%;object-position:left 46%}
+}
+</style>
+</head>
+<body>
+<main class="plow">
+ <header class="scene field">
+  <img src="./assets/field.jpg" alt="A horse and plow work a single furrow beneath a wide sky and gathering clouds.">
+  <div class="mark" aria-label="Plow">plow</div>
+  <div class="copy">
+   <h1>Know your ground.</h1>
+   <p>See where your coding agents get stuck, from the first message to a feature in customers’ hands.</p>
+   <a class="cta" href="#delivery">See a delivery <span aria-hidden="true">↓</span></a>
+  </div>
+ </header>
+ <section class="scene blade" aria-labelledby="ground">
+  <img src="./assets/blade.jpg" alt="An iron plow blade turns dark soil and exposes the roots beneath it.">
+  <div class="copy">
+   <h2 id="ground">Good code starts with good ground.</h2>
+   <p>The codebase, checks, and tools shape what agents can do.</p>
+  </div>
+ </section>
+ <section class="delivery" id="delivery" aria-labelledby="example-title">
+  <figure class="hands">
+   <img src="./assets/hands.jpg" alt="A worker rests their hands on the worn wooden handle of a plow.">
+  </figure>
+  <div class="example">
+   <p class="context">Illustrative delivery</p>
+   <h2 id="example-title">A feature reaches customers.</h2>
+   <p class="duration">3 hours 10 minutes from thread start to release</p>
+   <div class="stages" role="img" aria-label="25 minutes to open the pull request, 2 hours 15 minutes from opening to merge, and 30 minutes from merge to release."><span></span><span></span><span></span></div>
+   <ol class="checkpoints" aria-label="Delivery milestones">
+    <li>Thread started <time datetime="09:00">09:00</time></li>
+    <li>Pull request opened <time datetime="09:25">09:25</time></li>
+    <li>Merged <time datetime="11:40">11:40</time></li>
+    <li>Release published <time datetime="12:10">12:10</time></li>
+    <li>Access verified <time datetime="12:12">12:12</time></li>
+   </ol>
+   <p class="finding"><strong>Look here first:</strong> the pull request spent 2 hours 15 minutes between opening and merge.</p>
+  </div>
+ </section>
+</main>
+</body>
+</html>

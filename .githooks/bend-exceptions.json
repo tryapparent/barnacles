@@ -82,5 +82,19 @@
     "dashboard/web/visual/fleet.tsx",
     "dashboard/web/visual/scene.js",
     "dashboard/web/vite.config.ts"
+  ],
+  "Static Plow site hosting, presentation and binary assets": [
+    "public/assets/blade.jpg",
+    "public/assets/field.jpg",
+    "public/assets/geist-ofl.txt",
+    "public/assets/geist.woff2",
+    "public/assets/hands.jpg",
+    "public/assets/plow-cream.png",
+    "public/assets/plow-ink.png",
+    "public/assets/youngserif-ofl.txt",
+    "public/assets/youngserif.woff2",
+    "public/brand/index.html",
+    "public/compose.yaml",
+    "public/index.html"
   ]
 }
