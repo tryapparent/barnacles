@@ -208,6 +208,14 @@ export function stockT3Origin(endpoint: string) {
   return origin;
 }
 
+export function positiveInt(value: unknown): number {
+  const number = typeof value === "string" && /^[1-9]\d*$/.test(value) ? Number(value) : value;
+  if (typeof number !== "number" || !Number.isSafeInteger(number) || number < 1) {
+    throw new Error("Expected a positive integer source ID");
+  }
+  return number;
+}
+
 export function stockT3Id(value: unknown) {
   return typeof value === "string" && value.length <= 512 && /^[A-Za-z0-9][A-Za-z0-9:._%-]*$/.test(value) ? value : "";
 }
@@ -263,4 +271,4 @@ export async function stockT3Rpc(origin: URL, bearer: string, tag: string, paylo
 }
 
 
-if (import.meta.main) import("./t3.ts").then(module => module.refreshAnalysis());
+if (import.meta.main) import("./t3-otel/projection.ts").then(module => module.refreshAnalysis());

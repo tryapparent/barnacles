@@ -69,8 +69,10 @@ services:
   analysis-refresh:
     <<: *analysis
     restart: unless-stopped
-    entrypoint: [/bin/sh, -c, 'umask 077; while :; do node collector/wire.ts /tmp /input/forge/evidence.sqlite /input/codex/evidence.sqlite /receipts /analysis/evidence.sqlite || printf "%s\n" "Analysis refresh failed; retaining previous results" >&2; sleep 900; done']
+    entrypoint: [/bin/sh, -c, 'umask 077; while :; do node collector/wire.ts /tmp /input/forge/evidence.sqlite /input/codex/evidence.sqlite /receipts /analysis/evidence.sqlite && touch /tmp/plow-analysis-ready || printf "%s\n" "Analysis refresh failed; retaining previous results" >&2; sleep 900; done']
+    group_add: ['10001']
     environment:
+      PLOW_ANALYSIS_T3_HISTORY_DB: ${PLOW_ANALYSIS_HISTORY_DIR:+/input/t3/data/projection/evidence.sqlite}
       PLOW_T3_ORIGIN: ${PLOW_ANALYSIS_T3_ORIGIN:-}
       PLOW_T3_READ_TOKEN_FILE: ${PLOW_ANALYSIS_T3_TOKEN_PATH:-}
       PLOW_ANALYSIS_T3_INSTANCE: ${PLOW_ANALYSIS_T3_INSTANCE:-}
@@ -79,7 +81,18 @@ services:
       - ${PLOW_ANALYSIS_FORGE_DIR:-./.plow/analysis-forge}:/input/forge:ro
       - ${PLOW_ANALYSIS_CODEX_DIR:-./.plow/analysis-codex}:/input/codex:ro
       - ${PLOW_ANALYSIS_RECEIPTS_DIR:-./.plow/analysis-receipts}:/receipts:ro
+      - type: bind
+        source: ${PLOW_ANALYSIS_HISTORY_DIR:-/dev/null}
+        target: /input/t3
+        read_only: true
+        bind:
+          create_host_path: false
       - analysis:/analysis
+    healthcheck:
+      test: [CMD, test, -f, /tmp/plow-analysis-ready]
+      interval: 3s
+      timeout: 2s
+      retries: 60
 
   analysis-api:
     <<: *analysis
@@ -101,6 +114,11 @@ services:
         read_only: true
         bind:
           create_host_path: false
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8080/api/v1/bottlenecks').then(r=>process.exit(r.status===403?0:1),()=>process.exit(1))"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
 
 volumes:
   analysis:

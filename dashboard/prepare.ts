@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
 import { createServer } from "node:http";
 import { DatabaseSync } from "node:sqlite";
-import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, existsSync, realpathSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { createRemoteJWKSet, jwtVerify } from "jose";
@@ -11,7 +11,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { z } from "zod";
 import { snapshotFormatVersion, writeSnapshot } from "../evidence/read.ts";
 import { buildPolicies, loadPolicy } from "../tooling/bend.ts";
-import { accessVerifier, feedPayload } from "./plow/worker.mjs";
+import { accessVerifier, dashboardData } from "./plow/worker.mjs";
 
 function validateSnapshot(directory: string) {
   const path = join(directory, "snapshot.json");
@@ -88,40 +88,7 @@ function readAnalysis(file: string, thread?: string): string | undefined {
 type Tool = { name: string; description: string; input: { $: "Bottlenecks" | "Thread" | "Timeline" | "Charts" } };
 type ToolList = { $: "Con"; head: Tool; tail: ToolList } | { $: "Nil" };
 
-type TimelineRow = {
-  startUtcMs: number;
-  end: number;
-  work: [number, number, string][];
-  wait: [number, number, string][];
-  detail?: [number, number, string][];
-};
 type Charts = { charts(rows: unknown, end: number): object };
-type BendList = { $: "Con"; head: unknown; tail: BendList } | { $: "Nil" };
-const bendList = (items: unknown[]) =>
-  items.reduceRight<BendList>((tail, head) => ({ $: "Con", head, tail }), { $: "Nil" });
-
-function chartJson(_key: string, value: unknown) {
-  const list = value as BendList | undefined;
-  if (list?.$ !== "Con" && list?.$ !== "Nil") return value;
-  const entries = [];
-  for (let next = list; next.$ === "Con"; next = next.tail) entries.push(next.head);
-  return entries;
-}
-
-function dashboardData(feedFile: string, type: "Timeline" | "Charts", policy: Charts) {
-  const feed = JSON.parse(feedPayload(readFileSync(feedFile, "utf8")));
-  if (feed.unavailable) return;
-  const { observed, traces, overview } = feed;
-  if (type === "Timeline") return JSON.stringify({ observed, traces });
-  const millis = (seconds: number) => Math.round(seconds * 1000);
-  const rows = (overview?.traces ?? traces).map((row: TimelineRow, index: number) => {
-    const intervals = (clock: [number, number, string][], kind: number) =>
-      clock.map(([a, b, name]) => ({ $: "Interval", a: millis(a), b: millis(b), name, kind }));
-    return { $: "ChartRow", index: index + 1, start: row.startUtcMs, duration: millis(row.end),
-      intervals: bendList([...intervals(row.work, 2), ...intervals(row.detail ?? [], 3), ...intervals(row.wait, 1)]) };
-  });
-  return JSON.stringify({ observed, ...policy.charts(bendList(rows), overview?.to ?? observed) }, chartJson);
-}
 
 async function analysisMcp(file: string) {
   const { PLOW_MCP_ACCESS_TEAM: team, PLOW_MCP_ACCESS_AUDIENCE: audience } = process.env;
@@ -165,7 +132,7 @@ async function analysisMcp(file: string) {
         const id = "threadId" in args ? args.threadId : undefined;
         try {
           const payload = kind === "Charts" || kind === "Timeline"
-            ? dashboardData(feedFile, kind, charts)
+            ? dashboardData(readFileSync(feedFile, "utf8"), kind, charts)
             : readAnalysis(file, id);
           if (payload) {
             return { content: [{ type: "text", text: payload }], structuredContent: JSON.parse(payload) };
@@ -221,14 +188,20 @@ export async function serveAnalysis(file: string, port: string) {
   }).listen(Number(port), process.env.PLOW_ANALYSIS_BIND_HOST ?? "127.0.0.1");
 }
 
+function dockerCommand(args: string[], env = process.env) {
+  return execFileSync("docker", ["--context", "rootless", ...args], {
+    encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 180_000, maxBuffer: 4 * 1024 * 1024, env,
+  }).trim();
+}
+
+const docker = (...args: string[]) => dockerCommand(args);
+
 function deployT3History(release: string) {
   const etc = process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config");
   const settings = process.env.PLOW_T3_DEPLOY_ENV ?? join(etc, "plow-t3-otel", "compose.env");
   if (!existsSync(settings)) return;
   const stack = join(resolve(release), "collector/t3-otel/compose.yaml");
-  const docker = (...args: string[]) => execFileSync("docker", ["--context", "rootless", ...args], {
-    encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 180_000, maxBuffer: 4 * 1024 * 1024,
-  }).trim();
+
   const project = process.env.PLOW_T3_COMPOSE_PROJECT || "plow-t3-otel";
   const compose = (file: string, ...args: string[]) =>
     docker("compose", "--project-name", project, "--env-file", settings, "-f", file, ...args);
@@ -258,13 +231,61 @@ function deployT3History(release: string) {
   }
 }
 
+function deployAnalysis(release: string) {
+  const state = process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share");
+  const settings = process.env.PLOW_ANALYSIS_DEPLOY_ENV ?? join(state, "plow", "analysis", "compose.env");
+  if (!existsSync(settings)) return;
+  const stack = join(resolve(release), "compose.yaml");
+  const project = process.env.PLOW_ANALYSIS_COMPOSE_PROJECT || "plow-analysis";
+  const compose = (file: string, ...args: string[]) => docker("compose", "--project-name", project,
+    "--env-file", settings, "--profile", "analysis", "-f", file, ...args);
+  const services = ["analysis-refresh", "analysis-api"];
+  const config = JSON.parse(compose(stack, "config", "--format", "json"));
+  const refresh = config.services["analysis-refresh"];
+  if (!refresh?.environment?.PLOW_ANALYSIS_T3_HISTORY_DB) return;
+  const api = config.services["analysis-api"];
+  if (refresh.ports?.length || refresh.network_mode === "host" || api.network_mode === "host" ||
+      !api.ports?.length || api.ports.some((port: { host_ip?: string }) => port.host_ip !== "127.0.0.1") ||
+      !refresh.healthcheck || !api.healthcheck) throw Error("Invalid live analysis deployment config");
+  const previous = services.map(service => {
+    const id = compose(stack, "ps", "-a", "-q", service);
+    if (!id) throw Error("Expected the installed analysis services");
+    const info = JSON.parse(docker("inspect", id))[0];
+    return { image: info.Image, tag: info.Config.Image, health: info.State.Health?.Status,
+      source: info.Config.Labels["com.docker.compose.project.config_files"], backup: `${project}-${service}-rollback:latest` };
+  });
+  if (previous.every(item => item.source === stack && item.health === "healthy")) return;
+  const original = previous[0].source;
+  if (!original || !existsSync(original) || !previous.every(item => item.source === original)) {
+    throw Error("Missing the installed analysis release");
+  }
+  for (const item of previous) docker("image", "tag", item.image, item.backup);
+  let switching = false;
+  try {
+    compose(stack, "build", ...services);
+    switching = true;
+    compose(stack, "up", "--detach", "--no-build", "--force-recreate", "--wait", "--wait-timeout", "155", ...services);
+    console.log("Promoted live T3 analysis from the verified collector release");
+  } catch {
+    for (const item of previous) docker("image", "tag", item.backup, item.tag);
+    if (switching) {
+      const legacyAlias = original !== stack && realpathSync(original) === stack;
+      dockerCommand(["compose", "--project-name", project, "--env-file", settings, "--profile", "analysis",
+        "-f", original, "up", "--detach", "--no-build", "--force-recreate", ...services],
+      legacyAlias ? { ...process.env, PLOW_ANALYSIS_HISTORY_DIR: "" } : process.env);
+    }
+    throw Error("Live T3 analysis promotion failed");
+  }
+}
+
 if (import.meta.main && process.argv[2] === "--analysis-api") {
   await serveAnalysis(process.argv[3], process.argv[4]);
 } else if (import.meta.main && process.argv[2] === "--deploy-t3-history") {
   try {
     deployT3History(process.argv[3]);
+    deployAnalysis(process.argv[3]);
   } catch {
-    console.error("Could not promote the T3 history service");
+    console.error("Could not promote T3 collection and analysis");
     process.exitCode = 1;
   }
 } else if (import.meta.main) {
