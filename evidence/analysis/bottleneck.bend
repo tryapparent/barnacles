@@ -433,10 +433,13 @@ def local_verification_boundary_label(+boundary: String, +line: String, +termina
     String.eq(line, "Desktop dependency operation locked or unavailable"))
   +runtime = Bool.and(String.eq(boundary, "local-rust-test"), String.eq(line,
     "Packaged Record media/Engine unavailable; prepare native prerequisites or reinstall the complete app"))
+  +issue = Bool.and(String.eq(boundary, "issue-trailer"),
+    Bool.and(String.eq(line, "Commit needs a final Issue trailer"), String.eq(terminal, "error: failed to push some refs")))
   +push = Bool.pick(String, push_failed, Bool.pick(String, routing, "local-push-selection-guard-refused",
     Bool.pick(String, lock, "local-desktop-dependency-lock-unavailable",
       Bool.pick(String, runtime, "local-native-media-prerequisite-unavailable", ""))), "")
-  Bool.pick(String, changed, "local-push-worktree-changed-during-verification", push)
+  Bool.pick(String, changed, "local-push-worktree-changed-during-verification",
+    Bool.pick(String, issue, "local-push-issue-trailer-refused", push))
 
 def observe_local_verify_boundary(state: Replay, thread: String, id: String, +operation: String, +boundary: String,
   +line: String, +terminal: String, failed: Bool) -> Replay:
@@ -447,6 +450,18 @@ def observe_local_verify_boundary(state: Replay, thread: String, id: String, +op
   +label = Bool.pick(String, push, local_verification_boundary_label(boundary, line, terminal),
     Bool.pick(String, Bool.and(commit, embedded), "staged-embedded-html-unsupported", ""))
   observe_failure(state, thread, id, label, failed)
+
+def observe_exact_pr_check_wait(state: Replay, thread: String, id: String, +repository: String, +pr: U32,
+  +expected: String, first_repository: String, first_pr: U32, first_head: String, last_repository: String,
+  last_pr: U32, last_head: String, exit_code: U32, timeout: U32, elapsed_ms: U32) -> Replay:
+  +first = Bool.and(String.eq(repository, first_repository), Bool.and(U32.is_eq(pr, first_pr), String.eq(expected, first_head)))
+  +last = Bool.and(String.eq(repository, last_repository), Bool.and(U32.is_eq(pr, last_pr), String.eq(expected, last_head)))
+  +identified = Bool.and(Bool.not(String.is_empty(expected)), U32.is_gt(pr, 0))
+  +bound = Bool.and(U32.is_gt(timeout, 0), U32.is_eq(exit_code, 0))
+  +seconds = U32.div(elapsed_ms, 1000)
+  +complete = Bool.and(bound, U32.is_ge(seconds, 60))
+  observe_failure_with_duration(state, thread, id, "ci-pr-check-observer-exact-head",
+    Bool.and(identified, Bool.and(first, Bool.and(last, complete))), seconds)
 
 def observe_hosted_approval_fixture(state: Replay, thread: String, id: String, step: String, conclusion: String,
   test: String, line: String, origin: String) -> Replay:

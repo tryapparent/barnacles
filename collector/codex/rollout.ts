@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { open, type FileHandle } from "node:fs/promises";
 import { resolve } from "node:path";
 import { constants } from "node:fs";
+import { pipeline } from "node:stream/promises";
+import { createZstdDecompress } from "node:zlib";
 import type { CommandMix, List, Point, ProcessReceipt, RolloutAdmission, RolloutImport, RolloutEvidence, ShellCommand, SourcePolicy, ToolInvocation } from "../../evidence/index.ts";
 import { processReceipt, rolloutArguments, rolloutSyntax, sessionHandle, type SyntaxPolicy } from "./rollout-syntax.ts";
 import { bendValues, millis, point, row, str, toMillis, token, validMillis } from "../wire.ts";
@@ -78,26 +80,46 @@ function decodeLine(bytes: Buffer) {
   }
 }
 
-async function* boundedLines(file: FileHandle, size: number, receipt: RolloutImport) {
+class ExpandedRolloutTooLarge extends Error {}
+class RolloutReadFailure extends Error {}
+
+async function* boundedLines(file: FileHandle, size: number, compressed: boolean, receipt: RolloutImport) {
+  const source = file.createReadStream({ end: size - 1, autoClose: false });
+  const decoder = compressed ? createZstdDecompress() : null;
+  const controller = new AbortController();
+  const copy = decoder && pipeline(source, decoder, { signal: controller.signal }).catch(error => error);
   let segments: Buffer[] = [];
   let bytes = 0;
-  for await (const chunk of file.createReadStream({ end: size - 1, autoClose: false })) {
-    receipt.readBytes += chunk.length;
-    for (let start = 0; start < chunk.length;) {
-      const lf = chunk.indexOf(10, start);
-      const end = lf === -1 ? chunk.length : lf;
-      bytes += end - start;
-      if (bytes <= lineLimit) segments.push(chunk.subarray(start, end));
-      if (lf === -1) break;
-      receipt.lines++;
-      yield bytes <= lineLimit ? Buffer.concat(segments, bytes) : null;
-      segments = [];
-      bytes = 0;
-      start = lf + 1;
+  let decodedSize = 0;
+  try {
+    for await (const chunk of decoder ?? source) {
+      decodedSize += chunk.length;
+      if (decodedSize > fileLimit) throw new ExpandedRolloutTooLarge();
+      for (let start = 0; start < chunk.length;) {
+        const lf = chunk.indexOf(10, start);
+        const end = lf === -1 ? chunk.length : lf;
+        bytes += end - start;
+        if (bytes <= lineLimit) segments.push(chunk.subarray(start, end));
+        if (lf === -1) break;
+        receipt.lines++;
+        yield bytes <= lineLimit ? Buffer.concat(segments, bytes) : null;
+        segments = [];
+        bytes = 0;
+        start = lf + 1;
+      }
     }
+    const error = await copy;
+    if (error) throw new RolloutReadFailure();
+    receipt.cutoffLines = Number(bytes > 0);
+    receipt.cutoffBytes = bytes;
+  } catch (error) {
+    if (error instanceof ExpandedRolloutTooLarge) throw error;
+    throw new RolloutReadFailure();
+  } finally {
+    if (decoder) controller.abort();
+    await copy;
+    receipt.readBytes = source.bytesRead;
   }
-  receipt.cutoffLines = Number(bytes > 0);
-  receipt.cutoffBytes = bytes;
 }
 
 function outputHeader(output: unknown): string {
@@ -131,7 +153,7 @@ export async function inspectRollout(path: string, instance: string, rules: Sour
       info?.size === 0, (info?.size ?? 0) > fileLimit);
     if (receipt.status !== "scan" || !info) return { receipt };
     const syntax = await rolloutSyntax(policy);
-    for await (const bytes of boundedLines(file, info.size, receipt)) {
+    for await (const bytes of boundedLines(file, info.size, path.endsWith(".jsonl.zst"), receipt)) {
       const lineNumber = receipt.lines;
       let decoded;
       if (bytes) {
@@ -174,7 +196,11 @@ export async function inspectRollout(path: string, instance: string, rules: Sour
       }
     }
   } catch (error) {
-    if (!(error instanceof Error && "syscall" in error)) throw error;
+    if (error instanceof ExpandedRolloutTooLarge) {
+      receipt.status = policy.rollout_file_status(true, true, false, true);
+      return { receipt };
+    }
+    if (!(error instanceof RolloutReadFailure)) throw error;
     readFailed = true;
   } finally {
     await file.close();
