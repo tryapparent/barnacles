@@ -163,7 +163,7 @@ test("equal revisions replay and rejected revisions leave their stored evidence 
 });
 
 test("historical page evidence and its cursor commit together", () => {
-  const parent = process.env.BARNACLES_TEST_DIRECTORY;
+  const parent = process.env.PLOW_TEST_DIRECTORY;
   assert.ok(parent);
   const job = mkdtempSync(join(parent, "history-commit-"));
   const path = join(job, "evidence.sqlite");
