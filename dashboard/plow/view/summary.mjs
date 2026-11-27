@@ -4,7 +4,6 @@ const operationTiles = document.getElementById('operation-tiles')
 const collapse = document.getElementById('collapse')
 const utcWindow = document.getElementById('utc-window')
 const timelineSelection = document.getElementById('timeline-selection')
-const timelineEmpty = document.getElementById('timeline-empty')
 const categories = [
   { kind: 1, name: 'Admission wait', style: 'workflow' },
   { kind: 2, name: 'Provider run', style: 'agent' },
@@ -166,11 +165,13 @@ function paintFilter(start, end) {
     ? policy.timeline_filter(summaryTraces, start, end, selection.category, selection.operation)
     : null
   matches = new Map(filter ? [...values(filter.matches)].map(match => [match.index - 1, match.spans]) : [])
-  const status = filter ? operationLabel(selection.operation) + ' · ' + threadCount(filter.threads) + ' shown' : ''
+  const status = !filter ? '' : filter.threads > 0
+    ? operationLabel(selection.operation) + ' · ' + threadCount(filter.threads) + ' shown'
+    : 'No matching threads in this range. Zoom out or deselect the operation.'
   if (timelineSelection.textContent !== status) timelineSelection.textContent = status
-  timelineEmpty.hidden = !filter || filter.threads > 0
   document.getElementById('timeline-panel').dataset.category = selection.category
   for (const row of rows.children) paintThreadMatch(row, row.querySelector('.rail'), Number(row.dataset.traceIndex))
+  if (openTrace !== -1 && rows.children[openTrace].hidden) closeInspector()
 }
 
 function paintThreadMatch(row, rail, index) {
