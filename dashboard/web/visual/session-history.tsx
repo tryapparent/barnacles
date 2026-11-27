@@ -243,7 +243,7 @@ export function SessionHistoryPage() {
           <SessionViews sessions={result.data.sessions} waterfall={<SessionStudy sessions={result.data.sessions} study={result.data.study} />} />
         </Suspense>
         : <div className="trace-message"><h2>{result.data.study ? "No threads in this study" : "No session study loaded"}</h2>
-          <p>Load a private waterfall export into the Harbor snapshot to view session history.</p></div>)}
+          <p>Load a private waterfall export into Plow to view session history.</p></div>)}
     </div>
   </main>;
 }

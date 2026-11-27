@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { appendFile, readFile } from "node:fs/promises";
 import { setTimeout } from "node:timers/promises";
+import { sessionHistoryUrl } from "./worker.mjs";
 
 const account = process.env.CLOUDFLARE_ACCOUNT_ID;
 const namespace = process.env.PLOW_SESSION_NAMESPACE_ID;
@@ -41,6 +42,9 @@ const token = process.env.PLOW_WORKER_TOKEN;
 const audience = process.env.PLOW_ACCESS_AUDIENCE;
 const sha = process.env.GITHUB_SHA;
 const workerPath = process.argv[2];
+const configuredHistory = process.env.PLOW_SESSION_HISTORY_URL;
+const history = sessionHistoryUrl(configuredHistory);
+if (configuredHistory && !history) throw new Error("Expected a private HTTPS Plow /sessions URL.");
 if (!account || !/^[a-f0-9]{32}$/.test(account) || !token || !audience ||
     !/^[a-f0-9]{64}$/.test(audience) || !namespace || !/^[a-f0-9]{32}$/.test(namespace) || !sha || !/^[a-f0-9]{40}$/.test(sha) || !workerPath) {
   throw new Error("Missing Plow deployment configuration.");
@@ -118,6 +122,7 @@ bundle.set("metadata", new Blob([JSON.stringify({
   bindings: [
     { type: "plain_text", name: "PLOW_ACCESS_AUDIENCE", text: audience },
     { type: "kv_namespace", name: "PLOW_SESSION_FEED", namespace_id: namespace },
+    ...(history ? [{ type: "secret_text", name: "PLOW_SESSION_HISTORY_URL", text: history }] : []),
   ],
   annotations: { "workers/tag": sha, "workers/message": `Barnacles main ${sha}` },
 })], { type: "application/json" }));

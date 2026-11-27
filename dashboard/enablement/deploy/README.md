@@ -1,29 +1,18 @@
 # Dashboard deployment
 
-## Harbor on Clanker
+<a name="harbor-on-clanker"></a>
 
-Clanker runs Harbor and its evidence poller as enabled systemd user services. The
-existing Tailscale Serve route is the permanent Harbor URL. To find it, read the
-loopback port from Harbor's `ExecStart` and match that port to its proxy target
-in Serve. Keep the private URL in host configuration.
+## Plow on Clanker
+
+Clanker runs Plow and its evidence poller as enabled systemd user services. The
+existing Tailscale Serve route is the permanent private Plow URL. To find it,
+read the loopback port from the service's `ExecStart` and match it to its proxy
+target in Serve. Keep the private URL in host configuration.
 
 ```sh
 systemctl --user show barnacles-harbor.service -p WorkingDirectory -p ExecStart
 tailscale serve status
 ```
-
-For an authorized deployment, stage the reviewed source, built frontend and
-matching prepared snapshot together in a new release directory. Verify the
-candidate locally on a separate loopback port. Stop that temporary process
-after the check.
-
-Record the previous target of the deployment's `current` symlink. Stop
-`barnacles-harbor-poller.service`, then `barnacles-harbor.service`. Atomically
-replace the symlink with one pointing at the staged release, then start Harbor
-and its poller. Reuse the existing service ports, Serve route, identity settings
-and persistent collector state. Verify the dashboard, an asset and
-`/api/v1/shipping?limit=1` through the same authorized tailnet URL. If the
-release fails, repeat the switch with the previous target and verify again.
 
 ### Collector delivery from GitHub Actions
 
@@ -55,6 +44,19 @@ configuration stays in the poller service's local environment.
 Run the deployment service on demand for the first release. After verifying
 the result, enable its timer for subsequent releases. The timer checks for
 code updates separately from the collector's 15-minute data refresh.
+
+### Session history
+
+Load the approved private [session study](../../api.md#session-history) into
+the active release's snapshot under the deployment lock. Resolve the
+`current` symlink while holding the lock so the study lands in the release
+serving requests. The collector deploy command copies the study into the next
+release, and the data poller refreshes the shipping snapshot independently.
+
+Verify `/sessions`, its frontend asset and `/api/v1/sessions` through the
+authorized tailnet URL. Once the API returns the expected study, follow the
+[Plow preview deployment](../../plow/README.md#deployment) to configure the
+Session history link.
 
 ## Grafana and Tempo
 

@@ -25,6 +25,7 @@ timing intervals, generic clock labels, and an observation timestamp. It
 omits thread identifiers, titles, prompt text, links, and unlinked Codex
 and GitHub records. Generated files and live data stay out of Git and build
 artifacts. Harbor keeps its separate session study.
+When configured, the Session history link opens Plow’s private tailnet view.
 
 ## Build and verify
 
@@ -56,6 +57,9 @@ Configure the environment with `PLOW_CLOUDFLARE_ACCOUNT_ID`,
 `PLOW_ACCESS_AUDIENCE`, and `PLOW_SESSION_NAMESPACE_ID` variables and a `PLOW_WORKER_TOKEN` secret with Individual
 Workers Editor access scoped to the existing `plow-private-preview` Worker.
 The deployed module checks the Cloudflare Access context for that audience.
+After verifying the live Plow Session history route, set the optional
+`PLOW_SESSION_HISTORY_URL` environment secret to its full private HTTPS URL.
+The Worker includes the link in authorized pages with that setting.
 Cloudflare Access policies, host routes, and alternate URL settings stay in
 Cloudflare. The workflow checks that alternate URLs are disabled and signed-out
 requests go to Access before and after activation. The workflow summary ties

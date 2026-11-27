@@ -22,6 +22,10 @@ h1,p,ol{margin:0}.wordmark,h1{font-family:"Young Serif",Georgia,serif;font-weigh
 }
 .activity-meta{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px}
 .prototype{border-radius:4px;padding:4px 8px;background:var(--earth);font-size:12px;white-space:nowrap}
+.activity-links{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:0 6px}
+#session-history-link{display:inline-flex;align-items:center;min-height:44px;padding:0 7px;border-radius:4px;background:var(--earth);color:var(--cream);font-size:14px;font-weight:650;text-underline-offset:3px}
+#session-history-link:hover{background:var(--ink)}
+#session-history-link:focus-visible{outline:2px solid var(--cream);outline-offset:-4px}
 h1{font-size:clamp(32px,5vw,54px);line-height:1.08;letter-spacing:-.04em;margin-top:clamp(12px,2vw,22px);text-wrap:balance}
 @media(max-width:575px){
   .activity-header::before{background:linear-gradient(90deg,rgb(26 19 13 / .9) 55%,rgb(26 19 13 / .28))}

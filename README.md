@@ -1,6 +1,6 @@
-# Barnacles
+# Plow
 
-Open-source observability for how coding-agent work reaches release. Barnacles shows whether changes are reaching users, how thread-to-release time is changing, and where recorded time went.
+Open-source observability for how coding-agent work reaches release. Plow shows whether changes are reaching users, how thread-to-release time is changing, and where recorded time went.
 
 ## Architecture
 
@@ -15,12 +15,12 @@ Codex JSONL     T3 snapshots     GitHub APIs
                       |
           Evidence reports and snapshots
                       |
-            Harbor + API or CLI
+            Plow + API or CLI
 ```
 
 - [Collector](collector/README.md) documents source boundaries and code to adapt from Apparent.
 - [Evidence](evidence/README.md) defines record identities, release attribution, and metrics.
-- [Harbor](dashboard/api.md) documents the shipping dashboard and the shared read-only API.
+- [Plow](dashboard/api.md) documents the shipping dashboard and the shared read-only API.
 
 ## Try it locally
 

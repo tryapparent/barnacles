@@ -11,7 +11,18 @@ if (!directory) throw new Error('Pass the Plow build output directory.')
 const { default: worker } = await import(pathToFileURL(resolve(directory, 'worker.mjs')).href)
 const app = 'https://plow.tryapparent.com/app'
 const audience = 'fixture-audience'
-const demo = [{"shortTitle": "Release packaging", "title": "Release packaging", "startUtcMs": 1795726800000, "work": [[12960, 16920, "Release verification"]], "wait": [[0, 12960, "Publish artifacts"]], "errors": [], "subtitle": "Nov 26 \u00b7 21:00 UTC \u00b7 Sample", "end": 16920}, {"shortTitle": "Webhook delivery", "title": "Webhook delivery", "startUtcMs": 1795719600000, "work": [[0, 5040, "Code changes"]], "wait": [[5040, 18360, "CI checks"]], "errors": [], "subtitle": "Nov 26 \u00b7 19:00 UTC \u00b7 Sample", "end": 20700}, {"shortTitle": "Settings cleanup", "title": "Settings cleanup", "startUtcMs": 1795712400000, "work": [[0, 3240, "Code changes"], [13680, 16920, "Local testing"]], "wait": [[3240, 13680, "CI checks"]], "errors": [], "subtitle": "Nov 26 \u00b7 17:00 UTC \u00b7 Sample", "end": 16920}, {"shortTitle": "Installer checks", "title": "Installer checks", "startUtcMs": 1795705200000, "work": [], "wait": [[0, 12240, "CI checks"]], "errors": [], "subtitle": "Nov 26 \u00b7 15:00 UTC \u00b7 Sample", "end": 16200}, {"shortTitle": "Search indexing", "title": "Search indexing", "startUtcMs": 1795698000000, "work": [[0, 8640, "Code changes"]], "wait": [[8640, 15480, "CI checks"]], "errors": [], "subtitle": "Nov 26 \u00b7 13:00 UTC \u00b7 Sample", "end": 15480}, {"shortTitle": "Export retries", "title": "Export retries", "startUtcMs": 1795694400000, "work": [], "wait": [[5940, 17280, "Publish artifacts"]], "errors": [], "subtitle": "Nov 26 \u00b7 12:00 UTC \u00b7 Sample", "end": 17280}, {"shortTitle": "Empty state copy", "title": "Empty state copy", "startUtcMs": 1795687200000, "work": [[0, 2880, "Code changes"]], "wait": [[2880, 7380, "CI checks"]], "errors": [], "subtitle": "Nov 26 \u00b7 10:00 UTC \u00b7 Sample", "end": 7380}, {"shortTitle": "Runner diagnostics", "title": "Runner diagnostics", "startUtcMs": 1795680000000, "work": [[10440, 13320, "Local testing"]], "wait": [[0, 10440, "CI checks"]], "errors": [], "subtitle": "Nov 26 \u00b7 08:00 UTC \u00b7 Sample", "end": 13320}, {"shortTitle": "Dependency update", "title": "Dependency update", "startUtcMs": 1795676400000, "work": [[0, 5400, "Local testing"]], "wait": [[5400, 14760, "CI checks"]], "errors": [], "subtitle": "Nov 26 \u00b7 07:00 UTC \u00b7 Sample", "end": 14760}, {"shortTitle": "Import validation", "title": "Import validation", "startUtcMs": 1795608000000, "work": [[0, 4680, "Code changes"]], "wait": [[4680, 14760, "CI checks"]], "errors": [], "subtitle": "Nov 25 \u00b7 12:00 UTC \u00b7 Sample", "end": 17280}]
+const demo = [
+  {"startUtcMs": 1795726800000, "work": [[12960, 16920, "Release verification"]], "wait": [[0, 12960, "Publish artifacts"]], "errors": [], "end": 16920},
+  {"startUtcMs": 1795719600000, "work": [[0, 5040, "Code changes"]], "wait": [[5040, 18360, "CI checks"]], "errors": [], "end": 20700},
+  {"startUtcMs": 1795712400000, "work": [[0, 3240, "Code changes"], [13680, 16920, "Local testing"]], "wait": [[3240, 13680, "CI checks"]], "errors": [], "end": 16920},
+  {"startUtcMs": 1795705200000, "work": [], "wait": [[0, 12240, "CI checks"]], "errors": [], "end": 16200},
+  {"startUtcMs": 1795698000000, "work": [[0, 8640, "Code changes"]], "wait": [[8640, 15480, "CI checks"]], "errors": [], "end": 15480},
+  {"startUtcMs": 1795694400000, "work": [], "wait": [[5940, 17280, "Publish artifacts"]], "errors": [], "end": 17280},
+  {"startUtcMs": 1795687200000, "work": [[0, 2880, "Code changes"]], "wait": [[2880, 7380, "CI checks"]], "errors": [], "end": 7380},
+  {"startUtcMs": 1795680000000, "work": [[10440, 13320, "Local testing"]], "wait": [[0, 10440, "CI checks"]], "errors": [], "end": 13320},
+  {"startUtcMs": 1795676400000, "work": [[0, 5400, "Local testing"]], "wait": [[5400, 14760, "CI checks"]], "errors": [], "end": 14760},
+  {"startUtcMs": 1795608000000, "work": [[0, 4680, "Code changes"]], "wait": [[4680, 14760, "CI checks"]], "errors": [], "end": 17280},
+]
 const feed = { observed: 1795730400000, traces: demo }
 let storedFeed = JSON.stringify(feed)
 let reads = 0
@@ -20,6 +31,8 @@ const env = { PLOW_ACCESS_AUDIENCE: audience, PLOW_SESSION_FEED: { get: async ke
   reads++
   return storedFeed
 } } }
+const history = 'https://preview.tail-fixture.ts.net:19531/sessions'
+const linked = { ...env, PLOW_SESSION_HISTORY_URL: history }
 const context = { access: { aud: audience } }
 const request = new Request(app)
 assert.equal((await worker.fetch(request, env, {})).status, 403)
@@ -54,6 +67,15 @@ assert.deepEqual(JSON.parse(await readFile(projectedPath, 'utf8')), {
     { startUtcMs: 100, end: .8, work: [[.2,.8,'Provider run']], wait: [[.01,.2,'T3 admission']], errors: [.8] },
   ],
 })
+const denied = await worker.fetch(request, linked, {})
+assert.equal(denied.status, 403)
+assert.ok(!(await denied.text()).includes(history))
+const invalid = await worker.fetch(request, { ...env, PLOW_SESSION_HISTORY_URL: 'https://preview.tail-fixture.ts.net/shipping' }, context)
+assert.match(await invalid.text(), /id="session-history-link" hidden/)
+const head = await worker.fetch(new Request(app, { method: 'HEAD' }), linked, context)
+assert.equal(head.status, 200)
+assert.equal(await head.text(), '')
+
 
 const browser = await chromium.launch({ channel: 'chrome' })
 try {
@@ -65,7 +87,7 @@ try {
       if (message.type() === 'error' && !message.text().includes('503')) errors.push(message.text())
     })
     await page.route(app, async route => {
-      const response = await worker.fetch(new Request(route.request().url()), env, context)
+      const response = await worker.fetch(new Request(route.request().url()), linked, context)
       await route.fulfill({ status: response.status, headers: Object.fromEntries(response.headers), body: await response.text() })
     })
     await page.goto(app)
@@ -82,6 +104,11 @@ try {
     const screenshot = async name => {
       if (process.env.PLOW_SCREENSHOTS) await page.screenshot({ path: resolve(directory, `${width}-${name}.png`), fullPage: true })
     }
+    const link = page.getByRole('link', { name: 'Session history' })
+    assert.equal(await link.getAttribute('href'), history)
+    assert.ok(await link.isVisible())
+    await page.keyboard.press('Tab')
+    assert.equal(await link.evaluate(element => element.matches(':focus-visible')), true)
     const summary = page.locator('#summary-panel')
     const timeline = page.locator('#timeline-panel')
     const range = page.locator('#utc-window')
@@ -239,6 +266,10 @@ try {
     storedFeed = JSON.stringify(feed)
     await page.reload()
     await timeline.waitFor()
+    await page.route(history, route => route.fulfill({ contentType: 'text/html', body: '<h1>Plow session history</h1>' }))
+    await link.press('Enter')
+    await page.waitForURL(history)
+    assert.ok(await page.getByRole('heading', { name: 'Plow session history' }).isVisible())
     assert.deepEqual(errors, [])
     await page.close()
   }
