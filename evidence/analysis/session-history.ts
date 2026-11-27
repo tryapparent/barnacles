@@ -134,6 +134,10 @@ async function dashboardPolicy(scratch: string) {
     await buildPolicy(scratch, new URL("./joined/dashboard.bend", import.meta.url), "joined-dashboard.mjs"));
 }
 
+export async function analysisWindow(scratch: string, now: number) {
+  return (await dashboardPolicy(scratch)).last_day(now);
+}
+
 export async function backupAnalysisInput(input: string, output: string) {
   const db = new DatabaseSync(input, { readOnly: true });
   try {
@@ -157,12 +161,12 @@ export async function joinedTargets(path: string, scratch: string, instance: str
   }
 }
 
-function activeKeys(db: DatabaseSync, policy: DashboardPolicy, window: Window) {
+function activeKeys(db: DatabaseSync, policy: DashboardPolicy, window: Window, scope?: string) {
   if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='t3_threads'").get()) return [];
   const runs = db.prepare(`SELECT requested_ms,started_ms,completed_ms FROM t3_runs
     WHERE instance=? AND thread_id=? ORDER BY run_id`);
   const keys: ThreadKey[] = [];
-  for (const row of db.prepare("SELECT instance,thread_id,created_ms FROM t3_threads ORDER BY created_ms DESC,instance,thread_id").iterate()) {
+  for (const row of db.prepare("SELECT instance,thread_id,created_ms FROM t3_threads WHERE (? IS NULL OR instance=?) ORDER BY created_ms DESC,instance,thread_id").iterate(scope ?? null, scope ?? null)) {
     const clocks = runs.all(row.instance, row.thread_id).map((r): RunClock => ({
       $: "RunClock", requested: Number(r.requested_ms ?? 0), started: Number(r.started_ms ?? 0), completed: Number(r.completed_ms ?? 0),
     }));
@@ -178,7 +182,7 @@ type PublishedThread = {
 };
 
 export async function publishJoinedAnalysis(input: string, output: string, scratch: string, asOf = Date.now(),
-  readImpact?: (window: Window) => Promise<{ patterns: ImpactPattern[] }>) {
+  readImpact?: (window: Window) => Promise<{ patterns: ImpactPattern[] }>, scope?: string) {
   const from = statSync(input, { bigint: true });
   const to = statSync(output, { bigint: true, throwIfNoEntry: false });
   if (from.dev === to?.dev && from.ino === to?.ino) throw Error("Use a separate analysis database");
@@ -188,7 +192,7 @@ export async function publishJoinedAnalysis(input: string, output: string, scrat
     source.exec("PRAGMA busy_timeout=5000; BEGIN");
     const window = summary.last_day(asOf);
     const outcomeImpact = await readImpact?.(window) ?? null;
-    const keys = activeKeys(source, summary, window);
+    const keys = activeKeys(source, summary, window, scope);
     const revision = createHash("sha256").update(readFileSync(join(scratch, "joined-bottleneck.mjs")))
       .update(readFileSync(join(scratch, "joined-dashboard.mjs"))).digest("hex");
     closeSync(openSync(output, "a", 0o600));

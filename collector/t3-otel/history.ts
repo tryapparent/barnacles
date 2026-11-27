@@ -1,15 +1,20 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { openT3History, type List, type PendingT3Command, type T3Command, type T3HistoryCheckpoint } from "../../evidence/index.ts";
-import { buildPolicy, loadPolicy } from "../../tooling/bend.ts";
+import { openT3History, sourcePolicy, type List, type StoredT3Projection, type PendingT3Command, type T3Command, type T3HistoryCheckpoint } from "../../evidence/index.ts";
+import { buildPolicies, loadPolicy } from "../../tooling/bend.ts";
+import { stockProjection, type ProjectionCodec } from "./projection.ts";
 import { array, bendList, bendValues, boundedFile, boundedResponse, millis, requireStockT3Id, row,
   SourceReadError, stockT3Id, stockT3Origin, stockT3Rpc, str, token } from "../wire.ts";
 
-async function compileHistory(directory: string) {
+async function compileHistory(directory: string, withProjection: boolean) {
   const scratch = mkdtempSync(join(directory, "build-"));
   try {
-    return await loadPolicy<HistoryPolicy>(await buildPolicy(scratch, new URL("./history.bend", import.meta.url), "t3-history.mjs"));
+    const entries: [URL, string][] = [[new URL("./history.bend", import.meta.url), "t3-history.mjs"]];
+    if (withProjection) entries.push([sourcePolicy, "sources.mjs"]);
+    const [history, projection] = await buildPolicies(scratch, entries);
+    return { policy: await loadPolicy<HistoryPolicy>(history),
+      projection: projection ? await loadPolicy<ProjectionCodec>(projection) : undefined };
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
@@ -148,6 +153,7 @@ export type HistoryPolicy = HistoryCodec & {
   plan(target: Target, cursor: string, known: boolean, revision: number, frontier: number, refresh: boolean):
     { $: "Some"; value: Task } | { $: "None" };
   batch(input: List<Task>): List<Task>;
+  projection_due(updated: number, saved: number, now: number): boolean;
   older_frontier(previous: number, oldest: number): number;
   stale_item: NonNullable<Parameters<typeof openT3History>[3]>;
   reconcile_batch(input: List<PendingT3Command>): List<PendingT3Command>;
@@ -163,14 +169,23 @@ export async function pollT3History([job, instance, flag, ...extra]: string[]) {
   const targets = t3HistoryTargets();
   const source = stockT3HistoryReader(process.env.PLOW_T3_HISTORY_ORIGIN ?? "",
     process.env.PLOW_T3_HISTORY_READ_TOKEN_FILE ?? "/run/secrets/t3_history_read");
-  const policy = await compileHistory(process.env.TMPDIR ?? resolve(job));
-  const store = openT3History(join(resolve(job), "evidence.sqlite"), token(instance), policy.replay, policy.stale_item);
+  const path = process.env.PLOW_T3_PROJECTION_FILE;
+  const { policy, projection: codec } = await compileHistory(process.env.TMPDIR ?? resolve(job), Boolean(path));
+  const store = openT3History(join(resolve(job), "evidence.sqlite"), token(instance), policy.replay, policy.stale_item, path);
   const stop = new AbortController();
   process.once("SIGTERM", () => stop.abort());
   const wait = (ms: number) => sleep(ms, undefined, { signal: stop.signal }).catch(() => {});
+  let projectionFailed = 0;
   const read = async (id: string, cursor: string, covered = "") => {
     try {
-      return historyPage(policy, id, await source.page(id, cursor), cursor, covered);
+      const input = await source.page(id, cursor);
+      const result = historyPage(policy, id, input, cursor, covered);
+      let projection: StoredT3Projection | undefined;
+      if (!cursor && codec) {
+        try { projection = stockProjection(instance, id, input.projection, codec, policy.local_row); }
+        catch { projectionFailed++; }
+      }
+      return { ...result, projection };
     } catch (error) {
       if (cursor && error instanceof SourceReadError && error.status === 400) store.commit(id, cursor, "", 0, [], null);
       throw error;
@@ -183,6 +198,7 @@ export async function pollT3History([job, instance, flag, ...extra]: string[]) {
   try {
     do {
       const deadline = performance.now() + 900_000;
+      projectionFailed = 0;
       const coverage = { headPages: 0, olderPages: 0, complete: 0, failed: 0 };
       if (targets) {
         for (const id of targets) {
@@ -191,7 +207,7 @@ export async function pollT3History([job, instance, flag, ...extra]: string[]) {
             const saved = store.cursor(id);
             const head = await read(id, "");
             const cursor = policy.begin_scan(saved, head.next);
-            store.commit(id, saved, cursor, head.sequence, head.commands);
+            store.commit(id, saved, cursor, head.sequence, head.commands, undefined, head.projection);
             coverage.headPages++;
             ready();
             if (cursor && !stop.signal.aborted) {
@@ -214,6 +230,13 @@ export async function pollT3History([job, instance, flag, ...extra]: string[]) {
         }
         const all = [...bendValues(inventory)];
         const refresh = new Set(flag ? [] : [...bendValues(policy.recent(inventory))].map(item => item.id));
+        if (!flag && codec) {
+          const saved = store.projectionRevisions();
+          const now = Date.now();
+          for (const { id, updated } of all) {
+            if (policy.projection_due(updated, saved.get(id) ?? 0, now)) refresh.add(id);
+          }
+        }
         const deferred = new Set<string>();
         const checkpoints = store.checkpoints();
         console.log(JSON.stringify({ discovered: all.length }));
@@ -265,7 +288,7 @@ export async function pollT3History([job, instance, flag, ...extra]: string[]) {
                 const checkpoint = policy.advance_checkpoint(keep, saved, covered, keep ? previous?.mark?.revision ?? 0 : revision,
                   tip, priority, page.oldest, page.headRevision, next);
                 const mark = checkpoint.$ === "Some" ? checkpoint.value : undefined;
-                store.commit(id, saved, next, page.sequence, page.commands, mark);
+                store.commit(id, saved, next, page.sequence, page.commands, mark, page.projection);
                 if (mark) checkpoints.set(id, { cursor: next, mark });
                 if (cursor) coverage.olderPages++;
                 else coverage.headPages++;
@@ -283,7 +306,7 @@ export async function pollT3History([job, instance, flag, ...extra]: string[]) {
           console.log(JSON.stringify({ backfill: used, ...coverage }));
         }
       }
-      console.log(JSON.stringify(coverage));
+      console.log(JSON.stringify({ ...coverage, projectionFailed }));
       if (flag) {
         if (coverage.failed) process.exitCode = 1;
         return;

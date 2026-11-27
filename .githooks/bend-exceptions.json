@@ -9,6 +9,7 @@
     "collector/codex/rollout.ts",
     "collector/codex/otel.ts",
     "collector/t3-otel/history.ts",
+    "collector/t3-otel/projection.ts",
     "collector/t3.ts",
     "collector/wire.ts"
   ],
@@ -25,6 +26,7 @@
   "SQLite I/O, runtime entrypoints, and Bend2 interface types": [
     "evidence/storage/actions.sql",
     "evidence/storage/actions.ts",
+    "evidence/storage/t3/history.ts",
     "evidence/delivery/delivery.ts",
     "evidence/index.ts",
     "evidence/projection/intervals.ts",

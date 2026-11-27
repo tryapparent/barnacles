@@ -4,9 +4,10 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
-import { openT3History } from "../../evidence/index.ts";
+import { openT3History, readT3Projections, sourcePolicy } from "../../evidence/index.ts";
 import { buildPolicy, loadPolicy } from "../../tooling/bend.ts";
 import { historyPage, type HistoryPolicy } from "./history.ts";
+import { stockProjection, type ProjectionCodec } from "./projection.ts";
 
 test("history stops at an exact local anchor and reconciles a command outside the head", async () => {
   const job = mkdtempSync(join(process.env.PLOW_TEST_DIRECTORY!, "t3-overlap-"));
@@ -95,5 +96,77 @@ else {
     run();
     assert.equal(readFileSync(actions, "utf8"), first);
     assert.match(first, /history-rollback/);
+  } finally { rmSync(job, { recursive: true, force: true }); }
+});
+
+test("the ordinary refresh reads a persisted stock T3 projection and joins exact traces and CI", async () => {
+  const job = mkdtempSync(join(process.env.PLOW_TEST_DIRECTORY!, "t3-live-join-"));
+  const [history, forge, codex, joined] = ["history", "forge", "codex", "joined"].map(name => join(job, name + ".sqlite"));
+  try {
+    const now = Date.now() - 2000;
+    const iso = (ms: number) => new Date(ms).toISOString();
+    const sec = Math.floor(now / 1000);
+    const repository = "fixture/project";
+    const sha = "a".repeat(40);
+    const forgeDb = new DatabaseSync(forge);
+    forgeDb.exec(readFileSync(new URL("../../evidence/storage/actions.sql", import.meta.url), "utf8"));
+    forgeDb.prepare("INSERT INTO action_attempts VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").run(
+      repository, 42, 1, sha, 7, "completed", "failure", sec - 2, sec - 1, sec, sec, 1);
+    forgeDb.prepare("INSERT INTO action_jobs VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").run(
+      repository, 42, 1, 47, "fixture lane", "completed", "failure", sec - 2, 0, sec - 1, sec - 1, sec);
+    forgeDb.close();
+    const traces = new DatabaseSync(codex);
+    traces.exec(readFileSync(new URL("../../evidence/storage/sources.sql", import.meta.url), "utf8"));
+    const ns = (ms: number) => String(BigInt(ms) * 1000000n);
+    traces.prepare("INSERT INTO codex_otel_spans VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").run(
+      "codex-fixture", "a".repeat(32), "b".repeat(16), null, "agent.span", ns(now), ns(now + 100), 0,
+      "session-fixture", null, null, "fingerprint");
+    traces.close();
+    const codec = await loadPolicy<ProjectionCodec>(await buildPolicy(job, sourcePolicy, "sources.mjs"));
+    const policy = await loadPolicy<HistoryPolicy>(
+      await buildPolicy(job, new URL("./history.bend", import.meta.url), "history.mjs"));
+    const instance = "t3-fixture";
+    const id = "thread-fixture";
+    const pullRequest = { host: "github.com", repository, number: 1, source: "agent", snapshot: { state: "open" } };
+    const run = { id: "run-fixture", threadId: id, requestedAt: iso(now), startedAt: iso(now + 100),
+      completedAt: iso(now + 1000), status: "completed" };
+    const reference = { id: "ref-fixture", appThreadId: id, driver: "codex",
+      nativeThreadRef: { driver: "codex", nativeId: "session-fixture", strength: "strong" } };
+    const projection = stockProjection(instance, id, {
+      thread: { id, createdAt: iso(now), updatedAt: iso(now + 1000), createdBy: "user", creationSource: "web",
+        settledAt: iso(now + 1000), title: "discard this title", worktreePath: "discard this worktree",
+        pullRequests: [pullRequest, { ...pullRequest, host: "gitlab.com" }] },
+      runs: [run, { ...run, threadId: "inherited" }], providerThreads: [reference],
+    }, codec, policy.local_row);
+    const shared = join(job, "projection", "evidence.sqlite");
+    const store = openT3History(history, instance, policy.replay, policy.stale_item, shared);
+    try {
+      assert.ok(policy.projection_due(now, 0, now));
+      assert.ok(!policy.projection_due(now, now, now));
+      assert.ok(!policy.projection_due(now - 86400001, 0, now));
+      store.commit(id, "", "", 1, [], undefined, projection);
+      assert.throws(() => store.commit(id, "another-reader", "", 2, [], undefined, projection));
+      const stale = { ...projection, thread: { ...projection.thread, updated: now, runs: [] } };
+      store.commit(id, "", "", 2, [], undefined, stale);
+      const saved = readT3Projections(shared, instance, now);
+      assert.deepEqual(saved, [projection]);
+      assert.equal(projection.thread.title, "");
+      assert.equal(projection.thread.runs.length, 1);
+      assert.equal(projection.thread.pullRequests.length, 1);
+    } finally { store.close(); }
+    const receipt = { t3Instance: instance, threadId: id, codexInstance: "codex-fixture",
+      references: [reference], ci: { observationId: "obs-fixture", kind: "query", repository,
+        runId: 42, attempt: 1, headSha: sha } };
+    writeFileSync(join(job, "receipt.json"), JSON.stringify(receipt));
+    const refresh = () => JSON.parse(String(execFileSync(process.execPath, [new URL("../wire.ts", import.meta.url).pathname,
+      job, forge, codex, job, joined], { env: { ...process.env, PLOW_ANALYSIS_T3_HISTORY_DB: shared,
+        PLOW_ANALYSIS_T3_INSTANCE: instance, PLOW_ANALYSIS_CODEX_INSTANCE: "codex-fixture" } })));
+    assert.equal(refresh().exactCiReceipts, 1);
+    const output = new DatabaseSync(joined, { readOnly: true });
+    try {
+      const summary = JSON.parse(String(output.prepare("SELECT payload FROM analysis_summary").get()?.payload));
+      assert.deepEqual(summary.coverage, { $: "Coverage", active: 1, withCodex: 1, withCI: 1, withBoth: 1 });
+    } finally { output.close(); }
+    assert.equal(refresh().recomputed, 0);
   } finally { rmSync(job, { recursive: true, force: true }); }
 });

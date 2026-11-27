@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
 import { createServer } from "node:http";
 import { DatabaseSync } from "node:sqlite";
-import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, existsSync, realpathSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { createRemoteJWKSet, jwtVerify } from "jose";
@@ -176,14 +176,20 @@ export async function serveAnalysis(file: string, port: string) {
   }).listen(Number(port), process.env.PLOW_ANALYSIS_BIND_HOST ?? "127.0.0.1");
 }
 
+function dockerCommand(args: string[], env = process.env) {
+  return execFileSync("docker", ["--context", "rootless", ...args], {
+    encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 180_000, maxBuffer: 4 * 1024 * 1024, env,
+  }).trim();
+}
+
+const docker = (...args: string[]) => dockerCommand(args);
+
 function deployT3History(release: string) {
   const etc = process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config");
   const settings = process.env.PLOW_T3_DEPLOY_ENV ?? join(etc, "plow-t3-otel", "compose.env");
   if (!existsSync(settings)) return;
   const stack = join(resolve(release), "collector/t3-otel/compose.yaml");
-  const docker = (...args: string[]) => execFileSync("docker", ["--context", "rootless", ...args], {
-    encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 180_000, maxBuffer: 4 * 1024 * 1024,
-  }).trim();
+
   const project = process.env.PLOW_T3_COMPOSE_PROJECT || "plow-t3-otel";
   const compose = (file: string, ...args: string[]) =>
     docker("compose", "--project-name", project, "--env-file", settings, "-f", file, ...args);
@@ -213,13 +219,61 @@ function deployT3History(release: string) {
   }
 }
 
+function deployAnalysis(release: string) {
+  const state = process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share");
+  const settings = process.env.PLOW_ANALYSIS_DEPLOY_ENV ?? join(state, "plow", "analysis", "compose.env");
+  if (!existsSync(settings)) return;
+  const stack = join(resolve(release), "compose.yaml");
+  const project = process.env.PLOW_ANALYSIS_COMPOSE_PROJECT || "plow-analysis";
+  const compose = (file: string, ...args: string[]) => docker("compose", "--project-name", project,
+    "--env-file", settings, "--profile", "analysis", "-f", file, ...args);
+  const services = ["analysis-refresh", "analysis-api"];
+  const config = JSON.parse(compose(stack, "config", "--format", "json"));
+  const refresh = config.services["analysis-refresh"];
+  if (!refresh?.environment?.PLOW_ANALYSIS_T3_HISTORY_DB) return;
+  const api = config.services["analysis-api"];
+  if (refresh.ports?.length || refresh.network_mode === "host" || api.network_mode === "host" ||
+      !api.ports?.length || api.ports.some((port: { host_ip?: string }) => port.host_ip !== "127.0.0.1") ||
+      !refresh.healthcheck || !api.healthcheck) throw Error("Invalid live analysis deployment config");
+  const previous = services.map(service => {
+    const id = compose(stack, "ps", "-a", "-q", service);
+    if (!id) throw Error("Expected the installed analysis services");
+    const info = JSON.parse(docker("inspect", id))[0];
+    return { image: info.Image, tag: info.Config.Image, health: info.State.Health?.Status,
+      source: info.Config.Labels["com.docker.compose.project.config_files"], backup: `${project}-${service}-rollback:latest` };
+  });
+  if (previous.every(item => item.source === stack && item.health === "healthy")) return;
+  const original = previous[0].source;
+  if (!original || !existsSync(original) || !previous.every(item => item.source === original)) {
+    throw Error("Missing the installed analysis release");
+  }
+  for (const item of previous) docker("image", "tag", item.image, item.backup);
+  let switching = false;
+  try {
+    compose(stack, "build", ...services);
+    switching = true;
+    compose(stack, "up", "--detach", "--no-build", "--force-recreate", "--wait", "--wait-timeout", "155", ...services);
+    console.log("Promoted live T3 analysis from the verified collector release");
+  } catch {
+    for (const item of previous) docker("image", "tag", item.backup, item.tag);
+    if (switching) {
+      const legacyAlias = original !== stack && realpathSync(original) === stack;
+      dockerCommand(["compose", "--project-name", project, "--env-file", settings, "--profile", "analysis",
+        "-f", original, "up", "--detach", "--no-build", "--force-recreate", ...services],
+      legacyAlias ? { ...process.env, PLOW_ANALYSIS_HISTORY_DIR: "" } : process.env);
+    }
+    throw Error("Live T3 analysis promotion failed");
+  }
+}
+
 if (import.meta.main && process.argv[2] === "--analysis-api") {
   await serveAnalysis(process.argv[3], process.argv[4]);
 } else if (import.meta.main && process.argv[2] === "--deploy-t3-history") {
   try {
     deployT3History(process.argv[3]);
+    deployAnalysis(process.argv[3]);
   } catch {
-    console.error("Could not promote the T3 history service");
+    console.error("Could not promote T3 collection and analysis");
     process.exitCode = 1;
   }
 } else if (import.meta.main) {

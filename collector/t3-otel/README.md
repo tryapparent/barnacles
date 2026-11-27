@@ -122,6 +122,21 @@ The command reports a nonzero status if a target fails. In the automated
 Collector test, a failed older-page request resumes after a fresh head
 snapshot and stale evidence cannot change the newer exit code.
 
+Head snapshots also retain a separate allowlisted analysis projection.
+It holds local run identities and clocks, GitHub PR links and native
+provider binding fields. Titles, prompts, worktree paths and tool results
+stay out of it. The history poller refreshes missing or changed heads
+from the last 24 hours without traversing their older pages just for the
+projection. It commits the projection with the history page.
+`projectionFailed` counts head projections that could not be decoded
+while the underlying command import could proceed.
+
+The Compose service writes projections to `data/projection/evidence.sqlite`
+on the existing evidence volume. The analysis worker mounts the volume
+read-only and uses supplemental group `10001` to read the projections.
+Its group can traverse `data` and cannot read the private command and
+trace database. The writer keeps each database separate.
+
 ## Verify
 
 - Run `npm run verify -- collector` to exercise the compiled T3 and Codex policies through the HTTP writer with synthetic requests. The assertions cover separate auth and signals, instance binding, exact replay, same-batch and existing-row conflicts, invalid sibling rollback, redaction and ingest-clock preservation.
