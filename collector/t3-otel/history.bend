@@ -177,3 +177,6 @@ def advance_checkpoint(+keep: Bool, +saved: String, +covered: String, +revision:
   +covered_after = Bool.pick(String, Bool.or(nonempty(next), Bool.not(nonempty(tip))), covered, tip)
   Bool.pick(Maybe<&2, Checkpoint>, Bool.and(keep, Bool.not(seed)), None{},
     Some{Checkpoint{revision, older_frontier(priority, oldest), covered_after, tip}})
+
+def projection_due(+updated: Nat, saved: Nat, now: Nat) -> Bool:
+  Bool.and(Nat.is_le(Nat.sub(now, 86400000n), updated), Nat.is_gt(updated, saved))

@@ -103,18 +103,35 @@ includes a next step, its ranking basis, affected counts and timing coverage.
 The list can be empty with insufficient evidence. The existing analysis
 summary and thread detail continue to be available for existing clients.
 
-To resolve native Codex bindings over the network for already imported T3
-threads, supply `PLOW_ANALYSIS_T3_ORIGIN`, `PLOW_ANALYSIS_T3_INSTANCE`,
-`PLOW_ANALYSIS_CODEX_INSTANCE`, and the container path
-`PLOW_ANALYSIS_T3_TOKEN_PATH=/receipts/t3-read-token` with that private
-read credential mounted from the receipts directory. Keep it out of Git.
-Stock T3 metadata collection and exact CI receipts supply their original
-evidence independently.
+For live analysis set `PLOW_ANALYSIS_HISTORY_DIR` to the existing T3
+OTLP evidence volume's mountpoint and set `PLOW_ANALYSIS_T3_INSTANCE`
+and `PLOW_ANALYSIS_CODEX_INSTANCE` to the exact stored source namespaces.
+The worker uses the stock T3 poller's allowlisted run and provider
+projections as its T3 input and uses the live GitHub and Codex databases
+read-only. It evaluates the configured T3 instance in the 24-hour window.
+It reuses the original Bend2 native-session check and leaves missing or
+ambiguous binding evidence out of the trace join. A PR link supplies
+repository context. The exact CI join still requires the original
+query or watch receipt identifying the run, attempt, and head.
 
-```sh
-docker --context rootless compose --env-file "$private_env" --profile analysis \
-  up -d --build analysis-refresh analysis-api
-```
+The collectors share metadata through the evidence volume. This
+connection uses the existing T3 read credential on the history service
+and requires no additional credential on the analysis worker. A
+standalone analysis without the history volume can still use
+`PLOW_ANALYSIS_T3_ORIGIN` and `PLOW_ANALYSIS_T3_TOKEN_PATH` for the
+bounded network lookup. Point the token path to a mounted read-scoped
+credential and keep it out of Git.
+
+The existing collector release timer upgrades the two installed
+analysis containers after the history service. It reads
+`PLOW_ANALYSIS_DEPLOY_ENV` or the private
+`${XDG_DATA_HOME:-$HOME/.local/share}/plow/analysis/compose.env`.
+`PLOW_ANALYSIS_HISTORY_DIR` opts the analysis project into promotion.
+Readiness requires a published refresh and the API's unauthorized-request
+check. The existing analysis volume and loopback ingress are reused.
+The refresh log reports the number of stored T3 projections, strong
+bindings, sessions with spans, ambiguous bindings, and exact CI receipts
+joined in each pass.
 
 After approval for a private ingress, forward its HTTPS listener to the
 configured loopback port with Tailscale Serve. The backend requires the
