@@ -1,5 +1,6 @@
 import Base
 import ../bottleneck.bend as Study
+import ./priorities.bend as Priority
 
 type DayWindow is Data:
   DayWindow{from: Nat, to: Nat}
@@ -106,3 +107,6 @@ def select_threads(instances: List<&2, Target>) -> List<&2, Target>:
 
 def refresh_needed(stored: String, observed: String) -> Bool:
   Bool.not(String.eq(stored, observed))
+
+def top_priorities(batches: List<&2, Priority.Batch>, delays: List<&2, Priority.Delay>) -> List<&2, Priority.Priority>:
+  Priority.priorities(batches, delays)

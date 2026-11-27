@@ -2,6 +2,7 @@ import Base
 import ../bottleneck.bend as Study
 import ../../storage/codex-otel.bend as Otel
 import ./dashboard.bend as Dashboard
+import ./priorities.bend as Priority
 
 type Span is Data:
   Span{id: String, operation: String, start: String, end: String}
@@ -11,7 +12,7 @@ type Run is Data:
 
 type Job is Data:
   Job{id: String, label: String, status: String, conclusion: String, prior: Bool,
-    created: String, queued: String, started: String, completed: String}
+    created: String, queued: String, started: String, completed: String, scope: String}
 
 type JoinedAnalysis is Data:
   JoinedAnalysis{replay: Study.Replay, runs: U32, spans: U32, attempts: U32, jobs: U32, carried: U32}
@@ -48,7 +49,7 @@ def run_replay(runs: List<&2, Run>, state: Study.Replay) -> Study.Replay:
 
 def job_observation(+state: Study.Replay, +thread: String, +job: Job) -> Study.Replay:
   match job:
-    case Job{+id, +label, status, conclusion, prior, created, queued, started, completed}:
+    case Job{+id, +label, status, conclusion, prior, created, queued, started, completed, _}:
       match prior:
         case True{}: state
         case False{}:
@@ -64,7 +65,7 @@ def job_replay(jobs: List<&2, Job>, +thread: String, state: Study.Replay) -> Stu
 def carried_jobs(jobs: List<&2, Job>, +count: U32) -> U32:
   match jobs:
     case []: count
-    case Job{_, _, _, _, prior, _, _, _, _} <> tail:
+    case Job{_, _, _, _, prior, _, _, _, _, _} <> tail:
       carried_jobs(tail, U32.add(count, Bool.pick(U32, prior, 1, 0)))
 
 def project(+thread: String, +runs: List<&2, Run>, +spans: List<&2, Span>, attempts: U32, +jobs: List<&2, Job>) -> JoinedAnalysis:
@@ -88,12 +89,15 @@ def patterns(+result: JoinedAnalysis) -> List<&2, Study.RulePattern>:
   match result:
     case JoinedAnalysis{replay, _, _, _, _, _}: Study.replay_patterns(replay)
 
+def finished_inside(window: Dashboard.DayWindow, status: String, prior: Bool, completed: String) -> Bool:
+  +at = Nat.mul(U32.to_nat(seconds(completed, 0n)), 1000n)
+  Bool.and(Bool.not(prior), Bool.and(String.eq(status, "completed"), Dashboard.within(window, at)))
+
 def window_results(+window: Dashboard.DayWindow, jobs: List<&2, Job>, state: Study.Replay) -> Study.Replay:
   match jobs:
     case []: state
-    case Job{+id, _, status, conclusion, prior, _, _, _, completed} <> tail:
-      +at = Nat.mul(U32.to_nat(seconds(completed, 0n)), 1000n)
-      +eligible = Bool.and(Bool.not(prior), Bool.and(String.eq(status, "completed"), Dashboard.within(window, at)))
+    case Job{+id, _, status, conclusion, prior, _, _, _, completed, _} <> tail:
+      +eligible = finished_inside(window, status, prior, completed)
       +next = Study.observe_job_result(state, "", id, Bool.pick(String, eligible, conclusion, ""))
       window_results(window, tail, next)
 
@@ -105,3 +109,37 @@ def observations(findings: List<&2, Study.Finding>) -> List<&2, Dashboard.DayObs
 
 def window_observations(window: Dashboard.DayWindow, jobs: List<&2, Job>) -> List<&2, Dashboard.DayObservation>:
   observations(Study.replay_findings(window_results(window, jobs, Study.start_replay())))
+
+def job_signals(+window: Dashboard.DayWindow, jobs: List<&2, Job>) -> List<&2, Priority.Signal>:
+  match jobs:
+    case []: []
+    case Job{id, label, status, +conclusion, prior, _, _, started, +completed, scope} <> tail:
+      +bad = Bool.or(String.eq(conclusion, "failure"), String.eq(conclusion, "timed_out"))
+      +eligible = Bool.and(bad, finished_inside(window, status, prior, completed))
+      +start = U32.to_nat(seconds(started, 0n))
+      +end = U32.to_nat(seconds(completed, 0n))
+      +timed = Bool.and(Nat.is_lt(0n, start), Nat.is_le(start, end))
+      +elapsed = Priority.submitted(timed, Some{Nat.mul(Nat.sub(end, start), 1000n)})
+      +rest = job_signals(window, tail)
+      Bool.pick(List<&2, Priority.Signal>, eligible,
+        Priority.Signal{"ci-job", String.append(scope, label), id, elapsed} <> rest, rest)
+
+def milliseconds(+clock: String) -> Nat:
+  Bool.pick(Nat, Otel.small_decimal(clock, 13n), digits(String.to_list(clock), 0n), 0n)
+
+def admission_elapsed(window: Dashboard.DayWindow, +requested: Nat, started: Nat) -> Nat:
+  match window:
+    case Dashboard.DayWindow{from, to}:
+      Bool.pick(Nat, Nat.is_lt(0n, requested), Nat.sub(Nat.min(to, started), Nat.max(from, requested)), 0n)
+
+def admission_signals(+window: Dashboard.DayWindow, +thread: String, runs: List<&2, Run>) -> List<&2, Priority.Signal>:
+  match runs:
+    case []: []
+    case Run{id, requested, started, _} <> tail:
+      +elapsed = admission_elapsed(window, milliseconds(requested), milliseconds(started))
+      +rest = admission_signals(window, thread, tail)
+      Bool.pick(List<&2, Priority.Signal>, Nat.is_lt(0n, elapsed),
+        Priority.Signal{"t3-admission", "T3 run admission", Priority.key(thread, id), Some{elapsed}} <> rest, rest)
+
+def priority_signals(+window: Dashboard.DayWindow, thread: String, runs: List<&2, Run>, jobs: List<&2, Job>) -> List<&2, Priority.Signal>:
+  List.concat(&2, Priority.Signal, [admission_signals(window, thread, runs), job_signals(window, jobs)])

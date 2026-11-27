@@ -1,4 +1,3 @@
 export { snapshotFormatVersion, writeSnapshot } from "./projection/snapshot.ts";
 export type { TraceProjection } from "./projection/trace.ts";
-export { rows } from "./projection/timing.ts";
-export { projectPlowFeed } from "./analysis/session-history.ts";
+export { projectPlowFeed, rows } from "./projection/timing.ts";

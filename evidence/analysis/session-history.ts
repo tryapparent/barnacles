@@ -9,50 +9,24 @@ import type { List } from "../storage/sources.ts";
 const historyList = <T>(values: T[]): List<T> =>
   values.reduceRight<List<T>>((tail, head) => ({ $: "Con", head, tail }), { $: "Nil" });
 
-type PlowRun = { $: "Run"; requested: number; started: number; completed: number; status: string };
-type PlowThread = { $: "Thread"; created: number; updated: number; runs: List<PlowRun> };
-type PlowSpan = { a: number; b: number; name: string };
-type PlowTrace = { start: number; end: number; work: List<PlowSpan>; wait: List<PlowSpan>; errors: List<number> };
-type PlowHistoryTime = { work: number; workflow: number };
-type PlowPolicy = { project_feed(threads: List<PlowThread>): { observed: number; traces: List<PlowTrace>;
-  history: { first: number; threads: List<PlowHistoryTime> } } };
-
-export async function projectPlowFeed(path: string, scratch: string) {
-  const module = await buildPolicy(scratch, new URL("./plow-feed.bend", import.meta.url), "plow-feed.mjs");
-  const policy = await loadPolicy<PlowPolicy>(module);
-  const db = new DatabaseSync(path, { readOnly: true });
-  try {
-    db.exec("PRAGMA busy_timeout = 5000; BEGIN");
-    const threads = db.prepare("SELECT instance, thread_id, created_ms, updated_ms FROM t3_threads ORDER BY instance, thread_id").all();
-    const runs = db.prepare(`SELECT requested_ms, started_ms, completed_ms, status FROM t3_runs
-      WHERE instance=? AND thread_id=? ORDER BY run_id`);
-    const projected = policy.project_feed(historyList(threads.map(thread => ({
-      $: "Thread", created: Number(thread.created_ms), updated: Number(thread.updated_ms),
-      runs: historyList(runs.all(thread.instance, thread.thread_id).map(run => ({
-        $: "Run", requested: Number(run.requested_ms), started: Number(run.started_ms),
-        completed: Number(run.completed_ms), status: String(run.status),
-      }))),
-    }))));
-    const spans = (list: List<PlowSpan>) => rows(list).map(({ a, b, name }) => [a / 1000, b / 1000, name]);
-    return { observed: projected.observed, history: {
-      first: projected.history.first,
-      threads: rows(projected.history.threads).map(({ work, workflow }) => ({ work, workflow })),
-    }, traces: rows(projected.traces).map(trace => ({
-      startUtcMs: trace.start, end: trace.end / 1000,
-      work: spans(trace.work), wait: spans(trace.wait), errors: rows(trace.errors).map(at => at / 1000),
-    })) };
-  } finally {
-    db.close();
-  }
-}
-
 type JoinedRun = { $: "Run"; id: string; requested: string; started: string; completed: string };
 type JoinedSpan = { $: "Span"; id: string; operation: string; start: string; end: string };
 type JoinedJob = { $: "Job"; id: string; label: string; status: string; conclusion: string; prior: boolean;
-  created: string; queued: string; started: string; completed: string };
+  created: string; queued: string; started: string; completed: string; scope: string };
 type JoinedReplay = { runs: number; spans: number; attempts: number; jobs: number; carried: number };
 type Window = { $: "DayWindow"; from: number; to: number };
 type Observation = { $: "DayObservation"; rule: string; id: string };
+type Measure = { $: "Some"; value: number } | { $: "None" };
+type Signal = { $: "Signal"; kind: string; scope: string; event: string; elapsed: Measure };
+type ImpactPattern = { pattern: string; stage: string; uniqueMs: number | null; medianMs: number | null; worstMs: number | null;
+  affectedOutcomes: number; coverage: { sufficient: number; occurrences: number } };
+type Delay = { $: "Delay"; pattern: string; stage: string; elapsed: number; measured: number; occurrences: number;
+  outcomes: number; median: Measure; worst: Measure };
+
+const measure = (value: number | null): Measure => value === null ? { $: "None" } : { $: "Some", value };
+const delayInput = ({ pattern, stage, uniqueMs, medianMs, worstMs, affectedOutcomes, coverage }: ImpactPattern): Delay =>
+  ({ $: "Delay", pattern, stage, elapsed: uniqueMs ?? 0, measured: coverage.sufficient, occurrences: coverage.occurrences,
+    outcomes: affectedOutcomes, median: measure(medianMs), worst: measure(worstMs) });
 
 export async function measureOutcomeDelay(windows: List<unknown>, scratch: string, window?: Pick<Window, "from" | "to">) {
   type Report = { totals: unknown; patterns: unknown };
@@ -71,6 +45,7 @@ type JoinedPolicy = {
   findings(result: JoinedReplay): List<unknown>;
   patterns(result: JoinedReplay): List<unknown>;
   window_observations(window: Window, jobs: List<JoinedJob>): List<Observation>;
+  priority_signals(window: Window, thread: string, runs: List<JoinedRun>, jobs: List<JoinedJob>): List<Signal>;
 };
 
 const joinedPolicy = async (scratch: string) => loadPolicy<JoinedPolicy>(
@@ -114,13 +89,14 @@ function joinedInput(db: DatabaseSync, instance: string, thread: string) {
   const captured = hasGitHub ? db.prepare(`
     SELECT count(*) AS total FROM (${attempts}) o JOIN action_attempts a USING (repository,run_id,attempt,head_sha)`).get(...key) : undefined;
   const jobs: JoinedJob[] = hasGitHub ? db.prepare(`
-    SELECT j.* FROM (${attempts}) o JOIN action_attempts a USING (repository,run_id,attempt,head_sha)
+    SELECT j.*, a.workflow_id FROM (${attempts}) o JOIN action_attempts a USING (repository,run_id,attempt,head_sha)
     JOIN action_jobs j USING (repository,run_id,attempt)
     ORDER BY j.repository,j.run_id,j.attempt,j.job_id LIMIT 4097`).all(...key)
     .map((j) => ({ $: "Job", id: JSON.stringify([j.repository,j.run_id,j.attempt,j.job_id]), label: String(j.label),
       status: String(j.status), conclusion: String(j.conclusion), prior: Boolean(j.prior_execution),
       created: String(j.created_at ?? ""), queued: String(j.queue_end ?? ""),
-      started: String(j.execution_start ?? ""), completed: String(j.execution_end ?? "") })) : [];
+      started: String(j.execution_start ?? ""), completed: String(j.execution_end ?? ""),
+      scope: `${j.repository} · workflow ${j.workflow_id} · ` })) : [];
   const attemptCount = Number(captured?.total ?? 0);
   if ([runs.length, spans.length, jobs.length, attemptCount].some((count) => count > 4096)) {
     throw Error("The selected thread exceeds the analysis record limit");
@@ -149,6 +125,7 @@ type DashboardPolicy = {
   active(window: Window, created: number, runs: List<RunClock>): boolean;
   ranking(input: List<RankedThread>): List<unknown>;
   source_coverage(input: List<RankedThread>): unknown;
+  top_priorities(batches: List<{ $: "Batch"; thread: string; signals: List<Signal> }>, delays: List<Delay>): List<unknown>;
   refresh_needed(stored: string, observed: string): boolean;
 };
 
@@ -201,7 +178,7 @@ type PublishedThread = {
 };
 
 export async function publishJoinedAnalysis(input: string, output: string, scratch: string, asOf = Date.now(),
-  readImpact?: (window: Window) => Promise<unknown>) {
+  readImpact?: (window: Window) => Promise<{ patterns: ImpactPattern[] }>) {
   const from = statSync(input, { bigint: true });
   const to = statSync(output, { bigint: true, throwIfNoEntry: false });
   if (from.dev === to?.dev && from.ino === to?.ino) throw Error("Use a separate analysis database");
@@ -231,27 +208,33 @@ export async function publishJoinedAnalysis(input: string, output: string, scrat
         const id = createHash("sha256").update(JSON.stringify([instance, thread])).digest("hex").slice(0, 24);
         selected.run(id);
         const evidence = joinedInput(source, instance, thread);
-        const observations = policy.window_observations(window, historyList(evidence.jobs));
+        const jobs = historyList(evidence.jobs);
+        const observations = policy.window_observations(window, jobs);
+        const signals = policy.priority_signals(window, id, historyList(evidence.runs), jobs);
         const rules = rows(observations).map(({ rule }) => rule);
         const fingerprint = createHash("sha256").update(revision).update(JSON.stringify([evidence, observations])).digest("hex");
         const saved = previous.get(id);
         if (saved && !summary.refresh_needed(String(saved.fingerprint), fingerprint)) {
-          return { detail: JSON.parse(String(saved.payload)) as PublishedThread, observations };
+          return { detail: JSON.parse(String(saved.payload)) as PublishedThread, observations, signals };
         }
         const result = replayJoinedThread(policy, thread, evidence);
         const detail = { id, coverage: result.coverage, costs: result.costs, rules };
         store.run(id, JSON.stringify(detail));
         mark.run(id, fingerprint);
         recomputed++;
-        return { detail, observations };
+        return { detail, observations, signals };
       });
       const projected = historyList(cohort.map(({ detail: { id, coverage }, observations }): RankedThread =>
         ({ $: "Thread", id, codex: coverage.codexSpans, ci: coverage.githubAttempts, observations })));
       const analyzedAt = new Date(asOf).toISOString();
+      const batches = historyList(cohort.map(({ detail, signals }) => ({ $: "Batch" as const, thread: detail.id, signals })));
+      const priorities = rows(summary.top_priorities(batches, historyList(outcomeImpact?.patterns.map(delayInput) ?? [])));
       const latest = {
         version: 2, analyzedAt, window: { from: new Date(window.from).toISOString(), to: analyzedAt },
         coverage: summary.source_coverage(projected),
         outcomeImpact,
+        priorities: JSON.parse(JSON.stringify(priorities, (_key, value) =>
+          value?.$ === "Some" ? value.value : value?.$ === "None" ? null : value)),
         ranking: rows(summary.ranking(projected)),
         threads: cohort.map(({ detail: { id, coverage } }) => ({ id, coverage })),
       };
