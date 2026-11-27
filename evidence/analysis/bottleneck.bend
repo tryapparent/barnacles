@@ -15,14 +15,17 @@ type Attempt is Data:
 type Peer is Data:
   Peer{revision: String, ended: U32, seconds: U32}
 
+type RunStatusRead is Data:
+  RunStatusRead{id: String, snapshot: String, at: U32, streak: U32}
+
 type Replay is Data:
   Replay{seen: Map<&2, Bool>, files: Map<&2, FileTotal>, reads: Map<&2, U32>,
     costs: Map<&2, Cost>, attempts: Map<&2, Attempt>, cohorts: Map<&2, List<&2, Peer>>,
-    findings: List<&2, Finding>}
+    status_reads: Map<&2, RunStatusRead>, findings: List<&2, Finding>}
 
 def start_replay() -> Replay:
   Replay{Map.new(&2, Bool), Map.new(&2, FileTotal), Map.new(&2, U32), Map.new(&2, Cost),
-    Map.new(&2, Attempt), Map.new(&2, List<&2, Peer>), []}
+    Map.new(&2, Attempt), Map.new(&2, List<&2, Peer>), Map.new(&2, RunStatusRead), []}
 
 def pair(+a: String, b: String) -> String:
   String.append(Nat.show(String.length(a)), String.append(":", String.append(a, b)))
@@ -48,7 +51,7 @@ def file_total(+files: Map<&2, FileTotal>, +path: String, +previous: U32, +at: U
 
 def observe_file(state: Replay, +thread: String, +id: String, +path: String, +at: U32) -> Replay:
   match state:
-    case Replay{+seen, +files, +reads, +costs, +attempts, +cohorts, +findings}:
+    case Replay{+seen, +files, +reads, +costs, +attempts, +cohorts, +status_reads, +findings}:
       +event = pair("file", pair(thread, pair(id, path)))
       +thread_path = pair(thread, path)
       +previous = found(~U32, Map.get(U32, 0, reads, thread_path))
@@ -58,8 +61,8 @@ def observe_file(state: Replay, +thread: String, +id: String, +path: String, +at
       Bool.pick(Replay, valid,
         Replay{Map.set(&2, Bool, seen, event, True{}),
           file_total(files, path, previous, at), Map.set(&2, U32, reads, thread_path, at),
-          costs, attempts, cohorts, findings},
-        Replay{seen, files, reads, costs, attempts, cohorts, findings})
+          costs, attempts, cohorts, status_reads, findings},
+        Replay{seen, files, reads, costs, attempts, cohorts, status_reads, findings})
 
 def update_cost(costs: Map<&2, Cost>, key: String, clock: String, operation: String, +closed: Bool, duration: U32,
   total: Cost) -> Map<&2, Cost>:
@@ -77,47 +80,47 @@ def add_cost(+costs: Map<&2, Cost>, +clock: String, +operation: String, closed: 
 
 def observe_timing(state: Replay, id: String, +clock: String, operation: String, +start: U32, +end: U32) -> Replay:
   match state:
-    case Replay{+seen, +files, +reads, +costs, +attempts, +cohorts, +findings}:
+    case Replay{+seen, +files, +reads, +costs, +attempts, +cohorts, +status_reads, +findings}:
       +event = pair("timing", pair(clock, id))
       +closed = Bool.and(U32.is_gt(start, 0), U32.is_ge(end, start))
-      Bool.pick(Replay, includes(seen, event), Replay{seen, files, reads, costs, attempts, cohorts, findings},
+      Bool.pick(Replay, includes(seen, event), Replay{seen, files, reads, costs, attempts, cohorts, status_reads, findings},
         Replay{Map.set(&2, Bool, seen, event, True{}), files, reads,
-          add_cost(costs, clock, operation, closed, U32.sub(end, start)), attempts, cohorts, findings})
+          add_cost(costs, clock, operation, closed, U32.sub(end, start)), attempts, cohorts, status_reads, findings})
 
 def observe_local_admission(state: Replay, +thread: String, +id: String, +wait_ms: U32, bound_ms: U32,
   +allocated: U32, capacity: U32) -> Replay:
   match state:
-    case Replay{+seen, +files, +reads, +costs, +attempts, +cohorts, +findings}:
+    case Replay{+seen, +files, +reads, +costs, +attempts, +cohorts, +status_reads, +findings}:
       +event = pair("local-admission", pair(thread, id))
       +allocation_valid = Bool.and(U32.is_gt(allocated, 0), U32.is_ge(capacity, allocated))
       +valid = Bool.and(Bool.not(includes(seen, event)), Bool.and(allocation_valid, U32.is_ge(bound_ms, wait_ms)))
       +seconds = U32.div(wait_ms, 1000)
       Bool.pick(Replay, valid,
         Replay{Map.set(&2, Bool, seen, event, True{}), files, reads,
-          add_cost(costs, "local-build-admission", "t3-build", True{}, seconds), attempts, cohorts,
+          add_cost(costs, "local-build-admission", "t3-build", True{}, seconds), attempts, cohorts, status_reads,
           Bool.pick(List<&2, Finding>, U32.is_ge(wait_ms, 60000),
             Finding{"local-build-admission-slow", thread, id, "", seconds, 0, 0, 0} <> findings, findings)},
-        Replay{seen, files, reads, costs, attempts, cohorts, findings})
+        Replay{seen, files, reads, costs, attempts, cohorts, status_reads, findings})
 
 def update_attempt(state: Replay, thread: String, +id: String, +start: U32, +end: U32, failed: Bool,
   succeeded: Bool, +event: String, target: String, prior: Attempt) -> Replay:
   match state prior:
-    case Replay{+seen, +files, +reads, +costs, +attempts, +cohorts, +findings} Attempt{previous, +last_start, +last_end, last_failed}:
+    case Replay{+seen, +files, +reads, +costs, +attempts, +cohorts, +status_reads, +findings} Attempt{previous, +last_start, +last_end, last_failed}:
           +valid = Bool.and(Bool.not(includes(seen, event)), Bool.and(U32.is_gt(start, 0),
             Bool.and(U32.is_ge(start, last_start), U32.is_ge(end, start))))
           +recovery = Bool.and(succeeded, Bool.and(last_failed,
             Bool.and(U32.is_ge(start, last_end), U32.is_le(U32.sub(start, last_end), 1800))))
           Bool.pick(Replay, valid,
             Replay{Map.set(&2, Bool, seen, event, True{}), files, reads, costs,
-              Map.set(&2, Attempt, attempts, target, Attempt{id, start, end, failed}), cohorts,
+              Map.set(&2, Attempt, attempts, target, Attempt{id, start, end, failed}), cohorts, status_reads,
               Bool.pick(List<&2, Finding>, recovery, Finding{"recovered-attempt", thread, id, previous,
                 U32.sub(end, last_end), 0, 0, 0} <> findings, findings)},
-            Replay{seen, files, reads, costs, attempts, cohorts, findings})
+            Replay{seen, files, reads, costs, attempts, cohorts, status_reads, findings})
 
 def observe_attempt(+state: Replay, +thread: String, +id: String, key: String, +start: U32, +end: U32,
   +failed: Bool, +succeeded: Bool) -> Replay:
   match state:
-    case Replay{_, _, _, _, attempts, _, _}:
+    case Replay{_, _, _, _, attempts, _, _, _}:
       +event = pair("attempt", pair(thread, id))
       +target = pair("attempt", pair(thread, key))
       update_attempt(state, thread, id, start, end, failed, succeeded, event, target,
@@ -126,20 +129,20 @@ def observe_attempt(+state: Replay, +thread: String, +id: String, key: String, +
 def update_repeat(state: Replay, thread: String, +id: String, label: String, +start: U32, end: U32,
   seconds: U32, valid: Bool, +target: String, +event: String, prior: Attempt) -> Replay:
   match state prior:
-    case Replay{+seen, +files, +reads, +costs, +attempts, +cohorts, +findings} Attempt{previous, _, +last_end, _}:
+    case Replay{+seen, +files, +reads, +costs, +attempts, +cohorts, +status_reads, +findings} Attempt{previous, _, +last_end, _}:
       +ordered = Bool.and(U32.is_gt(start, 0), U32.is_ge(start, last_end))
       +accept = Bool.and(valid, Bool.and(ordered, Bool.not(includes(seen, event))))
       Bool.pick(Replay, accept,
         Replay{Map.set(&2, Bool, seen, event, True{}), files, reads, costs,
-          Map.set(&2, Attempt, attempts, target, Attempt{id, start, end, False{}}), cohorts,
+          Map.set(&2, Attempt, attempts, target, Attempt{id, start, end, False{}}), cohorts, status_reads,
           Bool.pick(List<&2, Finding>, U32.is_gt(last_end, 0),
             Finding{label, thread, id, previous, seconds, 0, 0, 0} <> findings, findings)},
-        Replay{seen, files, reads, costs, attempts, cohorts, findings})
+        Replay{seen, files, reads, costs, attempts, cohorts, status_reads, findings})
 
 def observe_repeat(+state: Replay, +thread: String, id: String, +label: String, scope: String, execution: String,
   start: U32, end: U32, seconds: U32, valid: Bool) -> Replay:
   match state:
-    case Replay{_, _, _, _, attempts, _, _}:
+    case Replay{_, _, _, _, attempts, _, _, _}:
       +target = pair("repeat", pair(label, pair(thread, scope)))
       update_repeat(state, thread, id, label, start, end, seconds, valid, target, pair(target, execution),
         found(~Attempt, Map.get(Attempt, Attempt{"", 0, 0, False{}}, attempts, target)))
@@ -159,6 +162,30 @@ def observe_verification_poll(state: Replay, thread: String, +id: String, turn: 
   +in_progress = Bool.or(String.eq(status, "active"), String.eq(status, "activating"))
   observe_repeat(state, thread, id, "local-verification-state-repolled", pair(turn, pair(invocation, status)),
     id, at, at, 0, in_progress)
+
+def advance_run_status_read(state: Replay, thread: String, +id: String, +snapshot: String, +at: U32,
+  +pending: Bool, +key: String, +event: String, prior: RunStatusRead) -> Replay:
+  match state prior:
+    case Replay{+seen, +files, +reads, +costs, +attempts, +cohorts, +status_reads, +findings} RunStatusRead{previous, old_snapshot, +last, +streak}:
+      +accept = Bool.and(U32.is_gt(at, last), Bool.not(includes(seen, event)))
+      +same = Bool.and(String.eq(snapshot, old_snapshot), U32.is_le(U32.sub(at, last), 300))
+      +next = Bool.pick(U32, pending, Bool.pick(U32, same, U32.inc(streak), 1), 0)
+      Bool.pick(Replay, accept,
+        Replay{Map.set(&2, Bool, seen, event, True{}), files, reads, costs, attempts, cohorts,
+          Map.set(&2, RunStatusRead, status_reads, key, RunStatusRead{id, snapshot, at, next}),
+          Bool.pick(List<&2, Finding>, U32.is_ge(next, 3),
+            Finding{"ci-manual-status-read-repeated", thread, id, previous, 0, 0, 0, 0} <> findings, findings)},
+        Replay{seen, files, reads, costs, attempts, cohorts, status_reads, findings})
+
+def observe_manual_ci_status_read(+state: Replay, +thread: String, +id: String, repository: String,
+  run: String, +attempt: U32, snapshot: String, at: U32, pending: Bool, mode: String) -> Replay:
+  match state:
+    case Replay{_, _, _, _, _, _, status_reads, _}:
+      +key = pair(thread, pair(repository, pair(run, U32.show(attempt))))
+      +event = pair("manual-ci-status-read", pair(key, id))
+      +identified = Bool.and(String.eq(mode, "manual-watcher-log"), U32.is_gt(attempt, 0))
+      Bool.pick(Replay, identified, advance_run_status_read(state, thread, id, snapshot, at, pending, key, event,
+        found(~RunStatusRead, Map.get(RunStatusRead, RunStatusRead{"", "", 0, 0}, status_reads, key))), state)
 
 def observe_package_build(state: Replay, thread: String, +id: String, scope: String, +tool: String,
   digest: String, +assets: U32, reported_ms: U32, +start: U32, +end: U32) -> Replay:
@@ -218,7 +245,7 @@ def with_outlier(+findings: List<&2, Finding>, +values: List<&2, U32>, +clock: S
 def observe_peer(state: Replay, thread: String, +id: String, +clock: String, cohort: String,
   +revision: String, +start: U32, +end: U32, eligible: Bool) -> Replay:
   match state:
-    case Replay{+seen, +files, +reads, +costs, +attempts, +cohorts, +findings}:
+    case Replay{+seen, +files, +reads, +costs, +attempts, +cohorts, +status_reads, +findings}:
       +event = pair("peer", pair(clock, id))
       +key = pair(clock, cohort)
       +past = found(~List<&2, Peer>, Map.get(List<&2, Peer>, [], cohorts, key))
@@ -227,9 +254,9 @@ def observe_peer(state: Replay, thread: String, +id: String, +clock: String, coh
         Bool.and(U32.is_gt(start, 0), U32.is_ge(end, start))))
       Bool.pick(Replay, valid,
         Replay{Map.set(&2, Bool, seen, event, True{}), files, reads, costs, attempts,
-          Map.set(&2, List<&2, Peer>, cohorts, key, keep_peer(past, revision, end, seconds)),
+          Map.set(&2, List<&2, Peer>, cohorts, key, keep_peer(past, revision, end, seconds)), status_reads,
           with_outlier(findings, earlier_peers(past, revision, start), clock, thread, id, seconds)},
-        Replay{seen, files, reads, costs, attempts, cohorts, findings})
+        Replay{seen, files, reads, costs, attempts, cohorts, status_reads, findings})
 
 def diagnostic_label(+line: String) -> String:
   +missing_checker = String.starts_with(line, "Staged checker could not load installed tools")
@@ -242,16 +269,34 @@ def diagnostic_label(+line: String) -> String:
 def observe_failure_with_duration(state: Replay, +thread: String, +id: String, +label: String,
   failed: Bool, seconds: U32) -> Replay:
   match state:
-    case Replay{+seen, +files, +reads, +costs, +attempts, +cohorts, +findings}:
+    case Replay{+seen, +files, +reads, +costs, +attempts, +cohorts, +status_reads, +findings}:
       +event = pair("failure", pair(thread, pair(label, id)))
       +valid = Bool.and(failed, Bool.and(Bool.not(String.is_empty(label)), Bool.not(includes(seen, event))))
       Bool.pick(Replay, valid,
-        Replay{Map.set(&2, Bool, seen, event, True{}), files, reads, costs, attempts, cohorts,
+        Replay{Map.set(&2, Bool, seen, event, True{}), files, reads, costs, attempts, cohorts, status_reads,
           Finding{label, thread, id, "", seconds, 0, 0, 0} <> findings},
-        Replay{seen, files, reads, costs, attempts, cohorts, findings})
+        Replay{seen, files, reads, costs, attempts, cohorts, status_reads, findings})
 
 def observe_failure(state: Replay, thread: String, id: String, label: String, failed: Bool) -> Replay:
   observe_failure_with_duration(state, thread, id, label, failed, 0)
+
+def observe_staged_source_budget(state: Replay, thread: String, id: String, operation: String, phase: String,
+  unit: String, path: String, actual: U32, +allowance: U32, failed: Bool) -> Replay:
+  +guard = Bool.and(String.eq(operation, "git-commit"), String.eq(phase, "budgets/style"))
+  +checked_file = Bool.and(String.eq(unit, "source-tokens"), Bool.not(String.starts_with(path, "/")))
+  +exceeded = Bool.and(U32.is_gt(allowance, 0), U32.is_gt(actual, allowance))
+  observe_failure(state, thread, id, "staged-source-token-budget",
+    Bool.and(failed, Bool.and(guard, Bool.and(checked_file, exceeded))))
+
+def observe_hosted_bun_test_deadline(state: Replay, thread: String, id: String, step: String, conclusion: String,
+  diagnostic: String, +path: String, test: String, exit_code: U32, +budget_ms: U32, +elapsed_ms: U32) -> Replay:
+  +suite = Bool.and(String.starts_with(step, "Run bun test "), Bool.and(String.eq(conclusion, "failure"), U32.is_eq(exit_code, 1)))
+  +file = Bool.and(String.contains(path, ".test."), Bool.not(String.starts_with(path, "/")))
+  +timeout = Bool.and(String.eq(diagnostic, "done-callback-deadline"),
+    Bool.and(U32.is_gt(budget_ms, 0), U32.is_ge(elapsed_ms, budget_ms)))
+  +identified = Bool.and(file, Bool.not(String.is_empty(test)))
+  observe_failure_with_duration(state, thread, id, "ci-bun-test-deadline",
+    Bool.and(suite, Bool.and(identified, timeout)), U32.div(elapsed_ms, 1000))
 
 def observe_diagnostic(state: Replay, thread: String, id: String, line: String, failed: Bool) -> Replay:
   observe_failure(state, thread, id, diagnostic_label(String.trim(line)), failed)
@@ -292,14 +337,14 @@ def observe_pr_notice(state: Replay, +thread: String, id: String, source_thread:
 def record_pr_watch_wake(state: Replay, +thread: String, +id: String, watch_id: String, reason: String,
   +seconds: U32, valid: Bool) -> Replay:
   match state:
-    case Replay{+seen, +files, +reads, +costs, +attempts, +cohorts, +findings}:
+    case Replay{+seen, +files, +reads, +costs, +attempts, +cohorts, +status_reads, +findings}:
       +event = pair("watch-wake", pair(thread, id))
       +accept = Bool.and(valid, Bool.not(includes(seen, event)))
       Bool.pick(Replay, accept,
         Replay{Map.set(&2, Bool, seen, event, True{}), files, reads,
-          add_cost(costs, "t3-pr-watch-parked", reason, True{}, seconds), attempts, cohorts,
+          add_cost(costs, "t3-pr-watch-parked", reason, True{}, seconds), attempts, cohorts, status_reads,
           Finding{"t3-pr-watch-parked", thread, id, watch_id, seconds, 0, 0, 0} <> findings},
-        Replay{seen, files, reads, costs, attempts, cohorts, findings})
+        Replay{seen, files, reads, costs, attempts, cohorts, status_reads, findings})
 
 def observe_pr_watch_wake(state: Replay, thread: String, id: String, watch_id: String, +pr: U32, message: String,
   +registered: U32, +parked: U32, +notified: U32, +prior: U32, next: U32, notice_stamp: String,
@@ -643,12 +688,12 @@ def observe_connect_deployment(+state: Replay, thread: String, +id: String, conc
 
 def replay_files(state: Replay) -> List<&2, FileTotal>:
   match state:
-    case Replay{_, files, _, _, _, _, _}: Map.values(&2, FileTotal, files)
+    case Replay{_, files, _, _, _, _, _, _}: Map.values(&2, FileTotal, files)
 
 def replay_costs(state: Replay) -> List<&2, Cost>:
   match state:
-    case Replay{_, _, _, costs, _, _, _}: Map.values(&2, Cost, costs)
+    case Replay{_, _, _, costs, _, _, _, _}: Map.values(&2, Cost, costs)
 
 def replay_findings(state: Replay) -> List<&2, Finding>:
   match state:
-    case Replay{_, _, _, _, _, _, findings}: List.reverse(&2, Finding, findings)
+    case Replay{_, _, _, _, _, _, _, findings}: List.reverse(&2, Finding, findings)
