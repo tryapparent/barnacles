@@ -234,11 +234,8 @@ async function ingress(action: string) {
         }
       }
     } finally {
-      try {
-        await api(`${tokens}/${credential.id}`, "DELETE");
-      } finally {
-        if (policy) await api(`${policies}/${policy.id}`, "DELETE");
-      }
+      if (policy) await api(`${policies}/${policy.id}`, "DELETE");
+      await api(`${tokens}/${credential.id}`, "DELETE");
     }
     console.log("Authenticated both app paths through Cloudflare and verified the Clanker revision.");
   }
