@@ -45,13 +45,12 @@ def published_entry(+owner: String, +target: String) -> Bool:
 def local_import(+owner: String, +path: String, +target: String, target_owner: String) -> Bool:
   Bool.or(String.eq(owner, target_owner), Bool.or(published_entry(owner, target),
     Bool.or(Bool.and(String.eq(path, "dashboard/prepare.test.ts"), String.eq(target, "evidence/index.ts")),
-      Bool.and(Bool.or(String.eq(path, "dashboard/web/vite.config.ts"), String.eq(path, "dashboard/plow/build.ts")),
-        String.eq(target, "tooling/bend.ts")))))
+      Bool.and(String.eq(path, "dashboard/plow/build.ts"), String.eq(target, "tooling/bend.ts")))))
 
 def disallowed_specifier(+value: String) -> Bool:
   Bool.or(String.is_empty(value), Bool.or(String.contains(value, "\\"),
     Bool.or(String.starts_with(value, "/"), Bool.or(String.starts_with(value, "#"),
-      Bool.or(String.starts_with(value, "file:"), Bool.or(String.eq(value, "barnacles"), String.starts_with(value, "barnacles/")))))))
+      Bool.or(String.starts_with(value, "file:"), Bool.or(String.eq(value, "plow"), String.starts_with(value, "plow/")))))))
 
 def ordinary_import(+value: String, owner: String, path: String, target: String, target_owner: String) -> Bool:
   Bool.and(Bool.not(disallowed_specifier(value)),
@@ -65,8 +64,3 @@ def generated_import(+path: String, +expression: String) -> Bool:
 def allowed_import(owner: String, +path: String, callee: String, expression: String, value: String, target: String, target_owner: String) -> Bool:
   Bool.or(Bool.and(String.eq(callee, "import"), generated_import(path, expression)),
     ordinary_import(value, owner, path, target, target_owner))
-
-def builds_harbor(scopes: List<&2, String>) -> Bool:
-  match scopes:
-    case []: True{}
-    case first <> rest: List.any(~&2, ~String, ~(scope => String.eq(scope, "dashboard")), first <> rest)

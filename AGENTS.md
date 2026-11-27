@@ -1,23 +1,22 @@
-# Barnacles agent instructions
+# Plow agent instructions
 
-Barnacles is a public MIT-licensed project for observing how coding-agent work reaches users.
+Plow is a public MIT-licensed project for observing how coding-agent work reaches users.
 
 ## Ownership
 
 - [Collector](collector/README.md) reads source evidence and emits allowlisted records.
 - [Evidence](evidence/README.md) owns SQLite, record identities, delivery joins, and metric definitions.
-- [Harbor](dashboard/api.md) owns the browser dashboard and its read-only shipping API. Build new dashboard work for Harbor. Use the [Grafana documentation](dashboard/README.md) as a reference for the retired preview.
+- [Plow](dashboard/plow/README.md) owns the browser dashboard and its Cloudflare Worker. The [Grafana tooling](dashboard/README.md) reads local evidence snapshots.
 
 Keep the dependency direction from collector to evidence and from dashboard to evidence views. Keep source clients and credentials out of evidence queries and dashboards. Put commands and focused verification instructions in the owning directory as they become runnable.
 
-## Harbor hosting on Clanker
+## Plow hosting
 
-- Reuse the existing Harbor systemd service and its canonical Tailscale Serve URL for every authorized deployment. Follow the [Harbor deployment guide](dashboard/enablement/deploy/README.md#harbor-on-clanker) to find the live URL and promote or roll back a release.
-- Keep branch and release-candidate checks on loopback. Adding or changing a Serve route requires explicit authorization for that routing change.
+- Follow the [Plow deployment guide](dashboard/plow/README.md#deployment) for the Cloudflare Worker at `plow.tryapparent.com/app`. Keep candidate checks on loopback.
 
 ## Bend2 is the implementation language
 
-- Use Bend2 by default for authored code. Implement all Barnacles product behavior in Bend2. This includes pairing, correlation, filtering, classification, validation of evidence, state updates, selection and ranking, attribution, and metric calculations. Apply this rule to new code and migrate the complete decision when changing existing behavior.
+- Use Bend2 by default for authored code. Implement all Plow product behavior in Bend2. This includes pairing, correlation, filtering, classification, validation of evidence, state updates, selection and ranking, attribution, and metric calculations. Apply this rule to new code and migrate the complete decision when changing existing behavior.
 - Keep the TypeScript host to external I/O, foreign-format decoding and encoding, compiler wiring, and SQLite transactions. SQL supplies schema, storage constraints, and raw evidence reads. Make domain decisions in Bend2 even when a TypeScript loop or SQL query could do the work.
 - If the pinned compiler or runtime blocks a required Bend2 implementation, record the exact limitation and affected behavior. Get an explicit scope decision before adding a host-language implementation of that product behavior.
 - Keep non-Bend host and tooling exceptions in the [exact-path registry](.githooks/bend-exceptions.json). New exceptions require an explicit decision and a concrete reason. The commit and push hooks check new paths.
@@ -40,7 +39,7 @@ Put explanations in visible Markdown documentation. Staged code and configuratio
 
 ## Verification and delivery
 
-- Verify the changed entry point. For dashboard changes, inspect the actual Harbor build for the supported sizes, themes, keyboard paths, and relevant data states. Use the approved design reference when available.
+- Verify the changed entry point. For dashboard changes, inspect the actual Plow build for the supported sizes, themes, keyboard paths, and relevant data states. Use the approved design reference when available.
 - Record the exact commands and evidence for the change and state any gaps. Deployment, source-side instrumentation, and spend require separate authorization.
 - Treat a draft PR as a checkpoint. For ordinary implementation work, follow the PR through checks and review, resolve in-scope blockers, and merge it when eligible. Finish the task after confirming the merge and completing any required post-merge verification.
 - Honor explicit draft-only requests, merge holds, and required approvals. When T3 requires a PR watch, register it and yield. Resume the merge work when the watch reports an update.

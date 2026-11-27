@@ -10,8 +10,8 @@ The pinned Bend2 compiler builds the interval, grouping, ranking, and timeline
 policies under `policy/`. The registered host paths provide HTML, embedded
 fonts, DOM and browser input adapters, build packaging, Chromium verification,
 and the JavaScript Worker module and Cloudflare API calls that those runtimes
-require. Generated files stay out of Git. This standalone preview uses neither
-Harbor's snapshot nor the public Plow site's origin.
+require. Generated files stay out of Git. The standalone preview has its own
+Worker and synthetic data.
 
 ## Build and verify
 

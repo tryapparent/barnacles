@@ -29,7 +29,7 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run verify -- dashboard
         env:
-          BARNACLES_COMPOSE_SMOKE: '1'
+          PLOW_COMPOSE_SMOKE: '1'
   plow:
     runs-on: ubuntu-latest
     timeout-minutes: 10

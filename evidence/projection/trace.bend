@@ -297,7 +297,7 @@ def otlp_nanos(+ms: Nat) -> String:
 def trace_event(marker: Reasoning) -> Wire.TraceEvent:
   match marker:
     case Reasoning{line, at, result_at, result_call_line}:
-      Wire.Event{"Reasoning recorded", otlp_nanos(at), [Wire.IntAttribute{"barnacles.source_line", Nat.show(line)}]}
+      Wire.Event{"Reasoning recorded", otlp_nanos(at), [Wire.IntAttribute{"plow.source_line", Nat.show(line)}]}
 
 def trace_events(markers: List<&2, Reasoning>, output: List<&2, Wire.TraceEvent>) -> List<&2, Wire.TraceEvent>:
   match markers:
@@ -318,10 +318,10 @@ def parent_id(+key: String, parent: Maybe<&2, String>) -> List<&2, String>:
 def measured_attributes(+clock: String, line: Nat, +command: String, +categories: String, tool: String) ->
     List<&2, Wire.TraceAttribute>:
   +category_fields = Bool.pick(List<&2, Wire.TraceAttribute>, String.eq(categories, ""), [],
-    [Wire.TextAttribute{"barnacles.categories", categories}, Wire.TextAttribute{"barnacles.tool", tool}])
-  Wire.TextAttribute{"barnacles.clock", clock} <> Wire.IntAttribute{"barnacles.source_line", Nat.show(line)} <>
+    [Wire.TextAttribute{"plow.categories", categories}, Wire.TextAttribute{"plow.tool", tool}])
+  Wire.TextAttribute{"plow.clock", clock} <> Wire.IntAttribute{"plow.source_line", Nat.show(line)} <>
     Bool.pick(List<&2, Wire.TraceAttribute>, String.eq(command, ""), category_fields,
-      Wire.TextAttribute{"barnacles.submitted_command", command} <> category_fields)
+      Wire.TextAttribute{"plow.submitted_command", command} <> category_fields)
 
 def trace_measured(+key: String, span: Measured) -> Wire.TraceWireSpan:
   match span:
@@ -333,10 +333,10 @@ def trace_estimate(+key: String, marker: Reasoning) -> Wire.TraceWireSpan:
   match marker:
     case Reasoning{+line, at, result_at, result_call_line}:
       Wire.WireSpan{["barnacles-model-wait-estimate", key, Nat.show(line)], Some{root_id(key)}, "Estimated model wait", 1,
-        otlp_nanos(result_at), otlp_nanos(at), [Wire.TextAttribute{"barnacles.clock", "model_wait_estimate"},
-          Wire.TextAttribute{"barnacles.estimate_basis", "Tool result to recorded reasoning"},
-          Wire.IntAttribute{"barnacles.tool_call_line", Nat.show(result_call_line)},
-          Wire.IntAttribute{"barnacles.reasoning_line", Nat.show(line)}], None{}}
+        otlp_nanos(result_at), otlp_nanos(at), [Wire.TextAttribute{"plow.clock", "model_wait_estimate"},
+          Wire.TextAttribute{"plow.estimate_basis", "Tool result to recorded reasoning"},
+          Wire.IntAttribute{"plow.tool_call_line", Nat.show(result_call_line)},
+          Wire.IntAttribute{"plow.reasoning_line", Nat.show(line)}], None{}}
 
 def trace_estimates(+key: String, estimates: List<&2, Reasoning>, output: List<&2, Wire.TraceWireSpan>) -> List<&2, Wire.TraceWireSpan>:
   match estimates:
@@ -352,7 +352,7 @@ def trace_wire(+key: String, result: TraceResult) -> Wire.TraceWire:
   match result:
     case TraceResult{observations, Metrics.Window{from, to}, spans, markers, estimates, coverage, reasoning_count}:
       root : Wire.TraceWireSpan = Wire.WireSpan{root_id(key), None{}, "Recorded session window", 1, otlp_nanos(from), otlp_nanos(to),
-        [Wire.TextAttribute{"barnacles.clock", "observation_window"}], Some{trace_events(List.reverse(&2, Reasoning, markers), [])}}
-      Wire.WireTrace{["barnacles-codex-trace", key], [Wire.TextAttribute{"service.name", "codex"}], "barnacles",
+        [Wire.TextAttribute{"plow.clock", "observation_window"}], Some{trace_events(List.reverse(&2, Reasoning, markers), [])}}
+      Wire.WireTrace{["barnacles-codex-trace", key], [Wire.TextAttribute{"service.name", "codex"}], "plow",
         root <> trace_wire_spans(key, List.reverse(&2, Measured, spans),
           trace_estimates(key, List.reverse(&2, Reasoning, estimates), []))}

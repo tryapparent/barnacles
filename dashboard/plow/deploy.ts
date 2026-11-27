@@ -82,7 +82,7 @@ bundle.set("metadata", new Blob([JSON.stringify({
   main_module: "worker.mjs",
   compatibility_date: "2026-11-27",
   bindings: [{ type: "plain_text", name: "PLOW_ACCESS_AUDIENCE", text: audience }],
-  annotations: { "workers/tag": sha, "workers/message": `Barnacles main ${sha}` },
+  annotations: { "workers/tag": sha, "workers/message": `Plow main ${sha}` },
 })], { type: "application/json" }));
 bundle.set("worker.mjs", new Blob([await readFile(workerPath)], {
   type: "application/javascript+module",

@@ -14,8 +14,8 @@ function fixtureRows<T>(list: FixtureList<T>) {
 
 
 test("timeline protects gaps, overlap precedence, and clipped failure times", async () => {
-  const parent = process.env.BARNACLES_TEST_DIRECTORY;
-  assert.ok(parent, "Set BARNACLES_TEST_DIRECTORY to a private job directory");
+  const parent = process.env.PLOW_TEST_DIRECTORY;
+  assert.ok(parent, "Set PLOW_TEST_DIRECTORY to a private job directory");
   const job = mkdtempSync(join(parent, "timeline-"));
   try {
     const compiled = await buildPolicy(job, new URL("./session-timeline.bend", import.meta.url), "timeline.mjs");

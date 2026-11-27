@@ -6,19 +6,19 @@ Each adapter extracts bounded provider input and decodes its wire format. Bend2 
 
 | Source | Initial boundary |
 | --- | --- |
-| T3 | Import metadata from supported thread and PR-link tools. Retain source identity, thread start, status, run clocks, explicit PR links, and origin when established. Accept an optional thread title for private Harbor review. Omit messages. |
+| T3 | Import metadata from supported thread and PR-link tools. Retain source identity, thread start, status, run clocks, explicit PR links, and origin when established. Accept an optional private thread title. Omit messages. |
 | Codex | Read selected local rollouts. Pair stable call and result IDs and preserve a separate endpoint for a correlated async process. Discard raw arguments and outputs after deriving timing. |
 | GitHub | Read PR and commit metadata, exact Actions attempts and jobs, and release assets. Check tag ancestry where applicable. Verify the intended asset with a bounded anonymous range request when the surface is public. Store publication and access observation timestamps. |
 | Local Git | Read commit IDs and changed paths reachable from one revision. Emit a local Changed Code Analysis report. |
 
-Saving a Git scan also retains the full observed path inventory for Harbor's folder analysis. The printed report and Grafana ranking still show the top 25 paths. Reimport scans saved before the inventory was introduced to populate the Harbor page.
+Saving a Git scan retains the full observed path inventory. The printed report and local Grafana ranking show the top 25 paths.
 
 ## Changed Code Analysis
 
-From the Barnacles checkout, with Node 22.18+ and Git installed:
+From the Plow checkout, with Node 22.18+ and Git installed:
 
 ```sh
-job=$(mktemp -d /tmp/apparent-dev-barnacles-changes-XXXXXX)
+job=$(mktemp -d /tmp/apparent-dev-plow-changes-XXXXXX)
 node collector/changed-code.ts "$job" /path/to/repository HEAD 1000
 ```
 
@@ -30,14 +30,14 @@ The JSON report includes the resolved revision, commits scanned, whether more co
 
 History reads stay local. The command fetches the checksum-pinned Bend2 compiler, writes its temporary build under the job directory, and prints the report to stdout. Add `--save-as OWNER/REPO` to also save the scan to the job's `evidence.sqlite` for [Grafana](../dashboard/provisioning/README.md#changed-code-analysis). Use the same repository name when preparing the dashboard. Each successful import replaces that repository's previous scan atomically. Keep reports for private repositories local.
 
-Verify with `BARNACLES_TEST_DIRECTORY="$job" node --test collector/changed-code.test.ts`.
+Verify with `PLOW_TEST_DIRECTORY="$job" node --test collector/changed-code.test.ts`.
 
 ## Run the Actions import
 
 From the repository root, with `gh` already authenticated:
 
 ```sh
-job=$(mktemp -d /tmp/apparent-dev-barnacles-ci-XXXXXX)
+job=$(mktemp -d /tmp/apparent-dev-plow-ci-XXXXXX)
 sha=9c1ffc52836711a006b4a983146655c04970f0bf
 node collector/import-actions.ts "$job" tryapparent/apparent 45813089179 1 "$sha"
 node collector/import-actions.ts "$job" tryapparent/apparent 45813387238 1 "$sha"
@@ -63,25 +63,23 @@ Successful window imports print a JSON receipt containing the window, requested 
 
 Run the synthetic checks with `npm run verify -- collector`. They compile the actual Bend2 policy and exercise pagination, partial and changing inventories, the command-line entry point, and SQLite replay.
 
-## Poll GitHub for Harbor
+## Poll GitHub
 
-Use one collector process per evidence database and Harbor snapshot. From the
-same checkout used for Harbor, with Node 22.18+, dependencies installed and
-`gh` authenticated with repository read access, run:
+Use one collector process per evidence database and SQLite snapshot. With
+Node 22.18+, dependencies installed, and `gh` authenticated with repository
+read access, run:
 
 ```sh
-export BARNACLES_POLL_SETTINGS="$job/poll-interval"
-node collector/import-sources.ts "$job" poll-github OWNER/REPO "$job/harbor-snapshot"
+export PLOW_POLL_SETTINGS="$job/poll-interval"
+node collector/import-sources.ts "$job" poll-github OWNER/REPO "$job/plow-snapshot"
 ```
 
 Use an existing private job directory. For an ongoing installation, give the
 collector a stable directory for its SQLite database and use a process
 supervisor. It runs immediately at startup and waits **15 minutes** between
-passes by default. Harbor can save a different interval in **Settings**.
-Set the same environment variable when starting
-[Harbor](../dashboard/api.md#github-polling-settings) and serve
-`"$job/harbor-snapshot"` as its snapshot directory. The first publish creates
-this directory. Append `--once` to run a single pass for a supervised check
+passes by default. Write a whole number from 1 to 1440 in the settings file
+to set a different interval in minutes. The first publish creates
+`"$job/plow-snapshot"`. Append `--once` to run a single pass for a supervised check
 or bootstrap. GitHub setup consists of the existing authenticated read access.
 
 Each pass checks the 30 most recently updated PRs, the first 30 workflow runs
@@ -94,23 +92,23 @@ descendant of the PR merge. Automatic Linux Main release capture uses exact
 merge-SHA matches against known PRs and runs the existing artifact access
 check. T3 and Codex imports can share the input evidence database.
 
-If a listing fails, the pass keeps the previous Harbor snapshot. If an
+If a listing fails, the pass keeps the previous snapshot. If an
 individual record changes during capture or fails to import, the pass reports
 the failure, keeps previous evidence for that record, and publishes the valid
-captures. The next pass can retry records still within scope. Harbor's cutoff
-is the time its snapshot was prepared. Collector logs show the listing sizes
-and failed import count. Each publish replaces the Harbor SQLite file
+captures. The next pass can retry records still within scope. The snapshot cutoff
+is its preparation time. Collector logs show the listing sizes
+and failed import count. Each publish replaces the derived SQLite file
 atomically.
 
 ## Apparent donor code
 
-Use the reviewed upstream revision `ed8e448f6b7d0826b1922a97fcef9691c9f5676f` as the starting point. The Actions import adapts exact-attempt reads and clock rules from the donor. It also adapts the checksum-pinned [Bend2 bootstrap](https://github.com/tryapparent/apparent/blob/ed8e448f6b7d0826b1922a97fcef9691c9f5676f/shared/enablement/bend/toolchain.ts). The [root LICENSE](../LICENSE) retains the donor notice. Preserve the original license and notices on copied code. Barnacles should run from its own checkout.
+Use the reviewed upstream revision `ed8e448f6b7d0826b1922a97fcef9691c9f5676f` as the starting point. The Actions import adapts exact-attempt reads and clock rules from the donor. It also adapts the checksum-pinned [Bend2 bootstrap](https://github.com/tryapparent/apparent/blob/ed8e448f6b7d0826b1922a97fcef9691c9f5676f/shared/enablement/bend/toolchain.ts). The [root LICENSE](../LICENSE) retains the donor notice. Preserve the original license and notices on copied code. Plow should run from its own checkout.
 
 - [Rollout census](https://github.com/tryapparent/apparent/blob/ed8e448f6b7d0826b1922a97fcef9691c9f5676f/enablement/timing/census.ts) and [yielded poll readers](https://github.com/tryapparent/apparent/tree/ed8e448f6b7d0826b1922a97fcef9691c9f5676f/enablement/timing/yielded-polls) supply envelope pairing and conservative process correlation.
 - [GitHub reader](https://github.com/tryapparent/apparent/blob/ed8e448f6b7d0826b1922a97fcef9691c9f5676f/enablement/timing/review/github.ts) and [snapshot normalization](https://github.com/tryapparent/apparent/blob/ed8e448f6b7d0826b1922a97fcef9691c9f5676f/enablement/timing/review/snapshots.ts) supply attempt/SHA validation, job/step clocks, and carried-job handling. A jobless workflow supplies no runner-queue clock.
 - [Release guidance](https://github.com/tryapparent/apparent/blob/ed8e448f6b7d0826b1922a97fcef9691c9f5676f/composition/enablement/release/README.md) supplies the channel and artifact semantics. Keep the Apparent release tag convention in its source adapter.
 
-Apparent's review ranking and dispatch orchestration serve a different workflow. Barnacles has no dependency on its desktop stack, CI hooks, or dispatch tooling.
+Apparent's review ranking and dispatch orchestration serve a different workflow. Plow has no dependency on its desktop stack, CI hooks, or dispatch tooling.
 
 ## Import T3, Codex, and GitHub delivery
 
@@ -145,7 +143,7 @@ const snapshot = {
 };
 ```
 
-Include the optional `title` only for threads whose titles can be shared with the private Harbor audience. Keep titles and the input projection out of Git and public output. Titles are trimmed and values longer than 512 characters are omitted. Replay the projection with a title to name a previously imported T3 thread.
+Include the optional `title` only if the private evidence audience may see it. Keep titles and the input projection out of Git and public output. Titles are trimmed and values longer than 512 characters are omitted. Replay the projection with a title to name a previously imported T3 thread.
 
 Use a stable instance name per T3 environment. Follow and combine link pages before setting the cursor to null. A non-null cursor is rejected. Thread run data covers the runs in the read response. The importer keeps the provider's link source and treats `created` and `agent` as ownership evidence. Manual links, multiple candidate owners, and chronological conflicts remain visible as coverage gaps. Direct web or mobile user creation supports the manual T3 origin. Other origins stay unknown until the provider supplies explicit evidence.
 
@@ -191,7 +189,7 @@ The standalone `gh_owned_wait.py RUN --repo OWNER/REPO --head SHA --attempt ATTE
 ```sh
 node collector/import-sources.ts "$job" waits SESSION [CALL]
 node collector/import-sources.ts "$job" watch-overlaps OWNER/REPO RUN HEAD_SHA ATTEMPT
-BARNACLES_TEST_DIRECTORY="$job" node --test collector/sources.test.ts
+PLOW_TEST_DIRECTORY="$job" node --test collector/sources.test.ts
 ```
 
 The lookup returns the wait's tool-envelope timestamps and its cell and process evidence. The overlap report compares observed read-only poll envelopes across distinct process launches for one exact workflow identity. A nested poll envelope begins at the wrapper request and ends at its matched result. Reported intervals are pairwise intersections and may themselves overlap. They establish concurrent observation only. They supply no estimate of resource savings, delivery delay, or critical-path impact.
@@ -222,7 +220,7 @@ On Linux with bpftrace, BTF, and permission to attach the scheduler probes, gene
 
 ```sh
 umask 077
-job=$(mktemp -d /tmp/apparent-dev-barnacles-process-XXXXXX)
+job=$(mktemp -d /tmp/apparent-dev-plow-process-XXXXXX)
 node collector/import-sources.ts "$job" process-probe "$worker_pid" "$isolated_workdir" >"$job/process.bt"
 timeout --signal=INT --kill-after=5s 60s sudo -n bpftrace -q "$job/process.bt" >"$job/events" 2>"$job/observer.log"
 ```
@@ -235,11 +233,9 @@ Verify the isolated launch against the retained rollout and import the rollout u
 node collector/import-sources.ts "$job" rollout "$instance" "$rollout"
 node collector/import-sources.ts "$job" process "$job/binding.json" "$job/events" "$job/observer.log"
 node dashboard/prepare.ts "$job/evidence.sqlite" "$job/snapshot" "$repository"
-npm run build:harbor -- --outDir "$job/harbor"
-node dashboard/prepare.ts --serve "$job/snapshot" 3031 "$job/harbor"
 ```
 
-Open **Process timings** in Harbor. The collector rejects ambiguous or mismatched calls, changed checksums, unrecognized event rows, observer diagnostics, and captures over 4,096 events or 120 seconds. A capture with a clean stop and missing exit evidence can still surface its measured spans. A replay of the same binding is idempotent. Concurrent launches in a shared directory need an executor-supplied process identity or another explicit binding.
+The snapshot stores derived spans in `process_timings`. The collector rejects ambiguous or mismatched calls, changed checksums, unrecognized event rows, observer diagnostics, and captures over 4,096 events or 120 seconds. A capture with a clean stop and missing exit evidence can still surface its measured spans. A replay of the same binding is idempotent. Concurrent launches in a shared directory need an executor-supplied process identity or another explicit binding.
 
 ## Replay bottleneck evidence
 
@@ -270,7 +266,7 @@ Bend2 clips each condition to the readiness anchor and admits a window when the 
 
 The result includes per-outcome segments and their conditions, the original normalized evidence and its sufficiency status, and a pattern and stage summary with `coverage.sufficient / coverage.occurrences`. An occurrence is counted once per pattern and scoped outcome. Median and worst pattern delay use uniquely attributed time per measured affected outcome. An outcome with only shared evidence has measured unique time of zero. Unmeasured durations are `null`. Totals across unrelated outcomes can overlap in wall time. Confirmed outcome delay is independent of job elapsed, runner time, tool occupancy, file tokens, and the delay a proposed change might actually remove.
 
-The command consumes normalized evidence supplied by an audit or collector. The GitHub polling command and the session-study snapshot have their own inputs and refresh paths.
+The command consumes normalized evidence supplied by an audit or collector. The GitHub polling command has its own inputs and refresh path.
 
 ### Replay observations and rankings
 

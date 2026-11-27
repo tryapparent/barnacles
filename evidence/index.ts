@@ -8,5 +8,5 @@ export {
   type RolloutAdmission, type RolloutImport, type RolloutEvidence, type ShellCommand, type SourcePolicy, type ThreadEvidence, type ToolInvocation,
 } from "./storage/sources.ts";
 export { readPollMinutes, repository } from "./repository.ts";
-export { actionsWaitCapturePlan, harborSnapshotPublisher } from "./projection/snapshot.ts";
+export { actionsWaitCapturePlan, snapshotPublisher } from "./projection/snapshot.ts";
 export { githubPollRows } from "./storage/load.ts";

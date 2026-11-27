@@ -42,7 +42,7 @@ const bundleKey = createHash("sha256").update(JSON.stringify({ inputs, packageNa
 const git = (...args: string[]) => execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 
 function installedCompiler() {
-  return join(git("rev-parse", "--path-format=absolute", "--git-common-dir"), "barnacles-bend", bundleKey);
+  return join(git("rev-parse", "--path-format=absolute", "--git-common-dir"), "plow-bend", bundleKey);
 }
 
 function verifiedSource(file: string, digest: string, bytes: Buffer) {
@@ -81,7 +81,8 @@ function writeCompiler(directory: string, bundle: ReturnType<typeof readCompiler
 }
 
 function configuredCompiler() {
-  if (process.env.BARNACLES_BEND_BUNDLE) return resolve(process.env.BARNACLES_BEND_BUNDLE);
+  const configured = process.env.PLOW_BEND_BUNDLE;
+  if (configured) return resolve(configured);
   try {
     const directory = installedCompiler();
     if (existsSync(directory)) return directory;
@@ -89,7 +90,8 @@ function configuredCompiler() {
 }
 
 export function hookCompilerDirectory() {
-  return process.env.BARNACLES_BEND_BUNDLE ? resolve(process.env.BARNACLES_BEND_BUNDLE) : installedCompiler();
+  const configured = process.env.PLOW_BEND_BUNDLE;
+  return configured ? resolve(configured) : installedCompiler();
 }
 
 export async function prepareCompiler(scratch: string): Promise<string> {
@@ -113,8 +115,8 @@ async function installHooks() {
     installed = true;
   } catch {}
   if (!installed) {
-    const bundle = process.env.BARNACLES_BEND_BUNDLE
-      ? readCompiler(resolve(process.env.BARNACLES_BEND_BUNDLE)) : await downloadCompiler();
+    const configured = process.env.PLOW_BEND_BUNDLE;
+    const bundle = configured ? readCompiler(resolve(configured)) : await downloadCompiler();
     mkdirSync(dirname(directory), { recursive: true, mode: 0o700 });
     const staging = mkdtempSync(join(dirname(directory), "install-"));
     try {
@@ -191,7 +193,7 @@ export async function loadPolicy<T>(path: string): Promise<T> {
 }
 
 export async function withHookPolicy<T>(source: URL, action: (policy: T) => void | Promise<void>) {
-  const scratch = mkdtempSync("/tmp/apparent-dev-barnacles-hook-");
+  const scratch = mkdtempSync("/tmp/apparent-dev-plow-hook-");
   try {
     const [output] = await buildPolicies(scratch, [[source, "hook.mjs"]], hookCompilerDirectory());
     await action(await loadPolicy<T>(output));

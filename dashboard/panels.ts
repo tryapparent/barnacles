@@ -1,13 +1,13 @@
-const datasource = { uid: "barnacles", type: "frser-sqlite-datasource" };
-const tempo = { uid: "barnacles-tempo", type: "tempo" };
+const datasource = { uid: "plow", type: "frser-sqlite-datasource" };
+const tempo = { uid: "plow-tempo", type: "tempo" };
 const yellow = "#F2B826";
 const green = "#4DAE79";
 const ink = "#D3D8D2";
-const timingPath = "/d/barnacles-timing/timing";
-const tracePath = "/d/barnacles-trace/trace";
-const changedCodePath = "/d/barnacles-changed-code/changed-code-analysis";
-const shippingPath = "/d/barnacles-shipping/shipping";
-const actionsPath = "/d/barnacles-actions/actions";
+const timingPath = "/d/plow-timing/timing";
+const tracePath = "/d/plow-trace/trace";
+const changedCodePath = "/d/plow-changed-code/changed-code-analysis";
+const shippingPath = "/d/plow-shipping/shipping";
+const actionsPath = "/d/plow-actions/actions";
 
 type Window = { from: number; to: number };
 type ChangeScan = { revision: string; commitsScanned: number; truncated: boolean; shallow: boolean; hasPaths: boolean };
@@ -100,7 +100,7 @@ function actionsDashboard(from: string, to: string, repository: string) {
   ];
   const coverageRows = (fields: [string, string][]) => fields.map(([label, column]) =>
     `SELECT '${label}' AS "Evidence", ${column} AS "Observed" FROM actions_wait_coverage`).join("\nUNION ALL\n");
-  const actions = board("barnacles-actions", "Barnacles · Actions waits", from, to, [
+  const actions = board("plow-actions", "Plow · Actions waits", from, to, [
     block(1, "Evidence scope", [0, 0, 15, 5],
       `**${repository}** · This view covers recorded workflow watcher receipts. “Only known running” counts time with one observed running job. Job durations can overlap. Establishing what held up a run requires dependency evidence.`),
     data(2, "table", "Snapshot window · UTC", [15, 0, 9, 5],
@@ -152,7 +152,7 @@ function actionsDashboard(from: string, to: string, repository: string) {
       tableOptions, tableFields,
       [byName("Step", width(62)), byName("Step name", wrap), execution], [],
       "Choose an exact job instance. If no steps appear, the snapshot has no step evidence for that selection."),
-  ], [link("Shipping review", "/d/barnacles-shipping/shipping")], [
+  ], [link("Shipping review", "/d/plow-shipping/shipping")], [
     variable("job_family", "Job family", `SELECT 'All job families' AS __text, '*' AS __value
       UNION ALL SELECT job_label, ':' || job_label FROM actions_wait_jobs ORDER BY __value`, "*"),
     variable("job_instance", "Job instance", `SELECT 'Choose a job' AS __text, '*' AS __value
@@ -215,7 +215,7 @@ export function dashboards(range: Range, repository: string) {
     variable("overview_operation", "Operation", `SELECT 'All operations' AS operation
       UNION SELECT operation FROM operation_totals WHERE window = ${timingWindow} AND clock = ${operationClock} ORDER BY operation`, "All operations"),
   ];
-  const shipping = board("barnacles-shipping", "Barnacles · Shipping review", from, to, [
+  const shipping = board("plow-shipping", "Plow · Shipping review", from, to, [
     block(1, "Evidence scope", [0, 0, 9, 4],
       `Linux Main x86_64 and CI for **${repository}**. ${rolloutScope}`),
     data(2, "gauge", "Gardening ↔ Shipping", [0, 4, 9, 6], 'SELECT dial AS "Direction" FROM coverage',
@@ -307,7 +307,7 @@ export function dashboards(range: Range, repository: string) {
   const workflow = "${workflow:sqlstring}";
   const operation = "${operation:sqlstring}";
   const timeFields = [byName("Mean", unit("s")), byName("Sum", unit("s")), byName("Union", unit("s"))];
-  const timing = board("barnacles-timing", "Barnacles · Timing breakdown", from, to, [
+  const timing = board("plow-timing", "Plow · Timing breakdown", from, to, [
     timingRange(range.timingCutoff),
     clockOccupancy(clock),
     freshness(3),
@@ -328,7 +328,7 @@ export function dashboards(range: Range, repository: string) {
       { showHeader: true, enablePagination: true },
       { noValue: "—", custom: { minWidth: 60 } }, [...timeFields, byName("Operation", wrap)],
       [], "Choose Mixed to see submitted command groups. Each group uses the clipped duration of its entire span. Union values for different rows can overlap."),
-  ], [link("Shipping review", "/d/barnacles-shipping/shipping" + windowLink + "&var-operation_clock=${clock:percentencode}"),
+  ], [link("Shipping review", "/d/plow-shipping/shipping" + windowLink + "&var-operation_clock=${clock:percentencode}"),
     link("Rollout waterfall", tracePath)], [
     windowVariable,
     variable("clock", "Clock", clockQuery, "Tool envelopes"),
@@ -344,7 +344,7 @@ export function dashboards(range: Range, repository: string) {
   const first = range.defaultTrace;
   const session = "${session:sqlstring}";
   const reasoningTime = "strftime('%Y-%m-%dT%H:%M:%fZ', observed / 1000.0, 'unixepoch')";
-  const trace = board("barnacles-trace", "Barnacles · Rollout waterfall",
+  const trace = board("plow-trace", "Plow · Rollout waterfall",
     first ? new Date(first.from).toISOString() : from, first ? new Date(first.to).toISOString() : to, [
       range.traceSessions ? data(1, "table", "Session coverage", [0, 0, 24, 5],
         `SELECT kind AS "Evidence", observed AS "Seen", missing AS "Untimed"
@@ -376,7 +376,7 @@ export function dashboards(range: Range, repository: string) {
           byName("Observed UTC", unit("time:YYYY-MM-DD HH:mm:ss.SSS")), byName("Line", width(72)),
         ], ["Observed UTC"],
         "Point events in the selected session with their rollout source lines. Reimport older rollouts to add reasoning coverage."),
-    ], [link("Shipping review", "/d/barnacles-shipping/shipping")], [
+    ], [link("Shipping review", "/d/plow-shipping/shipping")], [
       variable("session", "Session", "SELECT CAST(session AS TEXT) FROM trace_windows ORDER BY session", String(first?.session ?? 1)),
       { ...variable("traceId", "Trace ID", `SELECT COALESCE((SELECT trace_id FROM trace_windows
         WHERE CAST(session AS TEXT) = ${session}), '')`, first?.traceId ?? ""), hide: 2 },
@@ -385,7 +385,7 @@ export function dashboards(range: Range, repository: string) {
   const scan = range.changedCode;
   const coverageHeight = scan?.truncated || scan?.shallow ? 6 : 4;
   const changedCode = {
-    ...board("barnacles-changed-code", "Barnacles · Changed Code Analysis", from, to, [
+    ...board("plow-changed-code", "Plow · Changed Code Analysis", from, to, [
       scan ? block(1, "Git scan coverage", [0, 0, 24, coverageHeight], scanSummary(repository, scan))
         : block(1, "No Git scan", [0, 0, 24, 5],
           `Run Changed Code Analysis with \`--save-as ${repository}\`, then rebuild the Grafana snapshot.`),

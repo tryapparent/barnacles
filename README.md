@@ -1,6 +1,6 @@
-# Barnacles
+# Plow
 
-Open-source observability for how coding-agent work reaches release. Barnacles shows whether changes are reaching users, how thread-to-release time is changing, and where recorded time went.
+Open-source observability for how coding-agent work reaches release. Plow shows whether changes are reaching users, how thread-to-release time is changing, and where recorded time went.
 
 ## Architecture
 
@@ -15,12 +15,12 @@ Codex JSONL     T3 snapshots     GitHub APIs
                       |
           Evidence reports and snapshots
                       |
-            Harbor + API or CLI
+            CLI and local Grafana
 ```
 
 - [Collector](collector/README.md) documents source boundaries and code to adapt from Apparent.
 - [Evidence](evidence/README.md) defines record identities, release attribution, and metrics.
-- [Harbor](dashboard/api.md) documents the shipping dashboard and the shared read-only API.
+- The [Plow dashboard](https://plow.tryapparent.com/app) shows thread activity and time summaries with synthetic evidence. See the [dashboard guide](dashboard/plow/README.md) to build and test it.
 
 ## Try it locally
 
@@ -32,15 +32,15 @@ npm run demo
 npm run verify
 ```
 
-Build and serve the Harbor website using a private output directory.
+Build the same dashboard used by the Cloudflare Worker.
 
 ```sh
-job=$(dirname "$snapshot")
-npm run build:harbor -- --outDir "$job/harbor"
-node dashboard/prepare.ts --serve "$snapshot" 3031 "$job/harbor"
+plow_build_dir=$(mktemp -d /tmp/apparent-dev-plow-build-XXXXXX)
+node dashboard/plow/build.ts "$plow_build_dir"
+node dashboard/plow/smoke.mjs "$plow_build_dir"
 ```
 
-Open [Harbor Shipping review](http://127.0.0.1:3031/).
+Open `index.html` in the build directory for the standalone dashboard.
 
 The [Actions import](collector/README.md#run-the-actions-import) and the [T3, Codex, and GitHub delivery imports](collector/README.md#import-t3-codex-and-github-delivery) write local SQLite evidence. Use the delivery report to inspect verified releases and thread-to-release coverage.
 
@@ -48,4 +48,4 @@ The [legacy dashboard notes](dashboard/README.md) document the Grafana and Tempo
 
 [Changed Code Analysis](collector/README.md#changed-code-analysis) ranks files by how often commits touched them. Use it to find frequently edited files worth investigating for maintenance bottlenecks.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md). Barnacles is licensed under [MIT](LICENSE).
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md). Plow is licensed under [MIT](LICENSE).

@@ -17,7 +17,7 @@ type DemoPolicy = {
   };
 };
 
-const job = mkdtempSync("/tmp/apparent-dev-barnacles-demo-");
+const job = mkdtempSync("/tmp/apparent-dev-plow-demo-");
 const database = join(job, "evidence.sqlite");
 const dashboard = join(job, "grafana");
 const run = (entry: string, ...args: string[]) =>

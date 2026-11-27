@@ -12,7 +12,7 @@ import { pullRequest, releaseEvidence } from "./github/delivery.ts";
 import { inspectRollout, readRollout } from "./codex/rollout.ts";
 import { t3Snapshot } from "./t3.ts";
 
-const root = process.env.BARNACLES_TEST_DIRECTORY;
+const root = process.env.PLOW_TEST_DIRECTORY;
 assert.ok(root);
 
 test("compiled Bend2 source decisions through the SQLite import path", async () => {

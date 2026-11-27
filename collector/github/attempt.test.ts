@@ -12,8 +12,8 @@ import { collectAttempt, collectWindow, type ClockPolicy } from "./attempt.ts";
 import { pollGitHub } from "./delivery.ts";
 
 test("Bend2 clocks reach SQLite through the exact-attempt importer", async () => {
-  const parent = process.env.BARNACLES_TEST_DIRECTORY;
-  assert.ok(parent, "Set BARNACLES_TEST_DIRECTORY to a private job directory");
+  const parent = process.env.PLOW_TEST_DIRECTORY;
+  assert.ok(parent, "Set PLOW_TEST_DIRECTORY to a private job directory");
   const directory = mkdtempSync(join(parent, "test-"));
   try {
     const policy = await loadPolicy<ClockPolicy>(await buildPolicy(directory, new URL("./clocks.bend", import.meta.url), "clocks.mjs"));
@@ -143,8 +143,8 @@ test("Bend2 clocks reach SQLite through the exact-attempt importer", async () =>
 });
 
 test("bounded Actions imports report coverage, replay atomically, and preserve jobless attempts", () => {
-  const parent = process.env.BARNACLES_TEST_DIRECTORY;
-  assert.ok(parent, "Set BARNACLES_TEST_DIRECTORY to a private job directory");
+  const parent = process.env.PLOW_TEST_DIRECTORY;
+  assert.ok(parent, "Set PLOW_TEST_DIRECTORY to a private job directory");
   const directory = mkdtempSync(join(parent, "test-"));
   const from = "2026-01-01T12:00:00Z";
   const to = "2026-01-01T12:01:00Z";
@@ -252,8 +252,8 @@ if (url.searchParams.has("created")) {
 });
 
 test("polling captures changing attempts and excludes unverifiable releases", async () => {
-  const parent = process.env.BARNACLES_TEST_DIRECTORY;
-  assert.ok(parent, "Set BARNACLES_TEST_DIRECTORY to a private job directory");
+  const parent = process.env.PLOW_TEST_DIRECTORY;
+  assert.ok(parent, "Set PLOW_TEST_DIRECTORY to a private job directory");
   const directory = mkdtempSync(join(parent, "poll-github-"));
   const repo = "synthetic/example";
   const root = `repos/${repo}`;

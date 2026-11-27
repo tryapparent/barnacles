@@ -6,14 +6,14 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 test("pre-push routes the outgoing commit and blocks failed verification", () => {
-  const job = process.env.BARNACLES_TEST_DIRECTORY;
-  assert.ok(job, "Set BARNACLES_TEST_DIRECTORY to a private job directory");
+  const job = process.env.PLOW_TEST_DIRECTORY;
+  assert.ok(job, "Set PLOW_TEST_DIRECTORY to a private job directory");
   const root = mkdtempSync(join(job, "push-test-"));
   const cwd = join(root, "repo");
   const remote = join(root, "remote.git");
   mkdirSync(cwd);
   const env = { ...process.env };
-  delete env.BARNACLES_BEND_BUNDLE;
+  delete env.PLOW_BEND_BUNDLE;
   const git = (...args: string[]) => spawnSync("git", args, { cwd, env, encoding: "utf8" });
   const pass = (...args: string[]) => {
     const result = git(...args);
@@ -44,7 +44,7 @@ test("pre-push routes the outgoing commit and blocks failed verification", () =>
     for (const file of ["verify.ts", "check-directory-width.ts", "check-boundaries.ts", "bend.ts", "verification.bend"]) {
       copyFileSync(new URL("../tooling/" + file, import.meta.url), join(cwd, "tooling", file));
     }
-    write("dashboard/prepare.test.ts", "process.exit(process.env.BARNACLES_WEB_BUILD ? 0 : 1)\n");
+    write("dashboard/prepare.test.ts", "process.exit(0)\n");
     for (const file of ["pre-push", "snapshot.ts", "check-bend-paths.ts"]) {
       copyFileSync(new URL("./" + file, import.meta.url), join(cwd, ".githooks", file));
     }
@@ -60,9 +60,7 @@ test("pre-push routes the outgoing commit and blocks failed verification", () =>
       copyFileSync(new URL("../" + file, import.meta.url), join(cwd, file));
     }
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
-    packageJson.scripts["build:harbor"] = "node tooling/build-harbor.ts";
     write("package.json", JSON.stringify(packageJson));
-    write("tooling/build-harbor.ts", "process.exit(process.argv[2] === '--outDir' && process.argv[3] ? 0 : 1)\n");
     write("collector/github/attempt.test.ts", 'console.log("committed collector test")\n');
     write("collector/sources.test.ts", "process.exit(0)\n");
     pass("add", "README.md", "package.json", "package-lock.json", "collector", "dashboard", "evidence", "tooling", ".githooks", ".gitattributes");
