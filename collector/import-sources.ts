@@ -145,6 +145,10 @@ type ReplayPolicy = {
   observe_timing(state: unknown, id: string, clock: string, operation: string, start: number, end: number): unknown;
   observe_attempt(state: unknown, thread: string, id: string, key: string, start: number, end: number,
     failed: boolean, succeeded: boolean): unknown;
+  observe_hosted_test_failure(state: unknown, thread: string, id: string, scope: string, lane: string, test: string,
+    execution: string, conclusion: string, at: number): unknown;
+  observe_package_build(state: unknown, thread: string, id: string, scope: string, tool: string, digest: string,
+    assets: number, reportedMs: number, start: number, end: number): unknown;
   observe_peer(state: unknown, thread: string, id: string, clock: string, cohort: string, revision: string,
     start: number, end: number, eligible: boolean): unknown;
   observe_hosted_admission(state: unknown, thread: string, id: string, conclusion: string,
@@ -215,6 +219,13 @@ async function replayBottlenecks(file: string, scratch: string) {
       } else if (value.kind === "attempt") {
         state = policy.observe_attempt(state, token(value.thread), id, factText(value.key),
           clockSecond(value.start), clockSecond(value.end), bendBool(value.failed), bendBool(value.succeeded));
+      } else if (value.kind === "hosted-test-failure") {
+        state = policy.observe_hosted_test_failure(state, token(value.thread), id, token(value.scope), token(value.lane),
+          token(value.test), token(value.execution), token(value.conclusion), clockSecond(value.at));
+      } else if (value.kind === "package-build-result") {
+        state = policy.observe_package_build(state, token(value.thread), id, token(value.scope), token(value.tool),
+          token(value.digest), clockSecond(value.assets), clockSecond(value.reportedMs), clockSecond(value.start),
+          clockSecond(value.end));
       } else if (value.kind === "hosted-admission") {
         state = policy.observe_hosted_admission(state, token(value.thread), id, token(value.conclusion),
           bendBool(value.assigned), clockSecond(value.steps), factText(value.annotation));

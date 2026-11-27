@@ -618,6 +618,10 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
     const readback = { ...superseded, id: "readback-timeout", service: "public-pages", accepted: true,
       line: "DOMException [TimeoutError]: The operation was aborted due to timeout",
       phaseLine: "at async verifyReady (file:///test/public/enablement/cd/publish-pages.ts:230:18)" };
+    const smokeFailure = { kind: "hosted-test-failure", thread: "t", id: "first-test", scope: "pr-5",
+      lane: "desktop-linux", test: "capture-smoke", execution: "run:1:job", conclusion: "failure", at: 200 };
+    const packageBuild = { kind: "package-build-result", thread: "t", id: "first-build", scope: "run:1:job:step",
+      tool: "vite-production-client", digest: "manifest", assets: 55, reportedMs: 30_760, start: 200, end: 230 };
     const facts = [
       admission, admission,
       { ...admission, id: "superseded", annotation: "Canceling since a higher priority waiting request exists" },
@@ -693,6 +697,28 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       { ...readback, id: "pre-upload", accepted: false },
       { ...readback, id: "no-timeout", line: "TypeError: fetch failed" },
       { ...readback, id: "failed-probe-recovered", conclusion: "success" },
+      smokeFailure,
+      { ...smokeFailure, id: "same-execution", at: 205 },
+      { ...smokeFailure, id: "other-lane", lane: "desktop-mac", execution: "run:2:mac", at: 210 },
+      { ...smokeFailure, id: "other-case", test: "settings-smoke", execution: "run:2:job", at: 210 },
+      { ...smokeFailure, id: "passing-step", execution: "run:2:job", conclusion: "success", at: 210 },
+      { ...smokeFailure, id: "earlier-execution", execution: "run:0:job", at: 190 },
+      { ...smokeFailure, id: "unknown-clock", execution: "run:3:job", at: 0 },
+      { ...smokeFailure, id: "other-thread", thread: "t2", execution: "run:2:job", at: 210 },
+      { ...smokeFailure, id: "other-pr", scope: "pr-6", execution: "run:2:job", at: 210 },
+      { ...smokeFailure, id: "second-test", execution: "run:2:job", at: 210 },
+      { ...smokeFailure, id: "third-test", execution: "next-run:1:job", at: 260 },
+      packageBuild,
+      { ...packageBuild, id: "overlapping-build", start: 229, end: 260 },
+      { ...packageBuild, id: "different-step", scope: "run:1:job:other-step", start: 230, end: 260 },
+      { ...packageBuild, id: "different-manifest", digest: "other", start: 230, end: 260 },
+      { ...packageBuild, id: "different-kind", tool: "vite-server", start: 230, end: 260 },
+      { ...packageBuild, id: "different-asset-count", assets: 36, start: 230, end: 260 },
+      { ...packageBuild, id: "empty-manifest", assets: 0, start: 230, end: 260 },
+      { ...packageBuild, id: "impossible-clock", start: 230, end: 258 },
+      { ...packageBuild, id: "open-clock", start: 230, end: 0 },
+      { ...packageBuild, start: 230, end: 260 },
+      { ...packageBuild, id: "second-build", start: 230, end: 259 },
       read, read, { ...read, id: "b", at: 160 }, { ...read, thread: "t2", at: 170 },
       timing, timing, { ...timing, id: "unpaired", end: 0 },
       attempt, { ...attempt, id: "changed", key: "gate:v2", start: 115, end: 120, failed: false, succeeded: true },
@@ -724,6 +750,7 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
         "ci-benchmark-calibration-marker-timeout", "ci-benchmark-calibration-marker-timeout",
         "ci-benchmark-calibration-pressure-rejected", "ci-benchmark-calibration-pressure-rejected",
         "ci-deployment-candidate-superseded", "ci-deployment-readback-timeout",
+        "ci-test-failure-repeated", "ci-test-failure-repeated", "ci-package-build-repeated",
         "recovered-attempt", "runner"]);
     assert.ok(!first.includes("installed tools"));
     assert.ok(!first.includes("#42:"));
@@ -735,6 +762,7 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       ["admission-timeout", "", 0, 0], ["artifact-conflict", "", 0, 0], ["upload-error", "", 0, 0],
       ["marker", "", 0, 0], ["acknowledgement", "", 0, 0], ["pressure", "", 0, 0], ["artifact-pressure", "", 0, 0],
       ["superseded-deploy", "", 0, 0], ["readback-timeout", "", 0, 0],
+      ["second-test", "first-test", 0, 0], ["third-test", "second-test", 0, 0], ["second-build", "first-build", 30, 0],
       ["recovered", "first", 20, 0], ["tail", "", 250, 10],
     ]);
   } finally {
