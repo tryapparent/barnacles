@@ -67,6 +67,13 @@ queue and execution clocks describe hosted activity and alone cannot establish
 that a thread waited. Unattributed gaps remain Unobserved. Generated files
 and live data stay out of Git and build artifacts.
 
+**What to fix today** appears below Timeline when the analysis API is
+configured. The list uses the API's order for up to three priorities in
+the last 24 hours. The first priority opens automatically. Select another
+priority to see its evidence, timing coverage, and suggested next step.
+A lone priority opens without a selection control. The panel keeps
+confirmed outcome delay distinct from observed admission or CI time.
+
 ## Build and verify
 
 Run from the repository root with Node 22.18 or later and Chrome installed.

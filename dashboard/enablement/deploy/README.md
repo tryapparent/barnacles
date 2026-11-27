@@ -129,6 +129,6 @@ dashboard.
 Verify the protected ranking endpoint and the thread detail endpoint, then
 open the Access-protected app while connected to the tailnet. Grant local
 network access if the browser prompts. A new
-configuration adds the Bottlenecks section after the timeline. The analysis
-section shows coverage and freshness, and it works independently of the
-existing activity feed.
+configuration adds What to fix today after the timeline. The panel shows
+the ranked priorities and their evidence, and it works independently of
+the existing activity feed.
