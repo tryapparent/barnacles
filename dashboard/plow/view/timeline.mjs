@@ -243,9 +243,16 @@ function chartPlot() {
 }
 function paintWindow() {
   const { left, width } = chartPlot()
-  for (const element of [...axis.children, ...rows.querySelectorAll('.label span')]) {
-    const box = element.getBoundingClientRect()
-    element.style.visibility = box.left >= left - 1 && box.right <= left + width + 1 ? 'visible' : 'hidden'
+  let previousRight = left - 4
+  for (const tick of axis.children) {
+    const box = tick.getBoundingClientRect()
+    const fits = box.left >= previousRight + 4 && box.right <= left + width + 1
+    tick.style.visibility = fits ? 'visible' : 'hidden'
+    if (fits) previousRight = box.right
+  }
+  for (const label of rows.querySelectorAll('.label span')) {
+    const box = label.getBoundingClientRect()
+    label.style.visibility = box.left >= left - 1 && box.right <= left + width + 1 ? 'visible' : 'hidden'
   }
 }
 function duration() {
