@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { DatabaseSync } from 'node:sqlite'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -11,13 +11,17 @@ if (!directory) throw new Error('Pass the Plow build output directory.')
 const { default: worker } = await import(pathToFileURL(resolve(directory, 'worker.mjs')).href)
 const app = 'https://plow.tryapparent.com/app'
 const audience = 'fixture-audience'
+const t3Environment = '00000000-0000-4000-8000-000000000001'
+const t3Thread = '00000000-0000-4000-8000-000000000002'
+const t3Delegate = 'subagent:codex:' + 'a'.repeat(64)
+const t3Path = t3Environment + '/' + encodeURIComponent(t3Delegate)
 const demo = [
   {startUtcMs: 1795726800000, work: [[12960, 16920, "Release verification"]], wait: [[0, 12960, "Publish artifacts"]], end: 16920},
   {startUtcMs: 1795719600000, work: [[0, 5040, "Code changes"]], wait: [[5040, 18360, "CI checks"]], end: 20700},
   {startUtcMs: 1795712400000, work: [[0, 3240, "Code changes"], [13680, 16920, "Local testing"]], wait: [[3240, 13680, "CI checks"]], end: 16920},
   {startUtcMs: 1795705200000, work: [], wait: [[0, 12240, "CI checks"]], end: 16200},
   {startUtcMs: 1795698000000, work: [[0, 8640, "Code changes"]], wait: [[8640, 15480, "CI checks"]], end: 15480},
-  {startUtcMs: 1795694400000, work: [], wait: [[5940, 17280, "Publish artifacts"]], end: 17280},
+  {startUtcMs: 1795694400000, work: [], wait: [[5940, 17280, "Publish artifacts"]], end: 17280, t3Path},
   {startUtcMs: 1795687200000, work: [[0, 2880, "Code changes"]], wait: [[2880, 7380, "CI checks"]], end: 7380},
   {startUtcMs: 1795680000000, work: [[10440, 13320, "Local testing"]], wait: [[0, 10440, "CI checks"]], end: 13320},
   {startUtcMs: 1795676400000, work: [[0, 5400, "Local testing"]], wait: [[5400, 14760, "CI checks"]], end: 14760},
@@ -53,23 +57,25 @@ db.exec(`
   CREATE TABLE t3_threads(instance TEXT, thread_id TEXT, created_ms INTEGER, updated_ms INTEGER);
   CREATE TABLE t3_runs(instance TEXT, thread_id TEXT, run_id TEXT, requested_ms INTEGER, started_ms INTEGER,
     completed_ms INTEGER, status TEXT);
-  INSERT INTO t3_threads VALUES ('t3','older',100,1200),('t3','latest',1500,3000),('t3','unknown',3200,3400);
-  INSERT INTO t3_runs VALUES ('t3','older','a',110,300,900,'failed'),('t3','latest','b',2000,2400,NULL,'running'),
-    ('t3','latest','c',2100,NULL,NULL,'queued'),('t3','latest','d',NULL,2300,3200,'completed'),
+  INSERT INTO t3_threads VALUES ('fixture-t3','${t3Thread}',100,1200),('fixture-t3','${t3Delegate}',1500,3000),('t3','unknown',3200,3400);
+  INSERT INTO t3_runs VALUES ('fixture-t3','${t3Thread}','a',110,300,900,'failed'),('fixture-t3','${t3Delegate}','b',2000,2400,NULL,'running'),
+    ('fixture-t3','${t3Delegate}','c',2100,NULL,NULL,'queued'),('fixture-t3','${t3Delegate}','d',NULL,2300,3200,'completed'),
     ('another','latest','e',1600,1700,1800,'completed');
 `)
 db.close()
+await writeFile(dbPath + '.t3-environments.json', JSON.stringify({ 'fixture-t3': t3Environment }))
 execFileSync(process.execPath, ['dashboard/plow/build.ts', '--project-feed', dbPath, projectedPath])
 assert.deepEqual(JSON.parse(await readFile(projectedPath, 'utf8')), {
   observed: 3000,
   traces: [
-    { startUtcMs: 1500, end: .9, work: [], wait: [[.5,.9,'T3 admission']], errors: [] },
-    { startUtcMs: 100, end: .8, work: [[.2,.8,'Provider run']], wait: [[.01,.2,'T3 admission']], errors: [.8] },
+    { t3Path, startUtcMs: 1500, end: .9, work: [], wait: [[.5,.9,'T3 admission']], errors: [] },
+    { t3Path: t3Environment + '/' + t3Thread, startUtcMs: 100, end: .8, work: [[.2,.8,'Provider run']], wait: [[.01,.2,'T3 admission']], errors: [.8] },
   ],
 })
 const denied = await worker.fetch(request, linked, {})
 assert.equal(denied.status, 403)
-assert.ok(!(await denied.text()).includes(history))
+const deniedBody = await denied.text()
+assert.ok(!deniedBody.includes(history) && !deniedBody.includes(t3Path))
 const invalid = await worker.fetch(request, { ...env, PLOW_SESSION_HISTORY_URL: 'https://preview.tail-fixture.ts.net/shipping' }, context)
 assert.match(await invalid.text(), /data-session-history=""/)
 const head = await worker.fetch(new Request(app, { method: 'HEAD' }), linked, context)
@@ -245,9 +251,14 @@ try {
     const inspector = timeline.getByRole('region', { name: /Thread 6 · Recorded timeline/ })
     assert.match(await inspector.innerText(), /Publish artifacts/)
     assert.equal(await inspector.evaluate(element => element === document.activeElement), true)
+    const t3Action = inspector.getByRole('link', { name: 'Open in T3' })
+    assert.equal(await t3Action.getAttribute('href'), 'https://app.t3.codes/threads/' + t3Path)
+    assert.equal(await t3Action.getAttribute('rel'), 'noreferrer')
+    await page.keyboard.press('Tab')
+    assert.equal(await t3Action.evaluate(element => element === document.activeElement), true)
     await assertStable('open thread inspector')
     await screenshot('details')
-    await page.keyboard.press('Escape')
+    await t3Action.press('Escape')
     assert.equal(await inspect.getAttribute('aria-expanded'), 'false')
     assert.equal(await inspect.evaluate(element => element === document.activeElement), true)
     await assertStable('close thread inspector with Escape')
