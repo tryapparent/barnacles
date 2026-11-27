@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent,
   type PointerEvent, type ReactNode } from "react";
 import { Button, Tabs, TabsContent, TabsList, TabsTrigger, Tip, TooltipProvider } from "../controls";
-import { changeValues, sessionEventList, sessionPath, useTimelineRows, utcRange,
+import { changeValues, sessionEventList, sessionPath, t3ThreadHref, useTimelineRows, utcRange,
   type HistoryEntry, type TimelinePolicy, type TimelineRow as Row, type UtcRange } from "../api";
 import "./session-timeline.css";
 
@@ -118,6 +118,7 @@ function TimelineChart({ rows }: { rows: Row[] }) {
   const scale = elapsed(range);
   const details = policy.chart_details(scale, view.selected !== null);
   const selectedRow = rows.find((row) => row.entry.thread.id === view.selected);
+  const t3Href = selectedRow && t3ThreadHref(selectedRow.entry.thread.source);
 
   useLayoutEffect(() => {
     const observer = new ResizeObserver(([entry]) => setWidth(Math.max(1, Math.floor(entry.contentRect.width))));
@@ -266,7 +267,10 @@ function TimelineChart({ rows }: { rows: Row[] }) {
           <p>Ctrl+scroll or Ctrl+↑/↓ zooms. ← and → pan. Esc fits all threads. Hover over a phase or red mark for details.</p>
           <p>Green shows recorded tool activity. Brown shows workflows or waits, which can overlap other activity. Unclear time blends with its neighbors.</p>
         </details>
-        {selectedRow && <Button asChild variant="outline"><a href={sessionPath(selectedRow.entry.thread.id)}>Open trace waterfall</a></Button>}
+        {selectedRow && <div className="timeline-actions">
+          <Button asChild variant="outline"><a href={sessionPath(selectedRow.entry.thread.id)}>Open trace waterfall</a></Button>
+          {t3Href && <Button asChild variant="outline"><a href={t3Href} rel="noreferrer">Open in T3</a></Button>}
+        </div>}
       </div>
     </figure>
   </TooltipProvider>;

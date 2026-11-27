@@ -158,6 +158,11 @@ export function sessionEventList<T>(events: T[]) {
 }
 
 export const sessionPath = (id: string) => "/sessions?session=" + encodeURIComponent(id);
+export function t3ThreadHref(source: string) {
+  const ref = /^t3-thread:\/\/v2\/([a-f0-9-]{36})\/([a-f0-9-]{36}|[a-z]+:[a-z]+:[a-f0-9]{64})$/.exec(source);
+  return ref ? `https://app.t3.codes/threads/${ref[1]}/${encodeURIComponent(ref[2])}` : null;
+}
+
 export type UtcRange = { $: "UtcSpan"; start: number; end: number };
 export const utcRange = (start: number, end: number): UtcRange => ({ $: "UtcSpan", start, end });
 

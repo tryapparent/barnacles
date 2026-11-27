@@ -1,5 +1,5 @@
 import { lazy, Suspense, useMemo, useRef, useState, type ReactNode } from "react";
-import { changeValues, countLabel, dayLabel, sessionPath, sessionEventList, sessionPolicy, useEvidence, utcLabel,
+import { changeValues, countLabel, dayLabel, sessionPath, sessionEventList, sessionPolicy, t3ThreadHref, useEvidence, utcLabel,
   type HistoryEntry, type HistoryEvent, type HistoryLane, type HistoryTrace } from "../api";
 import { Button, NativeSelect } from "../controls";
 import "./session-history.css";
@@ -87,6 +87,7 @@ function TraceSignals({ study, signals, reveal }: {
 function TraceDetail({ trace, study }: { trace: HistoryTrace; study: Study }) {
   const { entry, lanes, signals } = trace;
   const { thread } = entry;
+  const t3Href = t3ThreadHref(thread.source);
   const [lane, setLane] = useState<number | null>(null);
   const [query, setQuery] = useState("");
   const [longest, setLongest] = useState(false);
@@ -141,7 +142,7 @@ function TraceDetail({ trace, study }: { trace: HistoryTrace; study: Study }) {
     <header className="trace-thread">
       <div><h2 id="trace-thread-title">{thread.title}</h2>
         <p>Started {utcLabel(traceUtc(thread.start))}</p></div>
-      <a href={thread.source}>Open T3 thread</a>
+      {t3Href && <Button asChild variant="outline"><a href={t3Href} rel="noreferrer">Open in T3</a></Button>}
     </header>
     <dl className="trace-context">
       <div><dt>Observed window</dt><dd>{entry.count ? traceElapsed(entry.end) : "Unknown"}</dd></div>
