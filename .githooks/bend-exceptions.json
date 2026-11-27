@@ -8,6 +8,7 @@
     "collector/codex/rollout-syntax.ts",
     "collector/codex/rollout.ts",
     "collector/codex/otel.ts",
+    "collector/t3-otel/history.ts",
     "collector/t3.ts",
     "collector/wire.ts"
   ],
@@ -64,6 +65,7 @@
   "Synthetic integration fixtures and demo": [
     "collector/changed-code.test.ts",
     "collector/codex/otel.test.ts",
+    "collector/t3-otel/history.test.ts",
     "collector/github/attempt.test.ts",
     "collector/sources.test.ts",
     "dashboard/prepare.test.ts",

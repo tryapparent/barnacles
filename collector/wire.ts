@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
-import { measureOutcomeDelay, type KernelCapture, type List, type Point, type T3Command } from "../evidence/index.ts";
+import { measureOutcomeDelay, type KernelCapture, type List, type Point } from "../evidence/index.ts";
 
 export type ObjectRow = Record<string, unknown>;
 
@@ -260,92 +260,6 @@ export async function stockT3Rpc(origin: URL, bearer: string, tag: string, paylo
   } finally {
     socket.close();
   }
-}
-
-export function stockT3HistoryReader(endpoint: string, credential: string) {
-  const origin = stockT3Origin(endpoint);
-  const secret = boundedFile(credential, 8192).toString("utf8").trim();
-  if (!/^[!-~]+$/.test(secret)) throw Error("Expected a T3 read bearer");
-  const headers = { authorization: `Bearer ${secret}`, "x-t3-orchestration-protocol": "2" };
-  async function get(url: URL, limit: number, timeout: number) {
-    const response = await fetch(url, { headers, redirect: "error", signal: AbortSignal.timeout(timeout) });
-    if (!response.ok) {
-      await response.body?.cancel();
-      throw new SourceReadError(response.status);
-    }
-    return row(await boundedResponse(response, limit).json());
-  }
-
-  async function page(thread: string, cursor: string) {
-    const url = new URL(`/api/orchestration/threads/${encodeURIComponent(thread)}`, origin);
-    url.pathname += cursor ? "/history" : "/bounded";
-    if (cursor) {
-      url.searchParams.set("cursor", cursor);
-      url.searchParams.set("view", "activity");
-    } else {
-      url.searchParams.set("dedupeBodies", "1");
-    }
-    return get(url, 8 * 1024 * 1024, 5000);
-  }
-
-  return { page, async inventory() {
-    const bytes = 64 * 1024 * 1024;
-    const [active, archived] = await Promise.all([
-      get(new URL("/api/orchestration/shell", origin), bytes, 15000),
-      stockT3Rpc(origin, secret, "orchestration.getArchivedShellSnapshot", {}, bytes, 15000),
-    ]);
-    const threads = (snapshot: ObjectRow) => array(snapshot.threads, 50_000).map(input => {
-      const item = row(input);
-      const updated = millis(item.updatedAt) || millis(item.createdAt);
-      return { $: "Target" as const, id: requireStockT3Id(item.id), updated };
-    });
-    return [...threads(active), ...threads(archived)];
-  } };
-}
-
-export type HistoryCodec = {
-  observe(thread: string, kind: string, driver: string, strength: string, item: T3Command):
-    { $: "Invalid" | "Skip" } | { $: "Keep"; command: T3Command };
-  local_row(thread: string, owner: string, visibility: string): boolean;
-  page_valid(previous: string, next: string, more: boolean): boolean;
-  earliest(saved: number, at: number): number;
-};
-
-export function historyPage(policy: HistoryCodec, thread: string, page: ReturnType<typeof row>, cursor: string) {
-  const next = cursor ? page.nextCursor : page.historyCursor;
-  const sequence = page.snapshotSequence;
-  if (!(next === null || typeof next === "string" && next.length <= 4096) ||
-      typeof page.hasMoreHistory !== "boolean" || !policy.page_valid(cursor, next ?? "", page.hasMoreHistory) ||
-      typeof sequence !== "number" || !Number.isInteger(sequence) || sequence < 0 || sequence > 0xffffffff) {
-    throw Error("Invalid stock T3 page coordinates");
-  }
-  let items: unknown[];
-  if (cursor) {
-    items = array(page.items, 4096).map(row)
-      .filter(item => policy.local_row(thread, str(item.sourceThreadId), str(item.visibility)))
-      .map(item => item.item);
-  } else {
-    const projection = row(page.projection);
-    if (row(projection.thread).id !== thread) throw Error("T3 snapshot belongs to another thread");
-    items = array(projection.turnItems, 4096);
-  }
-  const commands: T3Command[] = [];
-  let oldest = 0;
-  for (const input of items) {
-    const item = row(input);
-    const ref = row(item.nativeItemRef ?? {});
-    oldest = policy.earliest(oldest, millis(item.startedAt) || millis(item.completedAt) || millis(item.updatedAt));
-    const result = policy.observe(thread, str(item.type), str(ref.driver), str(ref.strength), {
-      $: "Command", id: stockT3Id(item.id), thread: stockT3Id(item.threadId), run: stockT3Id(item.runId),
-      provider_thread: stockT3Id(item.providerThreadId), provider_turn: stockT3Id(item.providerTurnId),
-      native_item: stockT3Id(ref.nativeId), status: str(item.status),
-      exit_code: Number.isSafeInteger(item.exitCode) ? String(item.exitCode) : "",
-      started: String(millis(item.startedAt)), completed: String(millis(item.completedAt)), updated: String(millis(item.updatedAt)),
-    });
-    if (result.$ === "Invalid") throw Error("Invalid native Codex command in T3 history");
-    if (result.$ === "Keep") commands.push(result.command);
-  }
-  return { sequence, next: next ?? "", oldest, commands };
 }
 
 

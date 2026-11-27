@@ -1,3 +1,5 @@
+import { execFileSync } from "node:child_process";
+import { homedir } from "node:os";
 import { createServer } from "node:http";
 import { DatabaseSync } from "node:sqlite";
 import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
@@ -100,8 +102,52 @@ function serveAnalysis(file: string, port: string) {
   }).listen(Number(port), process.env.PLOW_ANALYSIS_BIND_HOST ?? "127.0.0.1");
 }
 
+function deployT3History(release: string) {
+  const etc = process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config");
+  const settings = process.env.PLOW_T3_DEPLOY_ENV ?? join(etc, "plow-t3-otel", "compose.env");
+  if (!existsSync(settings)) return;
+  const stack = join(resolve(release), "collector/t3-otel/compose.yaml");
+  const docker = (...args: string[]) => execFileSync("docker", ["--context", "rootless", ...args], {
+    encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 180_000, maxBuffer: 4 * 1024 * 1024,
+  }).trim();
+  const project = process.env.PLOW_T3_COMPOSE_PROJECT || "plow-t3-otel";
+  const compose = (file: string, ...args: string[]) =>
+    docker("compose", "--project-name", project, "--env-file", settings, "-f", file, ...args);
+  const config = JSON.parse(compose(stack, "config", "--format", "json"));
+  const service = config.services?.history;
+  if (!service) return;
+  if (service.ports?.length || service.network_mode === "host" || !service.healthcheck) throw Error("Invalid T3 history deployment config");
+  const id = compose(stack, "ps", "-a", "-q", "history");
+  if (!id) throw Error("Expected the installed T3 history service");
+  const previous = JSON.parse(docker("inspect", id))[0];
+  const original = previous.Config.Labels["com.docker.compose.project.config_files"];
+  if (original === stack && previous.State.Health?.Status === "healthy") return;
+  if (!original || !existsSync(original)) throw Error("Missing the installed T3 history release");
+  const tag = previous.Config.Image;
+  const backup = `${project}-history-rollback:latest`;
+  docker("image", "tag", previous.Image, backup);
+  let switching = false;
+  try {
+    compose(stack, "build", "history");
+    switching = true;
+    compose(stack, "up", "--detach", "--no-deps", "--no-build", "--force-recreate", "--wait", "--wait-timeout", "75", "history");
+    console.log("Promoted T3 history from the verified collector release");
+  } catch {
+    docker("image", "tag", backup, tag);
+    if (switching) compose(original, "up", "--detach", "--no-deps", "--no-build", "history");
+    throw Error("T3 history promotion failed");
+  }
+}
+
 if (process.argv[2] === "--analysis-api") {
   serveAnalysis(process.argv[3], process.argv[4]);
+} else if (process.argv[2] === "--deploy-t3-history") {
+  try {
+    deployT3History(process.argv[3]);
+  } catch {
+    console.error("Could not promote the T3 history service");
+    process.exitCode = 1;
+  }
 } else {
   prepare(process.argv.slice(2)).catch((error: Error) => {
     console.error(error.message);
