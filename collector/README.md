@@ -7,7 +7,7 @@ Each adapter extracts bounded provider input and decodes its wire format. Bend2 
 | Source | Initial boundary |
 | --- | --- |
 | T3 | Import metadata from supported thread and PR-link tools. Retain source identity, thread start, status, run clocks, explicit PR links, and origin when established. Accept an optional thread title for private Harbor review. Omit messages. |
-| Codex | Read selected local rollouts. Pair stable call and result IDs and preserve a separate endpoint for a correlated async process. Discard raw arguments and outputs after deriving timing. |
+| Codex | Read selected local rollouts. Pair stable call and result IDs and preserve a separate endpoint for a correlated async process. [Live OpenTelemetry traces](codex/README.md) have their own intake and evidence tables. |
 | GitHub | Read PR and commit metadata, exact Actions attempts and jobs, and release assets. Check tag ancestry where applicable. Verify the intended asset with a bounded anonymous range request when the surface is public. Store publication and access observation timestamps. |
 | Local Git | Read commit IDs and changed paths reachable from one revision. Emit a local Changed Code Analysis report. |
 
