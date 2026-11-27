@@ -158,6 +158,9 @@ type ReplayPolicy = {
     allocated: number, capacity: number): unknown;
   observe_hosted_apt(state: unknown, thread: string, id: string, conclusion: string, exitCode: number,
     httpStatus: number, archive: string, summary: string): unknown;
+  observe_local_admission_timeout(state: unknown, thread: string, id: string, exitCode: number, line: string): unknown;
+  observe_hosted_publish(state: unknown, thread: string, id: string, publisher: string, conclusion: string,
+    exitCode: number, status: number, line: string): unknown;
   observe_job_result(state: unknown, thread: string, id: string, conclusion: string): unknown;
   observe_diagnostic(state: unknown, thread: string, id: string, line: string, failed: boolean): unknown;
   replay_files(state: unknown): List<Record<string, unknown>>;
@@ -224,6 +227,12 @@ async function replayBottlenecks(file: string, scratch: string) {
       } else if (value.kind === "hosted-apt-result") {
         state = policy.observe_hosted_apt(state, token(value.thread), id, token(value.conclusion),
           clockSecond(value.exitCode), clockSecond(value.httpStatus), factText(value.archive), factText(value.summary));
+      } else if (value.kind === "local-admission-timeout") {
+        state = policy.observe_local_admission_timeout(state, token(value.thread), id, clockSecond(value.exitCode),
+          factText(value.line));
+      } else if (value.kind === "hosted-publish-result") {
+        state = policy.observe_hosted_publish(state, token(value.thread), id, token(value.publisher),
+          token(value.conclusion), clockSecond(value.exitCode), clockSecond(value.status), factText(value.line));
       } else if (value.kind === "job-result") {
         state = policy.observe_job_result(state, token(value.thread), id, token(value.conclusion));
       } else if (value.kind === "diagnostic") {

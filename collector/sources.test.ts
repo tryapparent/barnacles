@@ -598,6 +598,13 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       summary: "E: Unable to fetch some archives, maybe run apt-get update or try with --fix-missing?" };
     const width = { ...diagnostic, id: "width",
       line: "pre-commit: staged candidate exceeds the directory-width limit:" };
+    const admissionTimeout = { kind: "local-admission-timeout", thread: "t", id: "admission-timeout", exitCode: 124,
+      line: "t3-build: timed out waiting for admission" };
+    const artifactConflict = { kind: "hosted-publish-result", thread: "t", id: "artifact-conflict",
+      publisher: "onboarding-release", conclusion: "failure", exitCode: 1, status: 0,
+      line: "Error: Onboarding release onboarding-v1.2.3 exists with a different or unfinished artifact" };
+    const uploadError = { ...artifactConflict, id: "upload-error", publisher: "github-release-assets", status: 500,
+      line: "HTTP 500 (https://uploads.github.com/repos/example/capture/releases/123/assets)" };
     const facts = [
       admission, admission,
       { ...admission, id: "superseded", annotation: "Canceling since a higher priority waiting request exists" },
@@ -646,6 +653,17 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       { ...apt, id: "recovered-apt", conclusion: "success" },
       { ...apt, id: "unrelated-summary", summary: "E: Invalid signature" },
       width, width, { ...width, id: "width-copy", failed: false },
+      admissionTimeout, admissionTimeout,
+      { ...admissionTimeout, id: "wrong-exit", exitCode: 1 },
+      { ...admissionTimeout, id: "build-timeout", line: "t3-build: command timed out" },
+      artifactConflict, artifactConflict,
+      { ...artifactConflict, id: "resolved-publish", conclusion: "success" },
+      { ...artifactConflict, id: "unrelated-publish", line: "Error: Onboarding release is unavailable" },
+      uploadError, uploadError,
+      { ...uploadError, id: "other-server", line: "HTTP 500 (https://example.org/repos/example/capture/releases/123/assets)" },
+      { ...uploadError, id: "status-mismatch", status: 503 },
+      { ...uploadError, id: "other-api-route", line: "HTTP 500 (https://uploads.github.com/repos/example/capture/actions/123/assets)" },
+      { ...uploadError, id: "upload-accepted", exitCode: 0 },
       read, read, { ...read, id: "b", at: 160 }, { ...read, thread: "t2", at: 170 },
       timing, timing, { ...timing, id: "unpaired", end: 0 },
       attempt, { ...attempt, id: "changed", key: "gate:v2", start: 115, end: 120, failed: false, succeeded: true },
@@ -670,6 +688,7 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       ["ci-hosted-admission-failure", "ci-job-failure", "ci-job-timeout", "staged-verification-prerequisite",
         "pr-merge-conflict-observed", "pr-merge-conflict-observed", "pr-create-http-server-error",
         "ci-job-rerun-rejected", "local-build-admission-slow", "ci-apt-package-not-found", "staged-directory-width",
+        "local-build-admission-timeout", "ci-onboarding-release-artifact-conflict", "ci-release-upload-server-error",
         "recovered-attempt", "runner"]);
     assert.ok(!first.includes("installed tools"));
     assert.ok(!first.includes("#42:"));
@@ -678,6 +697,7 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       ["run:7:job", "", 0, 0], ["run:2:job", "", 0, 0], ["run:4:job", "", 0, 0], ["checker", "", 0, 0],
       ["notice-1", "", 0, 0], ["notice-2", "", 0, 0], ["request", "", 0, 0], ["rerun", "", 0, 0],
       ["local-admission", "", 64, 0], ["apt-step", "", 0, 0], ["width", "", 0, 0],
+      ["admission-timeout", "", 0, 0], ["artifact-conflict", "", 0, 0], ["upload-error", "", 0, 0],
       ["recovered", "first", 20, 0], ["tail", "", 250, 10],
     ]);
   } finally {

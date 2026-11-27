@@ -247,6 +247,28 @@ def observe_hosted_apt(state: Replay, thread: String, id: String, conclusion: St
   +missing = Bool.and(U32.is_eq(http_status, 404), String.starts_with(summary, "E: Unable to fetch some archives"))
   observe_failure(state, thread, id, "ci-apt-package-not-found", Bool.and(failed, Bool.and(package, missing)))
 
+def observe_local_admission_timeout(state: Replay, thread: String, id: String, exit_code: U32, line: String) -> Replay:
+  +timeout = Bool.and(U32.is_eq(exit_code, 124),
+    String.eq(String.trim(line), "t3-build: timed out waiting for admission"))
+  observe_failure(state, thread, id, "local-build-admission-timeout", timeout)
+
+def publication_label(+publisher: String, +line: String, +status: U32) -> String:
+  +onboarding = Bool.and(String.eq(publisher, "onboarding-release"), Bool.and(U32.is_eq(status, 0),
+    Bool.and(String.starts_with(line, "Error: Onboarding release onboarding-v"),
+      String.ends_with(line, " exists with a different or unfinished artifact"))))
+  +upload = Bool.and(String.eq(publisher, "github-release-assets"),
+    Bool.and(U32.is_ge(status, 500), U32.is_lt(status, 600)))
+  +http_prefix = String.append("HTTP ", String.append(Nat.show(U32.to_nat(status)), " (https://uploads.github.com/repos/"))
+  +upload_line = Bool.and(String.starts_with(line, http_prefix), Bool.and(String.contains(line, "/releases/"),
+    String.ends_with(line, "/assets)")))
+  Bool.pick(String, onboarding, "ci-onboarding-release-artifact-conflict",
+    Bool.pick(String, Bool.and(upload, upload_line), "ci-release-upload-server-error", ""))
+
+def observe_hosted_publish(state: Replay, thread: String, id: String, publisher: String, conclusion: String,
+  exit_code: U32, status: U32, line: String) -> Replay:
+  +failed = Bool.and(String.eq(conclusion, "failure"), U32.is_eq(exit_code, 1))
+  observe_failure(state, thread, id, publication_label(publisher, String.trim(line), status), failed)
+
 def replay_files(state: Replay) -> List<&2, FileTotal>:
   match state:
     case Replay{_, files, _, _, _, _, _}: Map.values(&2, FileTotal, files)
