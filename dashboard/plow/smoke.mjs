@@ -77,7 +77,7 @@ try {
     assert.equal((await header.boundingBox()).width, width)
     assert.equal(await header.getByRole('heading', { level: 1 }).innerText(), 'Thread activity')
     assert.equal(await header.getByText('plow', { exact: true }).isVisible(), true)
-    assert.equal(await header.getByText('Sample data', { exact: true }).isVisible(), true)
+    assert.match(await header.locator('#feed-cutoff').innerText(), /Observed through .* UTC/)
     await header.locator('img').evaluate(image => image.decode())
     const screenshot = async name => {
       if (process.env.PLOW_SCREENSHOTS) await page.screenshot({ path: resolve(directory, `${width}-${name}.png`), fullPage: true })
@@ -94,7 +94,6 @@ try {
     assert.match(await total.innerText(), /43h 24m across 10 threads/)
     assert.equal(await fit.isDisabled(), true)
     await screenshot('overview')
-    assert.match(await page.locator('#feed-cutoff').innerText(), /Observed through .* UTC/)
     await summary.getByRole('button', { name: /Admission wait/ }).focus()
     await page.keyboard.press('Enter')
     assert.match(await total.innerText(), /28h 12m across 10 threads/)
