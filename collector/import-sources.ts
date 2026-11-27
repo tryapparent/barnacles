@@ -161,6 +161,13 @@ type ReplayPolicy = {
   observe_local_admission_timeout(state: unknown, thread: string, id: string, exitCode: number, line: string): unknown;
   observe_hosted_publish(state: unknown, thread: string, id: string, publisher: string, conclusion: string,
     exitCode: number, status: number, line: string): unknown;
+  observe_benchmark_marker(state: unknown, thread: string, id: string, lane: string, conclusion: string,
+    exitCode: number, sameBuild: boolean, line: string, started: number, ended: number): unknown;
+  observe_benchmark_pressure(state: unknown, thread: string, id: string, lane: string, source: string, conclusion: string,
+    exitCode: number, sameBuild: boolean, qualified: boolean, scorePresent: boolean, pressureRejected: boolean,
+    started: number, ended: number): unknown;
+  observe_hosted_deploy(state: unknown, thread: string, id: string, service: string, conclusion: string,
+    exitCode: number, line: string, phaseLine: string, accepted: boolean): unknown;
   observe_job_result(state: unknown, thread: string, id: string, conclusion: string): unknown;
   observe_diagnostic(state: unknown, thread: string, id: string, line: string, failed: boolean): unknown;
   replay_files(state: unknown): List<Record<string, unknown>>;
@@ -233,6 +240,17 @@ async function replayBottlenecks(file: string, scratch: string) {
       } else if (value.kind === "hosted-publish-result") {
         state = policy.observe_hosted_publish(state, token(value.thread), id, token(value.publisher),
           token(value.conclusion), clockSecond(value.exitCode), clockSecond(value.status), factText(value.line));
+      } else if (value.kind === "benchmark-marker") {
+        state = policy.observe_benchmark_marker(state, token(value.thread), id, token(value.lane),
+          token(value.conclusion), clockSecond(value.exitCode), bendBool(value.sameBuild), factText(value.line),
+          clockSecond(value.started), clockSecond(value.ended));
+      } else if (value.kind === "benchmark-pressure") {
+        state = policy.observe_benchmark_pressure(state, token(value.thread), id, token(value.lane), token(value.source),
+          token(value.conclusion), clockSecond(value.exitCode), bendBool(value.sameBuild), bendBool(value.qualified),
+          bendBool(value.scorePresent), bendBool(value.pressureRejected), clockSecond(value.started), clockSecond(value.ended));
+      } else if (value.kind === "hosted-deploy-result") {
+        state = policy.observe_hosted_deploy(state, token(value.thread), id, token(value.service),
+          token(value.conclusion), clockSecond(value.exitCode), factText(value.line), factText(value.phaseLine), bendBool(value.accepted));
       } else if (value.kind === "job-result") {
         state = policy.observe_job_result(state, token(value.thread), id, token(value.conclusion));
       } else if (value.kind === "diagnostic") {

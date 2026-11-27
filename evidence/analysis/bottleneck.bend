@@ -269,6 +269,52 @@ def observe_hosted_publish(state: Replay, thread: String, id: String, publisher:
   +failed = Bool.and(String.eq(conclusion, "failure"), U32.is_eq(exit_code, 1))
   observe_failure(state, thread, id, publication_label(publisher, String.trim(line), status), failed)
 
+def observe_benchmark_failure(+state: Replay, thread: String, +id: String, lane: String, label: String, valid: Bool,
+  start: U32, end: U32) -> Replay:
+  Bool.pick(Replay, valid,
+    observe_failure(observe_timing(state, id, "ci-benchmark-owner-step", lane, start, end), thread, id, label, True{}),
+    state)
+
+def observed_calibration_failure(conclusion: String, exit_code: U32, same_build: Bool) -> Bool:
+  Bool.and(same_build, Bool.and(String.eq(conclusion, "failure"), U32.is_eq(exit_code, 1)))
+
+def observe_benchmark_marker(state: Replay, thread: String, id: String, +lane: String, conclusion: String,
+  exit_code: U32, same_build: Bool, +line: String, start: U32, end: U32) -> Replay:
+  +marker = Bool.or(String.eq(line, "Error: Startup benchmark timed out at painted recording marker"),
+    String.eq(line, "Error: Startup benchmark timed out at revision-specific frame acknowledgement"))
+  +failed = observed_calibration_failure(conclusion, exit_code, same_build)
+  +valid = Bool.and(failed, Bool.and(String.eq(lane, "record-start"), marker))
+  observe_benchmark_failure(state, thread, id, lane, "ci-benchmark-calibration-marker-timeout", valid, start, end)
+
+def observe_benchmark_pressure(state: Replay, thread: String, id: String, +lane: String, +source: String,
+  conclusion: String, exit_code: U32, same_build: Bool, qualified: Bool, score_present: Bool, pressure_rejected: Bool,
+  start: U32, end: U32) -> Replay:
+  +start_source = Bool.and(String.eq(lane, "record-start"), String.eq(source, "calibration-artifact"))
+  +stop_source = Bool.and(String.eq(lane, "record-stop"), String.eq(source, "stop-result"))
+  +rejected = Bool.and(pressure_rejected, Bool.not(Bool.or(qualified, score_present)))
+  +failed = observed_calibration_failure(conclusion, exit_code, same_build)
+  +valid = Bool.and(failed, Bool.and(Bool.or(start_source, stop_source), rejected))
+  observe_benchmark_failure(state, thread, id, lane, "ci-benchmark-calibration-pressure-rejected", valid, start, end)
+
+def deployment_label(+service: String, +line: String, +phase_line: String, accepted: Bool) -> String:
+  +admission_frame = Bool.and(String.starts_with(phase_line, "at admission (file:"),
+    String.contains(phase_line, "/connect/tooling/hosting/scripts/deploy.ts:"))
+  +readback_frame = Bool.and(String.starts_with(phase_line, "at async verifyReady (file:"),
+    String.contains(phase_line, "/public/enablement/cd/publish-pages.ts:"))
+  +superseded = Bool.and(String.eq(service, "connect-worker"),
+    Bool.and(String.eq(line, "AssertionError [ERR_ASSERTION]: Candidate superseded by affected main changes"),
+      admission_frame))
+  +timeout = Bool.and(String.eq(service, "public-pages"), Bool.and(accepted,
+    Bool.and(String.eq(line, "DOMException [TimeoutError]: The operation was aborted due to timeout"),
+      readback_frame)))
+  Bool.pick(String, superseded, "ci-deployment-candidate-superseded",
+    Bool.pick(String, timeout, "ci-deployment-readback-timeout", ""))
+
+def observe_hosted_deploy(state: Replay, thread: String, id: String, service: String, conclusion: String,
+  exit_code: U32, line: String, phase_line: String, accepted: Bool) -> Replay:
+  +failed = Bool.and(String.eq(conclusion, "failure"), U32.is_eq(exit_code, 1))
+  observe_failure(state, thread, id, deployment_label(service, String.trim(line), String.trim(phase_line), accepted), failed)
+
 def replay_files(state: Replay) -> List<&2, FileTotal>:
   match state:
     case Replay{_, files, _, _, _, _, _}: Map.values(&2, FileTotal, files)

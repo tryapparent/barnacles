@@ -605,6 +605,19 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       line: "Error: Onboarding release onboarding-v1.2.3 exists with a different or unfinished artifact" };
     const uploadError = { ...artifactConflict, id: "upload-error", publisher: "github-release-assets", status: 500,
       line: "HTTP 500 (https://uploads.github.com/repos/example/capture/releases/123/assets)" };
+    const markerTimeout = { kind: "benchmark-marker", thread: "t", id: "marker", lane: "record-start",
+      conclusion: "failure", exitCode: 1, sameBuild: true, started: 200, ended: 370,
+      line: "Error: Startup benchmark timed out at painted recording marker" };
+    const pressureRejected = { kind: "benchmark-pressure", thread: "t", id: "pressure", lane: "record-stop",
+      conclusion: "failure", exitCode: 1, sameBuild: true, started: 200, ended: 1500,
+      source: "stop-result", qualified: false, scorePresent: false, pressureRejected: true };
+    const superseded = { kind: "hosted-deploy-result", thread: "t", id: "superseded-deploy", service: "connect-worker",
+      conclusion: "failure", exitCode: 1, accepted: false,
+      line: "AssertionError [ERR_ASSERTION]: Candidate superseded by affected main changes",
+      phaseLine: "at admission (file:///test/connect/tooling/hosting/scripts/deploy.ts:45:10)" };
+    const readback = { ...superseded, id: "readback-timeout", service: "public-pages", accepted: true,
+      line: "DOMException [TimeoutError]: The operation was aborted due to timeout",
+      phaseLine: "at async verifyReady (file:///test/public/enablement/cd/publish-pages.ts:230:18)" };
     const facts = [
       admission, admission,
       { ...admission, id: "superseded", annotation: "Canceling since a higher priority waiting request exists" },
@@ -664,6 +677,22 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       { ...uploadError, id: "status-mismatch", status: 503 },
       { ...uploadError, id: "other-api-route", line: "HTTP 500 (https://uploads.github.com/repos/example/capture/actions/123/assets)" },
       { ...uploadError, id: "upload-accepted", exitCode: 0 },
+      markerTimeout, markerTimeout,
+      { ...markerTimeout, id: "acknowledgement", line: "Error: Startup benchmark timed out at revision-specific frame acknowledgement" },
+      { ...markerTimeout, id: "noncalibration", sameBuild: false },
+      { ...markerTimeout, id: "different-marker", line: "Error: Startup benchmark timed out at something else" },
+      pressureRejected, pressureRejected,
+      { ...pressureRejected, id: "artifact-pressure", lane: "record-start", source: "calibration-artifact" },
+      { ...pressureRejected, id: "unrelated-source", source: "narrative" },
+      { ...pressureRejected, id: "zero-score", scorePresent: true },
+      { ...pressureRejected, id: "qualified", qualified: true },
+      { ...pressureRejected, id: "permitted-pressure", pressureRejected: false },
+      superseded, superseded,
+      { ...superseded, id: "wrong-boundary", phaseLine: "at release (file:///test/connect/tooling/hosting/scripts/deploy.ts:45:10)" },
+      readback, readback,
+      { ...readback, id: "pre-upload", accepted: false },
+      { ...readback, id: "no-timeout", line: "TypeError: fetch failed" },
+      { ...readback, id: "failed-probe-recovered", conclusion: "success" },
       read, read, { ...read, id: "b", at: 160 }, { ...read, thread: "t2", at: 170 },
       timing, timing, { ...timing, id: "unpaired", end: 0 },
       attempt, { ...attempt, id: "changed", key: "gate:v2", start: 115, end: 120, failed: false, succeeded: true },
@@ -680,7 +709,10 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
     assert.equal(replay(facts), first);
     const result = JSON.parse(first);
     assert.deepEqual(result.files, [{ $: "FileTotal", path: "README.md", requests: 3, threads: 2, revisits: 1 }]);
-    assert.deepEqual(result.costs, [
+    assert.deepEqual(result.costs.sort((a: { clock: string; operation: string }, b: { clock: string; operation: string }) =>
+      a.clock.localeCompare(b.clock) || a.operation.localeCompare(b.operation)), [
+      { $: "Cost", clock: "ci-benchmark-owner-step", operation: "record-start", count: 3, seconds: 1640, unknown: 0 },
+      { $: "Cost", clock: "ci-benchmark-owner-step", operation: "record-stop", count: 1, seconds: 1300, unknown: 0 },
       { $: "Cost", clock: "local-build-admission", operation: "t3-build", count: 2, seconds: 123, unknown: 0 },
       { $: "Cost", clock: "runner", operation: "build", count: 1, seconds: 129, unknown: 1 },
     ]);
@@ -689,6 +721,9 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
         "pr-merge-conflict-observed", "pr-merge-conflict-observed", "pr-create-http-server-error",
         "ci-job-rerun-rejected", "local-build-admission-slow", "ci-apt-package-not-found", "staged-directory-width",
         "local-build-admission-timeout", "ci-onboarding-release-artifact-conflict", "ci-release-upload-server-error",
+        "ci-benchmark-calibration-marker-timeout", "ci-benchmark-calibration-marker-timeout",
+        "ci-benchmark-calibration-pressure-rejected", "ci-benchmark-calibration-pressure-rejected",
+        "ci-deployment-candidate-superseded", "ci-deployment-readback-timeout",
         "recovered-attempt", "runner"]);
     assert.ok(!first.includes("installed tools"));
     assert.ok(!first.includes("#42:"));
@@ -698,6 +733,8 @@ test("bottleneck replay separates clocks, distinct peers and observed recoveries
       ["notice-1", "", 0, 0], ["notice-2", "", 0, 0], ["request", "", 0, 0], ["rerun", "", 0, 0],
       ["local-admission", "", 64, 0], ["apt-step", "", 0, 0], ["width", "", 0, 0],
       ["admission-timeout", "", 0, 0], ["artifact-conflict", "", 0, 0], ["upload-error", "", 0, 0],
+      ["marker", "", 0, 0], ["acknowledgement", "", 0, 0], ["pressure", "", 0, 0], ["artifact-pressure", "", 0, 0],
+      ["superseded-deploy", "", 0, 0], ["readback-timeout", "", 0, 0],
       ["recovered", "first", 20, 0], ["tail", "", 250, 10],
     ]);
   } finally {
