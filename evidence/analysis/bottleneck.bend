@@ -119,9 +119,44 @@ def observe_attempt(+state: Replay, +thread: String, +id: String, key: String, +
   match state:
     case Replay{_, _, _, _, attempts, _, _}:
       +event = pair("attempt", pair(thread, id))
-      +target = pair(thread, key)
+      +target = pair("attempt", pair(thread, key))
       update_attempt(state, thread, id, start, end, failed, succeeded, event, target,
         found(~Attempt, Map.get(Attempt, Attempt{"", 0, 0, False{}}, attempts, target)))
+
+def update_repeat(state: Replay, thread: String, +id: String, label: String, +start: U32, end: U32,
+  seconds: U32, valid: Bool, +target: String, +event: String, prior: Attempt) -> Replay:
+  match state prior:
+    case Replay{+seen, +files, +reads, +costs, +attempts, +cohorts, +findings} Attempt{previous, _, +last_end, _}:
+      +ordered = Bool.and(U32.is_gt(start, 0), U32.is_ge(start, last_end))
+      +accept = Bool.and(valid, Bool.and(ordered, Bool.not(includes(seen, event))))
+      Bool.pick(Replay, accept,
+        Replay{Map.set(&2, Bool, seen, event, True{}), files, reads, costs,
+          Map.set(&2, Attempt, attempts, target, Attempt{id, start, end, False{}}), cohorts,
+          Bool.pick(List<&2, Finding>, U32.is_gt(last_end, 0),
+            Finding{label, thread, id, previous, seconds, 0, 0, 0} <> findings, findings)},
+        Replay{seen, files, reads, costs, attempts, cohorts, findings})
+
+def observe_repeat(+state: Replay, +thread: String, id: String, +label: String, scope: String, execution: String,
+  start: U32, end: U32, seconds: U32, valid: Bool) -> Replay:
+  match state:
+    case Replay{_, _, _, _, attempts, _, _}:
+      +target = pair("repeat", pair(label, pair(thread, scope)))
+      update_repeat(state, thread, id, label, start, end, seconds, valid, target, pair(target, execution),
+        found(~Attempt, Map.get(Attempt, Attempt{"", 0, 0, False{}}, attempts, target)))
+
+def observe_hosted_test_failure(state: Replay, thread: String, id: String, scope: String, lane: String,
+  test: String, execution: String, conclusion: String, +at: U32) -> Replay:
+  observe_repeat(state, thread, id, "ci-test-failure-repeated", pair(scope, pair(lane, test)), execution,
+    at, at, 0, String.eq(conclusion, "failure"))
+
+def observe_package_build(state: Replay, thread: String, +id: String, scope: String, +tool: String,
+  digest: String, +assets: U32, reported_ms: U32, +start: U32, +end: U32) -> Replay:
+  +seconds = U32.div(reported_ms, 1000)
+  +within_span = U32.is_ge(U32.sub(end, start), U32.sub(seconds, 1))
+  +closed = Bool.and(U32.is_ge(end, start), Bool.and(U32.is_gt(seconds, 0), within_span))
+  +valid = Bool.and(String.eq(tool, "vite-production-client"), Bool.and(U32.is_gt(assets, 0), closed))
+  observe_repeat(state, thread, id, "ci-package-build-repeated",
+    pair(scope, pair(tool, pair(digest, U32.show(assets)))), id, start, end, seconds, valid)
 
 def earlier_peers(peers: List<&2, Peer>, +revision: String, +start: U32) -> List<&2, U32>:
   match peers:
