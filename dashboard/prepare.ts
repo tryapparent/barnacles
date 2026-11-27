@@ -10,8 +10,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 import { snapshotFormatVersion, writeSnapshot } from "../evidence/read.ts";
-import { buildPolicy, loadPolicy } from "../tooling/bend.ts";
-import { accessVerifier } from "./plow/worker.mjs";
+import { buildPolicies, loadPolicy } from "../tooling/bend.ts";
+import { accessVerifier, feedPayload } from "./plow/worker.mjs";
 
 function validateSnapshot(directory: string) {
   const path = join(directory, "snapshot.json");
@@ -85,8 +85,43 @@ function readAnalysis(file: string, thread?: string): string | undefined {
   }
 }
 
-type Tool = { name: string; description: string; thread: boolean };
+type Tool = { name: string; description: string; input: { $: "Bottlenecks" | "Thread" | "Timeline" | "Charts" } };
 type ToolList = { $: "Con"; head: Tool; tail: ToolList } | { $: "Nil" };
+
+type TimelineRow = {
+  startUtcMs: number;
+  end: number;
+  work: [number, number, string][];
+  wait: [number, number, string][];
+  detail?: [number, number, string][];
+};
+type Charts = { charts(rows: unknown, end: number): object };
+type BendList = { $: "Con"; head: unknown; tail: BendList } | { $: "Nil" };
+const bendList = (items: unknown[]) =>
+  items.reduceRight<BendList>((tail, head) => ({ $: "Con", head, tail }), { $: "Nil" });
+
+function chartJson(_key: string, value: unknown) {
+  const list = value as BendList | undefined;
+  if (list?.$ !== "Con" && list?.$ !== "Nil") return value;
+  const entries = [];
+  for (let next = list; next.$ === "Con"; next = next.tail) entries.push(next.head);
+  return entries;
+}
+
+function dashboardData(feedFile: string, type: "Timeline" | "Charts", policy: Charts) {
+  const feed = JSON.parse(feedPayload(readFileSync(feedFile, "utf8")));
+  if (feed.unavailable) return;
+  const { observed, traces, overview } = feed;
+  if (type === "Timeline") return JSON.stringify({ observed, traces });
+  const millis = (seconds: number) => Math.round(seconds * 1000);
+  const rows = (overview?.traces ?? traces).map((row: TimelineRow, index: number) => {
+    const intervals = (clock: [number, number, string][], kind: number) =>
+      clock.map(([a, b, name]) => ({ $: "Interval", a: millis(a), b: millis(b), name, kind }));
+    return { $: "ChartRow", index: index + 1, start: row.startUtcMs, duration: millis(row.end),
+      intervals: bendList([...intervals(row.work, 2), ...intervals(row.detail ?? [], 3), ...intervals(row.wait, 1)]) };
+  });
+  return JSON.stringify({ observed, ...policy.charts(bendList(rows), overview?.to ?? observed) }, chartJson);
+}
 
 async function analysisMcp(file: string) {
   const { PLOW_MCP_ACCESS_TEAM: team, PLOW_MCP_ACCESS_AUDIENCE: audience } = process.env;
@@ -99,12 +134,18 @@ async function analysisMcp(file: string) {
   const verify = accessVerifier(jwtVerify, keys, issuer, audience);
   const scratch = mkdtempSync(join(tmpdir(), "apparent-dev-plow-mcp-"));
   let tools: ToolList;
+  let charts: Charts;
   try {
-    const policy = await buildPolicy(scratch, new URL("../mcp/tools.bend", import.meta.url), "tools.mjs");
-    tools = (await loadPolicy<{ tools(): ToolList }>(policy)).tools();
+    const [toolPolicy, chartPolicy] = await buildPolicies(scratch, [
+      [new URL("../mcp/tools.bend", import.meta.url), "tools.mjs"],
+      [new URL("../mcp/charts.bend", import.meta.url), "charts.mjs"],
+    ]);
+    tools = (await loadPolicy<{ tools(): ToolList }>(toolPolicy)).tools();
+    charts = await loadPolicy<Charts>(chartPolicy);
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
+  const feedFile = process.env.PLOW_MCP_FEED_FILE ?? "/dashboard-feed/timeline.json";
   return async (request: import("node:http").IncomingMessage, response: import("node:http").ServerResponse) => {
     response.setHeader("Cache-Control", "private, no-store");
     if (request.headers.origin && request.headers.origin !== "https://plow.tryapparent.com") {
@@ -115,20 +156,24 @@ async function analysisMcp(file: string) {
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     response.once("close", () => void server.close());
     for (let list = tools; list.$ === "Con"; list = list.tail) {
-      const { name, description, thread } = list.head;
+      const { name, description, input } = list.head;
+      const kind = input.$;
       server.registerTool(name, {
-        description, inputSchema: thread ? { threadId: z.string().regex(threadId) } : {},
+        description, inputSchema: kind === "Thread" ? { threadId: z.string().regex(threadId) } : {},
         annotations: { readOnlyHint: true, openWorldHint: false },
       }, args => {
         const id = "threadId" in args ? args.threadId : undefined;
         try {
-          const payload = readAnalysis(file, id);
+          const payload = kind === "Charts" || kind === "Timeline"
+            ? dashboardData(feedFile, kind, charts)
+            : readAnalysis(file, id);
           if (payload) {
             return { content: [{ type: "text", text: payload }], structuredContent: JSON.parse(payload) };
           }
           if (id) return { isError: true, content: [{ type: "text", text: "Thread is absent from the current analysis." }] };
         } catch {}
-        return { isError: true, content: [{ type: "text", text: "Plow analysis is unavailable." }] };
+        const message = kind === "Charts" || kind === "Timeline" ? "Dashboard activity is unavailable." : "Plow analysis is unavailable.";
+        return { isError: true, content: [{ type: "text", text: message }] };
       });
     }
     await server.connect(transport);

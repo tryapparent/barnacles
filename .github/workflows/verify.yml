@@ -24,6 +24,7 @@ jobs:
           node --input-type=module <<'JS'
           import assert from "node:assert/strict";
           import { once } from "node:events";
+          import { writeFileSync } from "node:fs";
           import { join } from "node:path";
           import { DatabaseSync } from "node:sqlite";
           import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -47,6 +48,8 @@ jobs:
           const summary = { analyzedAt: "2026-01-01T00:00:00.000Z", coverage: { active: 1 }, threads: [{ id }] };
           const thread = { id, coverage: { codexSpans: 0 }, costs: [] };
           const file = join(process.env.PLOW_TEST_DIRECTORY, "analysis.sqlite");
+          const feedFile = join(process.env.PLOW_TEST_DIRECTORY, "timeline.json");
+          process.env.PLOW_MCP_FEED_FILE = feedFile;
           const db = new DatabaseSync(file);
           db.exec("CREATE TABLE analysis_summary(id, payload); CREATE TABLE analysis_threads(id, payload)");
           db.prepare("INSERT INTO analysis_summary VALUES(1, ?)").run(JSON.stringify(summary));
@@ -75,12 +78,28 @@ jobs:
             assert.deepEqual(await rest.json(), summary);
             await client.connect(new StreamableHTTPClientTransport(endpoint, { requestInit: { headers } }));
             assert.deepEqual((await client.listTools()).tools.map(tool => tool.name),
-              ["get_plow_bottlenecks", "get_plow_thread"]);
+              ["get_plow_bottlenecks", "get_plow_thread", "get_plow_timeline", "get_plow_charts"]);
             const call = (name, args) => client.callTool({ name, arguments: args });
             assert.deepEqual((await call("get_plow_bottlenecks", {})).structuredContent, summary);
             assert.deepEqual((await call("get_plow_thread", { threadId: id })).structuredContent, thread);
             assert.equal((await call("get_plow_thread", { threadId: "b".repeat(24) })).isError, true);
             assert.equal((await call("get_plow_thread", { threadId: "invalid" })).isError, true);
+            assert.equal((await call("get_plow_timeline", {})).isError, true);
+            const to = 1767225600000;
+            const observed = to + 60000;
+            const trace = { startUtcMs: to - 60000, end: 60, work: [[0, 45, "Provider run"]],
+              wait: [[45, 60, "Admission wait"]], errors: [50] };
+            writeFileSync(feedFile, JSON.stringify({ observed, traces: [], overview: { to, traces: [trace] } }));
+            assert.deepEqual((await call("get_plow_timeline", {})).structuredContent, { observed, traces: [] });
+            const charts = (await call("get_plow_charts", {})).structuredContent;
+            assert.equal(charts.observed, observed);
+            assert.equal(charts.to, to);
+            assert.equal(charts.from, to - 86400000);
+            assert.equal(charts.time_summary.duration, 60000);
+            assert.equal(charts.agent_work_trend.length, 6);
+            assert.equal(charts.agent_work_trend.at(-1).basis_points, 7500);
+            writeFileSync(feedFile, JSON.stringify({ observed, traces: [trace] }));
+            assert.deepEqual((await call("get_plow_timeline", {})).structuredContent, { observed, traces: [trace] });
           } finally {
             await client.close();
             server.closeAllConnections();

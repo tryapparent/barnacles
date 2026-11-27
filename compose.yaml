@@ -95,6 +95,12 @@ services:
       - "127.0.0.1:${PLOW_ANALYSIS_PORT:-15480}:8080"
     volumes:
       - analysis:/analysis:ro
+      - type: bind
+        source: ${PLOW_MCP_FEED_DIR:-./mcp}
+        target: /dashboard-feed
+        read_only: true
+        bind:
+          create_host_path: false
 
 volumes:
   analysis:
