@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent } from "react";
 import { createRoot } from "react-dom/client";
 import {
-  dayLabel, deliveryPage, fetchEvidence, milestoneLabel, pagePath,
+  dayLabel, fetchEvidence, milestoneLabel, pagePath,
   shippingPath, stageLabel, stages, utcLabel, durationMillis, processMillis,
   changePolicy, changeValues, changeTree, countLabel,
   type ChangeReview, type ChangeNode, type ChangeFile, type Detail, type Milestone, type ProcessCapture, type Review,
@@ -253,50 +253,37 @@ function PullRequestEvidence({ path, milestones }: { path: string; milestones: M
   </>;
 }
 
+function SelectedPullRequestEvidence({ number, cutoff }: { number: number; cutoff: string }) {
+  const heading = useRef<HTMLHeadingElement>(null);
+  const path = `/api/v1/pull-requests/${number}?asOf=${encodeURIComponent(cutoff)}`;
+  const { result, retry } = useEvidence<Detail>(path);
+  const detail = result.state === "ready" ? result.data : null;
+  useEffect(() => {
+    heading.current?.scrollIntoView({ block: "start" });
+    heading.current?.focus({ preventScroll: true });
+  }, []);
+  return <section className="selected-delivery" aria-labelledby={`delivery-pr-${number}`}>
+    <h3 ref={heading} id={`delivery-pr-${number}`} tabIndex={-1}>{detail?.title ?? `PR #${number}`}</h3>
+    {result.state === "loading" && <p className="fine" role="status">Loading PR evidence…</p>}
+    {result.state === "error" && <div className="detail-links" role="alert"><p>{result.message}</p>
+      <Button onClick={retry}>Retry PR details</Button></div>}
+    {detail && <>
+      <Waterfall milestones={detail.milestones} />
+      <div className="detail-links"><a href={detail.pullRequestUrl}>Open PR on GitHub</a><a href={path}>PR evidence JSON</a></div>
+    </>}
+  </section>;
+}
+
 function DeliveryTimeline({ review, selection }: { review: Review; selection: { pr: number | null; revision: number } }) {
   const selected = selection.pr;
-  const [pages, setPages] = useState(review.deliveries);
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-  const sentinel = useRef<HTMLDivElement>(null);
-  const request = useRef<AbortController | null>(null);
-  const { items, offset, nextOffset } = pages;
-  const bounds = pages.timeline ?? review.window;
-  const start = Date.parse(bounds.from);
-  const end = Date.parse(bounds.to);
+  const { items } = review.deliveries;
+  const points = items.flatMap((item) => item.milestones.flatMap((milestone) =>
+    milestone.observedAt ? [Date.parse(milestone.observedAt)] : []));
+  const start = Math.min(...points);
+  const end = Math.max(...points);
   const position = (at: number) => start === end ? 50 : (at - start) * 100 / (end - start);
   const ticks = start === end ? [start] : [start, Math.floor(start + (end - start) / 2), end];
   const found = selected !== null && items.some((item) => item.number === selected);
-  const loadMore = (limit?: number) => {
-    if (nextOffset === null || request.current) return;
-    const controller = new AbortController();
-    request.current = controller;
-    setLoading(true);
-    setError("");
-    fetchEvidence<Review>(deliveryPage(review, nextOffset, limit), controller.signal).then(({ deliveries }) => {
-      setPages((prior) => ({ ...prior, nextOffset: deliveries.nextOffset,
-        items: [...prior.items, ...deliveries.items.filter((item) => !prior.items.some((row) => row.number === item.number))] }));
-    }).catch((failure: Error) => {
-      if (!controller.signal.aborted) setError(failure.message);
-    }).finally(() => {
-      request.current = null;
-      if (!controller.signal.aborted) setLoading(false);
-    });
-  };
-  useEffect(() => () => request.current?.abort(), []);
-  useEffect(() => {
-    if (loading || error || nextOffset === null) return;
-    if (selected !== null && !found) {
-      loadMore(100);
-      return;
-    }
-    if (!sentinel.current || !window.IntersectionObserver) return;
-    const observer = new IntersectionObserver(([entry]) => {
-      if (entry.isIntersecting) loadMore();
-    }, { rootMargin: "160px" });
-    observer.observe(sentinel.current);
-    return () => observer.disconnect();
-  }, [loading, error, nextOffset, selected, found]);
   useEffect(() => {
     if (!found) return;
     const row = document.getElementById(`delivery-pr-${selected}`) as HTMLDetailsElement | null;
@@ -327,6 +314,7 @@ function DeliveryTimeline({ review, selection }: { review: Review; selection: { 
   }, [selection, found]);
   return <>
     {items.length ? <>
+      <p className="fine delivery-scope">{items.length === 10 ? "Latest 10 pull requests" : `${items.length} pull requests in this window`}</p>
       <StageKey />
       <p className="fine delivery-note">Bars show measured intervals. Dots mark observed milestones without a positive interval. Open a row for exact timestamps.</p>
       <div className="delivery-axis">
@@ -366,20 +354,9 @@ function DeliveryTimeline({ review, selection }: { review: Review; selection: { 
           <div className="detail-links"><a href={item.pullRequestUrl}>Open PR on GitHub</a><a href={item.detailPath}>PR evidence JSON</a></div>
         </details>;
       })}</div>
-      {nextOffset !== null && <div ref={sentinel} className="delivery-tail">
-        {loading && <span role="status" className="fine">Loading more deliveries…</span>}
-        {error && <p role="alert">{error}</p>}
-        {!loading && <Button className={error || !window.IntersectionObserver ? "" : "scroll-keyboard"}
-          onClick={() => loadMore(selected !== null && !found ? 100 : undefined)}>
-          {error ? "Retry loading deliveries" : "Load more deliveries"}
-        </Button>}
-      </div>}
-    </> : offset > 0 ? <p className="fine">No pull requests on this page.{" "}
-      <a href={pagePath({ offset: null, to: review.window.to }, "#delivery-title")}>First page</a></p> :
-      <p className="fine">No delivery milestones were observed in this window.</p>}
-    {selected !== null && !found && nextOffset === null && <p className="fine" role="status">
-      PR #{selected} has no row in this window. <a href={`/api/v1/pull-requests/${selected}?asOf=${encodeURIComponent(review.window.to)}`}>PR evidence JSON</a>
-    </p>}
+    </> : <p className="fine">No delivery milestones were observed in this window.</p>}
+    {selected !== null && !found &&
+      <SelectedPullRequestEvidence key={selection.revision} number={selected} cutoff={review.window.to} />}
   </>;
 }
 

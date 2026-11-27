@@ -71,7 +71,7 @@ export type Review = {
   deliveries: { total: number; limit: number; offset: number; nextOffset: number | null; timeline?: { from: string; to: string }; items: Delivery[] };
 };
 
-const fields = ["from", "to", "clock", "operation", "limit", "offset"];
+const fields = ["from", "to", "clock", "operation"];
 export const route = new URLSearchParams(location.search);
 
 function filters(query: URLSearchParams) {
@@ -79,16 +79,9 @@ function filters(query: URLSearchParams) {
 }
 
 export function shippingPath(query = route) {
-  return "/api/v1/shipping?" + filters(query);
-}
-
-export function deliveryPage(review: Review, offset: number, limit = review.deliveries.limit) {
-  const query = new URLSearchParams(route);
-  query.set("from", review.window.from);
-  query.set("to", review.window.to);
-  query.set("offset", String(offset));
-  query.set("limit", String(limit));
-  return shippingPath(query);
+  const params = filters(query);
+  params.set("limit", "10");
+  return "/api/v1/shipping?" + params;
 }
 
 export function pagePath(changes: Record<string, string | number | null>, anchor = "") {

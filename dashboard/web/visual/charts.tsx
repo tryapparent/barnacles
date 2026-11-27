@@ -12,8 +12,19 @@ function sector(inner: number, outer: number, from: number, to: number) {
 
 function Gauge({ comparison }: { comparison: Review["cycleComparison"] }) {
   const { deltaSeconds, prior, recent } = comparison;
-  const bound = Math.max(20, Math.ceil(Math.abs(deltaSeconds ?? 0) / 3600 / 10) * 10);
-  const amount = Math.abs(deltaSeconds ?? 0) / (bound * 3600);
+  const weeks = <dl className="comparison">{[prior, recent].map((week) => <div key={week.startsAt}>
+    <dt>Week of {dayLabel(week.startsAt)}</dt>
+    <dd>{week.meanSeconds === null ? "No measured shipments" :
+      <>{duration(week.meanSeconds)} <span>· {countLabel(week.attributedShipments)} measured</span></>}</dd>
+  </div>)}</dl>;
+  if (deltaSeconds === null) return <section className="panel cycle" aria-labelledby="cycle-title">
+    <h2 id="cycle-title">Thread to release</h2>
+    <p className="cycle-unavailable">Weekly comparison unavailable</p>
+    <p className="fine">Both completed UTC weeks need a verified shipment linked to a thread start.</p>
+    {weeks}
+  </section>;
+  const bound = Math.max(20, Math.ceil(Math.abs(deltaSeconds) / 3600 / 10) * 10);
+  const amount = Math.abs(deltaSeconds) / (bound * 3600);
   const negative = comparison.direction === "Gardening";
   const label = duration(deltaSeconds, true);
   const segmentCount = 15;
@@ -32,7 +43,7 @@ function Gauge({ comparison }: { comparison: Review["cycleComparison"] }) {
   });
   return <section className="panel cycle" aria-labelledby="cycle-title">
     <h2 id="cycle-title">Thread to release</h2>
-    <div className="gauge" data-direction={deltaSeconds === null ? "unknown" : deltaSeconds === 0 ? "steady" :
+    <div className="gauge" data-direction={deltaSeconds === 0 ? "steady" :
       negative ? "gardening" : "shipping"}>
       <svg viewBox="0 0 240 126" aria-hidden="true">
         <defs><pattern id="gauge-dots" width="5" height="5" patternUnits="userSpaceOnUse">
@@ -46,10 +57,7 @@ function Gauge({ comparison }: { comparison: Review["cycleComparison"] }) {
         <span>Gardening</span><span /><span>Shipping</span>
       </div>
     </div>
-    {deltaSeconds !== null && <dl className="comparison">{[prior, recent].map((week) => <div key={week.startsAt}>
-      <dt>Week of {dayLabel(week.startsAt)}</dt>
-      <dd>{duration(week.meanSeconds)} <span>· {countLabel(week.attributedShipments)} measured</span></dd>
-    </div>)}</dl>}
+    {weeks}
   </section>;
 }
 
