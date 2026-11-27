@@ -726,7 +726,9 @@ test("shipping API preserves historical and partial evidence and reads a replace
     ];
     writeFileSync(studyFile, JSON.stringify({ cutoff: cutoff * 1000, threads: [
       { i: 1, title: "Prior thread", link: t3 + "22222222-2222-2222-2222-222222222222",
-        start: start - 1000, cutoff: 13000, rollouts: 0, events: [] },
+        start: start - 1000, cutoff: 13000, rollouts: 0,
+        events: Array.from({ length: 40000 }, (_, index) =>
+          [8, 12000 - (index % 12000), 12001 - (index % 12000), "Step", "", "", "linked", false]) },
       { i: 2, title: "Recorded thread", link: "[Recorded thread](" + t3 + syntheticId + ")",
         start, cutoff: 12000, rollouts: 1, events: eventRows },
     ] }));
@@ -740,7 +742,7 @@ test("shipping API preserves historical and partial evidence and reads a replace
     const observed = await get(endpoints.sessionHistory.path);
     assert.deepEqual(observed.study, { cutoff: cutoff * 1000, replay: true });
     assert.deepEqual(observed.sessions.map((entry: { thread: { title: string }; count: number; signals: number }) =>
-      [entry.thread.title, entry.count, entry.signals]), [["Recorded thread", 4, 1], ["Prior thread", 0, 0]]);
+      [entry.thread.title, entry.count, entry.signals]), [["Recorded thread", 4, 1], ["Prior thread", 40000, 0]]);
     const id = observed.sessions[0].thread.id;
     const sessionDetail = await get("/api/v1/sessions?session=" + id);
     assert.equal(sessionDetail.trace.entry.thread.source, t3 + syntheticId);

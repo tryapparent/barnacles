@@ -1,4 +1,5 @@
 import Base
+import ../projection/metrics.bend as Metrics
 
 type HistoryEvent is Data:
   HistoryEvent{index: Nat, lane: Nat, start: Nat, end: Maybe<&2, Nat>, label: String,
@@ -76,7 +77,7 @@ def history_lanes(remaining: Nat, pair: Map<&2, List<&2, HistoryEvent>> & List<&
         case (table, values):
           +i = index
           history_lanes(i, Map.get(List<&2, HistoryEvent>, [], table, Nat.show(Nat.sub(i, 1n))),
-            HistoryLane{i, lane_name(i), List.sort(~HistoryEvent, ~event_before, values)} <> output)
+            HistoryLane{i, lane_name(i), Metrics.sort_timing(~HistoryEvent, ~event_before, values)} <> output)
 
 def signal_before(a: HistorySignal, b: HistorySignal) -> Bool:
   match a b:
@@ -126,14 +127,19 @@ def signal_event(signal: HistorySignal, key: String, cutoff: Nat, events: List<&
 def signals_for(+key: String, +cutoff: Nat, input: List<&2, HistorySignal>, +events: List<&2, HistoryEvent>, output: List<&2, HistorySignal>) ->
     List<&2, HistorySignal>:
   match input:
-    case []: List.sort(~HistorySignal, ~signal_before, output)
+    case []: Metrics.sort_timing(~HistorySignal, ~signal_before, output)
     case +signal <> tail:
       signals_for(key, cutoff, tail, events, bind_signal(signal_event(signal, key, cutoff, events), signal, output))
+
+def history_count(~A: Data, items: List<&2, A>, count: Nat) -> Nat:
+  match items:
+    case []: count
+    case _ <> tail: history_count(~A, tail, Nat.add(count, 1n))
 
 def history_result(thread: HistoryThread, scan: EventScan, +signals: List<&2, HistorySignal>) -> History:
   match scan:
     case EventScan{end, count, groups}:
-      History{HistoryEntry{thread, end, count, List.length(&2, HistorySignal, signals)}, history_lanes(13n, Map.get(List<&2, HistoryEvent>, [], groups, "12"), []), signals}
+      History{HistoryEntry{thread, end, count, history_count(~HistorySignal, signals, 0n)}, history_lanes(13n, Map.get(List<&2, HistoryEvent>, [], groups, "12"), []), signals}
 
 def project_session(+thread: HistoryThread, +events: List<&2, HistoryEvent>, signals: List<&2, HistorySignal>) -> History:
   match thread:
@@ -147,7 +153,7 @@ def entry_before(a: HistoryEntry, b: HistoryEntry) -> Bool:
       Bool.or(Nat.is_lt(y, x), Bool.and(Nat.is_eq(x, y), Nat.is_le(i, j)))
 
 def order_sessions(input: List<&2, HistoryEntry>) -> List<&2, HistoryEntry>:
-  List.sort(~HistoryEntry, ~entry_before, input)
+  Metrics.sort_timing(~HistoryEntry, ~entry_before, input)
 
 def session_matches(entry: HistoryEntry, +query: String) -> Bool:
   match entry:
@@ -173,11 +179,11 @@ def matching_events(events: List<&2, HistoryEvent>, +from: Nat, +to: Nat, +query
             Bool.and(match_label, event_in_range(head, from, to)), head <> output, output))
 
 def order_events(events: List<&2, HistoryEvent>) -> List<&2, HistoryEvent>:
-  List.sort(~HistoryEvent, ~event_before, events)
+  Metrics.sort_timing(~HistoryEvent, ~event_before, events)
 
 def session_events(events: List<&2, HistoryEvent>, from: Nat, to: Nat, query: String, offset: Nat) -> EventPage:
   +matched = matching_events(events, from, to, String.to_lower(String.trim(query)), [])
-  EventPage{List.length(&2, HistoryEvent, matched), List.take(&2, HistoryEvent, List.drop(&2, HistoryEvent, matched, offset), 20n)}
+  EventPage{history_count(~HistoryEvent, matched, 0n), List.take(&2, HistoryEvent, List.drop(&2, HistoryEvent, matched, offset), 20n)}
 
 def trace_elapsed(+ms: Nat) -> String:
   +s = Nat.div(ms, 1000n)
