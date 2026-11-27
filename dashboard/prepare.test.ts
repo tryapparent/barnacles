@@ -748,6 +748,7 @@ test("shipping API preserves historical and partial evidence and reads a replace
     assert.equal(report.deliveries.items[0].title, open.title);
     assert.equal(report.deliveries.nextOffset, 1);
     assert.equal(report.deliveries.maxMeasuredMillis, 700_000);
+    assert.deepEqual(report.deliveries.timeline, { from: iso(at - 1000), to: iso(at - 100) });
     assert.equal(report.operations.mapKind, "categories");
     const tiles = report.operations.map;
     assert.deepEqual(tiles.map(({ label, totalSeconds, grouped }: { label: string; totalSeconds: number; grouped: number }) =>
@@ -779,6 +780,7 @@ test("shipping API preserves historical and partial evidence and reads a replace
     assert.deepEqual(page.shipments.dailyChart, report.shipments.dailyChart);
     assert.equal(page.deliveries.nextOffset, null);
     assert.equal(page.deliveries.maxMeasuredMillis, report.deliveries.maxMeasuredMillis);
+    assert.deepEqual(page.deliveries.timeline, report.deliveries.timeline);
     assert.equal(page.deliveries.items[0].title, "Review delivery timing");
     const detail = await get(page.deliveries.items[0].detailPath);
     assert.equal(detail.title, "Review delivery timing");
@@ -793,6 +795,7 @@ test("shipping API preserves historical and partial evidence and reads a replace
     assert.deepEqual(historical.shipments.dailyChart.days, []);
     assert.equal(historical.fleet.items[0].stage, "published");
     assert.equal(historical.deliveries.items[0].milestones[7].observedAt, null);
+    assert.deepEqual(historical.deliveries.timeline, { from: iso(at - 1000), to: iso(at - 400) });
     assert.equal((await get("/api/v1/pull-requests/202?asOf=" + time(at - 399), 404)).error.code,
       "pull_request_not_observed");
     const partial = await get("/api/v1/pull-requests/202");

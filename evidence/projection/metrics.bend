@@ -870,9 +870,12 @@ def review_recent_days(days: List<&2, ReviewDay>, +first_day: Nat) -> List<&2, R
 type ReviewChart is Data:
   ReviewChartWindow{from: Nat, days: List<&2, ReviewDay>}
 
+type DeliveryTimeline is Data:
+  TimelineBounds{from: Nat, to: Nat}
+
 type ReviewResult is Data:
   ReviewReport{total: Nat, next_offset: Nat, max_measured_ms: Nat, deliveries: List<&2, ReviewItem>, fleet: List<&2, ReviewItem>,
-    verified: ShippingSample, weeks: List<&2, ReviewWeek>, days: List<&2, ReviewDay>, chart: ReviewChart}
+    verified: ShippingSample, weeks: List<&2, ReviewWeek>, days: List<&2, ReviewDay>, chart: ReviewChart, timeline: DeliveryTimeline}
 
 def review_count_facts(facts: List<&2, ReviewFact>) -> Nat:
   List.length(&2, ReviewFact, facts)
@@ -891,7 +894,19 @@ def review_max_measured(items: List<&2, ReviewItem>, +maximum: Nat) -> Nat:
     case Item{pr, order, changed, stage, events} <> rest:
       review_max_measured(rest, Nat.max(maximum, review_measured_time(events, 0n)))
 
-def review_page(accum: ReviewFold, +limit: Nat, +offset: Nat, from: Nat, to: Nat) -> ReviewResult:
+def review_earliest(events: List<&2, ReviewMoment>, +earliest: Nat) -> Nat:
+  match events:
+    case []: earliest
+    case Event{key, phase, observed, elapsed} <> rest:
+      review_earliest(rest, Nat.min(earliest, review_first(observed, earliest)))
+
+def review_timeline(items: List<&2, ReviewItem>, +from: Nat, +to: Nat) -> DeliveryTimeline:
+  match items:
+    case []: TimelineBounds{from, to}
+    case Item{pr, order, changed, stage, events} <> rest:
+      review_timeline(rest, review_earliest(events, from), Nat.max(to, changed))
+
+def review_page(accum: ReviewFold, +limit: Nat, +offset: Nat, from: Nat, +to: Nat) -> ReviewResult:
   match accum:
     case ReviewAccum{+deliveries, fleet, verified, weeks, days}:
       +total = List.length(&2, ReviewItem, deliveries)
@@ -902,7 +917,8 @@ def review_page(accum: ReviewFold, +limit: Nat, +offset: Nat, from: Nat, to: Nat
         List.take(&2, ReviewItem, List.drop(&2, ReviewItem, List.sort(~ReviewItem, ~review_newest, deliveries), offset), limit),
         List.sort(~ReviewItem, ~review_newest, fleet), verified,
         List.sort(~ReviewWeek, ~review_week_before, review_weeks(Map.to_list(&2, ReviewWeek, weeks))),
-        ordered_days, ReviewChartWindow{chart_from, review_recent_days(ordered_days, review_midnight(chart_from))}}
+        ordered_days, ReviewChartWindow{chart_from, review_recent_days(ordered_days, review_midnight(chart_from))},
+        review_timeline(deliveries, to, 0n)}
 
 def review_report(facts: List<&2, ReviewFact>, +from: Nat, +to: Nat, fleet_from: Nat, limit: Nat, offset: Nat) -> ReviewResult:
   review_page(review_collect(facts, from, to, fleet_from,

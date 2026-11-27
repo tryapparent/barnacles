@@ -83,6 +83,7 @@ type ReviewPolicy = {
     weeks: List<{ start: number; sample: Shipping }>;
     days?: List<ReviewDay>;
     chart?: { from: number; days: List<ReviewDay> };
+    timeline?: { from: number; to: number };
   };
   mean: TimingPolicy["mean"];
 };
@@ -678,6 +679,7 @@ export async function openShippingReview(directory: string) {
             items: rows(report.fleet).map((row) => encodeReviewReference(row, repo, window.to)) },
           deliveries: { total: report.total, limit: input.limit, offset: input.offset, nextOffset: report.next_offset || null,
             maxMeasuredMillis: report.max_measured_ms,
+            timeline: report.timeline && report.total > 0 && { from: utc(report.timeline.from), to: utc(report.timeline.to) } || undefined,
             items: rows(report.deliveries).map((row) => encodeReviewItem(row, repo, window.to, byNumber.get(row.pr)!, policy)) },
         };
       });

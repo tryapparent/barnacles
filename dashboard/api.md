@@ -162,11 +162,14 @@ as its own interval after publication.
 intervals across the selected delivery rows, independent of pagination. The
 browser uses it to hold the scale steady as more rows enter the list. Row widths
 use a compressed scale so short intervals stay visible alongside long ones.
-The delivery list places PRs with an observed merge or later milestone in the
-left lane and earlier PRs in the right lane, on the same duration scale. Each
-row names its latest observed milestone. A color represents a positive
-interval with both consecutive clocks in order. PRs from the same release can
-share a publication-to-access-check interval.
+The delivery timeline places every PR on one linear UTC axis.
+`deliveries.timeline` gives the earliest and latest observed milestone across
+all matching rows, including milestones before the filter start for those rows.
+The bounds stay fixed across pages. Older snapshots use the review window.
+Each row shows the merge date or “No merge recorded” and any other latest
+milestone. Colored bars connect measured consecutive clocks. A dot marks a
+milestone without a positive interval. PRs from the same release can share a
+publication-to-access-check interval at the same position on the axis.
 Selecting a ship scrolls to its delivery row and opens the milestone waterfall
 there. The link keeps the PR number and cutoff so it can be opened directly.
 Waterfalls use a linear UTC scale.
