@@ -45,6 +45,11 @@ Run the deployment service on demand for the first release. After verifying
 the result, enable its timer for subsequent releases. The timer checks for
 code updates separately from the collector's 15-minute data refresh.
 
+### T3 OTLP intake
+
+Use the [Clanker T3 OTLP runbook](t3-otlp.md) to apply and verify the
+authenticated trace stack from a release that includes the durable receiver.
+
 ### Session history
 
 Load the approved private [session study](../../api.md#session-history) into
