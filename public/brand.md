@@ -36,6 +36,14 @@ Ink labels reach 5.16:1 on Meadow. Meadow reaches 3.25:1 on Cool Mist, 3.26:1 on
 
 Start with **The Long Field**. Keep the horizon low, leave room for the headline in the sky, and let the darker cloud bank sit above the work. Follow with **Wet Iron**, close enough to see the blade turn the soil. Use **The Plowman’s Hands** as a supporting crop. The wide scene gives the page room to breathe. The close scenes show the work up close. Keep the product dashboard’s visual direction separate.
 
+## Stable page layout
+
+At a given viewport size, interactions within a page must preserve the position and size of its existing regions and the full width and height of the document. Apply this rule to pointer and keyboard interactions and to every state they trigger, including animations, loading, and errors. The layout can adapt when the viewport changes or the user navigates to another page.
+
+- Reserve an empty slot in the initial layout for each dropdown or disclosure panel. When it opens, it may fill only that slot. Keep the slot the same size when the panel closes, and keep it clear of other content and controls.
+- Size replaceable regions in advance for controls, results, and feedback. Keep long content within its assigned region using wrapping, internal scrolling, or pagination. Keep scrollbar space stable wherever a scrollbar can appear.
+- Verify the rule at each supported breakpoint. Compare region bounds and document dimensions before, during, and after opening, closing, and updating controls. Include the longest supported content and keyboard operation. The bounds and dimensions must match at the same viewport size.
+
 ## Homepage copy
 
 > **Know your ground.**
