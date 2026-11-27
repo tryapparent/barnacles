@@ -4,7 +4,7 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { Button, Card } from "./controls";
 import { AgentWorkTrend } from "./visual/agent-work-trend";
-import { Summary } from "./visual/charts";
+import { FieldSettings, Summary } from "./visual/charts";
 
 export { renderAgentWorkTrend } from "./visual/agent-work-trend";
 export { renderSummary } from "./visual/charts";
@@ -180,7 +180,7 @@ function Bottlenecks({ api }: { api: string }) {
   </section>;
 }
 
-function Dashboard({ field, sessionHistory, analysisApi }: { field: string; sessionHistory?: string; analysisApi?: string }) {
+function Dashboard({ field, fieldTexture, sessionHistory, analysisApi }: { field: string; fieldTexture?: string; sessionHistory?: string; analysisApi?: string }) {
   return <>
     <main>
       <header className="activity-header">
@@ -189,6 +189,7 @@ function Dashboard({ field, sessionHistory, analysisApi }: { field: string; sess
           <p className="wordmark">plow</p>
           <div className="activity-links">
             {sessionHistory && <a id="session-history-link" href={sessionHistory}>Session history</a>}
+            {fieldTexture && <FieldSettings />}
           </div>
         </div>
         <h1>Thread activity</h1>
@@ -196,7 +197,7 @@ function Dashboard({ field, sessionHistory, analysisApi }: { field: string; sess
       <div className="board">
         <p className="summary-note" id="feed-status">Session data is temporarily unavailable. Reload to try again.</p>
         <div id="feed-content" hidden>
-          <div className="activity-overview"><AgentWorkTrend /><Summary /></div>
+          <div className="activity-overview"><AgentWorkTrend /><Summary fieldTexture={fieldTexture} /></div>
           <Card id="timeline-panel" aria-labelledby="timeline-heading">
             <div className="timeline-heading-row">
               <h2 id="timeline-heading">Timeline</h2>
@@ -259,9 +260,9 @@ function Dashboard({ field, sessionHistory, analysisApi }: { field: string; sess
 export function mountDashboard() {
   const element = document.getElementById("plow-root");
   if (!element?.dataset.field) throw Error("Missing Plow dashboard assets");
-  const { field, sessionHistory, analysisApi } = element.dataset;
+  const { field, fieldTexture, sessionHistory, analysisApi } = element.dataset;
   element.removeAttribute("data-field");
   element.removeAttribute("data-session-history");
   const root = createRoot(element);
-  flushSync(() => root.render(<Dashboard field={field} sessionHistory={sessionHistory} analysisApi={analysisApi} />));
+  flushSync(() => root.render(<Dashboard field={field} fieldTexture={fieldTexture} sessionHistory={sessionHistory} analysisApi={analysisApi} />));
 }

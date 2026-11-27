@@ -188,6 +188,13 @@ function render(trace, width, measurements, index) {
     const paint = [...values(plan.paint)].map(slice => ({ ...slice, ...clip(slice) })).filter(slice => slice.a < slice.b)
     const stops = paint.map(slice => slice.paint + ' ' + percent(slice.a, length) + ' ' + percent(slice.b, length))
     bar.style.background = 'linear-gradient(to right,' + stops.join(',') + ')'
+    for (const slice of paint) {
+      const surface = makeElement('span', 'field-span')
+      surface.dataset.kind = slice.kind
+      surface.style.setProperty('--at', percent(slice.a, length))
+      surface.style.setProperty('--width', percent(slice.b - slice.a, length))
+      bar.append(surface)
+    }
     for (const label of values(plan.labels)) {
       const { a, b } = clip(label)
       if (a >= b) continue

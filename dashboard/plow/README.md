@@ -51,6 +51,12 @@ omits thread identifiers, titles, prompt text, links, and unlinked Codex
 and GitHub records. Generated files and live data stay out of Git and build
 artifacts. When configured, the Session history link opens Plow’s private tailnet view.
 
+The summary, Agent work share, and timeline share the Upright Rows texture
+atlas. The trend clips the summary's painted soil and crop layers at the
+existing batch curve, leaving gaps for unmeasured batches. The timeline uses
+lighter relief from the same atlas. Field colors recolors both overview plots,
+and Wind animates the summary canopy. Forced colors use the plain trend curve.
+
 ## Build and verify
 
 Run from the repository root with Node 22.18 or later and Chrome installed.
