@@ -159,9 +159,8 @@ Each mean uses PRs with both stage clocks in order. The stack shows the sum
 of the stage means, whose sample counts can differ. The access check is shown
 as its own interval after publication.
 `deliveries.maxMeasuredMillis` is the longest sum of observed consecutive
-intervals across the selected delivery rows, independent of pagination. The
-browser uses it to hold the scale steady as more rows enter the list. Row widths
-use a compressed scale so short intervals stay visible alongside long ones.
+intervals across the selected delivery rows, independent of pagination.
+
 The delivery timeline places every PR on one linear UTC axis.
 `deliveries.timeline` gives the earliest and latest observed milestone across
 all matching rows, including milestones before the filter start for those rows.
