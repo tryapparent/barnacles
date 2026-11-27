@@ -111,3 +111,49 @@ def time_summary(traces: List<&2, SummaryTrace>, from: Nat, to: Nat) -> TimeSumm
   +spans = clip_traces(traces,from,to)
   TimeSummary{span_time(spans),count_threads(spans,0n),
     List.sort(~SummaryCategory,~category_before,summary_categories([1,2,0],spans))}
+
+type TimelineMatch is Data:
+  TimelineMatch{index: Nat, spans: List<&2, SummarySpan>}
+
+type TimelineFilter is Data:
+  TimelineFilter{threads: Nat, matches: List<&2, TimelineMatch>}
+
+def thread_spans(spans: List<&2, SummarySpan>, +thread: Nat) -> List<&2, SummarySpan>:
+  match spans:
+    case []: []
+    case SummarySpan{+index,start,end,duration,kind,name} <> rest:
+      +tail = thread_spans(rest,thread)
+      Bool.pick(List<&2, SummarySpan>,Nat.is_eq(index,thread),SummarySpan{index,start,end,duration,kind,name} <> tail,tail)
+
+def add_timeline_match(intervals: List<&2, SummarySpan>, index: Nat, rest: List<&2, TimelineMatch>) -> List<&2, TimelineMatch>:
+  match intervals:
+    case []: rest
+    case first <> more: TimelineMatch{index,first <> more} <> rest
+
+def matching_threads(traces: List<&2, SummaryTrace>, +spans: List<&2, SummarySpan>) -> List<&2, TimelineMatch>:
+  match traces:
+    case []: []
+    case SummaryTrace{+index,_,_} <> rest:
+      add_timeline_match(thread_spans(spans,index),index,matching_threads(rest,spans))
+
+def timeline_filter(+traces: List<&2, SummaryTrace>, from: Nat, to: Nat, kind: U32, name: String) -> TimelineFilter:
+  +spans = category_spans(clip_traces(traces,from,to),kind)
+  +matches = matching_threads(traces,matching_spans(partition_operation(spans,name)))
+  TimelineFilter{List.length(&2, TimelineMatch, matches),matches}
+
+type OverviewSelection is Data:
+  OverviewSelection{category: U32, operation: String}
+
+type OverviewAction is Data:
+  SelectCategory{kind: U32}
+  SelectOperation{name: String}
+
+def select_overview(selection: OverviewSelection, action: OverviewAction) -> OverviewSelection:
+  match selection action:
+    case OverviewSelection{category,_} SelectCategory{+kind}:
+      OverviewSelection{Bool.pick(U32,U32.is_eq(category,kind),3,kind),""}
+    case OverviewSelection{category,operation} SelectOperation{+name}:
+      OverviewSelection{category,Bool.pick(String,String.eq(operation,name),"",name)}
+
+def initial_overview() -> OverviewSelection:
+  OverviewSelection{3,""}

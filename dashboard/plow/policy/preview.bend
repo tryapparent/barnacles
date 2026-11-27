@@ -221,3 +221,12 @@ def evidence(input: List<&2, Spans.Interval>, duration: Nat) -> List<&2, Spans.P
 
 def time_summary(traces: List<&2, Summary.SummaryTrace>, from: Nat, to: Nat) -> Summary.TimeSummary:
   Summary.time_summary(traces,from,to)
+
+def timeline_filter(traces: List<&2, Summary.SummaryTrace>, from: Nat, to: Nat, kind: U32, name: String) -> Summary.TimelineFilter:
+  Summary.timeline_filter(traces,from,to,kind,name)
+
+def initial_overview() -> Summary.OverviewSelection:
+  Summary.initial_overview()
+
+def select_overview(selection: Summary.OverviewSelection, action: Summary.OverviewAction) -> Summary.OverviewSelection:
+  Summary.select_overview(selection,action)
