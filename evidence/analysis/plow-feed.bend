@@ -63,5 +63,64 @@ def ordered_feed(feed: Feed) -> Feed:
   match feed:
     case Feed{observed,traces}: Feed{observed,List.reverse(&2,Trace,traces)}
 
-def project_feed(threads: List<&2,Thread>) -> Feed:
-  ordered_feed(collect(List.sort(~Thread,~thread_before,threads),Progress{10n,Feed{0n,[]}}))
+type HistoryTime is Data:
+  HistoryTime{work: Nat, workflow: Nat}
+
+type HistoryWindow is Data:
+  HistoryWindow{first: Nat, threads: List<&2,HistoryTime>}
+
+type PublishedFeed is Data:
+  PublishedFeed{observed: Nat, traces: List<&2,Trace>, history: HistoryWindow}
+
+def clock_before(a: Nat, b: Nat) -> Bool:
+  Nat.is_le(a,b)
+
+def span_boundaries(spans: List<&2,Span>, tail: List<&2,Nat>) -> List<&2,Nat>:
+  match spans:
+    case []: tail
+    case Span{a,b,_} <> rest: a <> b <> span_boundaries(rest,tail)
+
+def span_covers(spans: List<&2,Span>, +a: Nat, +b: Nat) -> Bool:
+  match spans:
+    case []: False{}
+    case Span{x,y,_} <> rest:
+      Bool.or(Bool.and(Nat.is_le(x,a),Nat.is_le(b,y)),span_covers(rest,a,b))
+
+def add_history_time(+a: Nat, +b: Nat, workflow: Bool, +work: Bool, time: HistoryTime) -> HistoryTime:
+  match time:
+    case HistoryTime{w,q}:
+      +duration = Nat.sub(b,a)
+      HistoryTime{Nat.add(w,Bool.pick(Nat,work,duration,0n)),
+        Nat.add(q,Bool.pick(Nat,Bool.and(Bool.not(work),workflow),duration,0n))}
+
+def history_time(points: List<&2,Nat>, +work: List<&2,Span>, +wait: List<&2,Span>, tally: HistoryTime) -> HistoryTime:
+  match points:
+    case +a <> +b <> rest:
+      history_time(b <> rest,work,wait,add_history_time(a,b,span_covers(wait,a,b),span_covers(work,a,b),tally))
+    case _: tally
+
+def recorded_history(clocks: Clocks) -> HistoryTime:
+  match clocks:
+    case Clocks{_,+work,+wait,_}:
+      +points = List.sort(~Nat,~clock_before,span_boundaries(work,span_boundaries(wait,[])))
+      history_time(points,work,wait,HistoryTime{0n,0n})
+
+def retained_history(threads: List<&2,Thread>, skip: Nat) -> List<&2,HistoryTime>:
+  match threads skip:
+    case [] _: []
+    case _ <> rest 1n+left: retained_history(rest,left)
+    case Thread{+created,+updated,runs} <> rest 0n:
+      recorded_history(run_clocks(runs,created,updated,Clocks{0n,[],[],[]})) <> retained_history(rest,0n)
+
+def project_history(+threads: List<&2,Thread>) -> HistoryWindow:
+  +skip = Nat.mul(Nat.sub(Nat.div(List.length(&2,Thread,threads),10n),5n),10n)
+  HistoryWindow{Nat.add(skip,1n),retained_history(threads,skip)}
+
+def published_feed(feed: Feed, history: HistoryWindow) -> PublishedFeed:
+  match feed:
+    case Feed{observed,traces}: PublishedFeed{observed,traces,history}
+
+def project_feed(threads: List<&2,Thread>) -> PublishedFeed:
+  +newest = List.sort(~Thread,~thread_before,threads)
+  published_feed(ordered_feed(collect(newest,Progress{10n,Feed{0n,[]}})),
+    project_history(List.reverse(&2,Thread,newest)))

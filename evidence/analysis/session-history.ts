@@ -10,7 +10,9 @@ type PlowRun = { $: "Run"; requested: number; started: number; completed: number
 type PlowThread = { $: "Thread"; created: number; updated: number; runs: List<PlowRun> };
 type PlowSpan = { a: number; b: number; name: string };
 type PlowTrace = { start: number; end: number; work: List<PlowSpan>; wait: List<PlowSpan>; errors: List<number> };
-type PlowPolicy = { project_feed(threads: List<PlowThread>): { observed: number; traces: List<PlowTrace> } };
+type PlowHistoryTime = { work: number; workflow: number };
+type PlowPolicy = { project_feed(threads: List<PlowThread>): { observed: number; traces: List<PlowTrace>;
+  history: { first: number; threads: List<PlowHistoryTime> } } };
 
 export async function projectPlowFeed(path: string, scratch: string) {
   const module = await buildPolicy(scratch, new URL("./plow-feed.bend", import.meta.url), "plow-feed.mjs");
@@ -29,7 +31,10 @@ export async function projectPlowFeed(path: string, scratch: string) {
       }))),
     }))));
     const spans = (list: List<PlowSpan>) => rows(list).map(({ a, b, name }) => [a / 1000, b / 1000, name]);
-    return { observed: projected.observed, traces: rows(projected.traces).map(trace => ({
+    return { observed: projected.observed, history: {
+      first: projected.history.first,
+      threads: rows(projected.history.threads).map(({ work, workflow }) => ({ work, workflow })),
+    }, traces: rows(projected.traces).map(trace => ({
       startUtcMs: trace.start, end: trace.end / 1000,
       work: spans(trace.work), wait: spans(trace.wait), errors: rows(trace.errors).map(at => at / 1000),
     })) };

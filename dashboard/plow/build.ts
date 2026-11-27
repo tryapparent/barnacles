@@ -7,6 +7,8 @@ import { projectPlowFeed } from "../../evidence/read.ts";
 import { buildPolicies } from "../../tooling/bend.ts";
 
 if (process.argv[2] === "--project-feed") {
+  const installedCompiler = process.env.BARNACLES_BEND_BUNDLE;
+  if (installedCompiler && !process.env.PLOW_BEND_BUNDLE) process.env.PLOW_BEND_BUNDLE = installedCompiler;
   const [database, destination, ...extra] = process.argv.slice(3);
   if (!database || !destination || extra.length) throw Error("Pass the input evidence database and a new feed file.");
   const scratch = await mkdtemp(join(tmpdir(), "apparent-dev-plow-projection-"));
@@ -37,7 +39,7 @@ const script = [policy, browser.output[0].code, "PlowUI.mountDashboard();",
 const timelineStyles = (await source("view/timeline.css"))
   .replace("__PLOW_YOUNG_SERIF__", await base64("../../public/assets/youngserif.woff2"))
   .replace("__PLOW_GEIST__", await base64("assets/geist.woff2"));
-const summaryStyles = await source("view/summary.css");
+const summaryStyles = (await source("view/summary.css")).replace("__PLOW_SOURCE_SERIF__", await base64("../../public/assets/source-serif-4.woff2"));
 const page = (await source("view/index.html"))
   .replace("__PLOW_FIELD__", await base64("../../public/assets/field.jpg"))
   .replace('<style id="timeline-css"></style>', () => `<style>\n${timelineStyles}</style>`)

@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { appendFile, readFile } from "node:fs/promises";
 import { setTimeout } from "node:timers/promises";
-import { sessionHistoryUrl } from "./worker.mjs";
+import { maxFeedLength, sessionHistoryUrl } from "./worker.mjs";
 
 const account = process.env.CLOUDFLARE_ACCOUNT_ID;
 const namespace = process.env.PLOW_SESSION_NAMESPACE_ID;
@@ -14,7 +14,7 @@ if (process.argv[2] === "--publish-feed") {
     throw Error("Set the Plow account, KV namespace and token file, then pass a projected feed file.");
   }
   const payload = await readFile(path);
-  if (!payload.length || payload.length > 128 * 1024) throw Error("Invalid Plow session feed size.");
+  if (!payload.length || payload.length > maxFeedLength) throw Error("Invalid Plow session feed size.");
   const token = (await readFile(credential, "utf8")).trim();
   if (!token) throw Error("The Plow KV credential file is empty.");
   const key = `https://api.cloudflare.com/client/v4/accounts/${account}/storage/kv/namespaces/${namespace}/values/session-timeline-v1`;

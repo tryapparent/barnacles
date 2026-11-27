@@ -48,6 +48,11 @@ const evidenceRows = traces.map(trace => {
   return { ...trace, end, evidence, failures, totals: policy.evidence_totals(evidence),
     recordedFailures: [...values(policy.failure_points(true,end,failures))] }
 })
+const trendHistory = feed.history
+const trendThreads = asList((trendHistory?.threads ?? []).map((thread, position) => ({
+  $: 'TrendThread', position, start: position, work: thread.work, workflow: thread.workflow,
+})))
+PlowUI.renderAgentWorkTrend([...values(policy.agent_work_trend(trendThreads, trendHistory?.first ?? 1))])
 const frame = policy.utc_frame(asList(evidenceRows.map(trace => ({
   $: 'UtcSpan', start: trace.startUtcMs, end: trace.startUtcMs + trace.end,
 }))))
