@@ -1,5 +1,13 @@
 # Grafana and Tempo deployment
 
+## Collector releases
+
+After verification passes on main, the `collector-release` job publishes a
+build-attested source archive. It contains the exact tracked commit and the
+`revision` file. The collector runs as a separate process with host-local
+configuration and publishes a derived SQLite snapshot. See the
+[collector guide](../../../collector/README.md#poll-github) for the command.
+
 ## Grafana and Tempo
 
 The repository root names and assembles one Compose project. Dashboard owns the Grafana and Tempo services, provisioning, replay, smoke tests, and recovery. Evidence owns the [snapshot contract](../../../evidence/README.md#published-dashboard-snapshot). Collector remains a host-side CLI for selected source inputs and credentials. A recurring import job can join through its own Compose include.

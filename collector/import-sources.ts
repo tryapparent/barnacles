@@ -3,20 +3,21 @@ import { createInterface } from "node:readline";
 import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
-  admissionPolicy, deliveryPolicy, deliveryReport, snapshotPublisher, loadEvidence, readPollMinutes, repository,
-  processTimingPolicy, rolloutCoverage, saveKernelCapture, sourcePolicy, waitReport, watchOverlaps, type AdmissionPolicy, type DeliveryPolicy, type KernelPolicy, type List, type SourcePolicy,
+  deliveryPolicy, deliveryReport, snapshotPublisher, loadEvidence, readPollMinutes, repository,
+  processTimingPolicy, rolloutCoverage, saveKernelCapture, waitReport, watchOverlaps, type AdmissionPolicy, type DeliveryPolicy, type KernelPolicy, type List, type SourcePolicy,
 } from "../evidence/index.ts";
-import { buildPolicy, buildPolicies, loadPolicy } from "../tooling/bend.ts";
+import { buildPolicy, loadPolicy } from "../tooling/bend.ts";
 import { positiveInt, type ClockPolicy } from "./github/attempt.ts";
 import { pollGitHub, pullRequest, releaseEvidence } from "./github/delivery.ts";
 import { inspectRollout } from "./codex/rollout.ts";
 import { bendBool, bendValues, clockSecond, factText, kernelCapture, kernelInteger, replayOutcomeDelays, row, seconds, sha, str, token } from "./wire.ts";
-import { t3Snapshot } from "./t3.ts";
+import { buildSourcePolicies, linkedRolloutPoller, t3Snapshot } from "./t3.ts";
 
 async function poll(db: string, scratch: string, repo: string, snapshot: string, policy: SourcePolicy, admission: AdmissionPolicy, once: boolean) {
   const configured = process.env.PLOW_POLL_SETTINGS;
-  if (!configured) throw Error("Set PLOW_POLL_SETTINGS to the polling settings file");
+  if (!configured) throw Error("Set PLOW_POLL_SETTINGS to the shared polling settings file");
   const settings = resolve(configured);
+  const linked = linkedRolloutPoller(db, policy, admission);
   const publish = snapshotPublisher(resolve(snapshot), repo, scratch);
   let minutes = readPollMinutes(settings);
   const clocks = await loadPolicy<ClockPolicy>(
@@ -24,10 +25,12 @@ async function poll(db: string, scratch: string, repo: string, snapshot: string,
   let reportedSettingsError = false;
   for (;;) {
     try {
+      linked?.assertSeparate();
       const result = pollGitHub(db, repo, policy, clocks, admission);
+      const rollout = await linked?.capture();
       await publish(db);
-      console.log(JSON.stringify(result));
-      if (once && result.failed) throw Error("GitHub poll completed with missing records");
+      console.log(JSON.stringify({ ...result, rollout }));
+      if (once && (result.failed || rollout && "failed" in rollout)) throw Error("Poll completed with missing records");
     } catch (error) {
       if (once) throw error;
       console.error(`GitHub poll failed: ${(error as Error).message}`);
@@ -63,7 +66,7 @@ async function main() {
     (command === "rollout" && first && second && !fourth) ||
     (command === "github" && first && second && !fourth) ||
     (command === "poll-github" && first && second && (!third || third === "--once") && !fourth)
-  )) throw Error("Usage: import-sources.ts JOB { t3 SNAPSHOT | rollout INSTANCE FILE [SOURCE_ID] | github OWNER/REPO PR [TAG] | poll-github OWNER/REPO SNAPSHOT [--once] | process BINDING EVENTS DIAGNOSTICS | process-probe PARENT_PID WORK_DIRECTORY | report | rollout-coverage | waits [SESSION [CALL]] | watch-overlaps OWNER/REPO RUN SHA ATTEMPT | bottlenecks FACTS.ndjson [--patterns] | outcome-delays EVIDENCE.json }");
+  )) throw Error("Usage: import-sources.ts JOB_DIRECTORY { t3 SNAPSHOT | rollout INSTANCE FILE [SOURCE_ID] | github OWNER/REPO PR [TAG] | poll-github OWNER/REPO SNAPSHOT [--once] | process BINDING EVENTS DIAGNOSTICS | process-probe PARENT_PID WORK_DIRECTORY | report | rollout-coverage | waits [SESSION [CALL]] | watch-overlaps OWNER/REPO RUN SHA ATTEMPT | bottlenecks FACTS.ndjson [--patterns] | outcome-delays EVIDENCE.json }");
 
   const db = join(resolve(directory), "evidence.sqlite");
   if (command === "waits") {
@@ -107,9 +110,7 @@ async function main() {
       console.log(JSON.stringify(deliveryReport(db, await loadPolicy<DeliveryPolicy>(file)), null, 2));
       return;
     }
-    const [output, admissionFile] = await buildPolicies(scratch, [[sourcePolicy, "sources.mjs"], [admissionPolicy, "admission.mjs"]]);
-    const admission = await loadPolicy<AdmissionPolicy>(admissionFile);
-    const policy: SourcePolicy = await loadPolicy(output);
+    const { policy, admission } = await buildSourcePolicies(scratch);
     if (command === "poll-github") {
       await poll(db, scratch, repository(first, policy), second, policy, admission, third === "--once");
     } else if (command === "t3") {

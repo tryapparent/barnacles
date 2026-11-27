@@ -92,5 +92,13 @@
     "dashboard/plow/view/timeline.css",
     "dashboard/plow/view/timeline.mjs",
     "dashboard/plow/worker.mjs"
+  ],
+  "React, shadcn and Vite presentation for the Plow browser app": [
+    "dashboard/web/assets/SHADCN-LICENSE",
+    "dashboard/web/controls.tsx",
+    "dashboard/web/main.tsx",
+    "dashboard/web/tsconfig.json",
+    "dashboard/web/visual/charts.tsx",
+    "dashboard/web/vite.config.ts"
   ]
 }

@@ -12,6 +12,9 @@
   },
   "devDependencies": {
     "@repomix/tree-sitter-wasms": "0.1.17",
+    "@types/react": "19.3.3",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.3.0",
     "@willbooster/tree-sitter-sql": "3.0.2",
     "@willbooster/web-tree-sitter": "23.0.1",
     "js-tiktoken": "1.0.21",
@@ -20,8 +23,16 @@
     "playwright": "1.65.1",
     "tree-sitter-bash": "0.25.1",
     "tree-sitter-wasms": "0.1.13",
+    "typescript": "7.0.2",
+    "vite": "8.4.0",
     "web-tree-sitter": "0.25.10",
     "yaml": "2.9.0"
   },
-  "type": "module"
+  "type": "module",
+  "dependencies": {
+    "@radix-ui/react-slot": "1.5.0",
+    "class-variance-authority": "0.7.1",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  }
 }

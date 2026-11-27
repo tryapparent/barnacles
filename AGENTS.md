@@ -8,6 +8,8 @@ Plow is a public MIT-licensed project for observing how coding-agent work reache
 - [Evidence](evidence/README.md) owns SQLite, record identities, delivery joins, and metric definitions.
 - [Plow](dashboard/plow/README.md) owns the browser dashboard and its Cloudflare Worker. The [Grafana tooling](dashboard/README.md) reads local evidence snapshots.
 
+Build the Plow interface in React with the shared [shadcn controls](dashboard/web/controls.tsx). Keep timeline geometry in the chart renderer and evidence decisions in Bend2.
+
 Keep the dependency direction from collector to evidence and from dashboard to evidence views. Keep source clients and credentials out of evidence queries and dashboards. Put commands and focused verification instructions in the owning directory as they become runnable.
 
 ## Plow hosting

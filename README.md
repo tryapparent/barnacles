@@ -32,10 +32,11 @@ npm run demo
 npm run verify
 ```
 
-Build the same dashboard used by the Cloudflare Worker.
+Build the React and shadcn dashboard served by the Cloudflare Worker.
 
 ```sh
 plow_build_dir=$(mktemp -d /tmp/apparent-dev-plow-build-XXXXXX)
+npm exec -- tsc -p dashboard/web/tsconfig.json
 node dashboard/plow/build.ts "$plow_build_dir"
 node dashboard/plow/smoke.mjs "$plow_build_dir"
 ```
