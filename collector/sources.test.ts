@@ -637,6 +637,12 @@ test("bottleneck replay binds verification and recovery to original receipts", (
     category: "usage_limit", code: "usageLimitExceeded", retryable: false, attempt: 0, maxAttempts: 0 };
   const noReply = { kind: "t3-provider-no-reply", id: "no-reply", thread: "t", sourceThread: "t", visibility: "local",
     type: "assistant_message", status: "completed", author: "agent", origin: "provider", receipt: "no-reply-after-retries" };
+  const emptyRollup = { kind: "t3-empty-pr-check-rollup", id: "empty-rollup", thread: "t", repository: "example/repo",
+    revision: "a".repeat(40), turn: "turn-one", pr: 15, observed: 90, started: 80, checks: 0 };
+  const manualVerification = { kind: "t3-linked-manual-verification", id: "manual-verification", thread: "t",
+    repository: emptyRollup.repository, revision: emptyRollup.revision, event: "workflow_dispatch",
+    path: ".github/workflows/verification.yml", status: "completed", conclusion: "success", attempt: 2,
+    executedJobs: 1, totalJobs: 4, completed: 100 };
   const facts = [
     worktree, worktree,
     { ...worktree, id: "same-removal", at: 110 },
@@ -731,6 +737,22 @@ test("bottleneck replay binds verification and recovery to original receipts", (
     noReply, noReply,
     { ...noReply, id: "user-quoted-reply", origin: "web" },
     { ...noReply, id: "inherited-no-reply", visibility: "inherited" },
+    { ...emptyRollup, id: "nonempty-rollup", checks: 3, observed: 80 },
+    emptyRollup, emptyRollup,
+    manualVerification, manualVerification,
+    { ...manualVerification, id: "no-executed-checks", executedJobs: 0, completed: 99 },
+    { ...manualVerification, id: "wrong-head-verification", revision: "b".repeat(40), completed: 115 },
+    { ...manualVerification, id: "wrong-repo-verification", repository: "other/repo", completed: 120 },
+    { ...manualVerification, id: "wrong-status", status: "in_progress", completed: 97 },
+    { ...manualVerification, id: "unrelated-workflow", path: ".github/workflows/deploy.yml", completed: 96 },
+    { ...manualVerification, id: "wrong-event", event: "push", completed: 95 },
+    { ...emptyRollup, id: "repeated-empty", observed: 180, started: 175 },
+    { ...emptyRollup, id: "repeated-empty", observed: 180, started: 175 },
+    { ...emptyRollup, id: "earlier-read-replay", observed: 179 },
+    { ...emptyRollup, id: "empty-next-turn", observed: 181, turn: "turn-two" },
+    { ...emptyRollup, id: "unknown-read-start", pr: 16, started: 0, observed: 185 },
+    { ...emptyRollup, id: "read-spans-completion", pr: 17, started: 99, observed: 190 },
+    { ...emptyRollup, id: "same-second-start", pr: 18, started: 100, observed: 200 },
   ];
   try {
     writeFileSync(file, facts.map(fact => JSON.stringify(fact)).join("\n") + "\n");
@@ -764,6 +786,12 @@ test("bottleneck replay binds verification and recovery to original receipts", (
       ["unknown-max-retries", "t3-provider-stream-recovered", 25],
       ["usage-limit", "t3-provider-usage-limit-refused", 0],
       ["no-reply", "t3-provider-no-reply-reported", 0],
+      ["empty-rollup", "t3-pr-check-rollup-empty", 0],
+      ["repeated-empty", "t3-pr-check-rollup-repeated", 90],
+      ["repeated-empty", "t3-pr-manual-verification-unlisted", 75],
+      ["unknown-read-start", "t3-pr-check-rollup-empty", 0],
+      ["read-spans-completion", "t3-pr-check-rollup-empty", 0],
+      ["same-second-start", "t3-pr-check-rollup-empty", 0],
     ]);
     const { patterns, costs } = JSON.parse(text);
     assert.deepEqual(costs.find((r: { clock: string }) => r.clock === "native-mac-ticket-readiness"),
