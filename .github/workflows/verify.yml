@@ -73,4 +73,5 @@ jobs:
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.PLOW_CLOUDFLARE_ACCOUNT_ID }}
           PLOW_ACCESS_AUDIENCE: ${{ vars.PLOW_ACCESS_AUDIENCE }}
+          PLOW_SESSION_NAMESPACE_ID: ${{ vars.PLOW_SESSION_NAMESPACE_ID }}
           PLOW_WORKER_TOKEN: ${{ secrets.PLOW_WORKER_TOKEN }}

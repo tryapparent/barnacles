@@ -6,9 +6,9 @@ const tiles = document.getElementById('tiles')
 const occurrences = document.getElementById('occurrences')
 const spanList = document.getElementById('span-list')
 const categories = [
-  { kind: 1, name: 'Workflows or waits', style: 'workflow' },
-  { kind: 2, name: 'Agent work', style: 'agent' },
-  { kind: 0, name: 'Unclear', style: 'unclear' },
+  { kind: 1, name: 'Admission wait', style: 'workflow' },
+  { kind: 2, name: 'Provider run', style: 'agent' },
+  { kind: 0, name: 'Unobserved', style: 'unclear' },
 ]
 let rangeCenter = .5
 let settingZoom = false
@@ -18,6 +18,7 @@ let activeOperation = null
 let selectedSpan = null
 let previousWindow = ''
 
+const shareLabel = new Intl.NumberFormat('en', { style: 'percent', maximumFractionDigits: 1 })
 const utc = time => utcDay.format(time) + ' ' + utcClock.format(time)
 const durationLabel = ms => {
   const minutes = Math.round(ms / 60000)
@@ -110,7 +111,7 @@ function renderSummary(windowStart, windowEnd) {
     return
   }
   const operations = [...values(group.operations)].map(operation => ({
-    ...operation, name: group.kind === 0 ? 'Unclear interval' : operation.name, style: group.style,
+    ...operation, name: group.kind === 0 ? 'Unobserved interval' : operation.name, style: group.style,
   }))
   if (!operations.some(operation => operation.name === activeOperation)) activeOperation = operations[0].name
   if (operations.length > 1) tiles.classList.add('operations')
@@ -186,5 +187,7 @@ function jumpToSpan(span) {
 }
 
 
-applyZoom(1,.5)
-document.fonts.ready.then(()=>{draw();paintWindow()})
+if (traces.length > 0) {
+  applyZoom(1,.5)
+  document.fonts.ready.then(()=>{draw();paintWindow()})
+}
