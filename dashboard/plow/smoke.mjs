@@ -10,6 +10,8 @@ const { default: worker } = await import(pathToFileURL(resolve(directory, 'worke
 const app = 'https://plow.tryapparent.com/app'
 const audience = 'fixture-audience'
 const env = { PLOW_ACCESS_AUDIENCE: audience }
+const history = 'https://preview.tail-fixture.ts.net:19531/sessions'
+const linked = { ...env, PLOW_SESSION_HISTORY_URL: history }
 const context = { access: { aud: audience } }
 const request = new Request(app)
 assert.equal((await worker.fetch(request, env, {})).status, 403)
@@ -20,6 +22,15 @@ const allowed = await worker.fetch(request, env, context)
 assert.equal(allowed.status, 200)
 assert.equal(allowed.headers.get('Cache-Control'), 'private, no-store')
 assert.equal(await allowed.text(), await readFile(resolve(directory, 'index.html'), 'utf8'))
+const denied = await worker.fetch(request, linked, {})
+assert.equal(denied.status, 403)
+assert.ok(!(await denied.text()).includes(history))
+const invalid = await worker.fetch(request, { ...env, PLOW_SESSION_HISTORY_URL: 'https://preview.tail-fixture.ts.net/shipping' }, context)
+assert.match(await invalid.text(), /id="session-history-link" hidden/)
+const head = await worker.fetch(new Request(app, { method: 'HEAD' }), linked, context)
+assert.equal(head.status, 200)
+assert.equal(await head.text(), '')
+
 
 const browser = await chromium.launch({ channel: 'chrome' })
 try {
@@ -31,7 +42,7 @@ try {
       if (message.type() === 'error') errors.push(message.text())
     })
     await page.route(app, async route => {
-      const response = await worker.fetch(new Request(route.request().url()), env, context)
+      const response = await worker.fetch(new Request(route.request().url()), linked, context)
       await route.fulfill({ status: response.status, headers: Object.fromEntries(response.headers), body: await response.text() })
     })
     await page.goto(app)
@@ -48,6 +59,11 @@ try {
     const screenshot = async name => {
       if (process.env.PLOW_SCREENSHOTS) await page.screenshot({ path: resolve(directory, `${width}-${name}.png`), fullPage: true })
     }
+    const link = page.getByRole('link', { name: 'Session history' })
+    assert.equal(await link.getAttribute('href'), history)
+    assert.ok(await link.isVisible())
+    await page.keyboard.press('Tab')
+    assert.equal(await link.evaluate(element => element.matches(':focus-visible')), true)
     const summary = page.locator('#summary-panel')
     const timeline = page.locator('#timeline-panel')
     const range = page.locator('#utc-window')
@@ -192,6 +208,10 @@ try {
     assert.equal(await instructions.count(), 0)
     await assertStable('close chart help')
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
+    await page.route(history, route => route.fulfill({ contentType: 'text/html', body: '<h1>Plow session history</h1>' }))
+    await link.press('Enter')
+    await page.waitForURL(history)
+    assert.ok(await page.getByRole('heading', { name: 'Plow session history' }).isVisible())
     assert.deepEqual(errors, [])
     await page.close()
   }

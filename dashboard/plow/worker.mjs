@@ -8,6 +8,11 @@ const headers = {
   'Content-Security-Policy': "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; font-src data:; img-src data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
 }
 
+export function sessionHistoryUrl(value) {
+  if (typeof value !== 'string' || !/^https:\/\/[a-z0-9.-]+\.ts\.net(?::[0-9]{1,5})?\/sessions$/.test(value) || !URL.canParse(value)) return
+  return new URL(value).href
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url)
@@ -20,6 +25,8 @@ export default {
     if (request.method !== 'GET' && request.method !== 'HEAD') {
       return new Response(null, { status: 405, headers: { Allow: 'GET, HEAD' } })
     }
-    return new Response(request.method === 'HEAD' ? null : html, { headers })
+    const destination = sessionHistoryUrl(env.PLOW_SESSION_HISTORY_URL)
+    const content = destination ? html.replace('id="session-history-link" hidden', `id="session-history-link" href="${destination}"`) : html
+    return new Response(request.method === 'HEAD' ? null : content, { headers })
   },
 }
