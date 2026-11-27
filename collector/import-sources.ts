@@ -1,15 +1,16 @@
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { createReadStream, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { createInterface } from "node:readline";
 import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
   admissionPolicy, deliveryPolicy, deliveryReport, harborSnapshotPublisher, loadEvidence, readPollMinutes, repository,
-  processTimingPolicy, rolloutCoverage, saveKernelCapture, sourcePolicy, waitReport, watchOverlaps, type AdmissionPolicy, type DeliveryPolicy, type KernelPolicy, type SourcePolicy,
+  processTimingPolicy, rolloutCoverage, saveKernelCapture, sourcePolicy, waitReport, watchOverlaps, type AdmissionPolicy, type DeliveryPolicy, type KernelPolicy, type List, type SourcePolicy,
 } from "../evidence/index.ts";
 import { buildPolicy, buildPolicies, loadPolicy } from "../tooling/bend.ts";
 import { positiveInt, type ClockPolicy } from "./github/attempt.ts";
 import { pollGitHub, pullRequest, releaseEvidence } from "./github/delivery.ts";
 import { inspectRollout } from "./codex/rollout.ts";
-import { kernelCapture, kernelInteger, str, token } from "./wire.ts";
+import { bendValues, kernelCapture, kernelInteger, row, str, token } from "./wire.ts";
 import { t3Snapshot } from "./t3.ts";
 
 async function poll(db: string, scratch: string, repo: string, snapshot: string, policy: SourcePolicy, admission: AdmissionPolicy, once: boolean) {
@@ -53,6 +54,7 @@ async function main() {
   if (!directory || extra.length || !(
     ((command === "report" || command === "rollout-coverage") && !first) ||
     (command === "waits" && !third) ||
+    (command === "bottlenecks" && first && !second) ||
     (command === "watch-overlaps" && first && second && third && fourth) ||
     (command === "process" && first && second && third && !fourth) ||
     (command === "process-probe" && first && second && !third) ||
@@ -60,7 +62,7 @@ async function main() {
     (command === "rollout" && first && second && !fourth) ||
     (command === "github" && first && second && !fourth) ||
     (command === "poll-github" && first && second && (!third || third === "--once") && !fourth)
-  )) throw Error("Usage: import-sources.ts JOB_DIRECTORY { t3 SNAPSHOT | rollout INSTANCE FILE [SOURCE_ID] | github OWNER/REPO PR [TAG] | poll-github OWNER/REPO HARBOR_SNAPSHOT [--once] | process BINDING EVENTS DIAGNOSTICS | process-probe PARENT_PID WORK_DIRECTORY | report | rollout-coverage | waits [SESSION [CALL]] | watch-overlaps OWNER/REPO RUN SHA ATTEMPT }");
+  )) throw Error("Usage: import-sources.ts JOB_DIRECTORY { t3 SNAPSHOT | rollout INSTANCE FILE [SOURCE_ID] | github OWNER/REPO PR [TAG] | poll-github OWNER/REPO HARBOR_SNAPSHOT [--once] | process BINDING EVENTS DIAGNOSTICS | process-probe PARENT_PID WORK_DIRECTORY | report | rollout-coverage | waits [SESSION [CALL]] | watch-overlaps OWNER/REPO RUN SHA ATTEMPT | bottlenecks FACTS.ndjson }");
 
   const db = join(resolve(directory), "evidence.sqlite");
   if (command === "waits") {
@@ -69,6 +71,10 @@ async function main() {
   }
   const scratch = mkdtempSync(join(resolve(directory), "build-"));
   try {
+    if (command === "bottlenecks") {
+      console.log(JSON.stringify(await replayBottlenecks(first, scratch), null, 2));
+      return;
+    }
     if (command === "process" || command === "process-probe") {
       const policy = await loadPolicy<KernelPolicy>(await buildPolicy(scratch, processTimingPolicy, "process-timing.mjs"));
       if (command === "process") {
@@ -131,6 +137,74 @@ async function main() {
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
+}
+
+type ReplayPolicy = {
+  start_replay(): unknown;
+  observe_file(state: unknown, thread: string, id: string, path: string, at: number): unknown;
+  observe_timing(state: unknown, id: string, clock: string, operation: string, start: number, end: number): unknown;
+  observe_attempt(state: unknown, thread: string, id: string, key: string, start: number, end: number,
+    failed: boolean, succeeded: boolean): unknown;
+  observe_peer(state: unknown, thread: string, id: string, clock: string, cohort: string, revision: string,
+    start: number, end: number, eligible: boolean): unknown;
+  replay_files(state: unknown): List<Record<string, unknown>>;
+  replay_costs(state: unknown): List<Record<string, unknown>>;
+  replay_findings(state: unknown): List<Record<string, unknown>>;
+};
+
+function clockSecond(value: unknown): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 0xffffffff) {
+    throw Error("Expected an unsigned Unix second");
+  }
+  return value;
+}
+
+function factText(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0 || value.length > 512 || /[\u0000-\u001f\u007f]/u.test(value)) {
+    throw Error("Expected a bounded fact label");
+  }
+  return value;
+}
+
+function bendBool(value: unknown): boolean {
+  if (typeof value !== "boolean") throw Error("Expected a boolean fact");
+  return value;
+}
+
+async function replayBottlenecks(file: string, scratch: string) {
+  const info = statSync(file);
+  if (!info.isFile() || info.size > 512 * 1024 * 1024) throw Error("Expected a bounded bottleneck fact stream");
+  const compiled = await buildPolicy(scratch, new URL("../evidence/analysis/bottleneck.bend", import.meta.url), "bottleneck.mjs");
+  const policy = await loadPolicy<ReplayPolicy>(compiled);
+  let state = policy.start_replay();
+  let lineNumber = 0;
+  for await (const line of createInterface({ input: createReadStream(file), crlfDelay: Infinity })) {
+    lineNumber++;
+    try {
+      if (line.length > 4096) throw Error("Oversized fact");
+      const value = row(JSON.parse(line));
+      const id = token(value.id);
+      if (value.kind === "file") {
+        state = policy.observe_file(state, token(value.thread), id, factText(value.path), clockSecond(value.at));
+      } else if (value.kind === "timing") {
+        state = policy.observe_timing(state, id, token(value.clock), factText(value.operation),
+          clockSecond(value.start), clockSecond(value.end));
+      } else if (value.kind === "attempt") {
+        state = policy.observe_attempt(state, token(value.thread), id, factText(value.key),
+          clockSecond(value.start), clockSecond(value.end), bendBool(value.failed), bendBool(value.succeeded));
+      } else if (value.kind === "peer") {
+        state = policy.observe_peer(state, token(value.thread), id, token(value.clock), factText(value.cohort),
+          token(value.revision), clockSecond(value.start), clockSecond(value.end), bendBool(value.eligible));
+      } else {
+        throw Error("Unknown bottleneck fact kind");
+      }
+    } catch (error) {
+      throw Error(`Invalid bottleneck fact at line ${lineNumber}`, { cause: error });
+    }
+  }
+  return { version: 1, files: Array.from(bendValues(policy.replay_files(state))),
+    costs: Array.from(bendValues(policy.replay_costs(state))),
+    findings: Array.from(bendValues(policy.replay_findings(state))) };
 }
 
 main().catch((error: Error) => {

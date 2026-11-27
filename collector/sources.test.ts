@@ -558,3 +558,49 @@ test("nested wait receipts, recycled handles and exact watcher overlap through t
     });
   } finally { rmSync(job, { recursive: true, force: true }); }
 });
+
+test("bottleneck replay separates clocks, distinct peers and observed recoveries", () => {
+  const root = process.env.BARNACLES_TEST_DIRECTORY;
+  assert.ok(root);
+  const job = mkdtempSync(join(root, "bottleneck-test-"));
+  try {
+    const file = join(job, "facts.ndjson");
+    const replay = (facts: Record<string, unknown>[]) => {
+      writeFileSync(file, facts.map((fact) => JSON.stringify(fact)).join("\n") + "\n");
+      return execFileSync(process.execPath, [
+        fileURLToPath(new URL("./import-sources.ts", import.meta.url)), job, "bottlenecks", file,
+      ], { encoding: "utf8" });
+    };
+    const read = { kind: "file", thread: "t", id: "a", path: "README.md", at: 100 };
+    const timing = { kind: "timing", id: "job", clock: "runner", operation: "build", start: 100, end: 229 };
+    const attempt = { kind: "attempt", thread: "t", id: "first", key: "gate:v1", start: 101, end: 110,
+      failed: true, succeeded: false };
+    const peer = { kind: "peer", thread: "t", id: "", clock: "runner", cohort: "workflow:job:runner",
+      revision: "", start: 0, end: 0, eligible: true };
+    const normal = Array.from({ length: 8 }, (_, i) => ({
+      ...peer, id: `job-${i}`, revision: `sha-${i}`, start: 300 + 10 * i, end: 310 + 10 * i,
+    }));
+    const facts = [
+      read, read, { ...read, id: "b", at: 160 }, { ...read, thread: "t2", at: 170 },
+      timing, timing, { ...timing, id: "unpaired", end: 0 },
+      attempt, { ...attempt, id: "changed", key: "gate:v2", start: 115, end: 120, failed: false, succeeded: true },
+      { ...attempt, id: "recovered", start: 125, end: 130, failed: false, succeeded: true },
+      { ...attempt, id: "repeated-success", start: 131, end: 140, failed: false, succeeded: true },
+      ...normal.slice(0, 7),
+      { ...normal[0], id: "duplicate-sha", start: 370, end: 380 },
+      { ...peer, id: "overlap", revision: "sha-overlap", start: 380, end: 550 },
+      { ...peer, id: "thin", revision: "sha-0", start: 400, end: 540 },
+      normal[7],
+      { ...peer, id: "tail", revision: "sha-tail", start: 600, end: 850 },
+    ];
+    const first = replay(facts);
+    assert.equal(replay(facts), first);
+    const result = JSON.parse(first);
+    assert.deepEqual(result.files, [{ $: "FileTotal", path: "README.md", requests: 3, threads: 2, revisits: 1 }]);
+    assert.deepEqual(result.costs, [{ $: "Cost", clock: "runner", operation: "build", count: 1, seconds: 129, unknown: 1 }]);
+    assert.deepEqual(result.findings.map(({ id, previous, seconds, median }: Record<string, unknown>) =>
+      [id, previous, seconds, median]), [["recovered", "first", 20, 0], ["tail", "", 250, 10]]);
+  } finally {
+    rmSync(job, { recursive: true, force: true });
+  }
+});

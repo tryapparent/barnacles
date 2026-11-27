@@ -240,3 +240,22 @@ node dashboard/prepare.ts --serve "$job/snapshot" 3031 "$job/harbor"
 ```
 
 Open **Process timings** in Harbor. The collector rejects ambiguous or mismatched calls, changed checksums, unrecognized event rows, observer diagnostics, and captures over 4,096 events or 120 seconds. A capture with a clean stop and missing exit evidence can still surface its measured spans. A replay of the same binding is idempotent. Concurrent launches in a shared directory need an executor-supplied process identity or another explicit binding.
+
+## Replay bottleneck evidence
+
+Use a private job directory and a frozen NDJSON stream of projected facts.
+
+```sh
+node collector/import-sources.ts "$job" bottlenecks "$job/facts.ndjson"
+```
+
+Each line is an object with an opaque `id` and one of these shapes:
+
+| Kind | Other fields | Observation |
+| --- | --- | --- |
+| `file` | `thread`, `path`, `at` | A literal file target projected from a supported read request. Count distinct threads, deduplicated requests, and visits within 15 minutes per thread and path. This does not prove the file was opened. |
+| `timing` | `clock`, `operation`, `start`, `end` | Sum closed intervals by clock and operation. Use zero for an absent endpoint. Show incomplete observations separately. These totals may overlap. |
+| `attempt` | `thread`, `key`, `start`, `end`, `failed`, `succeeded` | Link the last failed execution to a successful retry within 30 minutes for the same thread and exact operation/target/input/environment key. |
+| `peer` | `thread`, `clock`, `cohort`, `revision`, `start`, `end`, `eligible` | Compare a closed eligible clock with earlier completed observations. Group by versioned operation, workflow, event and runner class as applicable. A cohort retains the latest observation per revision, up to 64 revisions. At least eight different prior revisions are required. Flag a duration above p90, at least twice the median and at least 60 seconds above it. |
+
+Use integer Unix seconds for timestamps. Feed attempt and file records in source chronological order within their keys. Feed peers in completion order, including comparable history from before the target window. Observations identified by a repeated ID are replayed once per applicable clock or file. Keep unrelated shell envelopes, script output, absolute paths, and prompts out of the input. Use opaque or repository-relative labels, and store materialized facts and output privately. The analyzer identifies observable activity and comparable anomalies. It does not infer the critical path, activity from idle gaps, or the reason a runner was unallocated.
