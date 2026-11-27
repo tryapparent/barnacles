@@ -23,7 +23,7 @@ assert.equal(await allowed.text(), await readFile(resolve(directory, 'index.html
 
 const browser = await chromium.launch({ channel: 'chrome' })
 try {
-  for (const width of [320, 728, 1120]) {
+  for (const width of [320, 728, 1120, 1920]) {
     const page = await browser.newPage({ viewport: { width, height: 900 } })
     const errors = []
     page.on('pageerror', error => errors.push(error.message))
@@ -36,6 +36,15 @@ try {
     })
     await page.goto(app)
     await page.evaluate(() => document.fonts.ready)
+    const board = await page.locator('.board').boundingBox()
+    assert.equal(board.x, 0)
+    assert.equal(board.width, width)
+    const header = page.locator('.activity-header')
+    assert.equal((await header.boundingBox()).width, width)
+    assert.equal(await header.getByRole('heading', { level: 1 }).innerText(), 'Thread activity')
+    assert.equal(await header.getByText('plow', { exact: true }).isVisible(), true)
+    assert.equal(await header.getByText('Sample data', { exact: true }).isVisible(), true)
+    await header.locator('img').evaluate(image => image.decode())
     const screenshot = async name => {
       if (process.env.PLOW_SCREENSHOTS) await page.screenshot({ path: resolve(directory, `${width}-${name}.png`), fullPage: true })
     }
@@ -92,4 +101,4 @@ try {
   await browser.close()
 }
 
-console.log('Plow Worker access guard and browser drilldown passed at 320, 728 and 1120 pixels.')
+console.log('Plow Worker access guard and browser drilldown passed at 320, 728, 1120 and 1920 pixels.')

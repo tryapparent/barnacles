@@ -26,8 +26,10 @@ PLOW_SCREENSHOTS=1 node dashboard/plow/smoke.mjs "$plow_build_dir"
 
 The smoke check runs the built Worker with a simulated Access session, verifies
 denial with an absent or mismatched audience, and exercises the exact HTML and
-response policy through Chrome at 320, 728, and 1120 pixels. Screenshots are
-optional. Open the generated `index.html` for a standalone local preview.
+response policy through Chrome at 320, 728, 1120, and 1920 pixels. It checks
+that the dashboard uses the available width and that the header loads the
+landing page's field artwork from the Worker response. Screenshots are optional.
+Open the generated `index.html` for a standalone local preview.
 
 ## Deployment
 
