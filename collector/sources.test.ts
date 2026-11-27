@@ -623,6 +623,13 @@ test("bottleneck replay binds verification and recovery to original receipts", (
     receipt: "interrupted-before-processing" };
   const legacyFetch = { kind: "capture-access-result", thread: "t", id: "legacy-capture-fetch",
     operation: "apparent-fetch", failed: true, line: "Error: Hosted API: not_found" };
+  const unavailableNumber = { kind: "github-pr-number-resolution", thread: "t", id: "implicit-pr-number",
+    pr: 52, operation: "view", implicit: true,
+    diagnostic: "GraphQL: Could not resolve to a PullRequest with the number of 52. (repository.pullRequest)" };
+  const macQueue = { kind: "native-mac-ticket", thread: "t", id: "mac-queue", ticket: "ticket", workspace: "workspace",
+    phase: "queued", session: null, created: 100, observed: 110, deadline: 3700 };
+  const macReady = { ...macQueue, id: "mac-ready", phase: "ready", session: "session",
+    created: 0, observed: 160, deadline: 0 };
   const facts = [
     worktree, worktree,
     { ...worktree, id: "same-removal", at: 110 },
@@ -684,6 +691,22 @@ test("bottleneck replay binds verification and recovery to original receipts", (
     { ...legacyFetch, id: "legacy-unrelated-reply", operation: "apparent-status" },
     { ...legacyFetch, id: "legacy-not-terminal", failed: false },
     { ...legacyFetch, id: "legacy-quoted-line", line: "Quoted: Error: Hosted API: not_found" },
+    unavailableNumber, unavailableNumber,
+    { ...unavailableNumber, id: "explicit-number", implicit: false },
+    { ...unavailableNumber, id: "other-number", pr: 53 },
+    { ...unavailableNumber, id: "wrong-operation", operation: "create" },
+    { ...macReady, id: "unmatched-ready" },
+    macQueue, macQueue,
+    { ...macReady, id: "foreign-workspace", workspace: "other-workspace" },
+    { ...macReady, id: "foreign-thread", thread: "t2" },
+    { ...macReady, id: "before-queue-receipt", observed: 109 },
+    { ...macReady, id: "unowned-ready", session: null },
+    { ...macReady, id: "ready-with-create-clock", created: 120 },
+    macReady, macReady,
+    { ...macReady, id: "later-ready-observation", observed: 400 },
+    { ...macQueue, id: "second-queue", created: 410, observed: 415, deadline: 4010 },
+    { ...macReady, id: "old-session-reprinted", observed: 440 },
+    { ...macReady, id: "short-ready", observed: 450, session: "second-session" },
   ];
   try {
     writeFileSync(file, facts.map(fact => JSON.stringify(fact)).join("\n") + "\n");
@@ -710,8 +733,12 @@ test("bottleneck replay binds verification and recovery to original receipts", (
       ["rejected-input", "t3-inbound-message-interrupted", 0],
       ["legacy-capture-fetch", "capture-reference-unavailable", 0],
       ["legacy-capture-inspect", "capture-reference-unavailable", 0],
+      ["implicit-pr-number", "github-pr-implicit-number-unresolved", 0],
+      ["mac-ready", "native-mac-ticket-readiness-slow", 60],
     ]);
-    const patterns = JSON.parse(text).patterns;
+    const { patterns, costs } = JSON.parse(text);
+    assert.deepEqual(costs.find((r: { clock: string }) => r.clock === "native-mac-ticket-readiness"),
+      { $: "Cost", clock: "native-mac-ticket-readiness", operation: "nomac-wait", count: 2, seconds: 100, unknown: 0 });
     assert.deepEqual(patterns[0], { $: "RulePattern", rule: "local-build-memory-gate-with-worker-slots",
       threads: 2, findings: 3, timed: 0, largestSeconds: 0 });
     assert.deepEqual(patterns.find((p: { rule: string }) => p.rule === "t3-worktree-recreation-failed-before-provider"),

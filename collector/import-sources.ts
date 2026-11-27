@@ -218,6 +218,8 @@ type ReplayPolicy = {
     diagnostic: string, path: string, test: string, exitCode: number, budgetMs: number, elapsedMs: number): unknown;
   observe_github_pr_ref_resolution(state: unknown, thread: string, id: string, base: string, head: string,
     line: string, failed: boolean): unknown;
+  observe_github_pr_number_resolution(state: unknown, thread: string, id: string, pr: number, operation: string,
+    implicit: boolean, diagnostic: string): unknown;
   observe_github_workflow_scope(state: unknown, thread: string, id: string, operation: string, workflow: string,
     diagnostic: string, failed: boolean): unknown;
   observe_t3_worktree_missing(state: unknown, thread: string, id: string, expected: string, path: string,
@@ -297,6 +299,8 @@ type ReplayPolicy = {
     inputTurn: number, receiptTurn: number, submitted: number, reported: number, receipt: string): unknown;
   observe_local_build_memory_gate(state: unknown, thread: string, id: string, cause: string,
     available: number, capacity: number, minimum: number): unknown;
+  observe_native_mac_ticket(state: unknown, thread: string, id: string, ticket: string, workspace: string,
+    phase: string, session: string, created: number, observed: number, deadline: number): unknown;
   replay_files(state: unknown): List<Record<string, unknown>>;
   replay_costs(state: unknown): List<Record<string, unknown>>;
   replay_findings(state: unknown): List<Record<string, unknown>>;
@@ -431,6 +435,9 @@ async function replayBottlenecks(file: string, scratch: string, patterns: boolea
       } else if (value.kind === "github-pr-ref-resolution") {
         state = policy.observe_github_pr_ref_resolution(state, token(value.thread), id, factText(value.base),
           factText(value.head), factText(value.line), bendBool(value.failed));
+      } else if (value.kind === "github-pr-number-resolution") {
+        state = policy.observe_github_pr_number_resolution(state, token(value.thread), id, clockSecond(value.pr),
+          token(value.operation), bendBool(value.implicit), factText(value.diagnostic));
       } else if (value.kind === "github-workflow-scope-refusal") {
         state = policy.observe_github_workflow_scope(state, token(value.thread), id, token(value.operation),
           factText(value.workflow), token(value.diagnostic), bendBool(value.failed));
@@ -500,6 +507,10 @@ async function replayBottlenecks(file: string, scratch: string, patterns: boolea
       } else if (value.kind === "local-build-memory-gate") {
         state = policy.observe_local_build_memory_gate(state, token(value.thread), id, token(value.cause),
           clockSecond(value.available), clockSecond(value.capacity), clockSecond(value.minimum));
+      } else if (value.kind === "native-mac-ticket") {
+        state = policy.observe_native_mac_ticket(state, token(value.thread), id, token(value.ticket),
+          token(value.workspace), token(value.phase), value.session === null ? "" : token(value.session),
+          clockSecond(value.created), clockSecond(value.observed), clockSecond(value.deadline));
       } else if (value.kind === "github-pr-repository-recovery") {
         state = policy.observe_pr_repository_recovery(state, token(value.thread), id, factText(value.createdRepository),
           factText(value.closedRepository), factText(value.repairedRepository), clockSecond(value.createdPr),

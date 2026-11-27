@@ -431,6 +431,41 @@ def observe_local_build_memory_gate(state: Replay, thread: String, id: String, c
   observe_failure(state, thread, id, "local-build-memory-gate-with-worker-slots",
     Bool.and(String.eq(cause, "cgroup-memory"), slots))
 
+def update_native_mac_ticket(state: Replay, +thread: String, +id: String, +key: String, +valid_identity: Bool,
+  +phase: String, +session: String, +created: U32, +observed: U32, +deadline: U32, prior: Attempt) -> Replay:
+  match state prior:
+    case Replay{+seen, +files, +reads, +costs, +attempts, +cohorts, +status_reads, +findings} Attempt{+queued_id, +queued_at, +queue_receipt, _}:
+      +queued = Bool.and(String.eq(phase, "queued"), String.is_empty(session))
+      +queue_time = Bool.and(U32.is_gt(created, queued_at),
+        Bool.and(U32.is_ge(observed, created), Bool.and(U32.is_ge(observed, queue_receipt), U32.is_gt(deadline, created))))
+      +ready = Bool.and(String.eq(phase, "ready"), Bool.and(Bool.not(String.is_empty(session)),
+        Bool.and(U32.is_eq(created, 0), U32.is_eq(deadline, 0))))
+      +ready_time = Bool.and(U32.is_gt(queued_at, 0), U32.is_ge(observed, queue_receipt))
+      +event = pair("native-mac-ready", pair(thread, queued_id))
+      +session_event = pair("native-mac-session", pair(key, session))
+      +unseen = Bool.not(Bool.or(includes(seen, event), includes(seen, session_event)))
+      +first_ready = Bool.and(valid_identity, Bool.and(Bool.and(ready, ready_time), unseen))
+      +seconds = U32.sub(observed, queued_at)
+      +later_queue = Bool.and(valid_identity, Bool.and(queued, queue_time))
+      +slow = U32.is_ge(seconds, 60)
+      Bool.pick(Replay, first_ready,
+        Replay{Map.set(&2, Bool, Map.set(&2, Bool, seen, event, True{}), session_event, True{}), files, reads,
+          add_cost(costs, "native-mac-ticket-readiness", "nomac-wait", True{}, seconds), attempts, cohorts, status_reads,
+          Bool.pick(List<&2, Finding>, slow,
+            Finding{"native-mac-ticket-readiness-slow", thread, id, queued_id, seconds, 0, 0, 0} <> findings, findings)},
+        Replay{seen, files, reads, costs,
+          Bool.pick(Map<&2, Attempt>, later_queue, Map.set(&2, Attempt, attempts, key, Attempt{id, created, observed, False{}}), attempts),
+          cohorts, status_reads, findings})
+
+def observe_native_mac_ticket(+state: Replay, +thread: String, id: String, +ticket: String, +workspace: String,
+  phase: String, session: String, created: U32, observed: U32, deadline: U32) -> Replay:
+  match state:
+    case Replay{_, _, _, _, attempts, _, _, _}:
+      +valid_identity = Bool.not(Bool.or(String.is_empty(ticket), String.is_empty(workspace)))
+      +key = pair("native-mac-ticket", pair(thread, pair(ticket, workspace)))
+      update_native_mac_ticket(state, thread, id, key, valid_identity, phase, session, created, observed, deadline,
+        found(~Attempt, Map.get(Attempt, Attempt{"", 0, 0, False{}}, attempts, key)))
+
 def observe_pr_repository_recovery(state: Replay, thread: String, id: String, +created_repo: String,
   closed_repo: String, repaired_repo: String, +created_pr: U32, closed_pr: U32, repaired_pr: U32,
   title: String, repaired_title: String, implicit: Bool, +created: U32, +closed: U32, +repaired: U32) -> Replay:
@@ -590,6 +625,15 @@ def observe_github_pr_ref_resolution(state: Replay, thread: String, id: String, 
   +expected = String.append("pull request create failed: GraphQL: Head sha can't be blank, Base sha can't be blank, No commits between ",
     String.append(base, String.append(" and ", String.append(head, ", Head ref must be a branch (createPullRequest)"))))
   observe_failure(state, thread, id, "pr-create-graphql-ref-resolution", Bool.and(failed, String.eq(line, expected)))
+
+def observe_github_pr_number_resolution(state: Replay, thread: String, id: String, +pr: U32,
+  +operation: String, implicit: Bool, diagnostic: String) -> Replay:
+  +read = Bool.or(String.eq(operation, "view"), String.eq(operation, "checks"))
+  +write = Bool.or(String.eq(operation, "merge"), String.eq(operation, "ready"))
+  +expected = String.append("GraphQL: Could not resolve to a PullRequest with the number of ",
+    String.append(U32.show(pr), ". (repository.pullRequest)"))
+  +valid = Bool.and(U32.is_gt(pr, 0), Bool.and(implicit, Bool.and(Bool.or(read, write), String.eq(diagnostic, expected))))
+  observe_failure(state, thread, id, "github-pr-implicit-number-unresolved", valid)
 
 def observe_github_workflow_scope(state: Replay, thread: String, id: String, operation: String,
   +workflow: String, diagnostic: String, failed: Bool) -> Replay:
