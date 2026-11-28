@@ -314,6 +314,7 @@ func TestActivityReadContracts(t *testing.T) {
 	var status atomic.Int64
 	var warned atomic.Bool
 	policy := writePolicy(t, `case "$(cat)" in
+		*'"view":"operationQuery"'*) printf '%s' '" | fixture_operation_projection"';;
 		*'"partial":true'*) printf '%s' '{"from":1,"partial":true}';;
 		*) printf '%s' '{"from":1}';;
 	esac`)
@@ -321,6 +322,10 @@ func TestActivityReadContracts(t *testing.T) {
 		requests.Add(1)
 		if r.Header.Get("X-Scope-OrgID") != "fixture-tenant" {
 			t.Error("wrong tenant")
+		}
+		expr := r.URL.Query().Get("query")
+		if strings.Contains(expr, "fixture_operation_projection") != strings.Contains(expr, "confirmed_delay") {
+			t.Error("operation projection applied outside Activity data slices")
 		}
 		if code := status.Load(); code != 0 {
 			w.WriteHeader(int(code))
@@ -338,7 +343,7 @@ func TestActivityReadContracts(t *testing.T) {
 	if result := query(cutoff, "timeline"); result.Error != nil || len(result.Frames) != 0 {
 		t.Fatalf("empty timeline: %v", result)
 	}
-	if result := query(cutoff, "coverage"); result.Error != nil || requests.Load() != int64(len(activityReads(cutoff))) {
+	if result := query(cutoff, "coverage"); result.Error != nil || requests.Load() != int64(len(activityReads(cutoff, ""))) {
 		t.Fatalf("matching views repeated source work: %d requests, %v", requests.Load(), result.Error)
 	}
 	warned.Store(true)
@@ -361,7 +366,10 @@ func TestActivityReadContracts(t *testing.T) {
 func TestActivityReportsSliceAndSnapshotLimits(t *testing.T) {
 	cutoff := time.UnixMilli(1800000000000).UTC()
 	source := "t3_history"
-	policy := writePolicy(t, `cat >/dev/null; printf '%s' '{"from":1,"partial":true}'`)
+	policy := writePolicy(t, `case "$(cat)" in
+		*'"view":"operationQuery"'*) printf '%s' '" | fixture_operation_projection"';;
+		*) printf '%s' '{"from":1,"partial":true}';;
+	esac`)
 	ds := newFixtureDatasource(t, policy, func(w http.ResponseWriter, r *http.Request) {
 		params := r.URL.Query()
 		var values [][2]string
@@ -403,5 +411,42 @@ func TestActivityReportsSliceAndSnapshotLimits(t *testing.T) {
 	got := result.Frames[0].Meta.Notices
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Activity notices = %v, want %v", got, want)
+	}
+}
+
+func TestActivityContinuationKeepsTimestampTies(t *testing.T) {
+	from := time.UnixMilli(1800000000000)
+	tie := from.Add(time.Minute).UnixNano()
+	var requests atomic.Int64
+	ds := newFixtureDatasource(t, "/bin/false", func(w http.ResponseWriter, r *http.Request) {
+		var values [][2]string
+		switch requests.Add(1) {
+		case 1:
+			for i := 0; i < activityPageLimit-1; i++ {
+				values = append(values, [2]string{strconv.FormatInt(from.UnixNano(), 10), "prefix"})
+			}
+			values = append(values, [2]string{strconv.FormatInt(tie, 10), "tie-a"})
+		case 2:
+			if got := r.URL.Query().Get("start"); got != strconv.FormatInt(tie, 10) {
+				t.Errorf("continuation start = %s, want %d", got, tie)
+			}
+			values = append(values, [2]string{strconv.FormatInt(tie, 10), "tie-a"},
+				[2]string{strconv.FormatInt(tie, 10), "tie-b"})
+		default:
+			t.Error("unexpected extra request")
+		}
+		stream := map[string]any{"stream": map[string]string{"plow_source": "t3_history"}, "values": values}
+		json.NewEncoder(w).Encode(map[string]any{"status": "success", "data": map[string]any{
+			"resultType": "streams", "result": []any{stream},
+		}})
+	})
+	pages := 2
+	read := activityRead{window: backend.TimeRange{From: from, To: from.Add(time.Hour)}, source: "t3_history"}
+	got := ds.loki.readActivityShard(context.Background(), read, 0, activityShardBytes, &pages)
+	if got.failure != nil || got.gaps != 0 || len(got.lines) != activityPageLimit+1 {
+		t.Fatalf("continuation returned %d rows with gaps %v and error %v", len(got.lines), got.gaps, got.failure)
+	}
+	if tail := got.lines[len(got.lines)-2:]; !reflect.DeepEqual(tail, []string{"tie-a", "tie-b"}) {
+		t.Fatalf("continuation ties = %v", tail)
 	}
 }

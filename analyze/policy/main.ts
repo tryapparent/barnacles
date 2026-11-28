@@ -142,6 +142,11 @@ function evidence(source: string, value: unknown, traceBinding: boolean) {
 }
 
 async function activity(request: Record<string, unknown>, module: string) {
+  const { default: policy } = await import(pathToFileURL(module).href);
+  if (request.view === "operationQuery") {
+    process.stdout.write(JSON.stringify(policy.operation_query(nat(request.to))));
+    return;
+  }
   const records = object(request.records, "source records");
   let input: List<ReturnType<typeof evidence>> = { $: "Nil" };
   let decodeGap = false;
@@ -157,7 +162,6 @@ async function activity(request: Record<string, unknown>, module: string) {
       }
     }
   }
-  const { default: policy } = await import(pathToFileURL(module).href);
   const partial = request.partial === true || decodeGap;
   const lookup = request.view === "lookup" || request.view === "traceBinding";
   const report = lookup

@@ -20,6 +20,20 @@ type Activity is Data:
     threads: List<&2, S.Thread>, links: List<&2, RunLink>, ci: List<&2, S.Thread>, totals: List<&2, R.Totals>, categories: List<&2, R.Totals>,
     buckets: List<&2, R.Bucket>, findings: List<&2, R.Issue>}
 
+def operation_query(limit: Nat) -> String:
+  +number : String = "(?:0|[1-9][0-9]{0,14})"
+  +nullable = String.concat(["(?:null|",number,")"])
+  String.concat([
+    " | drop plow_prefix, plow_seen, plow_suffix",
+    " | regexp `^(?P<plow_prefix>\\{\"kind\":\"operation\",\"eventId\":\"[A-Za-z0-9_:%-]+\",",
+    "\"threadId\":\"[A-Za-z0-9_:%-]+\",\"t3RunId\":\"[A-Za-z0-9_:%-]+\",",
+    "\"operation\":\"command_execution\",\"timestampMs\":",number,",\"revisionMs\":",number,"),",
+    "\"observedMs\":(?P<plow_seen>",number,")(?P<plow_suffix>,\"startedMs\":",nullable,
+    ",\"completedMs\":",nullable,"\\})$`",
+    " | plow_seen=\"\" or plow_seen <= ",Nat.show(limit),
+    " | line_format `{{ if .plow_seen }}{{.plow_prefix}}{{.plow_suffix}}{{ else }}{{ __line__ }}{{ end }}`",
+    " | drop plow_prefix, plow_seen, plow_suffix"])
+
 def key(+left: String,right: String) -> String:
   String.concat([Nat.show(String.length(left)),":",left,right])
 

@@ -29,6 +29,7 @@ const (
 	activityCheckpointCap = 32
 	activitySplitDepth    = 6
 	activityReaders       = 4
+	activityReadTimeout   = 7 * time.Second
 	activityShardBytes    = 8 << 20
 	activitySnapshotBytes = 32 << 20
 	activitySnapshotLines = 50000
@@ -122,6 +123,7 @@ func (l lokiClient) readDirection(ctx context.Context, window backend.TimeRange,
 
 type lokiPage struct {
 	lines             []string
+	clocks            []int64
 	warned, oversized bool
 }
 
@@ -188,6 +190,7 @@ func (l lokiClient) readPage(ctx context.Context, window backend.TimeRange, quer
 	}
 
 	var lines []string
+	var clocks []int64
 	for _, stream := range payload.Data.Result {
 		if stream.Stream["plow_source"] != source || stream.Values == nil {
 			return lokiPage{}, lokiFailure(backend.StatusBadGateway, "Loki returned an unexpected stream")
@@ -206,9 +209,10 @@ func (l lokiClient) readPage(ctx context.Context, window backend.TimeRange, quer
 				return lokiPage{}, lokiFailure(backend.StatusBadGateway, "Loki returned a log entry with an invalid query timestamp")
 			}
 			lines = append(lines, line)
+			clocks = append(clocks, ns)
 		}
 	}
-	return lokiPage{lines: lines, warned: len(payload.Warnings) != 0}, nil
+	return lokiPage{lines: lines, clocks: clocks, warned: len(payload.Warnings) != 0}, nil
 }
 
 func lokiFailure(status backend.Status, message string) *backend.DataResponse {
@@ -270,6 +274,7 @@ type activityRead struct {
 	source string
 	kinds  string
 	latest bool
+	query  string
 }
 
 func (r activityRead) selector() string {
@@ -278,18 +283,18 @@ func (r activityRead) selector() string {
 		expr += " |~ `\"(" + r.kinds + ")\"`" +
 			` | json plow_kind="kind" | plow_kind=~"` + r.kinds + `"`
 	}
-	return expr + ` | drop plow_kind, event_id, observed_timestamp, detected_level, run_id, session_id, call_id`
+	return expr + r.query + ` | drop plow_kind, event_id, observed_timestamp, detected_level, run_id, session_id, call_id`
 }
 
-func activityReads(cutoff time.Time) []activityRead {
+func activityReads(cutoff time.Time, operationQuery string) []activityRead {
 	window := backend.TimeRange{From: cutoff.Add(-maxRange - activityDay), To: cutoff}
 	if window.From.Before(minTime) {
 		window.From = minTime
 	}
 	reads := []activityRead{
-		{window, "t3_history", "t3_coverage", true},
-		{window, "codex_history", "codex_coverage", true},
-		{window, "t3", "", false},
+		{window, "t3_history", "t3_coverage", true, ""},
+		{window, "codex_history", "codex_coverage", true, ""},
+		{window, "t3", "", false, ""},
 	}
 	for to := cutoff; !to.Before(window.From); {
 		from := to.Truncate(activityDay)
@@ -298,8 +303,8 @@ func activityReads(cutoff time.Time) []activityRead {
 		}
 		shard := backend.TimeRange{From: from, To: to}
 		reads = append(reads,
-			activityRead{shard, "t3_history", "t3_activity_run|t3_pr_link|t3_ci_link|confirmed_delay|operation", false},
-			activityRead{shard, "github_history", "github_actions_attempt|github_actions_job", false})
+			activityRead{shard, "t3_history", "t3_activity_run|t3_pr_link|t3_ci_link|confirmed_delay|operation", false, operationQuery},
+			activityRead{shard, "github_history", "github_actions_attempt|github_actions_job", false, ""})
 		to = from.Add(-time.Nanosecond)
 	}
 	return reads
@@ -321,23 +326,39 @@ const (
 	activitySliceBytes
 	activityTotalLines
 	activityTotalBytes
+	activityReadDeadline
 )
 
-func (l lokiClient) readActivity(ctx context.Context, cutoff time.Time) (map[string][]string, map[string]activityGap, *backend.DataResponse) {
+func (l lokiClient) readActivity(ctx context.Context, cutoff time.Time, operationQuery string) (map[string][]string, map[string]activityGap, *backend.DataResponse) {
+	readContext, cancel := context.WithTimeout(ctx, activityReadTimeout)
+	defer cancel()
 	records := make(map[string][]string)
 	gaps := make(map[string]activityGap)
 	var bytes, count int
-	reads := activityReads(cutoff)
+	reads := activityReads(cutoff, operationQuery)
 	for first := 0; first < len(reads); first += activityReaders {
+		if ctx.Err() != nil {
+			return nil, nil, lokiTransportFailure(ctx.Err())
+		}
+		if readContext.Err() != nil {
+			for _, read := range reads[first:] {
+				gaps[read.source] |= activityReadDeadline
+			}
+			break
+		}
 		batch := reads[first:min(first+activityReaders, len(reads))]
 		results := make([]activityRows, len(batch))
 		var readers sync.WaitGroup
 		for i, read := range batch {
 			readers.Go(func() {
-				results[i] = l.readActivityShard(ctx, read, activitySplitDepth, activityShardBytes)
+				pages := 1<<(activitySplitDepth+1) - 1
+				results[i] = l.readActivityShard(readContext, read, activitySplitDepth, activityShardBytes, &pages)
 			})
 		}
 		readers.Wait()
+		if ctx.Err() != nil {
+			return nil, nil, lokiTransportFailure(ctx.Err())
+		}
 		for i, result := range results {
 			if result.failure != nil {
 				return nil, nil, result.failure
@@ -364,13 +385,23 @@ func (l lokiClient) readActivity(ctx context.Context, cutoff time.Time) (map[str
 	return records, gaps, nil
 }
 
-func (l lokiClient) readActivityShard(ctx context.Context, read activityRead, depth, remaining int) activityRows {
+func (l lokiClient) readActivityShard(ctx context.Context, read activityRead, depth, remaining int, pages *int) activityRows {
+	if *pages == 0 {
+		return activityRows{gaps: activityPageLines}
+	}
+	if ctx.Err() != nil {
+		return activityRows{gaps: activityReadDeadline}
+	}
+	(*pages)--
 	limit := activityPageLimit
 	if read.latest {
 		limit = activityCheckpointCap
 	}
 	page, failure := l.readPage(ctx, read.window, read.selector(), read.source, limit, read.latest)
 	if failure != nil {
+		if failure.Status == backend.StatusTimeout && ctx.Err() != nil {
+			return activityRows{gaps: activityReadDeadline}
+		}
 		return activityRows{failure: failure}
 	}
 	var gaps activityGap
@@ -378,20 +409,35 @@ func (l lokiClient) readActivityShard(ctx context.Context, read activityRead, de
 		gaps |= activityWarning
 	}
 	saturated := page.oversized || !read.latest && len(page.lines) == limit
+	if saturated && !page.oversized {
+		last := slices.Max(page.clocks)
+		if last > read.window.From.UnixNano() && *pages > 0 {
+			var prefix []string
+			for i, ns := range page.clocks {
+				if ns < last {
+					prefix = append(prefix, page.lines[i])
+				}
+			}
+			older := activitySlice(prefix, remaining, gaps)
+			if older.gaps&activitySliceBytes != 0 {
+				return older
+			}
+			read.window.From = time.Unix(0, last)
+			newer := l.readActivityShard(ctx, read, depth, remaining-older.bytes, pages)
+			return mergeActivitySlices(older, newer)
+		}
+	}
 	if saturated && depth > 0 && !read.latest && read.window.To.After(read.window.From) {
 		middle := read.window.From.Add(read.window.To.Sub(read.window.From) / 2)
 		left, right := read, read
 		left.window.To, right.window.From = middle, middle.Add(time.Nanosecond)
-		older := l.readActivityShard(ctx, left, depth-1, remaining)
+		older := l.readActivityShard(ctx, left, depth-1, remaining, pages)
 		if older.failure != nil {
 			return older
 		}
-		newer := l.readActivityShard(ctx, right, depth-1, remaining-older.bytes)
-		if newer.failure != nil {
-			return newer
-		}
-		return activityRows{lines: append(older.lines, newer.lines...), bytes: older.bytes + newer.bytes,
-			gaps: gaps | older.gaps | newer.gaps}
+		older.gaps |= gaps
+		newer := l.readActivityShard(ctx, right, depth-1, remaining-older.bytes, pages)
+		return mergeActivitySlices(older, newer)
 	}
 
 	switch {
@@ -400,7 +446,18 @@ func (l lokiClient) readActivityShard(ctx context.Context, read activityRead, de
 	case saturated:
 		gaps |= activityPageLines
 	}
-	lines := page.lines
+	return activitySlice(page.lines, remaining, gaps)
+}
+
+func mergeActivitySlices(older, newer activityRows) activityRows {
+	if newer.failure != nil {
+		return newer
+	}
+	return activityRows{lines: append(older.lines, newer.lines...), bytes: older.bytes + newer.bytes,
+		gaps: older.gaps | newer.gaps}
+}
+
+func activitySlice(lines []string, remaining int, gaps activityGap) activityRows {
 	slices.Sort(lines)
 	bytes := 0
 	for i, line := range lines {

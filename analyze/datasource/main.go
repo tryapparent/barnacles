@@ -254,7 +254,17 @@ func (ds *datasource) activityReport(ctx context.Context, key activityKey) (acti
 }
 
 func (ds *datasource) loadActivityReport(ctx context.Context, key activityKey) (activityOutput, *backend.DataResponse) {
-	records, gaps, failure := ds.loki.readActivity(ctx, key.cutoff)
+	query, failure := runPolicy(ctx, ds.policy, map[string]any{
+		"to": key.cutoff.UnixMilli(), "view": "operationQuery", "range": key.period,
+	})
+	if failure != nil {
+		return activityOutput{}, failure
+	}
+	var operationQuery string
+	if json.Unmarshal(query, &operationQuery) != nil || operationQuery == "" {
+		return activityOutput{}, policyFailure(backend.StatusInternal, "Policy executable returned an invalid Activity query")
+	}
+	records, gaps, failure := ds.loki.readActivity(ctx, key.cutoff, operationQuery)
 	if failure != nil {
 		return activityOutput{}, failure
 	}

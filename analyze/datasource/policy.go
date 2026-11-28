@@ -288,6 +288,9 @@ func activityNotices(gaps map[string]activityGap, report activityOutput) []data.
 		if flags&activityTotalBytes != 0 {
 			add("The Activity size limit omitted " + label + " slices.")
 		}
+		if flags&activityReadDeadline != 0 {
+			add("Activity ran out of time to read " + label + ".")
+		}
 	}
 	if report.DecodeGap {
 		add("Activity skipped unreadable Loki evidence.")
