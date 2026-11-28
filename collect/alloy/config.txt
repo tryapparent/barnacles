@@ -91,7 +91,8 @@ otelcol.processor.transform "transport" {
       `set(attributes["session_id"], cache["record"]["sessionId"]) where IsString(cache["record"]["sessionId"])`,
       `set(attributes["run_id"], cache["record"]["run"]["id"]) where IsString(cache["record"]["run"]["id"])`,
       `set(attributes["session_id"], cache["record"]["run"]["sessionId"]) where IsString(cache["record"]["run"]["sessionId"])`,
-      `set(body, cache["wire"]) where IsString(cache["record"]["kind"]) and cache["timestamp"] != nil and IsString(attributes["plow_hour"])`,
+      `set(cache["observed_clock_fallback"], true) where resource.attributes["plow_source"] == "github_history" and cache["clock"] == nil and IsString(cache["record"]["eventId"]) and IsString(cache["record"]["repository"])`,
+      `set(body, cache["wire"]) where IsString(cache["record"]["kind"]) and ((cache["timestamp"] != nil and IsString(attributes["plow_hour"])) or cache["observed_clock_fallback"] == true)`,
     ]
   }
 

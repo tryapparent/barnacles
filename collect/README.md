@@ -50,7 +50,9 @@ Two old T3 chunks can share their first 128 bytes. Alloy can reuse the
 shorter file's saved offset in a longer file, even when both files contain
 valid JSONL. A resumed record can then begin inside a JSON line. The
 transport drops rows that fail JSON object decoding or lack a usable event
-clock and record kind. It filters those rows before the durable Loki queue
+clock and record kind. Valid GitHub evidence without a source clock uses the
+file observation time for Loki indexing and keeps its source clock null.
+The transport filters invalid rows before the durable Loki queue
 and keeps downstream delivery retries enabled. In Alloy metrics,
 `otelcol_processor_filter_logs_filtered_total` for
 `otelcol.processor.filter.transport` counts dropped records. It includes

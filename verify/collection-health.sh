@@ -123,6 +123,18 @@ curl -fsSG --max-time 15 -H 'X-Scope-OrgID: plow-fixture' \
 jq -e '.data.result==[]' "$PLOW_LGTM_WORKDIR/raw-tenant.json"
 jq -e '([.results.C.frames[].data.values[1][]] | add) == 3' "$PLOW_LGTM_WORKDIR/health.json"
 
+mkdir -p "$PLOW_LGTM_WORKDIR/spool/github"
+jq -nc --argjson now "$now" '
+  {kind:"github_coverage",eventId:"fixture-github-clockless",repository:"fixture/repo",
+   lane:"actions_retention",availability:"unknown",timestampMs:null,observedMs:$now}
+' > "$PLOW_LGTM_WORKDIR/spool/github/clockless.jsonl"
+clockless_loki() {
+  curl -fsSG --max-time 6 -H 'X-Scope-OrgID: plow-fixture' \
+    --data-urlencode 'query={plow_source="github_history"}' "http://$loki/loki/api/v1/query_range"
+}
+await clockless_loki 'any(.data.result[].values[][1] | fromjson; .eventId=="fixture-github-clockless"
+  and has("timestampMs") and .timestampMs==null)' "$PLOW_LGTM_WORKDIR/github-clockless.json"
+
 before=$(compose ps -q | sort)
 compose up -d --no-build --wait --wait-timeout 90
 [[ $(compose ps -q | sort) == "$before" ]]
