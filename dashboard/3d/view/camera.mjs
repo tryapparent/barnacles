@@ -188,8 +188,8 @@ export function createCamera(root, update) {
     },
     true,
   );
-  motion.addEventListener("change", () => {
-    if (active) move(goal, true);
+  motion.addEventListener("change", (event) => {
+    if (active && event.matches) move(goal, true);
   });
   return {
     pose,
