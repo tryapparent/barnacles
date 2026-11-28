@@ -3,7 +3,7 @@
   "title": "Plow trace detail",
   "description": "Inspect one redacted trace by its native Tempo ID.",
   "schemaVersion": 41,
-  "version": 1,
+  "version": 2,
   "editable": false,
   "timezone": "utc",
   "time": { "from": "now-2h", "to": "now" },
@@ -17,7 +17,7 @@
         "name": "traceId",
         "label": "Trace ID",
         "type": "textbox",
-        "description": "Paste the hexadecimal Trace ID and press Enter. Set the time range to include the span clocks.",
+        "description": "Paste an exact hexadecimal trace ID and press Enter. Lookup searches retained traces across time.",
         "query": "",
         "current": { "text": "", "value": "" }
       }
@@ -27,7 +27,7 @@
     {
       "id": 1,
       "title": "Span waterfall",
-      "description": "Select any span for its retained attributes and OTLP status. If no trace is found, check the identifier and time range. Instrumented coverage may be partial.",
+      "description": "Select a span to inspect its attributes and OTLP status. If the ID is missing, check it or return to Recent traces. If Tempo is unavailable, retry after collection recovers.",
       "type": "traces",
       "gridPos": { "x": 0, "y": 3, "w": 24, "h": 16 },
       "datasource": { "type": "tempo", "uid": "plow-tempo" },
@@ -36,7 +36,7 @@
           "refId": "A",
           "datasource": { "type": "tempo", "uid": "plow-tempo" },
           "queryType": "traceql",
-          "query": "$traceId"
+          "query": "${traceId:raw}"
         }
       ]
     },

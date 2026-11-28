@@ -6,6 +6,65 @@ import { createInterface } from "node:readline";
 
 const [url, dir] = process.argv.slice(2);
 const read = (name: string) => readFileSync(join(dir, name), "utf8");
+const data = (name: string) => JSON.parse(read(name + ".json"));
+const result = (name: string) => data(name).results.A;
+
+function assertFixtureResults() {
+  const mixedId = "11111111111111111111111111111111";
+  const unsetId = "55555555555555555555555555555555";
+  for (const [name, ids] of [
+    ["any", [mixedId, unsetId]], ["search", [mixedId]], ["ok", [mixedId]], ["unset", [unsetId]], ["empty", []],
+  ] as const) {
+    assert.equal(result(name).status, 200, name);
+    assert.deepEqual(result(name).frames[0].data.values[0].sort(), ids, name);
+  }
+  const missing = result("missing");
+  assert.ok(missing.status >= 400 && !missing.frames?.length);
+  assert.match(missing.error, /not found/i);
+
+  const { spans, event } = data("legacy");
+  const originals = data("fixture-" + mixedId).resourceSpans[0].scopeSpans[0].spans;
+  const tempoSpans = data("tempo").batches[0].scopeSpans[0].spans;
+  assert.equal(spans.length, originals.length);
+  assert.equal(tempoSpans.length, originals.length);
+  for (const [index, legacySpan] of spans.entries()) {
+    const original = originals[index];
+    const tempoSpan = tempoSpans.find((span: { spanId: string }) =>
+      Buffer.from(span.spanId, "base64").toString("hex") === original.spanId);
+    assert.equal(legacySpan.span_id, original.spanId);
+    assert.equal(legacySpan.parent_span_id ?? "", original.parentSpanId ?? "");
+    assert.equal(legacySpan.start_ns, original.startTimeUnixNano);
+    assert.equal(legacySpan.end_ns, original.endTimeUnixNano);
+    assert.equal(legacySpan.status_code, original.status.code);
+    assert.equal(tempoSpan.startTimeUnixNano, legacySpan.start_ns);
+    assert.equal(tempoSpan.endTimeUnixNano, legacySpan.end_ns);
+    assert.equal(Buffer.from(tempoSpan.traceId, "base64").toString("hex"), mixedId);
+    assert.equal(Buffer.from(tempoSpan.parentSpanId ?? "", "base64").toString("hex"), legacySpan.parent_span_id ?? "");
+  }
+  assert.equal(spans[1].call_id, "call_fixture");
+  assert.equal(event.event, "codex.tool_result");
+  assert.equal(event.success, 0);
+  assert.equal(event.observed_ns, originals[1].endTimeUnixNano);
+  const child = tempoSpans.find((span: { parentSpanId?: string }) => span.parentSpanId);
+  assert.ok(child.events.some((entry: { name: string; timeUnixNano: string }) =>
+    entry.name === event.event && entry.timeUnixNano === event.observed_ns));
+
+  assert.equal(result("exact").status, 200);
+  const frame = result("exact").frames[0];
+  const column = (name: string) => frame.data.values[frame.schema.fields.findIndex((field: { name: string }) => field.name === name)];
+  assert.deepEqual(column("traceID"), [mixedId, mixedId]);
+  assert.deepEqual(column("spanID").toSorted(), spans.map((span: { span_id: string }) => span.span_id));
+  assert.deepEqual(column("instrumentationLibraryName"), ["plow.codex", "plow.codex"]);
+  const childIndex = column("spanID").indexOf(spans[1].span_id);
+  assert.equal(column("parentSpanID")[childIndex], spans[0].span_id);
+  assert.equal(column("operationName")[childIndex], spans[1].operation);
+  assert.equal(column("statusCode")[childIndex], spans[1].status_code);
+  for (const name of ["legacy", "tempo", "any", "search", "exact"]) {
+    assert.ok(!read(name + ".json").includes("synthetic-private-trace-canary"), name);
+  }
+}
+
+assertFixtureResults();
 const child = spawn("docker", [
   "run", "--rm", "-i", "--network", "host",
   "-e", "GRAFANA_URL", "-e", "GRAFANA_SERVICE_ACCOUNT_TOKEN",
@@ -55,7 +114,7 @@ try {
   const search = await call("search_tempo_traces", { ...args, query: target.query, limit: target.limit, spss: target.spss });
   const direct = JSON.parse(read("search.json")).results.A.frames[0].data.values[0];
   assert.deepEqual(search.traces.map((trace: { traceID: string }) => trace.traceID), direct);
-  const trace = await call("get_tempo_trace", { ...args, trace_id: direct[0] });
+  const trace = await call("get_tempo_trace", { datasourceUid: target.datasource.uid, trace_id: direct[0] });
   writeFileSync(join(dir, "mcp-tempo.json"), JSON.stringify({ search, trace }) + "\n", { mode: 0o600 });
   assert.equal(trace.traceId, direct[0]);
   const frame = JSON.parse(read("exact.json")).results.A.frames[0];
