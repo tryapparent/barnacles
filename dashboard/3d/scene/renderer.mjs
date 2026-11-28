@@ -166,6 +166,8 @@ export function mountLandscape(root, sources, shoulder = () => {}) {
         (1 - srcW / photo.width) / 2,
         srcW / photo.width,
       );
+      g.save();
+      g.filter = "blur(1.6px)";
       g.drawImage(
         photo,
         (photo.width - srcW) / 2,
@@ -177,6 +179,7 @@ export function mountLandscape(root, sources, shoulder = () => {}) {
         b.width,
         b.height,
       );
+      g.restore();
       const veil = g.createLinearGradient(0, 0, b.width, b.height);
       veil.addColorStop(0, "#b8964438");
       veil.addColorStop(0.44, "#3d311e4a");
@@ -187,17 +190,27 @@ export function mountLandscape(root, sources, shoulder = () => {}) {
         width = Math.max(7, Math.min(15, b.width * 0.009));
       {
         const fork = (b.summary.x + b.summary.w + b.trendZone.x) / 2;
-        track(fork, 0, fork + 2, cross, width);
+        const crest = b.summary.y * .72;
+        track(fork, crest, fork + 2, cross, width);
+        track(fork, crest, fork - 16, crest * .6, width * .72);
+        track(fork - 20, crest * .45, fork + 12, 2, width * .42);
         shoulder(g, fork, 0, fork + 2, cross, width);
       }
       track(-5, cross, b.width + 5, cross - 2, width);
       shoulder(g, -5, cross, b.width + 5, cross - 2, width);
       paintRows(g, b);
       const verts = [];
-      const { timber, canopyShadow } = fieldGeometry({ g, verts, shade });
-      const radius = 33;
-      canopyShadow(b.width + radius * 0.47, cross - 12, radius);
-      timber(b.width + radius * 0.47, cross - 12, radius);
+      const { timber, canopyShadow, cottage, verge } = fieldGeometry({ g, verts, shade });
+      const yard = b.trendZone.x + b.trendZone.w;
+      cottage(yard + 31, cross - 36, 48, 21, 12, .23);
+      cottage(yard + 84, cross - 19, 24, 15, 10, -.29);
+      for (const [dx, dz, radius] of [[26,-79,13],[53,-86,15],[80,-69,12],[106,-57,13]]) {
+        canopyShadow(yard+dx,cross+dz,radius);
+        timber(yard+dx,cross+dz,radius);
+      }
+      for (const [across, depth, radius] of [[.952,.987,39],[.9,1.01,22],[.185,1.007,15]]) {
+        verge(b.width*across,b.height*depth,radius,rand);
+      }
       if (trees) gl.deleteBuffer(trees.buf);
       trees = upload(verts);
       gl.activeTexture(gl.TEXTURE0);
@@ -289,6 +302,7 @@ export function mountLandscape(root, sources, shoulder = () => {}) {
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
       gl.uniform2f(loc("view"), board.width, board.height);
       gl.uniform2f(loc("screenSize"), vw, vh);
+      gl.uniform4fv(loc("lens"), pose.lens ?? [1,1,0,0]);
       gl.uniform4f(loc("cam"), pose.x, pose.y, pose.s, pose.p);
       gl.uniform1f(loc("lift"), lift);
       gl.uniform1f(loc("time"), motion.matches ? 0 : now / 1000);

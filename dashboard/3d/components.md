@@ -23,6 +23,10 @@ If two refreshes overlap, the latest request takes precedence. When an update fa
 
 ## Materials and field labels
 
+The overview uses a hillside perspective. The camera supplies the same projection parameters to the WebGL scene, the ground texture lookup, the woodland edge and the DOM overlay. As the camera approaches a selected field, the perspective gradually gives way to the close-up inspection view. Keep the terrain and the hit targets in register when adjusting the lens.
+
+The distant valley uses a cropped ImageGen landscape for the horizon layer. Twin wheel ruts are drawn on the ground. The farmstead, orchard, rocks and seed heads use scene geometry outside the measured parcels. Their footprints do not contribute to any metric.
+
 Change terrain shading, foliage and fog in [the scene](scene/). Keep sun, paths, meadow and wind consistent from one plot to the next. Use the parcel and local plant cell when varying position, rotation and size. A surviving cell should keep its plant when a neighboring parcel changes.
 
 A label has a world anchor and a permitted footprint. Set its name and duration as horizontal text. Keep text selectable through the parcel’s keyboard target and expose both values in its accessible name.

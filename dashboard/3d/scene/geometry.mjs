@@ -152,5 +152,62 @@ export function fieldGeometry({
       );
     }
   }
-  return { grains, furrows, timber, canopyShadow, fogBank };
+  function cottage(x, z, width, depth, height, angle) {
+    const wall = [.64,.52,.34], gable = [.48,.38,.26];
+    const door = [.18,.145,.10], roof = [.45,.25,.15], tile = [.53,.32,.20];
+    const front = depth / 2, back = -front, left = -width / 2, right = -left;
+    const peak = height + depth * .35;
+    function face(color, ...corners) {
+      for (let i = 2; i < corners.length; i++) {
+        for (const [u, y, v] of [corners[0], corners[i-1], corners[i]]) {
+          verts.push(x + u*Math.cos(angle)-v*Math.sin(angle), y,
+            z + u*Math.sin(angle)+v*Math.cos(angle), ...color, -3, 0, 0);
+        }
+      }
+    }
+    for (const end of [left,right]) {
+      face(gable,[end,0,front],[end,height,front],[end,peak,0],[end,height,back],[end,0,back]);
+    }
+    for (const v of [front,back]) {
+      face(wall,[left,0,v],[right,0,v],[right,height,v],[left,height,v]);
+      face(v===front?tile:roof,[left-1,height,v*1.12],[right+1,height,v*1.12],
+        [right+1,peak,0],[left-1,peak,0]);
+    }
+    for (const col of [-.32,0,.32]) {
+      const u=width*col, sill=col===0?0:height*.38, edge=width*(col===0?.09:.045);
+      face(door,[u-edge,sill,front+.15],[u+edge,sill,front+.15],
+        [u+edge,height*.79,front+.15],[u-edge,height*.79,front+.15]);
+    }
+  }
+  function verge(x, z, size, rand) {
+    const vertex = (point, color) => verts.push(...point, ...color, -3, 0, 0);
+    const stone = [];
+    for (let i=0; i<11; i++) {
+      const angle=i*2*Math.PI/11, radius=size*(.84+.21*rand());
+      stone.push([x+Math.cos(angle)*radius, size*(.22+.18*rand()), z+Math.sin(angle)*radius*.62]);
+    }
+    const crown=[x-size*.13,size*.52,z-size*.18];
+    for (let i=0; i<stone.length; i++) {
+      const a=stone[i], b=stone[(i+1)%stone.length];
+      const light=.7+.3*Math.cos(i*.571), tone=[.33*light,.32*light,.23*light];
+      for(const v of [a,b,crown]) vertex(v,tone);
+      const soil=[.23*light,.21*light,.16*light];
+      for(const v of [a,[a[0],0,a[2]],b,b,[a[0],0,a[2]],[b[0],0,b[2]]]) vertex(v,soil);
+    }
+    for(let clump=0;clump<15;clump++) {
+      const baseX=x+(rand()-.5)*size*4.4, baseZ=z+(rand()-.46)*size*1.7;
+      for(let stalk=0;stalk<10;stalk++) {
+        const sx=baseX+(rand()-.5)*5, sz=baseZ+rand()*5;
+        const ht=size*(.25+rand()*.62), lean=(rand()-.58)*ht*.68;
+        const tone=rand()>.52?[.67,.52,.27]:[.39,.37,.17];
+        const waist=[sx+lean*.30,ht*.67,sz], tip=[sx+lean,ht,sz];
+        for(const v of [[sx-.42,0,sz],[sx+.42,0,sz],waist,waist,[waist[0]+.58,waist[1],sz],tip]) vertex(v,tone);
+        if(stalk%3===0) {
+          const grain=[.80,.64,.38];
+          for(const v of [tip,[tip[0]+1.2,ht+1.8,sz],[tip[0]+lean*.25,ht+3.4,sz]]) vertex(v,grain);
+        }
+      }
+    }
+  }
+  return { grains, furrows, timber, canopyShadow, fogBank, cottage, verge };
 }

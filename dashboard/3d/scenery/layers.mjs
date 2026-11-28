@@ -24,8 +24,8 @@ vec3 plowedSoil(vec2 world, float around, sampler2D tilth) {
   float profile = around + ripple + (clod - .22) * .43;
   float shoulder = .5 + .5 * cos(6.283 * (profile - .31));
   float crest = smoothstep(.67, 1., shoulder) * smoothstep(.16, .52, clod);
-  vec3 diffuse = mix(loam, crumbs, .19) * mix(.79, 1.26, shoulder);
-  return (diffuse + vec3(.040, .028, .020) + crest * vec3(.13, .088, .035)) * rakingLight(world);
+  vec3 diffuse = mix(vec3(.22,.14,.090), mix(loam, crumbs, .28), .51) * mix(.74, 1.22, shoulder);
+  return (diffuse + vec3(.040, .028, .020) + crest * vec3(.052, .034, .019)) * rakingLight(world);
 }`;
 
 export function paintShoulder(g, x1, z1, x2, z2, width) {
@@ -163,16 +163,19 @@ export function mountScenery(root, sources) {
     const relativeRim = projectedRim - rim;
     const dive = Math.max(0, zoom - 1);
     const ridgeBottom = Math.max(0, Math.min(projectedRim, rim + relativeRim * .52 - h * .42 * dive));
-    hills.style.height = ridgeBottom + "px";
+    const [, slope, tilt, offset] = pose.lens ?? [1, 1, 0, 0];
+    const project = y => offset*h + slope*y/(1+tilt*(.5-y/h));
+    const ridgeSize = ridgeBottom > 0 ? project(ridgeBottom) : 0;
+    hills.style.height = ridgeSize + "px";
     const ridgeWidth = w * Math.max(1.4, 1.4 * zoom ** .21);
-    const ridgeHeight = Math.max(ridgeBottom * 1.4, ridgeWidth * .17);
+    const ridgeHeight = Math.max(1, ridgeSize);
     const skyX = Math.min(0, Math.max(w - ridgeWidth, (w - ridgeWidth) * .48 + dx * .12));
-    const skyY = Math.min(0, ridgeBottom * .22 - ridgeHeight * .19);
+    const skyY = 0;
     hills.style.backgroundSize = ridgeWidth + "px " + ridgeHeight + "px";
     hills.style.backgroundPosition = skyX + "px " + skyY + "px";
     const woodsBottom = Math.min(projectedRim, rim + relativeRim * .67 - h * .50 * dive);
     hedge.style.transform = "translate(" + dx * .29 + "px," +
-      (woodsBottom - hedgeHeight * nearScale) + "px) scale(" + nearScale + ")";
+      (project(woodsBottom) - hedgeHeight * nearScale) + "px) scale(" + nearScale + ")";
     const foregroundScale = zoom ** .67;
     const oakX = -w * .009 + dx * 1.2 - w * .72 * dive;
     const oakY = -h * .038 + Math.min(0, dy * 1.2 - h * 1.02 * dive);

@@ -13,22 +13,46 @@ export function createCamera(root, update) {
   function paint() {
     root.style.setProperty("--scale", pose.s);
     root.style.setProperty("--pitch", pose.p);
+    const blend = Math.min(1, Math.max(0, 2 - pose.s / base));
+    const breadth = 1 - .16 * blend;
+    const slope = 1 - .35 * blend;
+    const tilt = .44 * blend;
+    const offset = .115 * blend;
+    const far = 1 + tilt / 2;
+    pose.lens = [breadth, slope, tilt, offset];
     const world = root.querySelector("main");
-    if (world)
-      world.style.transform =
-        "matrix(" +
-        [pose.s, 0, 0, pose.s * pose.p, pose.x, pose.y].join(",") +
-        ")";
+    if (world) {
+      const height = root.clientHeight, center = root.clientWidth / 2;
+      const k = -tilt / height;
+      const plane = [breadth, 0, 0, 0, center*k, slope-offset*tilt, 0, k,
+        0, 0, 1, 0, center*(far-breadth), offset*height*far, 0, far];
+      const affine = [pose.s, 0, 0, pose.s*pose.p, pose.x, pose.y];
+      world.style.transform = "matrix3d(" + plane + ") matrix(" + affine + ")";
+      const labels = world.querySelectorAll("h2,.category-tile .parcel-type,.field-story,.tick,.axis,.inspectable .sample-title,.inspectable .meta");
+      for (const label of labels) label.style.removeProperty("transform");
+      if (blend > 0) {
+        const bounds = Array.from(labels, label => label.getBoundingClientRect());
+        labels.forEach((label, index) => {
+          const r = bounds[index];
+          const x = r.x + r.width / 2, y = (r.y + r.height / 2) / height - offset;
+          const depth = far - tilt * y * far / (slope + tilt*y);
+          const dx = breadth / depth, dy = slope*far / (depth*depth);
+          const shear = (x-center)*tilt / (height*depth);
+          const size = 1 - .13*blend;
+          label.style.transform = "matrix(" + [size/dx,0,-size*pose.p*shear/(dx*dy),size/dy,0,0] + ")";
+        });
+      }
+    }
     update(pose, base, goal.s, moved);
   }
-  function move(next, immediate = false) {
+  function move(next, immediate = false, duration = 480) {
     cancelAnimationFrame(frame);
     goal = next;
     const start = performance.now(),
       previous = { ...pose };
     function tick(now) {
       const t =
-        immediate || motion.matches ? 1 : Math.min(1, (now - start) / 480);
+        immediate || motion.matches ? 1 : Math.min(1, Math.max(0, now - start) / duration);
       const ease = t * t * (3 - 2 * t);
       for (const key of ["x", "y", "s", "p"])
         pose[key] = previous[key] + (goal[key] - previous[key]) * ease;
@@ -76,6 +100,7 @@ export function createCamera(root, update) {
         y: h * 0.48 - (r.y + r.h * 0.5) * s * p,
       },
       immediate,
+      item.kind === "category" || item.kind === "operation" ? 1200 : 480,
     );
   }
   function resize(board, item) {

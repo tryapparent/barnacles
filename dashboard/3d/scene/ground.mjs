@@ -30,33 +30,20 @@ export function groundMaterials(g, images, rand) {
       1.2 * Math.sin(t * 0.021) +
       0.55 * Math.sin(t * 0.073) +
       2.1 * Math.sin(t * 0.006);
-    for (const [spread, fill] of [
-      [1.8, "#746533"],
-      [0.8, "#9e8954"],
-      [0, pat("road", 1.15, 1.1)],
-    ]) {
-      g.beginPath();
-      for (let i = 0; i <= steps; i++) {
-        const t = (len * i) / steps;
-        g.lineTo(t, wav(t) - width / 2 - spread - rand() * 0.95);
+    const lane = (t, side) => wav(t) + side * width * (.28 + .024 * Math.sin(t / 37));
+    for (const side of [-1, 1]) {
+      for (const [spread, fill] of [[.23, "#6a633b99"], [.15, pat("road", .85)], [.055, "#c2a47882"]]) {
+        g.beginPath();
+        for (const direction of [1, -1]) {
+          for (let i = 0; i <= steps; i++) {
+            const t = len * (direction === 1 ? i : steps - i) / steps;
+            g.lineTo(t, lane(t, side) + direction * (width * spread + rand() * .8));
+          }
+        }
+        g.closePath();
+        g.fillStyle = fill;
+        g.fill();
       }
-      for (let i = steps; i >= 0; i--) {
-        const t = (len * i) / steps;
-        g.lineTo(t, wav(t) + width / 2 + spread + rand() * 1.5);
-      }
-      g.closePath();
-      g.fillStyle = fill;
-      g.fill();
-    }
-    for (let i = 0; i < len * 0.65; i++) {
-      const x = rand() * len;
-      g.fillStyle = rand() > 0.5 ? "#dabc877a" : "#59472565";
-      g.fillRect(
-        x,
-        wav(x) + (rand() - 0.5) * width,
-        rand() * 2.8 + 0.3,
-        rand() * 1.2 + 0.4,
-      );
     }
     g.restore();
   }
