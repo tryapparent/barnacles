@@ -62,6 +62,8 @@ The deployment publishes Grafana on the configured loopback port in the `plow-gr
 
 Reapply with the same runtime directory and environment to retain the volumes and the Viewer. To stop serving just this endpoint, use `tailscale serve --https="$PLOW_TAILNET_HTTPS_PORT" off`. To stop the Compose project while preserving telemetry, run `docker compose -p plow-grafana stop` from the deployed release directory with the same runtime environment. Verify Grafana's authenticated `/api/user` returns the intended read-only identity and query the imported run with its original time range.
 
+Deployment seeds the three overview dashboards in the Viewer’s **Starred** menu through Grafana’s user API. It saves a per-user completion marker under `PLOW_LGTM_WORKDIR` after all three requests succeed. A failed seed can be retried on deploy, and reapplying after a successful seed preserves changes the Viewer makes to the list. Keep the markers with the Grafana volumes when restoring a deployment.
+
 The [GitHub collector deployment](../../collect/github/README.md#compose-deployment) runs continuous polling and historical backfill in one worker. Set `PLOW_GITHUB_CREDENTIAL_LAYOUT=per-alias` and provision a separate repository-scoped credential file for each configured alias. Existing single-repository deployments can keep the default legacy layout. Use `bash infra/lgtm/deploy.sh --github-only` for worker-only activation or set `PLOW_GITHUB_ENABLED=true` to include it when reapplying the whole stack.
 
 ### Host and capture aliases
