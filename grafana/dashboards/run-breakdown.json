@@ -102,7 +102,7 @@
           {
             "matcher": { "id": "byName", "options": "paired" },
             "properties": [
-              { "id": "displayName", "value": "Paired" },
+              { "id": "displayName", "value": "Pairs" },
               { "id": "custom.width", "value": 90 }
             ]
           },
@@ -126,8 +126,7 @@
             "matcher": { "id": "byName", "options": "sourceGaps" },
             "properties": [
               { "id": "displayName", "value": "Source gaps" },
-              { "id": "custom.width", "value": 264 },
-              { "id": "custom.wrapText", "value": true },
+              { "id": "custom.width", "value": 320 },
               { "id": "custom.inspect", "value": true }
             ]
           }
