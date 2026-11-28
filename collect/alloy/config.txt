@@ -191,6 +191,7 @@ otelcol.exporter.otlphttp "tempo" {
 }
 
 prometheus.exporter.unix "host" {
+  procfs_path    = sys.env("PLOW_HOST_PROCFS")
   set_collectors = ["cpu", "meminfo"]
 }
 
@@ -212,7 +213,23 @@ prometheus.relabel "host" {
 
   rule {
     target_label = "plow_host"
-    replacement = "loopback-fixture"
+    replacement = string.replace(sys.env("PLOW_HOST_ALIAS"), "$", "$$")
+  }
+
+  rule {
+    source_labels = ["plow_host"]
+    regex = "[A-Za-z0-9][A-Za-z0-9_-]{0,63}"
+    action = "keep"
+  }
+
+  rule {
+    source_labels = ["plow_host"]
+    target_label = "instance"
+  }
+
+  rule {
+    target_label = "plow_host_source"
+    replacement = "host-proc"
   }
 }
 

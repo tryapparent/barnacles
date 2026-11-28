@@ -3,6 +3,7 @@ set -euo pipefail
 cd "$(dirname -- "${BASH_SOURCE[0]}")/../.."
 export PLOW_LGTM_WORKDIR
 PLOW_LGTM_WORKDIR=$(mktemp -d /tmp/apparent-dev-plow-lgtm-XXXXXX)
+export PLOW_HOST_ALIAS=loopback-fixture
 job=${PLOW_LGTM_WORKDIR##*-}
 export PLOW_GRAFANA_IMAGE="plow-grafana-check-${job,,}:local"
 compose() { docker compose -p "plow-lgtm-${job,,}" "$@"; }
@@ -146,7 +147,7 @@ if grep -Fq fixture-live-canary "$PLOW_LGTM_WORKDIR/tempo.json"; then
   exit 1
 fi
 await_query "http://$mimir/prometheus/api/v1/query?query=node_memory_MemTotal_bytes" \
-  'any(.data.result[]; .metric.plow_host == "loopback-fixture" and (.value[1] | tonumber) > 0)' \
+  'any(.data.result[]; .metric.plow_host == "loopback-fixture" and .metric.instance == "loopback-fixture" and .metric.plow_host_source == "host-proc" and (.value[1] | tonumber) > 0)' \
   "$PLOW_LGTM_WORKDIR/mimir.json"
 
 before=$(compose ps -q)

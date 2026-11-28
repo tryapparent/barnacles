@@ -1005,6 +1005,139 @@
         "enableLogDetails": true,
         "sortOrder": "Descending"
       }
+    },
+    {
+      "id": 13,
+      "type": "text",
+      "title": "Host context",
+      "gridPos": {
+        "x": 0,
+        "y": 39,
+        "w": 24,
+        "h": 4
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "Samples use the selected UTC range. Legends show host aliases.  \n**Run attribution is unknown.** Utilization alone cannot establish the cause of a delay.  \nIf the charts are empty, select a range with samples or check the Alloy host scrape."
+      }
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "CPU non-idle",
+      "gridPos": {
+        "x": 0,
+        "y": 43,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "plow-mimir"
+      },
+      "description": "One-minute CPU time outside idle, averaged across logical CPUs. Includes I/O wait and steal time.",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "plow-mimir"
+          },
+          "expr": "100 * (1 - avg by (plow_host) (rate(node_cpu_seconds_total{plow_host_source=\"host-proc\",plow_host!=\"\",mode=\"idle\"}[1m]) and present_over_time(node_cpu_seconds_total{plow_host_source=\"host-proc\",plow_host!=\"\",mode=\"idle\"}[15s])))",
+          "queryType": "range",
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "interval": "5s",
+          "legendFormat": "{{plow_host}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 100,
+          "unit": "percent",
+          "custom": {
+            "fillOpacity": 12,
+            "lineWidth": 2,
+            "spanNulls": false,
+            "insertNulls": true
+          },
+          "color": {
+            "mode": "palette-classic-by-name"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single"
+        }
+      }
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "RAM in use",
+      "gridPos": {
+        "x": 12,
+        "y": 43,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "plow-mimir"
+      },
+      "description": "Share of total RAM unavailable to new workloads. Linux MemAvailable accounts for reclaimable memory.",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "plow-mimir"
+          },
+          "expr": "100 * (1 - last_over_time(node_memory_MemAvailable_bytes{plow_host_source=\"host-proc\",plow_host!=\"\"}[15s]) / last_over_time(node_memory_MemTotal_bytes{plow_host_source=\"host-proc\",plow_host!=\"\"}[15s]))",
+          "queryType": "range",
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "interval": "5s",
+          "legendFormat": "{{plow_host}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 100,
+          "unit": "percent",
+          "custom": {
+            "fillOpacity": 12,
+            "lineWidth": 2,
+            "spanNulls": false,
+            "insertNulls": true
+          },
+          "color": {
+            "mode": "palette-classic-by-name"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single"
+        }
+      }
     }
   ],
   "links": [
