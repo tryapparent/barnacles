@@ -1,6 +1,7 @@
 import Base
 import 0x29d6f1ff259add9ea6c8f213fda12377/sha256.bend as Sha
 import ./project.bend as P
+import ./turn.bend as T
 import 0x419ec39802735c4664960ab4b9d962e5/json.bend as J
 import 0xec25e4adfb02e59e4b817801115988ee/bytes.bend as Bytes
 
@@ -54,8 +55,20 @@ def run_status(status: String) -> String:
     case "interrupted": "interrupted"
     case _: "unknown"
 
-def run(+scope: String,+thread: String,+id: String,owner: String,status: String,requested: String,
-    started: String,completed: String,updated: String,observed: String,provider: String,refs: List<&2,P.T3Binding>) -> String:
+def terminal_trace(status: String) -> Bool:
+  match status:
+    case "completed": True{}
+    case "failed": True{}
+    case "cancelled": True{}
+    case "interrupted": True{}
+    case _: False{}
+
+def trace_data(attempts: String, turns: String) -> T.TraceData:
+  T.trace_data(attempts,turns)
+
+def run(+scope: String,+thread: String,+id: String,owner: String,+status: String,requested: String,
+    started: String,completed: String,updated: String,observed: String,+provider: String,refs: List<&2,P.T3Binding>,
+    active: String,trace: T.TraceData) -> String:
   +r = value(requested)
   +s = value(started)
   +e = value(completed)
@@ -63,13 +76,15 @@ def run(+scope: String,+thread: String,+id: String,owner: String,status: String,
   +seen = value(observed)
   +at = Nat.max(r,Nat.max(s,e))
   +session = P.chosen_run(P.binding(thread,provider,refs,P.Missing{}))
+  +turn = Bool.pick(String,Bool.and(terminal_trace(status),Bool.and(Nat.is_gt(s,0n),Nat.is_le(s,e))),
+    T.lookup(id,provider,session,active,trace),"")
   +valid = Bool.and(Bool.and(P.token(scope),stock_id(thread)),Bool.and(stock_id(id),String.eq(thread,owner)))
   +key = fresh_identity(scope,id)
   row : J.Val = J.Obj{[str("kind","t3_activity_run"),str("eventId",key),
     ms(Bool.pick(Nat,Nat.is_gt(at,0n),at,Nat.max(1n,rev))),num("revisionMs",rev),num("observedMs",seen),
     str("threadKey",fresh_identity(scope,thread)),
     (J.utf8("run"),J.Obj{[str("id",id),str("threadId",thread),str("sessionId",session),
-      str("status",run_status(status)),num("requestedMs",r),num("startedMs",s),num("completedMs",e)]})]}
+      str("status",run_status(status)),num("requestedMs",r),num("startedMs",s),num("completedMs",e),str("codexTurnId",turn)]})]}
   Bool.pick(String,valid,P.render(row),"")
 
 def operation(+scope: String,+thread: String,+id: String,owner: String,visibility: String,+run: String,kind: String,

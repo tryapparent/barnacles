@@ -111,7 +111,7 @@ function nat(value: unknown): number {
 
 const field = (value: unknown) => typeof value === "string" && value.length <= 768 ? value : "";
 
-function evidence(source: string, value: unknown) {
+function evidence(source: string, value: unknown, traceBinding: boolean) {
   const row = object(value, "evidence record");
   const run = object(row.run ?? {}, "run");
   const kind = field(row.kind);
@@ -129,7 +129,8 @@ function evidence(source: string, value: unknown) {
     id: field(row.eventId ?? run.id),
     thread: field(row.threadKey ?? run.threadId ?? row.threadId),
     run: field(run.id ?? row.t3RunId ?? String(row.runId ?? "")), session: field(run.sessionId ?? row.sessionId),
-    group: field(row.operation ?? String(row.prNumber ?? "")), status: field(run.status ?? row.conclusion ?? row.status),
+    group: field(traceBinding ? run.codexTurnId : row.operation ?? String(row.prNumber ?? "")),
+    status: field(run.status ?? row.conclusion ?? row.status),
     stamp: nat(row.timestampMs ?? run.completedMs), seen: nat(row.observedMs),
     revision: nat(row.revisionMs ?? row.sourceUpdatedMs ?? row.updatedMs ?? row.observedMs),
     first: nat(run.requestedMs ?? row.requestedMs ?? row.createdMs ?? row.oldestSourceMs),
@@ -149,7 +150,7 @@ async function activity(request: Record<string, unknown>, module: string) {
     if (!Array.isArray(lines)) throw Error("Expected a bounded list of source records");
     for (const line of lines) {
       try {
-        const head = evidence(source, JSON.parse(line));
+        const head = evidence(source, JSON.parse(line), request.view === "traceBinding");
         input = { $: "Con", head, tail: input };
       } catch {
         partial = true;
@@ -157,10 +158,11 @@ async function activity(request: Record<string, unknown>, module: string) {
     }
   }
   const { default: policy } = await import(pathToFileURL(module).href);
-  const report = request.view === "lookup"
+  const report = request.view === "lookup" || request.view === "traceBinding"
     ? policy.lookup(input, nat(request.to), string(request, "runId"), partial)
     : policy.activity(input, string(request, "range"), nat(request.to), partial, string(request, "operation"));
   process.stdout.write(JSON.stringify(report, (_key, value) => {
+    if (_key === "turn" && request.view === "lookup") return undefined;
     if (typeof value === "bigint") return Number(value);
     if (value?.$ === "None") return null;
     if (value?.$ === "Some") return value.value;
@@ -184,6 +186,12 @@ async function compile(directory: string) {
   ]);
 }
 
+function traceMatch(value: unknown) {
+  const row = object(value, "Tempo match");
+  return { $: "TraceMatch", id: field(row.id), session: field(row.session), turn: field(row.turn),
+    start: nat(row.start), end: nat(row.end) };
+}
+
 async function main() {
   const [mode, directory, ...extra] = process.argv.slice(2);
   if (mode === "--compile" && directory && !extra.length) {
@@ -198,10 +206,20 @@ async function main() {
   try {
     const module = scratch ? (await compile(scratch))[range ? 1 : 0] : configured!;
     if (range) return await activity(request, module);
-    const { run, events } = decode(request);
     const { default: policy } = await import(pathToFileURL(module).href) as {
-      default: { analyze(run: Run, events: List<ToolEvent>): Report; evidence_gap(events: bigint): string };
+      default: { analyze(run: Run, events: List<ToolEvent>): Report; evidence_gap(events: bigint): string;
+        trace(session: string, turn: string, complete: boolean, matches: List<ReturnType<typeof traceMatch>>): unknown };
     };
+    if (request.view === "exactTrace") {
+      if (!Array.isArray(request.matches) || request.matches.length > 8) throw Error("Expected bounded Tempo matches");
+      const matches = request.matches.reduceRight<List<ReturnType<typeof traceMatch>>>((tail, row) =>
+        ({ $: "Con", head: traceMatch(row), tail }), { $: "Nil" });
+      const result = policy.trace(string(request, "session"), string(request, "turn"), request.complete === true, matches);
+      process.stdout.write(JSON.stringify(result, (key, value) => key === "$" ? undefined :
+        typeof value === "bigint" ? Number(value) : value) + "\n");
+      return;
+    }
+    const { run, events } = decode(request);
     const report = policy.analyze(run, events);
     if (report.$ === "Rejected") throw Error("Policy rejected the run identity or clock window");
 

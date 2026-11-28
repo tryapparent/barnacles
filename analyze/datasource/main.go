@@ -41,6 +41,7 @@ var (
 
 type datasource struct {
 	loki          lokiClient
+	tempo         *url.URL
 	policy        string
 	activityCache activityCache
 }
@@ -49,6 +50,7 @@ func newDatasource(_ context.Context, settings backend.DataSourceInstanceSetting
 	var config struct {
 		LokiURL    string `json:"lokiUrl"`
 		LokiTenant string `json:"lokiTenant"`
+		TempoURL   string `json:"tempoUrl"`
 	}
 	if err := json.Unmarshal(settings.JSONData, &config); err != nil {
 		return nil, errors.New("Invalid Plow datasource settings")
@@ -61,6 +63,15 @@ func newDatasource(_ context.Context, settings backend.DataSourceInstanceSetting
 	}
 	if !tenantID.MatchString(config.LokiTenant) {
 		return nil, errors.New("Configure lokiTenant as a single tenant ID")
+	}
+	var tempo *url.URL
+	if config.TempoURL != "" {
+		tempo, err = url.Parse(config.TempoURL)
+		if err != nil || (tempo.Scheme != "http" && tempo.Scheme != "https") || tempo.Hostname() == "" ||
+			tempo.User != nil || tempo.RawQuery != "" || tempo.ForceQuery || tempo.Fragment != "" {
+			return nil, errors.New("Configure tempoUrl as an HTTP or HTTPS base URL")
+		}
+		tempo = tempo.JoinPath("api", "search")
 	}
 	token := settings.DecryptedSecureJSONData["lokiBearerToken"]
 	if len(token) > 4096 || strings.ContainsAny(token, "\r\n") {
@@ -83,6 +94,7 @@ func newDatasource(_ context.Context, settings backend.DataSourceInstanceSetting
 				},
 			},
 		},
+		tempo:         tempo,
 		policy:        policy,
 		activityCache: activityCache{gate: make(chan struct{}, 1)},
 	}, nil
@@ -105,6 +117,7 @@ func (ds *datasource) query(ctx context.Context, query backend.DataQuery) backen
 	var model struct {
 		RunID        string `json:"runId"`
 		History      string `json:"history"`
+		Trace        bool   `json:"trace"`
 		ActivityView string `json:"activityView"`
 		Range        string `json:"range"`
 		Operation    string `json:"operation"`
@@ -128,13 +141,16 @@ func (ds *datasource) query(ctx context.Context, query backend.DataQuery) backen
 	if model.ActivityView != "" {
 		return ds.activity(ctx, window.To, model.ActivityView, model.Range, model.Operation)
 	}
+	if model.Trace {
+		return ds.runTrace(ctx, window, model.RunID, model.History == "1")
+	}
 
 	var run runRecord
 	var failure *backend.DataResponse
 	history := model.History == "1"
 	if history {
 		var gap string
-		run, gap, failure = ds.readHistoryRun(ctx, window, model.RunID)
+		run, gap, failure = ds.readHistoryRun(ctx, window, model.RunID, "lookup")
 		if gap != "" {
 			return renderUnavailable(model.RunID, gap)
 		}

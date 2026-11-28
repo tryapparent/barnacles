@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as wait } from "node:timers/promises";
-import { capturePolicy, checkpoint, health, ordered, publish, resume, scopeArg, type WireList as List } from "../fixture.ts";
+import { array, capturePolicy, checkpoint, health, ordered, publish, resume, scopeArg, type WireList as List } from "../fixture.ts";
 import { buildPolicy, loadPolicy } from "../../tooling/bend.ts";
 
 type Binding = { $: "T3Binding"; owner: string; driver: string; native_driver: string; strength: string; session: string; reference: string };
@@ -14,7 +14,7 @@ function object(input: unknown): Record<string, unknown> {
 }
 
 function list<T>(input: unknown, cap: number, decode: (input: unknown) => T): List<T> {
-  if (!Array.isArray(input) || input.length > cap) throw Error("Invalid or oversized T3 result list");
+  if (!Array.isArray(input) || input.length > cap) throw Error("Invalid T3 result list");
   return input.reduceRight<List<T>>((tail, entry) => ({ $: "Con", head: decode(entry), tail }), { $: "Nil" });
 }
 
@@ -58,7 +58,7 @@ class SourceError extends Error {
 function sourceURL(path: string, origin: string) {
   const url = new URL(path, origin);
   if (url.protocol !== "https:" && !(url.protocol === "http:" && url.hostname === "127.0.0.1")) {
-    throw Error("Use HTTPS or a loopback fixture T3 origin");
+    throw Error("Use HTTPS or loopback for T3");
   }
   return url;
 }
@@ -130,17 +130,14 @@ async function archived(origin: string, token: string) {
 }
 
 type Capture = Awaited<ReturnType<typeof capturePolicy>> & {
+  trace_data(attempts: string, turns: string): unknown;
   run(scope: string, thread: string, id: string, owner: string, status: string, requested: string,
-    started: string, completed: string, revision: string, observed: string, provider: string, refs: List<Binding>): string;
+    started: string, completed: string, revision: string, observed: string, provider: string, refs: List<Binding>,
+    active: string, trace: unknown): string;
   operation(...fields: string[]): string;
   pr_link(...fields: string[]): string;
   page(previous: string, next: string, more: boolean): boolean;
 };
-
-function array(input: unknown, cap: number) {
-  if (!Array.isArray(input) || input.length > cap) throw Error("bounded_inventory");
-  return input.map(object);
-}
 
 type Page = { lines: string[]; next: string; oldest: number; runHistoryGap: boolean };
 
@@ -166,10 +163,12 @@ function page(policy: Capture, scope: string, thread: string, input: Record<stri
     if (head.id !== thread) throw Error("incomplete_projection");
     const refs = bindings(projection);
     const runs = array(projection.runs, 4096);
+    const trace = policy.trace_data(JSON.stringify(projection.attempts ?? null), JSON.stringify(projection.providerTurns ?? null));
     runHistoryGap = input.hasMoreHistory === true || runs.length === 4096;
     for (const run of runs) {
       const line = policy.run(scope, thread, text(run.id), text(run.threadId), text(run.status),
-        ms(run.requestedAt), ms(run.startedAt), ms(run.completedAt), ms(run.updatedAt ?? head.updatedAt), receipt, text(run.providerThreadId), refs);
+        ms(run.requestedAt), ms(run.startedAt), ms(run.completedAt), ms(run.updatedAt ?? head.updatedAt), receipt, text(run.providerThreadId), refs,
+        text(run.activeAttemptId), trace);
       if (!line) continue;
       lines.push(line);
       observe(timestamp(run.requestedAt) || timestamp(run.startedAt) || timestamp(run.completedAt));

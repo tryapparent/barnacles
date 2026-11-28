@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -227,7 +228,7 @@ func lokiTransportFailure(err error) *backend.DataResponse {
 	}
 }
 
-func (ds *datasource) readHistoryRun(ctx context.Context, window backend.TimeRange, id string) (runRecord, string, *backend.DataResponse) {
+func (ds *datasource) readHistoryRun(ctx context.Context, window backend.TimeRange, id, view string) (runRecord, string, *backend.DataResponse) {
 	selector := t3HistorySelector + ` | json plow_kind="kind", plow_run_id="run.id" | plow_kind="t3_activity_run" | plow_run_id=` + strconv.Quote(id)
 	lines, gaps, failure := ds.loki.read(ctx, window, selector, "t3_history", eventLimit)
 	if failure != nil {
@@ -237,7 +238,7 @@ func (ds *datasource) readHistoryRun(ctx context.Context, window backend.TimeRan
 		return runRecord{}, "T3 run history lookup is incomplete. " + strings.Join(gaps, ". "), nil
 	}
 	raw, failure := runPolicy(ctx, ds.policy, map[string]any{
-		"range": "24h", "view": "lookup", "to": time.Now().UnixMilli(), "runId": id,
+		"range": "24h", "view": view, "to": time.Now().UnixMilli(), "runId": id,
 		"records": map[string][]string{"t3_history": lines},
 	})
 	if failure != nil {
@@ -247,6 +248,7 @@ func (ds *datasource) readHistoryRun(ctx context.Context, window backend.TimeRan
 		Thread  string
 		Run     string
 		Session string
+		Turn    string
 		Start   *int64
 		End     *int64
 		Gap     string
@@ -260,7 +262,7 @@ func (ds *datasource) readHistoryRun(ctx context.Context, window backend.TimeRan
 	if row.Run != id || !identifier.MatchString(row.Session) || row.Start == nil || row.End == nil || row.Gap != "" {
 		return runRecord{}, "", policyFailure(backend.StatusInternal, "Invalid T3 history result")
 	}
-	return runRecord{ID: row.Run, ThreadID: row.Thread, SessionID: row.Session, StartedMS: row.Start, CompletedMS: row.End}, "", nil
+	return runRecord{ID: row.Run, ThreadID: row.Thread, SessionID: row.Session, StartedMS: row.Start, CompletedMS: row.End, TurnID: row.Turn}, "", nil
 }
 
 type activityRead struct {
@@ -378,4 +380,99 @@ func (l lokiClient) readActivityShard(ctx context.Context, read activityRead, de
 		}
 	}
 	return activityRows{lines: lines, bytes: bytes, partial: saturated || page.warned}
+}
+
+var (
+	nativeUUID    = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+	nativeTraceID = regexp.MustCompile(`^[0-9a-f]{32}$`)
+)
+
+type tempoMatch struct {
+	ID      string `json:"id"`
+	Session string `json:"session"`
+	Turn    string `json:"turn"`
+	Start   int64  `json:"start"`
+	End     int64  `json:"end"`
+}
+
+func (ds *datasource) tempoSearch(ctx context.Context, from, to time.Time, run runRecord) ([]tempoMatch, bool) {
+	const limit = 3
+	endpoint := *ds.tempo
+	params := url.Values{}
+	params.Set("q", `{ instrumentation:name = "plow.codex" && span.conversation.id = `+strconv.Quote(run.SessionID)+
+		` && span.turn.id = `+strconv.Quote(run.TurnID)+` } | select(span.conversation.id, span.turn.id)`)
+	params.Set("start", strconv.FormatInt(from.Unix(), 10))
+	params.Set("end", strconv.FormatInt(to.Unix(), 10))
+	params.Set("limit", strconv.Itoa(limit))
+	params.Set("spss", "1")
+	endpoint.RawQuery = params.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	if err != nil {
+		return nil, false
+	}
+	resp, err := ds.loki.http.Do(req)
+	if err != nil {
+		return nil, false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, false
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 256<<10+1))
+	if err != nil || len(body) > 256<<10 {
+		return nil, false
+	}
+	var payload struct {
+		Metrics *struct {
+			CompletedJobs int `json:"completedJobs"`
+			TotalJobs     int `json:"totalJobs"`
+		} `json:"metrics"`
+		Traces []struct {
+			ID       string `json:"traceID"`
+			Start    string `json:"startTimeUnixNano"`
+			Duration uint32 `json:"durationMs"`
+			SpanSets []struct {
+				Spans []struct {
+					Attributes []struct {
+						Key   string `json:"key"`
+						Value struct {
+							String string `json:"stringValue"`
+						} `json:"value"`
+					} `json:"attributes"`
+				} `json:"spans"`
+			} `json:"spanSets"`
+		} `json:"traces"`
+	}
+	if json.Unmarshal(body, &payload) != nil || payload.Metrics == nil ||
+		payload.Traces == nil || payload.Metrics.TotalJobs < 0 || payload.Metrics.CompletedJobs != payload.Metrics.TotalJobs ||
+		(payload.Metrics.TotalJobs == 0 && len(payload.Traces) != 0) ||
+		len(payload.Traces) >= limit {
+		return nil, false
+	}
+	rows := make([]tempoMatch, 0, len(payload.Traces))
+	for _, candidate := range payload.Traces {
+		ns, err := strconv.ParseInt(candidate.Start, 10, 64)
+		if err != nil || !nativeTraceID.MatchString(candidate.ID) || candidate.ID == strings.Repeat("0", 32) ||
+			len(candidate.SpanSets) != 1 || len(candidate.SpanSets[0].Spans) != 1 {
+			return nil, false
+		}
+		row := tempoMatch{ID: candidate.ID, Start: ns / 1_000_000}
+		row.End = row.Start + int64(candidate.Duration) + 1
+		var sessionCount, turnCount int
+		for _, attribute := range candidate.SpanSets[0].Spans[0].Attributes {
+			switch attribute.Key {
+			case "conversation.id":
+				row.Session = attribute.Value.String
+				sessionCount++
+			case "turn.id":
+				row.Turn = attribute.Value.String
+				turnCount++
+			}
+		}
+		if sessionCount != 1 || turnCount != 1 {
+			return nil, false
+		}
+		rows = append(rows, row)
+	}
+	return rows, true
 }

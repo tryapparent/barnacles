@@ -63,6 +63,8 @@ test("T3 live head and durable opaque backfill advance independently", async () 
   const now = new Date(Date.now() - 10_000).toISOString();
   const old = "2025-06-03T12:00:00.000Z";
   const cursor = "+opaque/fixture=";
+  const nativeSession = "11111111-1111-1111-1111-111111111111";
+  const nativeTurn = "22222222-2222-2222-2222-222222222222";
   let unavailable = false;
   let discovered = false;
   let completed = false;
@@ -74,7 +76,7 @@ test("T3 live head and durable opaque backfill advance independently", async () 
     const url = new URL(request.url!, "http://127.0.0.1");
     const reply = (value: unknown) => response.end(JSON.stringify(value));
     if (url.pathname.endsWith("/websocket-ticket")) return reply({ ticket: "fixture-ticket" });
-    if (url.pathname.endsWith("/shell")) return reply({ threads: discovered ? [...active, { id: "thread-new", updatedAt: now }] : active });
+    if (url.pathname.endsWith("/shell")) return reply({ threads: discovered ? [...active, { id: "thread-new", updatedAt: active[0].updatedAt }] : active });
     const id = url.pathname.split("/").at(-2)!;
     if (url.pathname.endsWith("/history")) {
       assert.equal(url.searchParams.get("cursor"), cursor);
@@ -89,9 +91,15 @@ test("T3 live head and durable opaque backfill advance independently", async () 
     return reply({ hasMoreHistory: more, historyCursor: more ? cursor : null, snapshotSequence: 1,
       projection: { thread: { id, updatedAt: end ?? start, title: "private fixture title" },
         providerThreads: more ? [] : [{ id: "provider-ref", appThreadId: id, driver: "codex",
-          nativeThreadRef: { driver: "codex", strength: "strong", nativeId: "safe-session" } }], turnItems: [],
+          nativeThreadRef: { driver: "codex", strength: "strong", nativeId: nativeSession } }], turnItems: [],
+        attempts: [{ id: "attempt", runId: id + "-run", providerThreadId: "provider-ref",
+          nativeThreadId: nativeSession, rootNodeId: "root", providerTurnId: null },
+          ...(id === "thread-new" ? [{ id: "previous-attempt", runId: id + "-run" }] : [])],
+        providerTurns: [{ id: "turn", runAttemptId: "attempt", providerThreadId: "provider-ref", nodeId: "root",
+          nativeTurnRef: { nativeId: nativeTurn, driver: "codex", strength: "strong" },
+          payload: "private turn payload" }],
         runs: [{ id: id + "-run", threadId: id, providerThreadId: "provider-ref",
-          requestedAt: start, startedAt: start, completedAt: end, status: end ? "completed" : "running" }] } });
+          activeAttemptId: "attempt", requestedAt: start, startedAt: start, completedAt: end, status: end ? "completed" : "running" }] } });
   });
   server.on("upgrade", (request, socket) => {
     const accept = createHash("sha1").update(request.headers["sec-websocket-key"] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
@@ -149,8 +157,12 @@ test("T3 live head and durable opaque backfill advance independently", async () 
     assert.match(output, /thread-new-run/);
     assert.match(output, /thread-archived-run/);
     assert.match(output, /"sessionId":""/);
-    assert.match(output, /"sessionId":"safe-session"/);
-    assert.doesNotMatch(output, /private fixture title|fixture-read|opaque/);
+    assert.ok(output.includes('"sessionId":"' + nativeSession + '"'));
+    const runs = output.trim().split("\n").map(line => JSON.parse(line)).filter(row => row.kind === "t3_activity_run");
+    assert.deepEqual(runs.filter(row => row.run.codexTurnId).map(row => [row.run.id, row.run.codexTurnId]), [
+      ["thread-active-run", nativeTurn],
+    ]);
+    assert.doesNotMatch(output, /private fixture title|private turn payload|fixture-read|opaque/);
   } finally {
     server.close();
     rmSync(scratch, { recursive: true, force: true });
