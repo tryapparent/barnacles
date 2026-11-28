@@ -150,7 +150,16 @@ def coverage(+scope: String, collector: String, lane: String, state: String, +ob
     ms(at),num("observedMs",at),num("oldestSourceMs",value(oldest)),num("cutoffMs",value(cutoff))]}
   Bool.pick(String,P.token(scope),P.render(row),"")
 
-def codex(+kind: String,+session: String,+call: String,clock: String) -> String:
+def codex_kind(kind: String) -> String:
+  match kind:
+    case "function_call": "function_call"
+    case "function_call_output": "function_call_output"
+    case "custom_tool_call": "function_call"
+    case "custom_tool_call_output": "function_call_output"
+    case _: ""
+
+def codex(wire_kind: String,+session: String,+call: String,clock: String) -> String:
+  +kind = codex_kind(wire_kind)
   +at = value(clock)
   +key = String.concat([session,":",call,":",kind,":",Nat.show(at)])
   +valid = Bool.and(P.token(session),Bool.and(P.token(call),Nat.is_gt(at,0n)))

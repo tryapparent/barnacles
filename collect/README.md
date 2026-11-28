@@ -70,7 +70,7 @@ the beginning and skips to the saved uncompressed offset. Replacements and
 forked copies replay stable call event identities. A truncated tail stays
 pending. Unsupported compressed formats are a coverage gap. Filenames and
 source content stay in the private checkpoint and input roots. Historical
-JSONL preserves tool call envelope clocks. Live OTLP continues independently
+JSONL preserves function and custom tool call envelope clocks. Live OTLP continues independently
 through the existing sanitized Tempo route.
 
 The Activity streams use `plow_source=t3_history|codex_history|github_history`.

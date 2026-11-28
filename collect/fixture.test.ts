@@ -63,7 +63,8 @@ test("Codex capture restarts, admits new arrivals beside backfill and preserves 
   writeFileSync(archived, gzipSync(fixture("codex.jsonl").replaceAll("fixture-session", "old-synthetic-session")));
   utimesSync(archived, old, old);
   const zstd = join(root, "rollout-archive.jsonl.zst");
-  writeFileSync(zstd, zstdCompressSync(fixture("codex.jsonl").replaceAll("fixture-session", "zstd-synthetic-session")));
+  writeFileSync(zstd, zstdCompressSync(fixture("codex.jsonl").replaceAll("fixture-session", "zstd-synthetic-session")
+    .replaceAll("function_call", "custom_tool_call")));
   utimesSync(zstd, old, old);
   capture("live");
   assert.equal(rows("codex").filter(row => row.sessionId).length, 0);
