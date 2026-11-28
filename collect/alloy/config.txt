@@ -40,7 +40,7 @@ otelcol.receiver.filelog "t3" {
 }
 
 otelcol.receiver.filelog "t3_history" {
-  include           = ["/spool/t3/*.jsonl"]
+  include           = [coalesce(sys.env("PLOW_T3_HISTORY_GLOB"), "/spool/t3/*.jsonl")]
   fingerprint_size = "128B"
   include_file_name = false
   start_at          = "beginning"
@@ -72,22 +72,40 @@ otelcol.receiver.filelog "github_history" {
 }
 
 otelcol.processor.transform "transport" {
-  error_mode = "propagate"
+  error_mode = "silent"
 
   log_statements {
     context = "log"
     statements = [
-      `replace_pattern(body, "^[{]\"chunkId\":\"[0-9a-f]{64}\", *", "{")`,
-      `merge_maps(cache, ParseJSON(body), "upsert")`,
-      `set(time_unix_nano, Int(cache["timestampMs"]) * 1000000) where cache["timestampMs"] != nil`,
-      `set(time_unix_nano, Int(cache["run"]["completedMs"]) * 1000000) where cache["run"] != nil and cache["timestampMs"] == nil`,
-      `set(attributes["plow_hour"], String(Int(time_unix_nano / 3600000000000))) where time_unix_nano > 0`,
-      `set(attributes["event_id"], cache["eventId"])`,
-      `set(attributes["call_id"], cache["callId"])`,
-      `set(attributes["session_id"], cache["sessionId"])`,
-      `set(attributes["run_id"], cache["run"]["id"]) where cache["run"] != nil`,
-      `set(attributes["session_id"], cache["run"]["sessionId"]) where cache["run"] != nil`,
+      `set(cache["wire"], body)`,
+      `set(body, false)`,
+      `replace_pattern(cache["wire"], "^[{]\"chunkId\":\"[0-9a-f]{64}\", *", "{")`,
+      `set(cache["record"], ParseJSON(cache["wire"])) where IsString(cache["wire"])`,
+      `set(cache["clock"], cache["record"]["timestampMs"]) where IsMap(cache["record"])`,
+      `set(cache["clock"], cache["record"]["run"]["completedMs"]) where cache["clock"] == nil and IsMap(cache["record"]["run"])`,
+      `set(cache["timestamp"], Int(cache["clock"])) where (IsInt(cache["clock"]) or IsDouble(cache["clock"])) and Double(cache["clock"]) >= 1.0 and Double(cache["clock"]) <= 9223372036854.0 and Double(cache["clock"]) == Double(Int(cache["clock"]))`,
+      `set(time_unix_nano, cache["timestamp"] * 1000000) where cache["timestamp"] != nil`,
+      `set(attributes["plow_hour"], String(Int(time_unix_nano / 3600000000000))) where cache["timestamp"] != nil`,
+      `set(attributes["event_id"], cache["record"]["eventId"]) where IsString(cache["record"]["eventId"])`,
+      `set(attributes["call_id"], cache["record"]["callId"]) where IsString(cache["record"]["callId"])`,
+      `set(attributes["session_id"], cache["record"]["sessionId"]) where IsString(cache["record"]["sessionId"])`,
+      `set(attributes["run_id"], cache["record"]["run"]["id"]) where IsString(cache["record"]["run"]["id"])`,
+      `set(attributes["session_id"], cache["record"]["run"]["sessionId"]) where IsString(cache["record"]["run"]["sessionId"])`,
+      `set(cache["observed_clock_fallback"], true) where resource.attributes["plow_source"] == "github_history" and cache["clock"] == nil and IsString(cache["record"]["eventId"]) and IsString(cache["record"]["repository"])`,
+      `set(body, cache["wire"]) where IsString(cache["record"]["kind"]) and ((cache["timestamp"] != nil and IsString(attributes["plow_hour"])) or cache["observed_clock_fallback"] == true)`,
     ]
+  }
+
+  output {
+    logs = [otelcol.processor.filter.transport.input]
+  }
+}
+
+otelcol.processor.filter "transport" {
+  error_mode = "propagate"
+
+  logs {
+    log_record = [`not IsString(body)`]
   }
 
   output {

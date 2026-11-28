@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync, zstdCompressSync } from "node:zlib";
@@ -58,6 +58,28 @@ test("history chunks distinguish shared prefixes and remain immutable on replay"
     assert.match(chunkId, /^[a-f0-9]{64}$/);
     assert.deepEqual(event, JSON.parse(start));
   }
+});
+
+test("T3 versioned-only reads require exact counterparts for every legacy chunk", () => {
+  const directory = join(workdir, "t3-legacy");
+  const row = projectRun(policy, fixture("t3.json"));
+  const deploy = fileURLToPath(new URL("../infra/lgtm/deploy.sh", import.meta.url));
+  const audit = () => spawnSync("bash", [deploy, "--verify-t3-v2", directory]).status;
+  assert.equal(audit(), 0);
+  publish(directory, "fixture-live", [row]);
+  const [legacy] = readdirSync(directory);
+  assert.equal(audit(), 1);
+  publish(directory, "fixture-backfill", [row], 128);
+  assert.equal(audit(), 1);
+  publish(directory, "fixture-live", [row], 128);
+  assert.equal(audit(), 0);
+  const arbitrary = join(directory, "unversioned.jsonl");
+  writeFileSync(arbitrary, row + "\n");
+  assert.equal(audit(), 1);
+  rmSync(arbitrary);
+  const versioned = legacy.replace("-live-", "-live-v2-");
+  appendFileSync(join(directory, versioned), row + "\n");
+  assert.equal(audit(), 1);
 });
 
 test("Codex capture restarts, admits new arrivals beside backfill and preserves fork replay identities", async () => {

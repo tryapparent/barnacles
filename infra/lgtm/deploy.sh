@@ -1,6 +1,54 @@
 set -euo pipefail
 
 cd "$(dirname -- "${BASH_SOURCE[0]}")/../.."
+verify_t3_v2() {
+  node --no-warnings --input-type=module - "$1" <<'JS'
+import { lstatSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { chunkWire } from "./collect/fixture.ts";
+
+function verify(directory) {
+  const info = lstatSync(directory, { throwIfNoEntry: false });
+  if (!info) return true;
+  if (!info.isDirectory()) return false;
+  const files = readdirSync(directory, { withFileTypes: true }).filter(entry => entry.name.endsWith(".jsonl"));
+  if (files.length > 100_000) return false;
+  const names = new Set(files.filter(entry => entry.isFile()).map(entry => entry.name));
+  const chunkName = /^([A-Za-z0-9_-]{1,48}-(?:live|backfill))-(v2-)?([a-f0-9]{64})\.jsonl$/;
+  let remainingBytes = 1024 ** 3;
+  for (const entry of files) {
+    const match = chunkName.exec(entry.name);
+    if (!entry.isFile() || !match) return false;
+    const [, prefix, version, expectedDigest] = match;
+    if (version) continue;
+    const legacy = join(directory, entry.name);
+    const versionedName = prefix + "-v2-" + expectedDigest + ".jsonl";
+    if (!names.has(versionedName)) return false;
+    const versioned = join(directory, versionedName);
+    remainingBytes -= lstatSync(legacy).size + lstatSync(versioned).size;
+    if (remainingBytes < 0) return false;
+    const bytes = readFileSync(legacy);
+    const body = bytes.toString("utf8");
+    const { digest, wire } = chunkWire(body, 128);
+    if (!Buffer.from(body).equals(bytes) || !body.startsWith("{") || !body.endsWith("\n") ||
+        digest !== expectedDigest || !readFileSync(versioned).equals(Buffer.from(wire))) return false;
+  }
+  return true;
+}
+
+try {
+  process.exitCode = verify(process.argv[2]) ? 0 : 1;
+} catch {
+  process.exitCode = 1;
+}
+JS
+}
+
+if [[ ${1:-} == --verify-t3-v2 ]]; then
+  [[ $# == 2 ]]
+  verify_t3_v2 "$2"
+  exit
+fi
 : "${PLOW_LGTM_WORKDIR:?Set the private runtime directory}"
 mode=${1:-}
 case "$mode" in
@@ -80,6 +128,13 @@ jq -e --arg authority "$authority" --arg legacy "$legacy_target" --arg access "$
   (.Web[$authority] == null or (.Web[$authority].Handlers | keys == ["/"]) and (.Web[$authority].Handlers["/"].Proxy as $target | $target == $legacy or ($access != "" and $target == $access)))
 ' <<< "$route" > /dev/null
 mkdir -p "$PLOW_LGTM_WORKDIR/spool"
+export PLOW_T3_HISTORY_GLOB='/spool/t3/*.jsonl'
+if verify_t3_v2 "$PLOW_LGTM_WORKDIR/spool/t3" 2>/dev/null; then
+  printf -v digest_glob '%64s' ''
+  export PLOW_T3_HISTORY_GLOB="/spool/t3/*-v2-${digest_glob// /?}.jsonl"
+else
+  printf '%s\n' 'Retaining the legacy T3 history glob because exact v2 coverage could not be verified.' >&2
+fi
 if [[ ! -s "$PLOW_LGTM_WORKDIR/grafana-password" ]]; then
   openssl rand -hex 32 > "$PLOW_LGTM_WORKDIR/grafana-password"
   chmod 444 "$PLOW_LGTM_WORKDIR/grafana-password"

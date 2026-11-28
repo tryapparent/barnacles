@@ -97,13 +97,17 @@ function durableFile(path: string, content: string, immutable: boolean) {
   }
 }
 
-export function publish(directory: string, prefix: string, lines: string[], fingerprintBytes = 0) {
-  if (!lines.length) return;
-  const body = lines.join("\n") + "\n";
+export function chunkWire(body: string, fingerprintBytes: number) {
   const digest = createHash("sha256").update(body).digest("hex");
   const field = '{"chunkId":"' + digest + '",';
   const padding = fingerprintBytes - Buffer.byteLength(body) - field.length + 1;
   const wire = fingerprintBytes ? field + " ".repeat(Math.max(0, padding)) + body.slice(1) : body;
+  return { digest, wire };
+}
+
+export function publish(directory: string, prefix: string, lines: string[], fingerprintBytes = 0) {
+  if (!lines.length) return;
+  const { digest, wire } = chunkWire(lines.join("\n") + "\n", fingerprintBytes);
   const version = fingerprintBytes ? "-v2-" : "-";
   durableFile(join(directory, prefix + version + digest + ".jsonl"), wire, true);
 }

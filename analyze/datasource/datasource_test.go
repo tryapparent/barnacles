@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -28,6 +29,48 @@ var fixtureEvents = []string{
 }
 
 const fixturePolicyOutput = `{"runId":"fixture-run","intervals":[{"callId":"paired-call","kind":"function_call","startMs":2000,"endMs":4000,"durationMs":2000},{"callId":"unknown-call","kind":"function_call","startMs":5000,"endMs":null,"durationMs":null}],"findings":[{"callId":"unknown-call","reason":"missing_end"}],"coverage":{"events":3,"paired":1,"unknown":1}}`
+
+func TestTempoSearchCanonicalizesCompactTraceIDs(t *testing.T) {
+	const (
+		full    = "0123456789abcdef0123456789abcdef"
+		session = "12345678-1234-1234-1234-123456789abc"
+		turn    = "87654321-4321-4321-4321-cba987654321"
+		reply   = `{"metrics":{"totalJobs":1,"completedJobs":1},"traces":[{"traceID":"fixture-id","startTimeUnixNano":"1748951940000000000","durationMs":100,"spanSets":[{"spans":[{"attributes":[{"key":"conversation.id","value":{"stringValue":"` + session + `"}},{"key":"turn.id","value":{"stringValue":"` + turn + `"}}]}]}]}]}`
+	)
+	cases := []struct {
+		name, wire, expected string
+	}{
+		{"full width", full, full},
+		{"leading zero omitted", full[1:], full},
+		{"all zeros", "0", ""},
+		{"invalid hex", "g" + full[1:], ""},
+		{"too long", "0" + full, ""},
+	}
+	for _, fixture := range cases {
+		t.Run(fixture.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, strings.Replace(reply, "fixture-id", fixture.wire, 1))
+			}))
+			defer server.Close()
+			endpoint, err := url.Parse(server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ds := datasource{tempo: endpoint, loki: lokiClient{http: server.Client()}}
+			start := time.Unix(1748951940, 0)
+			rows, complete := ds.tempoSearch(context.Background(), start, start.Add(time.Second), runRecord{SessionID: session, TurnID: turn})
+			if fixture.expected == "" {
+				if complete || len(rows) != 0 {
+					t.Fatal("invalid trace ID was admitted")
+				}
+				return
+			}
+			if !complete || len(rows) != 1 || rows[0].ID != fixture.expected {
+				t.Fatalf("expected a canonical trace ID, got %v, complete %v", rows, complete)
+			}
+		})
+	}
+}
 
 func TestQueryDataFramesAndReplay(t *testing.T) {
 	t.Run("wire contract", func(t *testing.T) {
