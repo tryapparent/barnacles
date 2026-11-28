@@ -1,0 +1,73 @@
+import { vs, fs } from "./shaders.mjs";
+export function createProgram(gl) {
+  const program = gl.createProgram();
+  for (const [kind, source] of [
+    [gl.VERTEX_SHADER, vs],
+    [gl.FRAGMENT_SHADER, fs],
+  ]) {
+    const shader = gl.createShader(kind);
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS))
+      throw Error(gl.getShaderInfoLog(shader));
+    gl.attachShader(program, shader);
+  }
+  gl.linkProgram(program);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS))
+    throw Error(gl.getProgramInfoLog(program));
+  gl.useProgram(program);
+  return program;
+}
+export function bindTextures(gl, loc, images, texture) {
+  gl.activeTexture(gl.TEXTURE1);
+  gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());
+  gl.texImage2D(
+    gl.TEXTURE_2D,
+    0,
+    gl.RGBA,
+    gl.RGBA,
+    gl.UNSIGNED_BYTE,
+    images.oak,
+  );
+  for (const axis of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T])
+    gl.texParameteri(gl.TEXTURE_2D, axis, gl.CLAMP_TO_EDGE);
+  gl.generateMipmap(gl.TEXTURE_2D);
+  gl.texParameteri(
+    gl.TEXTURE_2D,
+    gl.TEXTURE_MIN_FILTER,
+    gl.LINEAR_MIPMAP_LINEAR,
+  );
+  gl.uniform1i(loc("foliage"), 1);
+  gl.activeTexture(gl.TEXTURE2);
+  gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());
+  gl.texImage2D(
+    gl.TEXTURE_2D,
+    0,
+    gl.RGB,
+    gl.RGB,
+    gl.UNSIGNED_BYTE,
+    images.soil,
+  );
+  for (const axis of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T])
+    gl.texParameteri(gl.TEXTURE_2D, axis, gl.CLAMP_TO_EDGE);
+  for (const f of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER])
+    gl.texParameteri(gl.TEXTURE_2D, f, gl.LINEAR);
+  gl.uniform1i(loc("earth"), 2);
+  gl.activeTexture(gl.TEXTURE3);
+  gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());
+  gl.texImage2D(
+    gl.TEXTURE_2D,
+    0,
+    gl.RGB,
+    gl.RGB,
+    gl.UNSIGNED_BYTE,
+    images.meadow,
+  );
+  for (const axis of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T])
+    gl.texParameteri(gl.TEXTURE_2D, axis, gl.CLAMP_TO_EDGE);
+  for (const f of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER])
+    gl.texParameteri(gl.TEXTURE_2D, f, gl.LINEAR);
+  gl.uniform1i(loc("borderGrass"), 3);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+}

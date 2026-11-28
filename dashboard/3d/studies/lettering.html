@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="en">
+  <title>Plow · Field lettering study</title
+  ><meta charset="utf-8" /><meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+  /><style>
+    @font-face {
+      font-family: Young;
+      src: url("../../../public/assets/youngserif.woff2");
+    }
+    @font-face {
+      font-family: Source;
+      src: url("../../../public/assets/source-serif-4.woff2");
+      font-weight: 200 900;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      color: var(--foreground, #30241b);
+      font:
+        15px/1.4 Source,
+        Georgia,
+        serif;
+    }
+    main {
+      max-width: 760px;
+      margin: auto;
+    }
+    .controls {
+      display: flex;
+      gap: 7px 12px;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      margin: 0 0 10px;
+    }
+    fieldset {
+      display: flex;
+      gap: 1px;
+      border: 0;
+      margin: 0;
+      padding: 0;
+    }
+    legend,
+    .sr {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      clip-path: inset(50%);
+      overflow: hidden;
+    }
+    label {
+      cursor: pointer;
+      position: relative;
+      display: block;
+    }
+    label span,
+    select {
+      border: 1px solid var(--border, #85715d);
+      color: inherit;
+      background: transparent;
+      display: block;
+      min-height: 36px;
+      padding: 7px 10px;
+      border-radius: 4px;
+      font: inherit;
+    }
+    input:checked + span {
+      background: #392820;
+      color: #fff4df;
+      border-color: #392820;
+    }
+    input:focus-visible + span,
+    select:focus-visible {
+      outline: 2px solid var(--ring, #72875a);
+      outline-offset: 2px;
+    }
+    select {
+      background: var(--background, #fff);
+      cursor: pointer;
+    }
+    .land {
+      width: 100%;
+      height: clamp(205px, 42vw, 300px);
+      position: relative;
+      isolation: isolate;
+      overflow: hidden;
+      display: grid;
+      place-content: center;
+      background-size: cover;
+      background-position: center;
+    }
+    .land[data-field="workflow"] {
+      background-image: url("workflow.jpg");
+    }
+    .land[data-field="agent"] {
+      background-image: url("agent.jpg");
+    }
+    .land[data-field="unclear"] {
+      background-image: url("unclear.jpg");
+    }
+    .type {
+      position: relative;
+      width: max-content;
+      max-width: 100%;
+      text-align: center;
+      color: #fff4df;
+      isolation: isolate;
+      text-shadow:
+        0 1px 1px #392820,
+        1px 2px 3px #392820;
+    }
+    .type::before {
+      content: "";
+      position: absolute;
+      inset: -28% -27%;
+      background: radial-gradient(
+        ellipse closest-side,
+        #20190ed1 3%,
+        #241b0ed4 39%,
+        #2e251c70 73%,
+        transparent
+      );
+      z-index: -1;
+      pointer-events: none;
+    }
+    .name {
+      display: block;
+      font:
+        400 clamp(24px, 5.6vw, 48px) / 1.15 Young,
+        Georgia,
+        serif;
+      transform: skewX(-7deg) scaleY(0.86) rotate(-3deg);
+      transform-origin: 50% 85%;
+      mask-image: linear-gradient(
+        179deg,
+        #000 35%,
+        #000e 68%,
+        #000b 92%,
+        #000a
+      );
+      letter-spacing: -0.03em;
+    }
+    .value {
+      display: block;
+      font:
+        600 clamp(19px, 3.4vw, 28px) / 1.4 Source,
+        Georgia,
+        serif;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .land[data-field="unclear"] .type {
+      color: #1a130d;
+      text-shadow: 0 1px 1px #fff4df66;
+    }
+    .land[data-field="unclear"] .type::before {
+      background: radial-gradient(ellipse closest-side, #f4eed766, transparent);
+    }
+    .land[data-mode="stake"] .type {
+      text-align: left;
+      transform: translateX(8px);
+    }
+    .land[data-mode="stake"] .name {
+      mask-image: none;
+      transform: none;
+      font:
+        400 clamp(22px, 4.7vw, 37px) / 1.15 Source,
+        Georgia,
+        serif;
+      letter-spacing: -0.015em;
+    }
+    .stake {
+      display: none;
+    }
+    .land[data-mode="stake"] .stake {
+      display: block;
+      position: absolute;
+      left: -17px;
+      bottom: 0;
+      width: 7px;
+      height: 112%;
+      background: linear-gradient(90deg, #493422, #c3a274 50%, #70553a 70%);
+      transform: rotate(4deg);
+      box-shadow: 1px 1px 1px #34210b55;
+    }
+    .stake:before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto;
+      height: 20%;
+      background: linear-gradient(90deg, #aa9e85, #fff4df 50%, #bcab89);
+    }
+    .stake:after {
+      content: "";
+      position: absolute;
+      bottom: 0;
+      left: 2px;
+      width: 37px;
+      height: 4px;
+      background: linear-gradient(90deg, #241a10b3, transparent);
+      transform: rotate(13deg);
+      transform-origin: left;
+    }
+    figcaption {
+      margin: 8px 0 0;
+      color: var(--muted-foreground, inherit);
+      min-height: 2em;
+    }
+    figure {
+      margin: 0;
+    }
+    @media (max-width: 390px) {
+      label span,
+      select {
+        padding: 6px 7px;
+      }
+      .controls {
+        gap: 5px;
+      }
+    }
+  </style>
+  <main>
+    <div class="controls">
+      <fieldset>
+        <legend>Lettering treatment</legend>
+        <label
+          ><input
+            class="sr"
+            type="radio"
+            name="mode"
+            value="paint"
+            checked
+          /><span>Painted name</span></label
+        ><label
+          ><input class="sr" type="radio" name="mode" value="stake" /><span
+            >Survey stake</span
+          ></label
+        >
+      </fieldset>
+      <select aria-label="Field material">
+        <option value="workflow">Tilled soil</option>
+        <option value="agent">Crops</option>
+        <option value="unclear">Fog</option>
+      </select>
+    </div>
+    <figure>
+      <div class="land" data-field="workflow" data-mode="paint">
+        <div class="type">
+          <i class="stake" aria-hidden="true"></i
+          ><span class="name">CI checks</span><span class="value">21h 27m</span>
+        </div>
+      </div>
+      <figcaption aria-live="polite">
+        The name follows the ground. The duration stays upright.
+      </figcaption>
+    </figure>
+  </main>
+  <script>
+    const names = {
+      workflow: ["CI checks", "21h 27m"],
+      agent: ["Code changes", "6h 48m"],
+      unclear: ["Unobserved interval", "4h 6m"],
+    };
+    document.addEventListener("change", () => {
+      const land = document.querySelector(".land"),
+        field = document.querySelector("select").value,
+        mode = document.querySelector("input:checked").value;
+      land.dataset.field = field;
+      land.dataset.mode = mode;
+      document.querySelector(".name").textContent = names[field][0];
+      document.querySelector(".value").textContent = names[field][1];
+      document.querySelector("figcaption").textContent =
+        mode === "paint"
+          ? "The name follows the ground. The duration stays upright."
+          : "A pale-tipped stake marks the spot. Both lines face the reader.";
+    });
+  </script>
+</html>

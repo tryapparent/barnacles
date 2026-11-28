@@ -1,0 +1,62 @@
+export const vs = `attribute vec3 p,color;attribute vec4 spot;uniform float plant;uniform vec4 cam;uniform vec2 screenSize;attribute vec2 tex;attribute float flex;varying mediump float floorLayer;varying vec2 uv,land;varying vec3 rgb;uniform vec2 view;uniform float lift;uniform highp float time;uniform mediump float shadow;void main(){vec3 v=p;float sway=max(flex,0.);if(plant>.5){float cs=cos(spot.w),sn=sin(spot.w);v=vec3(spot.x+(p.x*cs-p.z*sn)*spot.z,p.y*spot.z,spot.y+(p.x*sn+p.z*cs)*spot.z);sway*=spot.z;}v.x+=sway*(sin(time*1.4+v.x*.034+v.z*.021)+.3*sin(time*2.+v.z*.08));if(shadow>.5){if(plant>.5){v.x+=v.y*.53;v.z+=v.y*.7;}else{float ray=(1.-tex.y)*(-flex);v.x+=ray*.75;v.z+=ray*1.38-v.y*.35;}v.y=0.;}vec2 proj=vec2(v.x,(v.z-lift*v.y)*cam.w)*cam.z+cam.xy;gl_Position=vec4(proj.x/screenSize.x*2.-1.,1.-proj.y/screenSize.y*2.,.86-v.y*.009-v.z/view.y*.32,1.);uv=tex;land=v.xz/view;rgb=color;floorLayer=0.;
+ if(p.y<-.1 && plant<.5 && tex.x>=0. && tex.x<=1.){gl_Position=vec4(tex.x*2.-1.,1.-tex.y*2.,.99,1.);vec2 world=(tex*screenSize-cam.xy)/cam.z;uv=vec2(world.x,world.y/cam.w)/view;floorLayer=1.;}}`;
+export const fs = `precision highp float;varying mediump float floorLayer;varying vec2 uv,land;varying vec3 rgb;uniform sampler2D photo,foliage,earth,borderGrass;uniform highp float lift;uniform highp vec2 view;uniform highp float time;uniform vec3 mistTint;uniform vec2 grassCrop;uniform mediump float shadow;float hash3(vec3 p){
+      p=fract(p*vec3(.1031,.1030,.0973));
+      p+=dot(p,p.yxz+33.33);
+      return fract((p.x+p.y)*p.z);
+    }
+    float noise3(vec3 p){
+      vec3 i=floor(p),f=fract(p);
+      f=f*f*(3.-2.*f);
+      vec4 a=vec4(hash3(i),hash3(i+vec3(0,1,0)),hash3(i+vec3(0,0,1)),hash3(i+vec3(0,1,1)));
+      vec3 j=i+vec3(1,0,0);
+      vec4 b=vec4(hash3(j),hash3(j+vec3(0,1,0)),hash3(j+vec3(0,0,1)),hash3(j+vec3(0,1,1)));
+      vec4 c=mix(a,b,f.x);
+      return mix(mix(c.x,c.y,f.y),mix(c.z,c.w,f.y),f.z);
+    }
+    float vapor(vec3 p){
+      float large=noise3(p);
+      return large*.63+noise3(p*2.17+vec3(large*1.9,.8,4.2))*.27+noise3(p*4.58+large)*.10;
+    }
+    vec4 marchFog(vec2 footprint,vec3 box,vec2 origin){
+      float width=box.x,depth=box.y,height=box.z;
+      float x=footprint.x*width;
+      float groundZ=mix(-lift*height,depth,footprint.y);
+      float bottom=max(0.,-groundZ/max(.0001,lift));
+      float top=min(height,(depth-groundZ)/max(.0001,lift));
+      if(top<=bottom)return vec4(0.);
+      const int steps=16;
+      float dy=(top-bottom)/float(steps);
+      float pathLength=dy*sqrt(1.+lift*lift)/height;
+      vec3 light=vec3(0.);
+      float transmit=1.;
+      vec3 wind=vec3(-time*.135,time*.032,-time*.042);
+      vec3 sky=mix(mistTint,vec3(1.,.976,.91),.84);
+      vec3 underside=mistTint*vec3(.61,.685,.73);
+      float sideX=smoothstep(0.,min(width*.20,8.),min(x,width-x));
+      for(int i=0;i<steps;i++){
+        float y=top-(float(i)+.5)*dy;
+        float z=groundZ+y*lift;
+        float altitude=y/height;
+        vec3 sampleAt=vec3((x+origin.x)/27.,y/17.,(z+origin.y)/19.)+wind;
+        float billow=vapor(sampleAt);
+        float sideZ=smoothstep(0.,min(depth*.24,8.5),min(z,depth-z));
+        float edge=sideX*sideZ;
+        float envelope=pow(max(edge,.0001),.29);
+        float density=smoothstep(-.13,.25,billow*1.15+.23-altitude/max(.01,envelope));
+        density*=edge*smoothstep(0.,.12,altitude)*(.44+.88*billow);
+        float absorbed=1.-exp(-density*pathLength*8.2);
+        float sun=noise3(sampleAt+vec3(-.44,.54,-.20));
+        float lit=clamp(.18+altitude*.70+1.35*(billow-sun),0.,1.);
+        light+=transmit*absorbed*mix(underside,sky,lit);
+        transmit*=1.-absorbed;
+        if(transmit<.008)break;
+      }
+      return vec4(light/max(.00001,1.-transmit),1.-transmit);
+    }
+    void main(){if(floorLayer>.5){vec2 tile=1.-abs(mod(uv,2.)-1.);vec3 groundColor=texture2D(photo,tile).rgb;
+    if(uv.x<0.||uv.y<0.||uv.x>1.||uv.y>1.){vec2 grassUV=vec2(grassCrop.x+tile.x*grassCrop.y,tile.y);groundColor=texture2D(borderGrass,grassUV).rgb*.91;}gl_FragColor=vec4(groundColor,1.);}else if(uv.x < -7.0){
+      vec2 q=vec2(-uv.x-8., uv.y);
+      vec2 origin=land*view-q*rgb.xy;
+      gl_FragColor=marchFog(q,rgb,origin);
+    }else if(uv.x>3.5){vec2 q=uv-vec2(5.,2.);vec2 a=mat2(.80,.60,-.60,.80)*q*3.7;vec2 b=mat2(.36,-.93,.93,.36)*q*8.4;vec3 lo=texture2D(earth,1.-abs(mod(a,2.)-1.)).rgb;vec3 hi=texture2D(earth,1.-abs(mod(b,2.)-1.)).rgb;gl_FragColor=vec4((vec3(.135,.083,.045)+lo*.49+hi*.34)*rgb,1.);}else if(uv.x>1.5){vec4 leaf=texture2D(foliage,uv-vec2(2.,0.));if(leaf.a<.48)discard;gl_FragColor=vec4(shadow>.5?texture2D(photo,clamp(land,0.,1.)).rgb*vec3(.69,.68,.58):leaf.rgb*rgb,1.);}else gl_FragColor=vec4(shadow>.5?texture2D(photo,land).rgb*vec3(.73,.73,.62):(uv.x<0.?rgb:texture2D(photo,uv).rgb*rgb),1.);}`;
