@@ -55,7 +55,7 @@ services:
         bind:
           create_host_path: false
   grafana:
-    image: ${PLOW_GRAFANA_IMAGE:-plow-grafana-greenfield:local}
+    image: &grafana-image ${PLOW_GRAFANA_IMAGE:-plow-grafana-greenfield:local}
     build:
       context: ../..
       dockerfile: infra/lgtm/grafana.Dockerfile
@@ -83,6 +83,7 @@ services:
       GF_PLUGINS_PREINSTALL_DISABLED: "true"
       GF_PLUGINS_PUBLIC_KEY_RETRIEVAL_DISABLED: "true"
       GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS: plow-agent-observability-datasource
+      PLOW_ACTIVITY_SUMMARIES: ${PLOW_ACTIVITY_SUMMARIES:-0}
     secrets:
       - grafana_password
     volumes:
@@ -93,6 +94,53 @@ services:
       interval: 3s
       timeout: 2s
       retries: 20
+  activity-refresh:
+    profiles: [activity-refresh]
+    image: *grafana-image
+    pull_policy: never
+    depends_on:
+      - loki
+    restart: ${PLOW_LGTM_RESTART:-no}
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:mode=1777
+    volumes:
+      - activity-refresh-lock:/var/lib/plow-activity:ro
+    environment:
+      GOMAXPROCS: "2"
+      PLOW_ACTIVITY_SOURCE_URL: http://loki:3100
+      PLOW_ACTIVITY_SOURCE_TENANT: plow-fixture
+      PLOW_ACTIVITY_SINK_URL: http://loki:3100
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        if [ "$${1:-}" != schedule ]; then
+          exec flock -n -E 75 /var/lib/plow-activity /usr/local/bin/plow-activity-refresh "$$@"
+        fi
+        rm -f /tmp/plow-activity-success
+        until curl -fs --max-time 2 http://loki:3100/ready -o /dev/null; do
+          sleep 5
+        done
+        while :; do
+          if flock -n -E 75 /var/lib/plow-activity /usr/local/bin/plow-activity-refresh; then
+            touch /tmp/plow-activity-success
+          fi
+          sleep 300
+        done
+      - activity-refresh
+    command: [schedule]
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'last=$$(date -r /tmp/plow-activity-success +%s 2>/dev/null) && [ "$$(($$(date +%s) - last))" -lt 480 ]'
+      interval: 15s
+      timeout: 2s
+      retries: 2
+      start_period: 3m
   loki:
     restart: ${PLOW_LGTM_RESTART:-no}
     image: grafana/loki:3.6.2@sha256:fad94db64eeb0e14544953789c942453df68a860b6f760d867f06c5b31f461ab
@@ -181,3 +229,4 @@ volumes:
   capture-state:
   tempo-data:
   mimir-data:
+  activity-refresh-lock:

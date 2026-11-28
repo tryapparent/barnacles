@@ -66,6 +66,52 @@ Deployment seeds the three overview dashboards in the Viewer’s **Starred** men
 
 The [GitHub collector deployment](../../collect/github/README.md#compose-deployment) runs continuous polling and historical backfill in one worker. Set `PLOW_GITHUB_CREDENTIAL_LAYOUT=per-alias` and provision a separate repository-scoped credential file for each configured alias. Existing single-repository deployments can keep the default legacy layout. Use `bash infra/lgtm/deploy.sh --github-only` for worker-only activation or set `PLOW_GITHUB_ENABLED=true` to include it when reapplying the whole stack.
 
+### Optional Activity summaries
+
+Use the same release, Compose files, project name, and environment as the existing stack. The examples assume a `compose` shell function with those options. The worker runs the producer and the compiled Bend2 policy from the local Grafana image. When using a custom tag with the Access overlay, give `PLOW_GRAFANA_IMAGE` and `PLOW_ACCESS_IMAGE` the same value. The `deploy.sh --access` entry point binds both services to the Access image tag.
+
+Start the worker with the reader still in its default mode. Build the Grafana image once before starting the worker from the same release.
+
+```sh
+export PLOW_ACTIVITY_SUMMARIES=0
+compose build grafana
+compose --profile activity-refresh up -d --no-deps --wait --wait-timeout 240 activity-refresh
+```
+
+The worker waits for Loki readiness and immediately runs the producer to seed both current UTC-minute presets. Seed after raw collection is available. An empty or incomplete source can produce a summary with missing coverage. The worker reads the existing `plow-fixture` tenant and writes only to `plow-activity`; both use the stack's internal Loki endpoint. It has no host port or Grafana credentials. Health requires a successful refresh during this container start and within the last eight minutes.
+
+Check both summary periods in the summary tenant before enabling the reader. For the loopback stack, get the mapped address with `compose port loki 3100` and set `PLOW_LOKI_LOOPBACK` to its HTTP origin. Inspect only the summary clocks and coverage in the response.
+
+```sh
+(
+  set -eu
+  for period in 24h 7d; do
+    response=$(curl -fsSG -H 'X-Scope-OrgID: plow-activity' \
+      --data-urlencode "query={plow_source=\"activity_summary\",period=\"$period\"}" \
+      --data-urlencode 'limit=1' "$PLOW_LOKI_LOOPBACK/loki/api/v1/query_range")
+    jq -e '[.data.result[].values[][1] | fromjson |
+      {period, cutoffMs, publishedMs, sourceCutoff: .report.cutoff, partial: .report.partial}] |
+      first // error("missing Activity summary")' <<< "$response"
+  done
+) && {
+  export PLOW_ACTIVITY_SUMMARIES=1
+  compose up -d --no-deps --wait grafana
+}
+```
+
+Verify both Activity presets as an authenticated Viewer. The four overview views use the summary stream, and the detail and run links continue to read raw evidence. Persist `PLOW_ACTIVITY_SUMMARIES=1` and add `activity-refresh` to the existing `COMPOSE_PROFILES` in the deployment environment so a full reapply updates both services together.
+
+Each cycle waits five minutes after its attempt completes. A per-project volume lock serializes scheduled and manual invocations. Successful cycles are silent. Failed cycles leave preceding summaries in Loki and report the producer error in `compose --profile activity-refresh logs activity-refresh`. The container retries on the next cycle. Its health expires if no complete refresh succeeds in time. Grafana displays source freshness separately from worker health.
+
+To inspect the producer options or rebuild a historical UTC-minute cutoff, use the packaged entry point. Retry exit status 75 after the scheduled attempt releases the lock.
+
+```sh
+compose --profile activity-refresh run --rm --no-deps -T activity-refresh --help
+compose --profile activity-refresh run --rm --no-deps -T activity-refresh --cutoff-ms "$cutoff_ms"
+```
+
+To disable summary reads, set `PLOW_ACTIVITY_SUMMARIES=0` in the deployment environment and run `compose up -d --no-deps --wait grafana`. To stop publishing, also remove the profile from that environment and explicitly run `compose --profile activity-refresh stop activity-refresh`. Both actions retain the Loki history. To resume, seed with the worker and check both periods again before enabling the reader.
+
 ### Host and capture aliases
 
 Set these independent mappings in the same private Compose environment used for reapply. Use stable, non-sensitive aliases. For production, set a unique host alias for each measured host in the Mimir deployment and keep one writer per alias. Preserve the alias for the same host across container recreation.
