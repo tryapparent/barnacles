@@ -42,6 +42,19 @@ protocol = "json"
 Authorization = "Bearer <collector-token>"
 ```
 
+T3 app-server instances that share a base Codex config can use per-provider
+launch arguments instead. Render them from the verified release. Pass the
+existing collector's private environment file and its loopback port.
+
+```sh
+node collector/codex/otel.ts --codex-launch-args "$collector_env_file" 4318
+```
+
+Set the output as the intended T3 Codex instance's launch arguments. The
+managed setting applies on its next app-server launch. The credential
+helper sends the bearer directly to the exporter, with no credential in
+the rendered launch arguments.
+
 ## Evidence and coverage
 
 The Collector removes resource and scope attributes, schema URLs, span links, trace state and free-form status text. It retains exact span coordinates. Unrecognized span names become `codex.span` so their parent links survive. The retained attributes are format-checked conversation, turn and tool-call identifiers, plus numeric reported event duration and a success flag on selected events. Prompts, arguments, output, paths, thread names and arbitrary event names are excluded. The evidence receiver applies the Bend2 admission policy to the projected fields again before writing.

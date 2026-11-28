@@ -2,10 +2,11 @@ import { timingSafeEqual } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer, type IncomingMessage } from "node:http";
 import { join, resolve } from "node:path";
+import { parseEnv } from "node:util";
 import { CodexOtelConflict, codexOtelPolicy, saveCodexOtel, type CodexOtelFact, type CodexOtelPolicy } from "../../evidence/index.ts";
 import { T3OtelConflict, openT3Otel, t3OtelPolicy, type T3OtelSpan, type T3OtelPolicy } from "../../evidence/index.ts";
 import { buildPolicy, loadPolicy } from "../../tooling/bend.ts";
-import { array, row, str, token } from "../wire.ts";
+import { array, boundedFile, row, str, token } from "../wire.ts";
 import { pollT3History } from "../t3-otel/history.ts";
 export type { HistoryPolicy } from "../t3-otel/history.ts";
 
@@ -186,7 +187,20 @@ async function serveT3([job, instance, ...extra]: string[]) {
 
 if (import.meta.main) {
   const args = process.argv.slice(2);
-  if (args[0] === "--t3-history") {
+  if (args[0] === "--codex-header" && args.length === 2) {
+    const secret = parseEnv(boundedFile(args[1], 8192).toString("utf8")).PLOW_CODEX_OTLP_TOKEN;
+    if (!/^[A-Za-z0-9_-]{32,256}$/.test(secret ?? "")) throw Error("Invalid Codex collector credential");
+    process.stdout.write(JSON.stringify({ Authorization: "Bearer " + secret }));
+  } else if (args[0] === "--codex-launch-args" && args.length === 3) {
+    const [, credentialFile, port] = args;
+    if (!/^\d{1,5}$/.test(port) || +port < 1024 || +port > 65535) throw Error("Invalid Codex collector port");
+    const quote = (value: string) => "'" + value.replaceAll("'", "'\"'\"'") + "'";
+    const helper = [process.execPath, process.argv[1], "--codex-header", resolve(credentialFile)].map(quote).join(" ");
+    const values = ['otel.exporter="none"', 'otel.metrics_exporter="none"', 'otel.log_user_prompt=false',
+      `otel.trace_exporter={otlp-http={endpoint="http://127.0.0.1:${port}/v1/traces",protocol="json"}}`,
+      "otel.headers_helper=" + JSON.stringify(helper)];
+    process.stdout.write(values.flatMap(value => ["-c", value]).map(value => JSON.stringify(value)).join(" ") + "\n");
+  } else if (args[0] === "--t3-history") {
     try {
       await pollT3History(args.slice(1));
     } catch {

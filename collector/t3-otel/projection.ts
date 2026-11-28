@@ -1,12 +1,15 @@
-import { mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { linkSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   admissionPolicy, analysisWindow, backupAnalysisInput, joinedTargets, joinSession, loadEvidence,
   projectPlowFeed, publishJoinedAnalysis, readT3Projections, repository, sessionJoinPolicy, type AdmissionPolicy,
-  type SessionJoinPolicy, type SourcePolicy, type StoredT3Projection, type NativeBinding, type Point, type ThreadEvidence,
+  type AttemptIdentity, type SessionJoinPolicy, type SourcePolicy, type StoredT3Projection, type NativeBinding, type Point, type ThreadEvidence,
 } from "../../evidence/index.ts";
 import { buildPolicies, loadPolicy } from "../../tooling/bend.ts";
-import { array, bendList, millis, point, positiveInt, replayOutcomeDelays, row, stockT3Id, str, timeParts, toMillis, token } from "../wire.ts";
+import { collectAttempt, type ClockPolicy, type GitHubReader } from "../github/attempt.ts";
+import { array, bendList, boundedFile, millis, point, positiveInt, replayOutcomeDelays, row, stockT3Id, stockT3Origin, stockT3Rpc, str, timeParts, toMillis, token } from "../wire.ts";
 
 export type ProjectionCodec = SourcePolicy & {
   github_link(host: string): boolean;
@@ -59,6 +62,63 @@ export function nativeBindings(input: unknown[]): NativeBinding[] {
   });
 }
 
+async function prepareCiReceipt(scratch: string, exact: AttemptIdentity, kind: string) {
+  const env = process.env;
+  const directory = env.PLOW_ANALYSIS_RECEIPTS_DIR;
+  const bearerFile = env.PLOW_T3_READ_TOKEN_FILE;
+  if (!directory || !bearerFile || !env.PLOW_T3_ORIGIN) throw Error("Set the CI receipt directory and T3 read access");
+  const observationId = token(env.CODEX_TOOL_CALL_ID);
+  const threadId = t3Id(env.T3CODE_THREAD_ID);
+  const sessionId = token(env.CODEX_THREAD_ID);
+  const t3Instance = token(env.PLOW_ANALYSIS_T3_INSTANCE);
+  const codexInstance = token(env.PLOW_ANALYSIS_CODEX_INSTANCE);
+  const bearer = boundedFile(bearerFile, 8192).toString("utf8").trim();
+  if (!/^[!-~]+$/.test(bearer)) throw Error("Invalid T3 read credential");
+  const result = await stockT3Rpc(stockT3Origin(env.PLOW_T3_ORIGIN), bearer,
+    "orchestration.getThreadProjection", { threadId }, 8 * 1024 * 1024);
+  const policy = await loadPolicy<SessionJoinPolicy>((await buildPolicies(scratch, [[sessionJoinPolicy, "ci-binding.mjs"]]))[0]);
+  const selected = policy.choose_binding(threadId, sessionId, bendList(nativeBindings(array(result.providerThreads, 64))));
+  if (!policy.ci_kind(kind) || selected.$ !== "Bound") throw Error("CI observation has no exact native Codex binding");
+  const references = [{ id: selected.reference_id, appThreadId: threadId, driver: "codex",
+    nativeThreadRef: { driver: "codex", strength: "strong", nativeId: sessionId } }];
+  const ci = { observationId, kind, repository: exact.repository,
+    runId: exact.runId, attempt: exact.attempt, headSha: exact.sha };
+  const payload = JSON.stringify({ t3Instance, threadId, codexInstance, sessionId, references, ci });
+  const key = createHash("sha256").update(JSON.stringify([t3Instance, threadId, observationId])).digest("hex");
+  return () => {
+    const output = join(directory, key + ".json");
+    const staging = join(directory, randomUUID() + ".next");
+    writeFileSync(staging, payload, { mode: 0o600, flag: "wx" });
+    try {
+      linkSync(staging, output);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST" || boundedFile(output, 16384).toString("utf8") !== payload) throw error;
+    } finally {
+      rmSync(staging);
+    }
+  };
+}
+
+export async function captureCiAttempt(database: string, scratch: string, exact: AttemptIdentity, kind: string,
+  policy: ClockPolicy, admission: AdmissionPolicy, read: GitHubReader) {
+  const publish = await prepareCiReceipt(scratch, exact, kind);
+  async function verifyWatchTarget() {
+    const { id, run_attempt, head_sha } = row(await read(`repos/${exact.repository}/actions/runs/${exact.runId}`));
+    if (!policy.attempt_matches(String(id), String(run_attempt), str(head_sha),
+      String(exact.runId), String(exact.attempt), exact.sha)) throw Error("The latest GitHub attempt changed during the watch");
+  }
+  if (kind === "watch") {
+    await verifyWatchTarget();
+    execFileSync("gh", ["run", "watch", String(exact.runId), "--repo", exact.repository, "--interval", "30", "--compact"],
+      { stdio: ["ignore", "inherit", "inherit"], timeout: 600_000, env: { ...process.env, GH_PROMPT_DISABLED: "1" } });
+  }
+  const attempt = await collectAttempt(exact, policy, read);
+  if (kind === "watch") await verifyWatchTarget();
+  loadEvidence(database, { source: "github-actions", attempt }, admission);
+  publish();
+  console.log(`Captured exact CI ${kind} and ${attempt.jobs.length} jobs`);
+}
+
 export function stockProjection(instance: string, id: string, input: unknown, policy: ProjectionCodec, local: LocalRow): StoredT3Projection {
   const projection = row(input);
   const thread = row(projection.thread);
@@ -103,7 +163,8 @@ async function joinStored(path: string, traces: string, history: string, scratch
     bound++;
     withSpans += Number(result.acceptedSpans > 0);
   }
-  return { projections: captures.length, bound, ambiguous, withSpans };
+  return { counts: { projections: captures.length, bound, ambiguous, withSpans },
+    threads: new Set(captures.map(({ thread }) => thread.id)) };
 }
 
 function readAnalysisImpact(receipts: string, scratch: string) {
@@ -125,13 +186,19 @@ export async function refreshAnalysis() {
     const history = process.env.PLOW_ANALYSIS_T3_HISTORY_DB;
     const codexInstance = process.env.PLOW_ANALYSIS_CODEX_INSTANCE;
     const t3Instance = process.env.PLOW_ANALYSIS_T3_INSTANCE;
-    const capture = history && await joinStored(path, traces, history, scratch, asOf, token(t3Instance), token(codexInstance));
+    const capture = history ? await joinStored(path, traces, history, scratch, asOf, token(t3Instance), token(codexInstance)) : undefined;
     const { importLiveSession } = await import("../t3.ts");
     const files = readdirSync(receipts).filter((name) => name.endsWith(".json")).sort();
-    if (files.length > 50) throw Error("Too many join receipts");
+    let selectedReceipts = 0;
     let exactCiReceipts = 0;
     for (const file of files) {
-      const result = await importLiveSession(path, scratch, join(receipts, file), traces);
+      const receipt = join(receipts, file);
+      if (capture) {
+        const keys = row(JSON.parse(boundedFile(receipt, 1024 * 1024).toString("utf8")));
+        if (keys.t3Instance !== t3Instance || !capture.threads.has(t3Id(keys.threadId))) continue;
+      }
+      if (++selectedReceipts > 50) throw Error("Too many current join receipts");
+      const result = await importLiveSession(path, scratch, receipt, traces);
       exactCiReceipts += Number(result.ci === "Linked");
     }
     if (!history && codexInstance && t3Instance && process.env.PLOW_T3_ORIGIN) {
@@ -152,7 +219,7 @@ export async function refreshAnalysis() {
       const result = await publishJoinedAnalysis(path, output, scratch, asOf, readAnalysisImpact(receipts, scratch),
         history ? t3Instance : undefined);
       if (activity && candidate) renameSync(candidate, join(activity, "timeline.json"));
-      console.log(JSON.stringify({ ...result, t3: capture || undefined, exactCiReceipts }));
+      console.log(JSON.stringify({ ...result, t3: capture?.counts, exactCiReceipts }));
     } finally {
       if (candidate) rmSync(candidate, { force: true });
     }
