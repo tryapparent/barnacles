@@ -51,11 +51,14 @@ export function fieldGeometry({
         0.68 * Math.sin(z * 0.043 + x * 0.063) +
         0.46 * Math.sin(z * 0.067 + x * 0.12);
       const clamp = (v) => Math.min(r.x + r.w, Math.max(r.x, v + shift));
+      const crest = clamp(x + (end - x) * .43);
+      const taper = Math.max(.02, Math.min(1, (z-r.y)/4, (r.y+r.h-z)/4,
+        (crest-r.x)/4, (r.x+r.w-crest)/4));
       return [
         [clamp(x), 0.05, z, 0],
         [
-          clamp(x + (end - x) * 0.43),
-          ht * (1 + 0.19 * Math.sin(z * 0.13 + x * 0.07)),
+          crest,
+          ht * taper * (1 + 0.19 * Math.sin(z * 0.13 + x * 0.07)),
           z,
           0.43,
         ],
@@ -81,18 +84,12 @@ export function fieldGeometry({
     function vertex(i, j) {
       const u = i / n,
         v = j / n,
-        dx = (u - 0.49) * 2,
-        dy = (v - 0.49) * 2,
-        arch = Math.sqrt(Math.max(0, 1 - dx * dx * 0.88 - dy * dy));
-      const y =
-        r *
-        arch *
-        (1.52 + 0.28 * Math.sin(u * 13 + v * 7)) *
-        (1 - Math.pow(v, 7));
+        crownDepth = Math.sin(u * Math.PI) * Math.sin(v * Math.PI);
+      const y = (1 - v) * span;
       verts.push(
-        x + (u - 0.49) * span,
+        x + (u - .5) * span,
         y,
-        z + (v - 0.94) * span * 0.82 + y * 0.35,
+        z + crownDepth * r * .42,
         1,
         1,
         1,
@@ -161,7 +158,7 @@ export function fieldGeometry({
       for (let i = 2; i < corners.length; i++) {
         for (const [u, y, v] of [corners[0], corners[i-1], corners[i]]) {
           verts.push(x + u*Math.cos(angle)-v*Math.sin(angle), y,
-            z + u*Math.sin(angle)+v*Math.cos(angle), ...color, -3, 0, 0);
+            z + u*Math.sin(angle)+v*Math.cos(angle), ...color, -5, y, 0);
         }
       }
     }
@@ -181,18 +178,17 @@ export function fieldGeometry({
   }
   function verge(x, z, size, rand) {
     const vertex = (point, color) => verts.push(...point, ...color, -3, 0, 0);
-    const stone = [];
-    for (let i=0; i<11; i++) {
-      const angle=i*2*Math.PI/11, radius=size*(.84+.21*rand());
-      stone.push([x+Math.cos(angle)*radius, size*(.22+.18*rand()), z+Math.sin(angle)*radius*.62]);
-    }
-    const crown=[x-size*.13,size*.52,z-size*.18];
-    for (let i=0; i<stone.length; i++) {
-      const a=stone[i], b=stone[(i+1)%stone.length];
-      const light=.7+.3*Math.cos(i*.571), tone=[.33*light,.32*light,.23*light];
-      for(const v of [a,b,crown]) vertex(v,tone);
-      const soil=[.23*light,.21*light,.16*light];
-      for(const v of [a,[a[0],0,a[2]],b,b,[a[0],0,a[2]],[b[0],0,b[2]]]) vertex(v,soil);
+    const stonePoint = (i, j) => {
+      const a = i*Math.PI/14, latitude = j*Math.PI/18;
+      const radius = size*Math.cos(latitude)*(1+.06*Math.sin(3*a)+.035*Math.cos(5*a+latitude));
+      const light = .74+.20*Math.sin(latitude)+.12*Math.cos(a+1.1)*Math.cos(latitude);
+      return [x+Math.cos(a)*radius, size*(.56*Math.sin(latitude)-.06),
+        z+Math.sin(a)*radius*.70, .42*light,.42*light,.31*light,-4,0,0];
+    };
+    for (let j=0;j<9;j++) for (let i=0;i<28;i++) {
+      const a=stonePoint(i,j), b=stonePoint(i+1,j);
+      const c=stonePoint(i,j+1), d=stonePoint(i+1,j+1);
+      verts.push(...a,...b,...c,...c,...b,...d);
     }
     for(let clump=0;clump<15;clump++) {
       const baseX=x+(rand()-.5)*size*4.4, baseZ=z+(rand()-.46)*size*1.7;

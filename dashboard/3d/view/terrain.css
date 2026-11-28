@@ -151,12 +151,11 @@ main p,
 .inspectable:hover .sample-title {
   text-decoration-style: solid;
 }
-.bar:hover,
-.category-tile:hover,
-.parcel-button:hover,
-.batch-parcel:hover {
-  outline: 1px solid #f4df9f;
-  outline-offset: -1px;
+.category-tile:hover .category-name,
+.parcel-button:hover .category-name,
+.phase-target:hover .category-name {
+  text-decoration: underline;
+  text-underline-offset: .2em;
 }
 .rail {
   background: #474d23aa;
@@ -188,17 +187,6 @@ main p,
   display: grid;
   align-items: center;
   justify-content: center;
-}
-.failure-point span {
-  background: #54221a;
-  color: #fff1cd;
-  border: 1px solid #ffedbf;
-  border-radius: 100%;
-  font:
-    bold 12px/14px Georgia,
-    serif;
-  width: 15px;
-  height: 16px;
 }
 .no-rows,
 .empty-trend {

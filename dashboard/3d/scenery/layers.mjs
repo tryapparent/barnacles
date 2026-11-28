@@ -93,13 +93,11 @@ function imageLayer(parent, name, src) {
 }
 
 const nearWoods = [
-  [-.31, .36, .74, false],
-  [-.012, .29, .98, true],
-  [.235, .22, .69, false],
-  [.409, .34, 1.0, false],
-  [.694, .27, .82, true],
-  [.923, .32, .92, false],
-  [1.18, .27, .73, true],
+  [-.16, .32, .80, false],
+  [.13, .21, .66, true],
+  [.42, .145, .47, false],
+  [.65, .19, .71, true],
+  [.91, .31, .87, false],
 ];
 
 export function mountScenery(root, sources) {
@@ -143,13 +141,13 @@ export function mountScenery(root, sources) {
     homeX = (w - board.width * base) / 2;
     homeY = (h - board.height * base * .93) / 2;
     rim = homeY + (board.summary.y - 3) * base * .93;
-    hedgeHeight = Math.max(22, board.summary.y * base * .47);
+    hedgeHeight = Math.max(38, board.summary.y * base * .70);
     hedge.style.width = w + "px";
     hedge.style.height = hedgeHeight + "px";
     oak.style.width = w * .5 + "px";
     oak.style.height = h * 1.065 + "px";
     verge.style.width = w + "px";
-    verge.style.height = Math.max(36, Math.min(110, h * .105)) + "px";
+    verge.style.height = Math.max(60, Math.min(168, h * .175)) + "px";
     if (pose) view(pose);
   }
   function view(next) {
@@ -168,9 +166,9 @@ export function mountScenery(root, sources) {
     const ridgeSize = ridgeBottom > 0 ? project(ridgeBottom) : 0;
     hills.style.height = ridgeSize + "px";
     const ridgeWidth = w * Math.max(1.4, 1.4 * zoom ** .21);
-    const ridgeHeight = Math.max(1, ridgeSize);
+    const ridgeHeight = Math.max(1, project(rim));
     const skyX = Math.min(0, Math.max(w - ridgeWidth, (w - ridgeWidth) * .48 + dx * .12));
-    const skyY = 0;
+    const skyY = Math.min(0, ridgeSize - ridgeHeight);
     hills.style.backgroundSize = ridgeWidth + "px " + ridgeHeight + "px";
     hills.style.backgroundPosition = skyX + "px " + skyY + "px";
     const woodsBottom = Math.min(projectedRim, rim + relativeRim * .67 - h * .50 * dive);
@@ -180,8 +178,8 @@ export function mountScenery(root, sources) {
     const oakX = -w * .009 + dx * 1.2 - w * .72 * dive;
     const oakY = -h * .038 + Math.min(0, dy * 1.2 - h * 1.02 * dive);
     oak.style.transform = "translate(" + oakX + "px," + oakY + "px) scale(" + foregroundScale + ")";
-    const vergeHeight = Math.max(36, Math.min(110, h * .105));
-    const vergeY = h - vergeHeight * .62 + dy * 1.12 + h * (zoom - 1);
+    const vergeHeight = Math.max(60, Math.min(168, h * .175));
+    const vergeY = h - vergeHeight * .84 + dy * 1.12 + h * (zoom - 1);
     verge.style.transform = "translate(" + dx * 1.1 + "px," + vergeY + "px) scale(" + foregroundScale + ")";
   }
   return {layout, view};

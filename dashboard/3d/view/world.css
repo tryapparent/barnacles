@@ -126,11 +126,15 @@
   overflow: hidden;
 }
 .parcel-button .parcel-type {
-  transform: scaleY(calc(1 / var(--pitch)));
+  position: absolute;
+  left: var(--label-x, 50%);
+  top: var(--label-y, 50%);
+  width: max-content;
+  transform: translate(-50%, -50%) scaleY(calc(1 / var(--pitch)));
   max-width: 100%;
   padding: calc(3px / var(--scale)) calc(5px / var(--scale));
   color: #fff3cc;
-  background: #272314ba;
+  background: transparent;
   border-radius: calc(3px / var(--scale));
   text-shadow: 0 1px 2px #111;
   font:
@@ -146,7 +150,7 @@
   white-space: nowrap;
   margin-top: calc(2px / var(--scale));
 }
-.parcel-button:is(:hover, :focus-visible, [aria-pressed="true"]) {
+.parcel-button:focus-visible {
   outline: calc(2px / var(--scale)) solid #dfc77c;
   outline-offset: calc(-2px / var(--scale));
 }
@@ -163,9 +167,7 @@ body[data-focused]:not([data-focused=""])
     .meta,
     .sample-title,
     .batch-trigger,
-    .trend-plot text,
-    .path-labels,
-    #tiles .parcel-type
+    .path-labels
   ) {
   visibility: hidden;
 }
@@ -187,7 +189,7 @@ body[data-focused]:not([data-focused=""])
   width: max-content;
   max-width: 100%;
   padding: 1px 3px;
-  background: #242916dc;
+  background: transparent;
   transform: scaleY(calc(1 / var(--pitch)));
 }
 .phase-target .category-name {
@@ -203,4 +205,88 @@ body[data-focused]:not([data-focused=""])
 .batch-parcel[aria-pressed="true"] {
   outline: calc(2px / var(--scale)) solid #ffe698;
   outline-offset: calc(-2px / var(--scale));
+}
+
+body[data-focused="field"] #tiles [aria-expanded="true"] .parcel-type {
+  visibility: hidden;
+}
+body[data-focused]:not([data-focused=""]):not([data-focused="batch"]) .trend-plot text {
+  visibility: hidden;
+}
+body[data-focused="batch"] .trend-plot text {
+  visibility: visible;
+  font-size: calc(15px / var(--scale));
+  stroke-width: calc(2px / var(--scale));
+}
+.farm-ready .trend-series {
+  stroke: transparent;
+}
+.parcel-button .parcel-type, .phase-target .parcel-type {
+  text-shadow: 0 1px 3px #201a0e, 0 0 4px #302710;
+}
+.parcel-button.fog .parcel-type, .phase-target.fog .parcel-type {
+  color: #201f17;
+  text-shadow: 0 1px 3px #fff8df;
+}
+.parcel-button[aria-pressed="true"]:not(:focus-visible),
+.phase-target[aria-pressed="true"]:not(:focus-visible),
+.batch-parcel[aria-pressed="true"]:not(:focus-visible) {
+  outline: none;
+}
+.parcel-button[aria-pressed="true"] .category-name,
+.phase-target[aria-pressed="true"] .category-name {
+  text-decoration: underline;
+  text-underline-offset: .2em;
+}
+
+.ground-labels {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.ground-labels > span {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  color: #fff8e8;
+  text-shadow: 0 1px 2px #221a0d, 0 0 4px #242012;
+  font: 650 clamp(15px, 1.25vw, 20px)/1.05 "Source Serif 4", Georgia, serif;
+  white-space: nowrap;
+  text-align: center;
+}
+.ground-labels strong {
+  display: block;
+  margin-top: 2px;
+  font-size: .9em;
+}
+.ground-labels [data-selected] { text-decoration: underline; text-underline-offset: .18em; }
+.ground-labels [data-fog] { color: #16180f; text-shadow: 0 1px 3px #fff7e4; }
+.ground-labels .scale-reading { transform: translate(-100%, -50%); }
+.ground-labels .batch-reading { transform: translate(-50%, -135%); }
+.ground-labels .range-reading { transform: translate(-50%, 0); }
+body[data-focused]:not([data-focused=""]) :is(.category-tile,.parcel-button,.phase-target) .parcel-type,
+body[data-focused="batch"] .trend-plot text { opacity: 0; }
+
+.ground-labels [data-inline] strong { display: inline; margin-left: .35em; }
+@media (forced-colors: active) {
+  .farm-ready .trend-series { stroke: CanvasText; }
+  .ground-labels > span { color: CanvasText; text-shadow: none; }
+}
+
+.ground-labels .failure-stake {
+  width: 2px;
+  height: 18px;
+  background: #422c1d;
+  box-shadow: 1px 0 #ddcba5;
+  transform: translate(-50%, -100%);
+}
+.failure-stake::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 2px;
+  width: 13px;
+  height: 9px;
+  background: #cc673b;
+  clip-path: polygon(0 0, 100% 22%, 87% 45%, 100% 67%, 0 100%);
 }

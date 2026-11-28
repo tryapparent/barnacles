@@ -66,10 +66,8 @@ export function bindTextures(gl, loc, images, texture) {
     gl.UNSIGNED_BYTE,
     images.meadow,
   );
-  for (const axis of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T])
-    gl.texParameteri(gl.TEXTURE_2D, axis, gl.CLAMP_TO_EDGE);
-  for (const f of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER])
-    gl.texParameteri(gl.TEXTURE_2D, f, gl.LINEAR);
+  gl.generateMipmap(gl.TEXTURE_2D);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
   gl.uniform1i(loc("borderGrass"), 3);
   gl.activeTexture(gl.TEXTURE4);
   gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());

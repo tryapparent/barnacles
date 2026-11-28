@@ -220,6 +220,7 @@ export function landscapeLayout(scene, width, revision, selection, policy) {
           piece,
         ),
       );
+      sub.shade = [-1, 1, .05][d.operations.length % 3];
       sub.matches = op.matches;
       d.operations.push(sub);
     }

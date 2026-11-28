@@ -51,17 +51,23 @@ export function botanicalModel(cut) {
       h = 0.14 + j * 0.18,
       span = 0.98 - j * 0.105,
       width = 0.182 - j * 0.012;
-    const q = [dx * span * 0.58, h + 0.44, dz * span * 0.58],
-      tip = [dx * span, h + 0.25, dz * span],
-      base = [0, h, 0];
-    const l = [q[0] - dz * width, q[1] - 0.07, q[2] + dx * width],
-      r = [q[0] + dz * width, q[1] - 0.07, q[2] - dx * width];
-    const mid = [q[0], q[1] + 0.045, q[2]],
-      green = [0.32 + j * 0.019, 0.43 + j * 0.015, 0.085];
-    facet(base, l, mid, shade(green, 0.7));
-    facet(base, mid, r, green);
-    facet(l, tip, mid, shade(green, 1.06));
-    facet(mid, tip, r, shade(green, 1.33));
+    const green = [0.32 + j * 0.019, 0.43 + j * 0.015, 0.085];
+    function blade(t, side) {
+      const belly = Math.sin(Math.PI * t);
+      const across = side * width * belly;
+      const reach = span * t;
+      const y = h + .28 * t + .32 * belly - Math.abs(side) * belly * .055;
+      return [dx * reach - dz * across, y, dz * reach + dx * across];
+    }
+    for (const side of [-1, 1]) {
+      for (let k = 0; k < 3; k++) {
+        const t = k/3, end = (k+1)/3;
+        const base=blade(t,0), edge=blade(t,side), next=blade(end,0), rim=blade(end,side);
+        const low=shade(green,.88+.10*t+.08*side), high=shade(green,.94+.12*end+.08*side);
+        if(k>0) { vertex(base,low); vertex(edge,low); vertex(next,high); }
+        if(k<2) { vertex(edge,low); vertex(rim,high); vertex(next,high); }
+      }
+    }
   }
   for (let j = 0; j < 6; j++) {
     const a = j * 2.4,

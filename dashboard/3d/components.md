@@ -6,7 +6,7 @@ The standalone builder compiles [the landscape policy](landscape.bend) and bundl
 
 The chart layout gives each parcel a key, parent, semantic role, material, name, value and world-space rectangle. Selection, drawing and labels refer to that descriptor. Category and operation areas follow their durations. A zero-duration category has zero area. A tiny positive category still has its proportional area. Small labels can move to the edge, and a keyboard target can be larger than the ground it selects.
 
-A thread row uses elapsed time along its horizontal axis. Ground before and after the recorded extent is meadow. A gap inside that extent is unobserved, with fog. A recorded failure is a point. The trend has separate runs for contiguous measured batches, including a mark for an isolated batch. A missing batch measurement leaves a gap. A measured zero reaches the zero line.
+A thread row uses elapsed time along its horizontal axis. Ground before and after the recorded extent is meadow. A gap inside that extent is unobserved, with fog. A rust-colored survey flag marks the instant of a recorded failure. The trend has separate runs for contiguous measured batches, including a mark for an isolated batch. A missing batch measurement leaves a gap. A measured zero reaches the zero line.
 
 ## Changing the data
 
@@ -23,9 +23,9 @@ If two refreshes overlap, the latest request takes precedence. When an update fa
 
 ## Materials and field labels
 
-The overview uses a hillside perspective. The camera supplies the same projection parameters to the WebGL scene, the ground texture lookup, the woodland edge and the DOM overlay. As the camera approaches a selected field, the perspective gradually gives way to the close-up inspection view. Keep the terrain and the hit targets in register when adjusting the lens.
+The overview uses a hillside perspective. The camera supplies the same projection parameters to the WebGL scene, the ground texture lookup, the woodland edge and the DOM overlay. During a field visit the camera keeps an oblique view. Operation captions move within the visible part of their ground footprint as the user pans. Keep the terrain and the hit targets in register when adjusting the lens.
 
-The distant valley uses a cropped ImageGen landscape for the horizon layer. Twin wheel ruts are drawn on the ground. The farmstead, orchard, rocks and seed heads use scene geometry outside the measured parcels. Their footprints do not contribute to any metric.
+The distant valley uses a cropped ImageGen landscape for the horizon layer. The meadow uses a fine grass tile at a consistent world scale. Twin wheel ruts are drawn on the ground. A timber fence separates the cultivated and fallow sides of each measured trend, with each percentage drawn at its batch position on inspection. The farmstead, orchard, rocks and seed heads use scene geometry outside the measured parcels. Their footprints do not contribute to any metric.
 
 Change terrain shading, foliage and fog in [the scene](scene/). Keep sun, paths, meadow and wind consistent from one plot to the next. Use the parcel and local plant cell when varying position, rotation and size. A surviving cell should keep its plant when a neighboring parcel changes.
 

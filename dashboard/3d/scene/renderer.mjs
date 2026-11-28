@@ -156,30 +156,9 @@ export function mountLandscape(root, sources, shoulder = () => {}) {
       );
       ground.width = Math.ceil(b.width * scale);
       ground.height = Math.ceil(b.height * scale);
-      const g = ground.getContext("2d", { alpha: false });
+      const g = ground.getContext("2d");
       g.scale(scale, scale);
       const { track, shade } = groundMaterials(g, images, rand);
-      const photo = images.meadow,
-        srcW = Math.min(photo.width, (photo.height * b.width) / b.height);
-      gl.uniform2f(
-        loc("grassCrop"),
-        (1 - srcW / photo.width) / 2,
-        srcW / photo.width,
-      );
-      g.save();
-      g.filter = "blur(1.6px)";
-      g.drawImage(
-        photo,
-        (photo.width - srcW) / 2,
-        0,
-        srcW,
-        photo.height,
-        0,
-        0,
-        b.width,
-        b.height,
-      );
-      g.restore();
       const veil = g.createLinearGradient(0, 0, b.width, b.height);
       veil.addColorStop(0, "#b8964438");
       veil.addColorStop(0.44, "#3d311e4a");
@@ -202,9 +181,9 @@ export function mountLandscape(root, sources, shoulder = () => {}) {
       const verts = [];
       const { timber, canopyShadow, cottage, verge } = fieldGeometry({ g, verts, shade });
       const yard = b.trendZone.x + b.trendZone.w;
-      cottage(yard + 31, cross - 36, 48, 21, 12, .23);
-      cottage(yard + 84, cross - 19, 24, 15, 10, -.29);
-      for (const [dx, dz, radius] of [[26,-79,13],[53,-86,15],[80,-69,12],[106,-57,13]]) {
+      cottage(yard + 29, cross - 54, 33, 16, 8, .23);
+      cottage(yard + 62, cross - 68, 19, 12, 7, -.29);
+      for (const [dx, dz, radius] of [[18,-75,9],[46,-72,9],[74,-81,11],[87,-58,8]]) {
         canopyShadow(yard+dx,cross+dz,radius);
         timber(yard+dx,cross+dz,radius);
       }
@@ -215,9 +194,9 @@ export function mountLandscape(root, sources, shoulder = () => {}) {
       trees = upload(verts);
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, texture);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, ground);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, ground);
       counters.groundUploads++;
-      counters.uploadedBytes += ground.width * ground.height * 3;
+      counters.uploadedBytes += ground.width * ground.height * 4;
     }
     function discard(mesh) {
       for (const part of Object.values(mesh))
@@ -236,6 +215,7 @@ export function mountLandscape(root, sources, shoulder = () => {}) {
         const prior = cache.get(slot);
         if (prior?.signature === signature) {
           prior.r = r;
+          prior.shade = spec.shade ?? 0;
           continue;
         }
         if (prior) discard(prior.mesh);
@@ -247,7 +227,7 @@ export function mountLandscape(root, sources, shoulder = () => {}) {
           ]),
         );
         if (mesh.plants) mesh.plants.count = data.plants.length / 4;
-        cache.set(slot, { signature, r, mesh });
+        cache.set(slot, { signature, r, mesh, shade: spec.shade ?? 0 });
         counters.meshUploads++;
       }
       for (const [slot, rec] of cache)
@@ -264,7 +244,8 @@ export function mountLandscape(root, sources, shoulder = () => {}) {
       attributes(botanical.buf);
       gl.enableVertexAttribArray(spot);
       instancing.vertexAttribDivisorANGLE(spot, 1);
-      for (const { r, mesh } of items) {
+      for (const { r, mesh, shade } of items) {
+        gl.uniform1f(loc("plotShade"), shade);
         gl.uniform2f(loc("origin"), r.x, r.y);
         gl.bindBuffer(gl.ARRAY_BUFFER, mesh.plants.buf);
         gl.vertexAttribPointer(spot, 4, gl.FLOAT, false, 16, 0);
@@ -313,12 +294,13 @@ export function mountLandscape(root, sources, shoulder = () => {}) {
       triangles(plane);
       const inView = [...cache.values()].filter(
         ({ r }) =>
-          pose.x + (r.x + r.w + 9) * pose.s > 0 &&
-          pose.x + (r.x - 9) * pose.s < vw &&
-          pose.y + (r.y + r.h + 9) * pose.s * pose.p > 0 &&
-          pose.y + (r.y - 34 * lift) * pose.s * pose.p < vh,
+          pose.x + (r.x + r.w + 9) * pose.s > -vw*.45 &&
+          pose.x + (r.x - 9) * pose.s < vw*1.45 &&
+          pose.y + (r.y + r.h + 9) * pose.s * pose.p > -vh*.42 &&
+          pose.y + (r.y - 34 * lift) * pose.s * pose.p < vh*1.42,
       );
-      for (const { r, mesh } of inView) {
+      for (const { r, mesh, shade } of inView) {
+        gl.uniform1f(loc("plotShade"), shade);
         gl.uniform2f(loc("origin"), r.x, r.y);
         gl.uniform1f(loc("cover"), 1);
         triangles(mesh.surface);
@@ -345,6 +327,7 @@ export function mountLandscape(root, sources, shoulder = () => {}) {
       gl.uniform2f(loc("origin"), 0, 0);
       gl.uniform1f(loc("shadow"), 1);
       triangles(trees);
+      gl.uniform1f(loc("plotShade"), 0);
       gl.uniform1f(loc("shadow"), 0);
       gl.enable(gl.DEPTH_TEST);
       triangles(trees);

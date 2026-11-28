@@ -1,7 +1,7 @@
 import { createElement as h, Fragment } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
-import { control, LandscapeBoard } from "./view/board.mjs";
+import { control, LandscapeBoard, GroundLabels, projectLabels } from "./view/board.mjs";
 import { mountScenery, paintShoulder } from "./scenery/layers.mjs";
 import policy from "plow-landscape-policy";
 import { createCamera } from "./view/camera.mjs";
@@ -39,25 +39,7 @@ const camera = createCamera(root, (pose, base, target, moved) => {
     plus = root.querySelector(".plus");
   if (minus) minus.disabled = target <= base + 0.0001;
   if (plus) plus.disabled = target >= base * 9 - 0.0001;
-  for (const el of root.querySelectorAll(".parcel-button")) {
-    const item = board.objects.get(el.dataset.target),
-      r = item.r;
-    const cx = pose.x + item.anchor.x * pose.s,
-      cy = pose.y + item.anchor.y * pose.p * pose.s;
-    const fits =
-      r.w * pose.s >= Math.min(160, Math.max(84, item.name.length * 7)) &&
-      r.h * pose.s * pose.p >= 42 &&
-      cx >= 24 &&
-      cx <= root.clientWidth - 24 &&
-      cy >= 48 &&
-      cy <= root.clientHeight - 26;
-    el.toggleAttribute("data-compact", !fits);
-    el.tabIndex = fits ? 0 : -1;
-    const alt = [...root.querySelectorAll("[data-fallback]")].find(
-      (button) => button.dataset.fallback === item.key,
-    );
-    if (alt) alt.hidden = fits;
-  }
+  if (board) projectLabels(root, pose);
   renderer?.view(pose);
   scenery?.view(pose);
 });
@@ -142,6 +124,7 @@ function Farm() {
     null,
     board &&
       h(LandscapeBoard, { board, selected, choose, height: root.clientHeight }),
+    board && h(GroundLabels, { board, selected }),
     h(
       "div",
       { className: "farm-hud" },

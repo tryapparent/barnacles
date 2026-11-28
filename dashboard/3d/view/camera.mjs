@@ -13,7 +13,7 @@ export function createCamera(root, update) {
   function paint() {
     root.style.setProperty("--scale", pose.s);
     root.style.setProperty("--pitch", pose.p);
-    const blend = Math.min(1, Math.max(0, 2 - pose.s / base));
+    const blend = Math.min(1, Math.max(.70, 2 - pose.s / base));
     const breadth = 1 - .16 * blend;
     const slope = 1 - .35 * blend;
     const tilt = .44 * blend;
@@ -80,8 +80,8 @@ export function createCamera(root, update) {
       );
       return;
     }
-    const r = item.r,
-      p = 0.72;
+    const r = item.kind === "batch" ? board.trend : item.r,
+      p = 0.59;
     const s = Math.min(
       base * 9,
       Math.max(

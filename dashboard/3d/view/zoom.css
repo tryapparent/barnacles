@@ -141,6 +141,23 @@ body[data-focused="field"] .farm-detail h2 {
   margin-left: 7px;
   min-height: 27px;
 }
+body .farm-detail {
+  background: transparent;
+  border: 0;
+  text-shadow: 0 1px 3px #17160b, 0 0 5px #282310;
+}
+.farm-detail .facts button {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  text-shadow: inherit;
+  text-decoration: underline;
+  text-underline-offset: .2em;
+}
+.farm-detail .facts button[aria-pressed="true"] {
+  color: #fff9e4;
+  font-weight: 700;
+}
 @media (forced-colors: active) {
   #farm-scene,
   #landscape-stage {

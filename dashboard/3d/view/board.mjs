@@ -51,7 +51,7 @@ function CategoryView({ b, selected, choose, height }) {
       "div",
       { id: "tiles", className: "summary-tiles" },
       b.categories.map((item) =>
-        parcelButton(choose, item, "category-tile", !small(item), {
+        parcelButton(choose, item, "category-tile", !!selected || !small(item), {
           "data-kind": item.category,
           "aria-expanded": active?.key === item.key,
           tabIndex: !selected && !small(item) ? 0 : -1,
@@ -90,7 +90,7 @@ function CategoryView({ b, selected, choose, height }) {
             choose,
             item,
             "parcel-button",
-            item.r.w > 20 && item.r.h > 6,
+            true,
             {
               "aria-pressed": selected.key === item.key,
               "data-operation": item.name,
@@ -123,6 +123,7 @@ function TrendView({ b, selected, choose }) {
           id: "trend",
           className: "batch-trigger",
           "aria-label": "Batch values",
+          title: "Inspect the agent work share along the field fence",
           "data-target": "trend",
           onClick: () => choose(b.batches[0].key),
           tabIndex: selected ? -1 : 0,
@@ -337,7 +338,7 @@ function TimelineView({ b, selected, choose }) {
               style: box(rect(d.r.x - 9, d.r.y, 18, d.r.h)),
               onClick: () => choose(d.key),
             },
-            h("span", { "aria-hidden": true }, "!"),
+
           ),
         ),
       ),
@@ -349,6 +350,77 @@ function TimelineView({ b, selected, choose }) {
         "No recorded threads.",
       ),
   );
+}
+export function GroundLabels({ board, selected }) {
+  const marks = [];
+  function mark(item, text, value, style, x, y) {
+    marks.push(h("span", {
+      key: item.key, "data-caption": item.key, className: style,
+      "data-x": x, "data-y": y,
+      "data-fog": item.material === "fog" || undefined,
+      "data-selected": selected?.key === item.key || undefined,
+    }, text, value && h("strong", null, value)));
+  }
+  for (const thread of board.threads)
+    for (const event of thread.failures)
+      mark(event, null, null, "failure-stake", event.anchor.x, event.anchor.y);
+  if (selected?.kind === "batch") {
+    for (const d of board.batches)
+      mark(d, d.value, null, "batch-reading", d.point?.[0] ?? d.anchor.x, d.point?.[1] ?? d.anchor.y);
+    for (const n of [0, 50, 100])
+      mark({ key: "axis/" + n }, n + "%", null, "scale-reading", board.trend.x - 27, board.trend.y + board.trend.h * (1-n/100));
+    for (const d of [board.batches[0], board.batches.at(-1)].filter((d,i,a)=>a.indexOf(d)===i))
+      mark({key:"end/"+d.key}, d.name, null, "range-reading", d.point?.[0] ?? d.anchor.x, board.trend.y+board.trend.h+13);
+  } else if (selected?.kind === "category" || selected?.kind === "operation") {
+    for (const d of board.categories) {
+      if (d.key === selected.key || d.key === selected.parent)
+        for (const op of d.operations) mark(op, op.name, op.value, "operation-reading");
+      else mark(d, d.name, d.value, "neighbor-reading");
+    }
+  } else if (selected) {
+    const thread = selected.kind === "thread" ? selected : board.objects.get(selected.parent);
+    for (const part of thread.parts) mark(part, part.name, part.value, "phase-reading");
+  }
+  return h("div", {className:"ground-labels", "aria-hidden":true}, marks);
+}
+export function projectLabels(root, pose) {
+  const w=root.clientWidth, h=root.clientHeight;
+  const [breadth,slope,tilt,offset]=pose.lens;
+  const targets=new Map(Array.from(root.querySelectorAll(".category-tile,.parcel-button,.phase-target"), el=>[el.dataset.target,el]));
+  const backups=new Map(Array.from(root.querySelectorAll("[data-fallback]"), el=>[el.dataset.fallback,el]));
+  for (const el of root.querySelectorAll("[data-caption]")) {
+    const key=el.dataset.caption;
+    let x,y;
+    if (el.dataset.x !== undefined) {
+      const ground=(pose.y+Number(el.dataset.y)*pose.p*pose.s)/h;
+      const depth=1+tilt*(.5-ground);
+      x=w/2+(pose.x+Number(el.dataset.x)*pose.s-w/2)*breadth/depth;
+      y=h*(offset+slope*ground/depth);
+      el.hidden=depth<=0 || x<0 || x>w || y<45 || y>h;
+    } else {
+      const target=targets.get(key);
+      if (!target) { el.hidden=true; continue; }
+      const bounds=target.getBoundingClientRect();
+      const top=Math.max(67,bounds.top),bottom=Math.min(h-12,bounds.bottom);
+      y=(top+bottom)/2;
+      const row=y/h-offset;
+      const ground=row*(1+tilt/2)/(slope+tilt*row);
+      const depth=1+tilt*(.5-ground);
+      const project=x=>w/2+(pose.x+x*pose.s-w/2)*breadth/depth;
+      const start=parseFloat(target.style.left);
+      const left=Math.max(6,project(start)),right=Math.min(w-6,project(start+parseFloat(target.style.width)));
+      x=(left+right)/2;
+      el.toggleAttribute("data-inline", bottom-top<39);
+      el.hidden=right-left<Math.min(180,Math.max(54,el.firstChild.textContent.length*7.5)) || bottom-top<18;
+      if (target.classList.contains("parcel-button")) {
+        target.tabIndex=el.hidden ? -1 : 0;
+        const backup=backups.get(key);
+        if(backup) backup.hidden=!el.hidden;
+      }
+    }
+    el.style.left=x+"px";
+    el.style.top=y+"px";
+  }
 }
 export function LandscapeBoard({ board, selected, choose, height }) {
   return h(

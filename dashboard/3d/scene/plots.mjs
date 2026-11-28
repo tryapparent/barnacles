@@ -8,6 +8,7 @@ export function plotSpecs(board) {
       material: d.material,
       r: d.r,
       small: !!d.small,
+      shade: d.shade,
     }));
   for (const [index, run] of board.runs.entries()) {
     if (run.length < 2) {
@@ -75,6 +76,26 @@ export function plotMesh(spec, plants) {
       quad(surface, x0, x1, 0, 0, y0, y1);
       quad(canopy, x0, x1, y0, y1, r.h, r.h);
     }
+    function beam(a, b, height, thickness) {
+      const color = [.60, .49, .32];
+      for (const [x,y,z] of [[a[0],height,a[1]],[b[0],height,b[1]],
+        [a[0],height+thickness,a[1]],[a[0],height+thickness,a[1]],
+        [b[0],height,b[1]],[b[0],height+thickness,b[1]]]) {
+        verts.push(x,y,z,...color,-1,0,0);
+      }
+    }
+    for (let i=1;i<points.length;i++) {
+      const a=points[i-1], b=points[i];
+      beam(a,b,4.6,1.1);
+      beam(a,b,2.1,.72);
+      const posts=Math.max(1,Math.ceil(Math.hypot(b[0]-a[0],b[1]-a[1])/16));
+      for(let post=0;post<posts;post++) {
+        const t=post/posts, x=a[0]+(b[0]-a[0])*t, z=a[1]+(b[1]-a[1])*t;
+        beam([x-.65,z],[x+.65,z],0,6.3);
+      }
+    }
+    const end=points.at(-1);
+    beam([end[0]-.65,end[1]],[end[0]+.65,end[1]],0,6.3);
     if (plants)
       grains(
         local,
@@ -84,7 +105,7 @@ export function plotMesh(spec, plants) {
             Math.floor((x / r.w) * (points.length - 1)),
           );
           const [a, b] = [points[index], points[index + 1]];
-          return a[1] + ((b[1] - a[1]) * (x - a[0])) / (b[0] - a[0]);
+          return 16 + a[1] + ((b[1] - a[1]) * (x - a[0])) / (b[0] - a[0]);
         },
         false,
         false,
