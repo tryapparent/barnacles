@@ -108,13 +108,15 @@ func executePolicy(ctx context.Context, path string, input policyInput) (policyO
 	return output, nil
 }
 
+const maxPolicyResponseBytes = 4 << 20
+
 type boundedOutput struct {
 	buffer   bytes.Buffer
 	exceeded bool
 }
 
 func (o *boundedOutput) Write(p []byte) (int, error) {
-	if o.buffer.Len()+len(p) > maxResponseBytes {
+	if o.buffer.Len()+len(p) > maxPolicyResponseBytes {
 		o.exceeded = true
 		return 0, errors.New("policy output exceeds byte limit")
 	}

@@ -134,8 +134,8 @@ func TestLokiFailures(t *testing.T) {
 			io.WriteString(w, `{"status":"success","data":{"resultType":"streams","result":null}}`)
 		}, backend.StatusBadGateway, "invalid stream response"},
 		{"body cap", func(w http.ResponseWriter, _ *http.Request) {
-			io.WriteString(w, strings.Repeat("x", maxResponseBytes+1))
-		}, backend.StatusBadGateway, "exceeded 4 MiB"},
+			io.WriteString(w, strings.Repeat("x", maxLokiResponseBytes+1))
+		}, backend.StatusBadGateway, "exceeded 8 MiB"},
 		{"not found", func(w http.ResponseWriter, _ *http.Request) {
 			io.WriteString(w, `{"status":"success","data":{"resultType":"streams","result":[]}}`)
 		}, backend.StatusNotFound, "was not found"},

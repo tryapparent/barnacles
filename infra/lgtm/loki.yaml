@@ -3,6 +3,7 @@ analytics:
   reporting_enabled: false
 server:
   http_listen_port: 3100
+  grpc_server_max_recv_msg_size: 8388608
 common:
   instance_addr: 127.0.0.1
   path_prefix: /loki

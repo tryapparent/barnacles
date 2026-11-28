@@ -61,3 +61,6 @@ candidate splits Loki range reads by day. Hourly query splitting multiplied
 each panel's source reads into hundreds of subqueries and delayed short
 run-detail reads during range changes. The query split is independent of the
 hourly event streams used for late historical inserts.
+The Loki server accepts internal query responses up to 8 MiB to match the
+Grafana datasource response budget. Dense daily operation streams can exceed
+the Loki default of 4 MiB before reaching Grafana.

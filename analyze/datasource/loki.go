@@ -15,10 +15,10 @@ import (
 )
 
 const (
-	t3Selector       = `{plow_source="t3"}`
-	historySelector  = `{plow_source="codex_history"}`
-	maxResponseBytes = 4 << 20
-	maxLineBytes     = 16 << 10
+	t3Selector           = `{plow_source="t3"}`
+	historySelector      = `{plow_source="codex_history"}`
+	maxLokiResponseBytes = 8 << 20
+	maxLineBytes         = 16 << 10
 )
 
 type lokiClient struct {
@@ -129,12 +129,12 @@ func (l lokiClient) readDirection(ctx context.Context, window backend.TimeRange,
 		return nil, nil, lokiFailure(backend.StatusBadGateway, "Loki returned HTTP "+strconv.Itoa(response.StatusCode))
 	}
 
-	body, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxLokiResponseBytes+1))
 	if err != nil {
 		return nil, nil, lokiTransportFailure(err)
 	}
-	if len(body) > maxResponseBytes {
-		return nil, nil, lokiFailure(backend.StatusBadGateway, "Loki response exceeded 4 MiB. Narrow the time range")
+	if len(body) > maxLokiResponseBytes {
+		return nil, nil, lokiFailure(backend.StatusBadGateway, "Loki response exceeded 8 MiB. Narrow the time range")
 	}
 	var payload struct {
 		Status   string   `json:"status"`
