@@ -385,6 +385,7 @@ func (l lokiClient) readActivityShard(ctx context.Context, read activityRead, de
 var (
 	nativeUUID    = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 	nativeTraceID = regexp.MustCompile(`^[0-9a-f]{32}$`)
+	tempoSearchID = regexp.MustCompile(`^[0-9a-f]{1,32}$`)
 )
 
 type tempoMatch struct {
@@ -452,11 +453,11 @@ func (ds *datasource) tempoSearch(ctx context.Context, from, to time.Time, run r
 	rows := make([]tempoMatch, 0, len(payload.Traces))
 	for _, candidate := range payload.Traces {
 		ns, err := strconv.ParseInt(candidate.Start, 10, 64)
-		if err != nil || !nativeTraceID.MatchString(candidate.ID) || candidate.ID == strings.Repeat("0", 32) ||
+		if err != nil || !tempoSearchID.MatchString(candidate.ID) || strings.TrimLeft(candidate.ID, "0") == "" ||
 			len(candidate.SpanSets) != 1 || len(candidate.SpanSets[0].Spans) != 1 {
 			return nil, false
 		}
-		row := tempoMatch{ID: candidate.ID, Start: ns / 1_000_000}
+		row := tempoMatch{ID: strings.Repeat("0", 32-len(candidate.ID)) + candidate.ID, Start: ns / 1_000_000}
 		row.End = row.Start + int64(candidate.Duration) + 1
 		var sessionCount, turnCount int
 		for _, attribute := range candidate.SpanSets[0].Spans[0].Attributes {
