@@ -441,7 +441,7 @@
     "uid": "plow-activity",
     "title": "Activity",
     "schemaVersion": 41,
-    "version": 3,
+    "version": 4,
     "editable": false,
     "timezone": "utc",
     "time": {
@@ -805,7 +805,7 @@
         "fieldConfig": {
           "defaults": {
             "color": {
-              "mode": "thresholds"
+              "mode": "palette-classic"
             },
             "mappings": [
               {
@@ -831,13 +831,8 @@
                     "color": "#54925E",
                     "index": 3
                   },
-                  "T3 admission": {
-                    "text": "T3 admission",
-                    "color": "#B48251",
-                    "index": 4
-                  },
                   "Request to provider start": {
-                    "text": "Request to provider start",
+                    "text": "T3 admission",
                     "color": "#B48251",
                     "index": 5
                   },
@@ -850,31 +845,6 @@
                     "text": "Missing clocks",
                     "color": "#687288",
                     "index": 7
-                  },
-                  "Attempt queue": {
-                    "text": "Attempt queue",
-                    "color": "#8478B7",
-                    "index": 8
-                  },
-                  "Attempt elapsed": {
-                    "text": "Attempt elapsed",
-                    "color": "#5674B3",
-                    "index": 9
-                  },
-                  "Job queue": {
-                    "text": "Job queue",
-                    "color": "#8478B7",
-                    "index": 10
-                  },
-                  "Job execution": {
-                    "text": "Job execution",
-                    "color": "#5674B3",
-                    "index": 11
-                  },
-                  "Job failed": {
-                    "text": "Job failed",
-                    "color": "#D24653",
-                    "index": 12
                   }
                 }
               }
@@ -933,52 +903,12 @@
         "fieldConfig": {
           "defaults": {
             "color": {
-              "mode": "thresholds"
+              "mode": "palette-classic"
             },
             "mappings": [
               {
                 "type": "value",
                 "options": {
-                  "Provider run": {
-                    "text": "Provider run",
-                    "color": "#6A934F",
-                    "index": 0
-                  },
-                  "Command execution": {
-                    "text": "Command execution",
-                    "color": "#3D8241",
-                    "index": 1
-                  },
-                  "Tool call": {
-                    "text": "Tool call",
-                    "color": "#457B56",
-                    "index": 2
-                  },
-                  "Provider operations": {
-                    "text": "Provider operations",
-                    "color": "#54925E",
-                    "index": 3
-                  },
-                  "T3 admission": {
-                    "text": "T3 admission",
-                    "color": "#B48251",
-                    "index": 4
-                  },
-                  "Request to provider start": {
-                    "text": "Request to provider start",
-                    "color": "#B48251",
-                    "index": 5
-                  },
-                  "Between recorded runs": {
-                    "text": "Between recorded runs",
-                    "color": "#948A81",
-                    "index": 6
-                  },
-                  "Missing clocks": {
-                    "text": "Missing clocks",
-                    "color": "#687288",
-                    "index": 7
-                  },
                   "Attempt queue": {
                     "text": "Attempt queue",
                     "color": "#8478B7",
