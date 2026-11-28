@@ -158,6 +158,7 @@ test("the ordinary refresh reads a persisted stock T3 projection and joins exact
       references: [reference], ci: { observationId: "obs-fixture", kind: "query", repository,
         runId: 42, attempt: 1, headSha: sha } };
     writeFileSync(join(job, "receipt.json"), JSON.stringify(receipt));
+    writeFileSync(join(job, "expired.json"), JSON.stringify({ ...receipt, threadId: "expired-fixture" }));
     const activity = mkdtempSync(join(job, "activity-"));
     const refresh = () => JSON.parse(String(execFileSync(process.execPath, [new URL("../wire.ts", import.meta.url).pathname,
       job, forge, codex, job, joined], { env: { ...process.env, PLOW_ANALYSIS_T3_HISTORY_DB: shared, PLOW_ANALYSIS_ACTIVITY_DIR: activity,

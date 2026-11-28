@@ -295,6 +295,11 @@ async function main() {
       console.log(JSON.stringify({ sourceAvailable: plan.sourceAvailable, missingBeforeCapture: plan.missing, captured: attempts.length }));
       return;
     }
+    const capture = process.env.PLOW_CI_CAPTURE;
+    if (!windowMode && capture) {
+      const exact = { repository, runId: positiveInt(mode), attempt: positiveInt(args[0]), sha: fullSha(args[1]) };
+      return await (await import("./t3-otel/projection.ts")).captureCiAttempt(database, scratch, exact, capture, policy, admission, read);
+    }
     const { attempts, coverage } = windowMode
       ? await collectWindow(repository, args[0], args[1], positiveInt(args[2]), positiveInt(args[3]), policy, read)
       : { attempts: [await collectAttempt({
