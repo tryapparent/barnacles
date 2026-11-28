@@ -2,7 +2,7 @@ import Base
 import ../plow/policy/preview.bend as Chart
 import ../plow/policy/spans.bend as Spans
 import ../plow/policy/summary.bend as Summary
-import ../plow/policy/trend.bend as Trend
+import ./policy/snapshot.bend as Snapshot
 
 type Trace is Data:
   Trace{start: Nat, end: Nat, intervals: List<&2,Spans.Interval>, errors: List<&2,Nat>}
@@ -11,7 +11,7 @@ type Row is Data:
   Row{start: Nat, end: Nat, parts: List<&2,Spans.Part>, failures: List<&2,Nat>}
 
 type Scene is Data:
-  Scene{frame: Chart.UtcSpan, summary: Summary.TimeSummary, rows: List<&2,Row>, batches: List<&2,Trend.TrendBatch>}
+  Scene{frame: Chart.UtcSpan, summary: Summary.TimeSummary, rows: List<&2,Row>, batches: List<&2,Snapshot.TrendBatch>}
 
 def bounded(intervals: List<&2,Spans.Interval>, +end: Nat) -> List<&2,Spans.Interval>:
   match intervals:
@@ -44,14 +44,14 @@ def summaries(input: List<&2,Row>, +index: Nat) -> List<&2,Summary.SummaryTrace>
     case []: []
     case Row{start,_,parts,_} <> rest: Summary.SummaryTrace{index,start,parts} <> summaries(rest,Nat.add(index,1n))
 
-def compose(+input: List<&2,Row>, history: List<&2,Trend.TrendThread>, first: Nat, frame: Chart.UtcSpan) -> Scene:
+def compose(+input: List<&2,Row>, history: List<&2,Snapshot.TrendThread>, first: Nat, frame: Chart.UtcSpan) -> Scene:
   match frame:
     case Chart.UtcSpan{+a,+b}:
-      Scene{Chart.UtcSpan{a,b},Summary.time_summary(summaries(input,1n),a,b),input,Trend.agent_work_trend(history,first)}
+      Scene{Chart.UtcSpan{a,b},Summary.time_summary(summaries(input,1n),a,b),input,Snapshot.agent_work_trend(history,first)}
 
-def landscape(traces: List<&2,Trace>, history: List<&2,Trend.TrendThread>, first: Nat) -> Scene:
+def landscape(traces: List<&2,Trace>, history: List<&2,Snapshot.TrendThread>, first: Nat) -> Scene:
   +input = rows(traces)
-  compose(input,history,first,Chart.utc_frame(clocks(input)))
+  compose(input,history,first,Snapshot.utc_frame(clocks(input)))
 
 def ticks(frame: Chart.UtcSpan, +width: Nat) -> List<&2,Nat>:
   match frame:

@@ -16,7 +16,7 @@ Open the HTML file directly in a browser. It works offline and includes the asse
 
 ## Landscape
 
-[The evidence policy](landscape.bend) uses Plow’s interval, summary and trend policies. [The view](view/) projects the data into parcels, time intervals and label anchors. React controls and the [WebGL scene](scene/) share those coordinates. The foreground oak frames the overlook. A wooded bank on the far side of the fields meets the [painted valley](scenery/). Its world position determines where the valley comes into view during a field visit. The [component guide](components.md) covers updating the world and the limits of snapshot-local identity.
+[The evidence policy](landscape.bend) uses Plow’s interval and summary policies. The [snapshot policy](policy/snapshot.bend) groups complete batches of ten threads and sets the UTC extent for this view. [The view](view/) projects the data into parcels, time intervals and label anchors. React controls and the [WebGL scene](scene/) share those coordinates. The foreground oak frames the overlook. A wooded bank on the far side of the fields meets the [painted valley](scenery/). Its world position determines where the valley comes into view during a field visit. The [component guide](components.md) covers updating the world and the limits of snapshot-local identity.
 
 ## Field labels
 
