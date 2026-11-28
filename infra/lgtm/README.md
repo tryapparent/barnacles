@@ -34,7 +34,16 @@ Loki uses TSDB schema v13 and native OTLP ingestion. This fixture stack admits o
 
 The Grafana image builds the [data source plugin](../../analyze/datasource/) and compiles the Bend2 rule before the stack starts. The image allows this single unsigned plugin for the loopback candidate. Open the [run breakdown dashboard](../../grafana/) using the displayed Grafana port.
 
-Grafana MCP v2.3.0 does not include the Plow data source in its `run_panel_query` allowlist. The fixture uses Grafana MCP’s read-only `grafana_api_request` with `POST /api/ds/query` and the same target and time range as the dashboard. It compares the resulting data frames with Grafana’s direct result. The stack publishes no standalone MCP server. Outside the fixture, set up a Viewer account and choose the allowed tools for the Grafana instance.
+## Managed Grafana MCP
+
+Run the opt-in Compose service as a local stdio MCP server under an authorized client on the Docker host. The command starts one disposable container per session. It binds no host port and works with both the existing private Grafana deployment and the Access deployment. The legacy Cloudflare `/app/mcp` route is separate.
+
+1. In the existing Grafana organization, create a dedicated service account with the Viewer role and a short-lived token. Save it in a mode-0700 directory outside the release. Set the file to mode 0444 so the unprivileged container can read the single-file bind mount when Docker is rootless. The private directory controls host access. Set `PLOW_MCP_TOKEN_FILE` to the absolute file path and `PLOW_LGTM_WORKDIR` to the deployed stack's runtime directory in the MCP client's launch environment.
+2. From the pinned release directory, run `docker compose -p plow-grafana -f infra/lgtm/compose.yaml build grafana-mcp`. Configure the client's working directory to that release, command to `docker`, and arguments to `compose -p plow-grafana -f infra/lgtm/compose.yaml run --rm --no-deps -T grafana-mcp`. Once Grafana uses the [Access socket](../access/README.md), add `-f infra/access/compose.yaml` before `run`. Include the existing `PLOW_TAILNET_ORIGIN` for the Access overlay.
+3. Call `grafana_api_request` with GET `/api/search` to find a dashboard and GET `/api/dashboards/uid/<uid>` to read its provisioned panel targets. Use POST `/api/ds/query` with the same targets, resolved variables, and absolute time range as the corresponding Grafana panel. Compare the frames for a known run. The pinned Grafana MCP v2.3.0 uses this API tool because the Plow data source is outside its native `run_panel_query` allowlist.
+4. To rotate the credential, replace the private token file, restart the MCP client session, verify a known query, and revoke the previous token. To roll back, remove the client registration and revoke its Viewer token. This leaves Cloudflare and the Grafana deployment in place.
+
+The local bridge allows only dashboard search, dashboard reads, and the query endpoint. It supplies the service account token to Grafana and discards tool-supplied HTTP headers. Keep the deployed data sources read-only. The socket variant runs with an isolated network namespace and a read-only bind of Grafana's socket directory. Run `GOMAXPROCS=2 bash infra/lgtm/check.sh` for the private deployment proof and `GOMAXPROCS=2 bash infra/access/check.sh` for the socket proof. Each uses the deployed Compose entry point with a synthetic Viewer token, checks rejected writes and admin access, and compares the same provisioned panel query via Grafana and MCP.
 
 ## Private Clanker deployment
 

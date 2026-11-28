@@ -80,8 +80,10 @@ async function review(api, { account, zone, application, audience }) {
   const appPath = appsPath + '/' + application
   const zonesPath = 'zones/' + zone + '/workers/routes'
   const [app, apps, policies, providers, workers] = await Promise.all([
-    api(appPath), api(appsPath, 'GET', undefined, true), api(appPath + '/policies', 'GET', undefined, true),
-    api(accountPath + '/access/identity_providers', 'GET', undefined, true), api(zonesPath, 'GET', undefined, true),
+    api('Access application', appPath), api('Access applications', appsPath, 'GET', undefined, true),
+    api('Access policies', appPath + '/policies', 'GET', undefined, true),
+    api('Access identity providers', accountPath + '/access/identity_providers', 'GET', undefined, true),
+    api('Workers routes', zonesPath, 'GET', undefined, true),
   ])
   const domains = app.self_hosted_domains ?? []
   if (app.type !== 'self_hosted' || app.aud !== audience ||
@@ -116,6 +118,12 @@ async function review(api, { account, zone, application, audience }) {
   }
 }
 
+function accessLogin(response, team) {
+  const location = new URL(response.headers.get('location') ?? '/', 'https://' + host)
+  return response.status === 302 && location.origin === 'https://' + team + '.cloudflareaccess.com' &&
+    location.pathname === '/cdn-cgi/access/login/' + host
+}
+
 async function signedOut(team) {
   const origin = 'https://' + host
   const statuses = {}
@@ -125,15 +133,19 @@ async function signedOut(team) {
     const response = await fetch(origin + path, { redirect: 'manual', signal: AbortSignal.timeout(8_000) })
     await response.body?.cancel()
     if (protectedPaths.includes(path)) {
-      const location = new URL(response.headers.get('location') ?? origin, origin)
       const challenge = response.headers.get('www-authenticate') ?? ''
       if (!((response.status === 401 && challenge.startsWith('Bearer ') &&
           challenge.includes(origin + '/.well-known/cloudflare-access-protected-resource/')) ||
-          (response.status === 302 && location.origin === 'https://' + team + '.cloudflareaccess.com' &&
-          location.pathname === '/cdn-cgi/access/login/' + host))) throw Error('Access challenge missing on ' + path)
+          accessLogin(response, team))) throw Error('Access challenge missing on ' + path)
     }
     statuses[path] = response.status
   }
+  const browser = await fetch(origin + '/app/', {
+    headers: { accept: 'text/html' }, redirect: 'manual', signal: AbortSignal.timeout(8_000),
+  })
+  await browser.body?.cancel()
+  if (!accessLogin(browser, team)) throw Error('Browser request did not redirect to the existing Access login.')
+  statuses['/app/ (HTML)'] = browser.status
   return statuses
 }
 
@@ -168,7 +180,7 @@ async function main(action) {
       !tokenFile || (action !== 'status' && !receiptFile)) throw Error('Invalid Cloudflare ingress inputs.')
   const token = (await readFile(tokenFile, 'utf8')).trim()
   if (!/^[\w.-]+$/.test(token)) throw Error('Invalid Cloudflare token file.')
-  async function api(path, method = 'GET', body, list = false) {
+  async function api(resource, path, method = 'GET', body, list = false) {
     const entries = []
     for (let page = 1; page <= 25; page++) {
       const endpoint = 'https://api.cloudflare.com/client/v4/' + path +
@@ -178,9 +190,9 @@ async function main(action) {
         headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' },
         body: body === undefined ? undefined : JSON.stringify(body),
       })
-      if (!response.ok) throw Error('Cloudflare ' + method + ' returned HTTP ' + response.status + '.')
+      if (!response.ok) throw Error('Cloudflare ' + resource + ' ' + method + ' returned HTTP ' + response.status + '.')
       const payload = await response.json()
-      if (!payload.success) throw Error('Cloudflare rejected ' + method + '.')
+      if (!payload.success) throw Error('Cloudflare rejected ' + resource + ' ' + method + '.')
       if (!list) return payload.result
       entries.push(...payload.result)
       if (page >= (payload.result_info?.total_pages ?? 1)) return entries
@@ -188,7 +200,7 @@ async function main(action) {
     throw Error('Cloudflare list exceeded the bounded inventory.')
   }
   const configuration = 'accounts/' + account + '/cfd_tunnel/' + tunnel + '/configurations'
-  const current = async () => (await api(configuration)).config
+  const current = async () => (await api('Tunnel configuration', configuration)).config
   const input = { team, audience, port: +port }
   const context = { account, zone, tunnel, application }
   const load = async () => readFile(receiptFile, 'utf8').then(raw => {
@@ -209,7 +221,7 @@ async function main(action) {
   }
   const result = await transition({
     action, current, load, target: config => plan(config, input),
-    put: config => api(configuration, 'PUT', { config }),
+    put: config => api('Tunnel configuration', configuration, 'PUT', { config }),
     save: async receipt => {
       if (await load()) return
       const handle = await open(receiptFile, 'wx', 0o600)

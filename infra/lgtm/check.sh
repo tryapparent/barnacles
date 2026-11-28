@@ -9,6 +9,7 @@ export PLOW_GRAFANA_IMAGE="plow-grafana-check-${job,,}:local"
 compose() { docker compose -p "plow-lgtm-${job,,}" "$@"; }
 cleanup() {
   status=$?
+  rm -f "$PLOW_LGTM_WORKDIR/mcp/token"
   if (( status != 0 )); then
     compose logs > "$PLOW_LGTM_WORKDIR/compose.log" 2>&1 || true
     tail -80 "$PLOW_LGTM_WORKDIR/compose.log" >&2
@@ -23,6 +24,7 @@ openssl rand -hex 24 > "$PLOW_LGTM_WORKDIR/grafana-password"
 chmod 444 "$PLOW_LGTM_WORKDIR/grafana-password"
 
 compose config -q
+compose build grafana-mcp
 compose run --rm --no-deps alloy validate --stability.level=public-preview /etc/alloy/config.alloy
 compose up -d --build --wait --wait-timeout 90
 
@@ -169,11 +171,13 @@ grafana_post() {
     -H 'Content-Type: application/json' --data "$2" "http://$grafana/api/$1"
 }
 account=$(grafana_post serviceaccounts '{"name":"plow-fixture-mcp","role":"Viewer"}' | jq -er .id)
+export PLOW_MCP_TOKEN_FILE="$PLOW_LGTM_WORKDIR/mcp/token"
+mkdir -m 0700 "$(dirname "$PLOW_MCP_TOKEN_FILE")"
 (umask 077; grafana_post "serviceaccounts/$account/tokens" '{"name":"verification","secondsToLive":300}' |
-  jq -er .key > "$PLOW_LGTM_WORKDIR/mcp-token")
-node verify/grafana-mcp.ts "http://$grafana" "$PLOW_LGTM_WORKDIR/mcp-token" \
-  "$PLOW_LGTM_WORKDIR/query.json" "$PLOW_LGTM_WORKDIR/analysis.json" "$PLOW_LGTM_WORKDIR/mcp.json"
-unlink "$PLOW_LGTM_WORKDIR/mcp-token"
+  jq -er .key > "$PLOW_MCP_TOKEN_FILE")
+chmod 0444 "$PLOW_MCP_TOKEN_FILE"
+node verify/grafana-mcp.ts "$PLOW_LGTM_WORKDIR/query.json" \
+  "$PLOW_LGTM_WORKDIR/analysis.json" "$PLOW_LGTM_WORKDIR/mcp.json" --exact -p "plow-lgtm-${job,,}"
 
 mkdir -p "$PLOW_LGTM_WORKDIR/spool/t3"
 end_ms=$(( $(date +%s) * 1000 - 1000 ))
@@ -222,11 +226,7 @@ for period in 7d 24h; do
     (.results.share.frames[0].data.values[0] | length) ==
       (if $period=="7d" then 7 else 6 end)
   ' "$PLOW_LGTM_WORKDIR/activity.json"
+  node verify/grafana-mcp.ts "$PLOW_LGTM_WORKDIR/activity-query.json" "$PLOW_LGTM_WORKDIR/activity.json" \
+    "$PLOW_LGTM_WORKDIR/activity-mcp.json" --exact -p "plow-lgtm-${job,,}"
 done
-umask 077
-grafana_post "serviceaccounts/$account/tokens" '{"name":"activity-verification","secondsToLive":300}' |
-  jq -er .key > "$PLOW_LGTM_WORKDIR/mcp-token"
-node verify/grafana-mcp.ts "http://$grafana" "$PLOW_LGTM_WORKDIR/mcp-token" \
-  "$PLOW_LGTM_WORKDIR/activity-query.json" "$PLOW_LGTM_WORKDIR/activity.json" "$PLOW_LGTM_WORKDIR/activity-mcp.json"
-unlink "$PLOW_LGTM_WORKDIR/mcp-token"
-printf 'Verified Loki ingestion, Grafana run and Activity queries, replay, Tempo, Mimir and Grafana MCP. Evidence: %s\n' "$PLOW_LGTM_WORKDIR"
+printf 'Verified Loki, Grafana, replay, Tempo, Mimir and Grafana MCP. Evidence: %s\n' "$PLOW_LGTM_WORKDIR"
