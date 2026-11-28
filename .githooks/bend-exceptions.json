@@ -42,6 +42,10 @@
     "collect/t3/read.ts",
     "collect/t3/read.test.ts"
   ],
+  "Retained Codex trace SQLite read-only, pinned compiler, OTLP and Tempo HTTP, checkpoint filesystem and synthetic wire I/O (see collect/trace-replay/README.md)": [
+    "collect/trace-replay/main.ts",
+    "collect/trace-replay/main.test.ts"
+  ],
   "Native dashboard, Collector fan-out and OTLP verification (see grafana/traces.md)": [
     "grafana/dashboards/codex-traces.json",
     "grafana/dashboards/codex-trace-detail.json",

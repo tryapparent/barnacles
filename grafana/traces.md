@@ -34,7 +34,7 @@ The secondary exporter queues asynchronously in memory and retries for a bounded
 
 ## Historical coverage
 
-Replay requires a bounded retained native OTLP export with its original IDs and clocks, or a decision to treat a verified legacy evidence projection as a partial replay. The SQLite span and event tables retain trace, span and parent IDs, clocks and allowlisted attributes. They do not preserve the complete original OTLP envelope, including span kind or discarded resource metadata. Codex rollout JSONL can corroborate turn and call identities. It cannot fill absent native trace coordinates or establish complete trace coverage.
+Replay requires a bounded retained native OTLP export with its original IDs and clocks, or a decision to treat a verified legacy evidence projection as a partial replay. The SQLite span and event tables retain trace, span and parent IDs, clocks and allowlisted attributes. They do not preserve the complete original OTLP envelope, including span kind or discarded resource metadata. Codex rollout JSONL can corroborate turn and call identities. It cannot fill absent native trace coordinates or establish complete trace coverage. The [opt-in retained trace replay](../collect/trace-replay/README.md) handles verified legacy projections with a bounded manifest and marks the Tempo resource with `plow.replay.source=legacy-sqlite` and `plow.replay.coverage=partial`. The live and historical spans share the same search scope.
 
 ## Verification
 
