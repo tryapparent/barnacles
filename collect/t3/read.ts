@@ -1,12 +1,11 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as wait } from "node:timers/promises";
-import { capturePolicy, checkpoint, health, ordered, publish, resume, scopeArg } from "../fixture.ts";
+import { capturePolicy, checkpoint, health, ordered, publish, resume, scopeArg, type WireList as List } from "../fixture.ts";
 import { buildPolicy, loadPolicy } from "../../tooling/bend.ts";
 
-type List<T> = { $: "Nil" } | { $: "Con"; head: T; tail: List<T> };
 type Binding = { $: "T3Binding"; owner: string; driver: string; native_driver: string; strength: string; session: string; reference: string };
-type Run = { $: "T3Run"; owner: string; id: string; started: string; completed: string };
+type Run = { $: "T3Run"; owner: string; id: string; started: string; completed: string; provider: string };
 type Policy = { t3_run(thread: string, requested: string, refs: List<Binding>, runs: List<Run>): string };
 
 function object(input: unknown): Record<string, unknown> {
@@ -39,7 +38,7 @@ export async function projectT3Run(scratch: string, thread: string, requested: s
   const runs = list<Run>(projection.runs, 4096, value => {
     const item = object(value);
     return { $: "T3Run", owner: text(item.threadId), id: text(item.id),
-      started: ms(item.startedAt), completed: ms(item.completedAt) };
+      started: ms(item.startedAt), completed: ms(item.completedAt), provider: text(item.providerThreadId) };
   });
   const module = await buildPolicy(scratch, new URL("../project.bend", import.meta.url), "t3-run.mjs");
   const policy = await loadPolicy<Policy>(module);
@@ -248,7 +247,7 @@ async function capture(lane: string, once: boolean, origin: string, tokenFile: s
           const result = page(policy, scope, thread, await read(origin, token, thread, cursor), cursor, observed);
           if (result.next && old?.previous.includes(result.next)) throw Error("incomplete_projection");
           if (result.next && (old?.previous.length ?? 0) >= 10_000) throw Error("bounded_inventory");
-          publish(join(spool, "t3"), scope + "-" + lane, result.lines);
+          publish(join(spool, "t3"), scope + "-" + lane, result.lines, 128);
           const oldest = old?.oldest && result.oldest ? Math.min(old.oldest, result.oldest) : old?.oldest || result.oldest;
           state.marks[thread] = {
             revision: cursor && old ? old.revision : revision,
@@ -285,7 +284,7 @@ async function capture(lane: string, once: boolean, origin: string, tokenFile: s
     if (lane === "live") {
       const progress = resume<State>(join(stateDir, "t3-" + scope + "-backfill.json"), { last: 0, oldest: 0, count: 0, marks: {} });
       publish(join(spool, "t3"), scope + "-" + lane, [policy.coverage(scope, "t3_coverage", lane, status,
-        String(observed), String(progress.oldest || state.oldest), String(state.last))]);
+        String(observed), String(progress.oldest || state.oldest), String(state.last))], 128);
     }
     if (once && status === "retrying") process.exitCode = 1;
     if (!once) await wait(15_000);

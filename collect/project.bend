@@ -81,7 +81,7 @@ type T3Binding is Data:
   T3Binding{owner: String, driver: String, native_driver: String, strength: String, session: String, reference: String}
 
 type T3Run is Data:
-  T3Run{owner: String, id: String, started: String, completed: String}
+  T3Run{owner: String, id: String, started: String, completed: String, provider: String}
 
 type Choice is Data:
   Missing{}
@@ -94,31 +94,27 @@ def select(matches: Bool, found: Choice, value: String) -> Choice:
     case True{} Missing{}: Exact{value}
     case True{} _: Ambiguous{}
 
-def binding(+thread: String, refs: List<&2, T3Binding>, found: Choice) -> Choice:
+def binding(+thread: String,+provider: String,refs: List<&2,T3Binding>,prior: Choice) -> Choice:
   match refs:
-    case []: found
-    case T3Binding{owner, driver, native_driver, strength, +session, _} <> rest:
-      +matches = Bool.and(String.eq(owner, thread), Bool.and(String.eq(driver, "codex"),
-        Bool.and(String.eq(native_driver, "codex"), Bool.and(String.eq(strength, "strong"), token(session)))))
-      binding(thread, rest, select(matches, found, session))
-
-def scoped_run(+thread: String, +wanted: String, +session: String, runs: List<&2, T3Run>, found: Choice) -> Choice:
-  match runs:
-    case []: found
-    case T3Run{owner, +id, started, completed} <> rest:
-      +matches = Bool.and(String.eq(owner, thread), String.eq(id, wanted))
-      +line = run(id, thread, session, started, completed)
-      scoped_run(thread, wanted, session, rest, select(matches, found, line))
+    case []: prior
+    case T3Binding{owner,driver,native,strength,+session,reference} <> rest:
+      +id = Bool.and(Bool.not(String.is_empty(provider)),String.eq(provider,reference))
+      +kind = Bool.and(String.eq(driver,"codex"),Bool.and(String.eq(native,"codex"),String.eq(strength,"strong")))
+      +matches = Bool.and(Bool.and(id,kind),Bool.and(String.eq(owner,thread),token(session)))
+      binding(thread,provider,rest,select(matches,prior,session))
 
 def chosen_run(choice: Choice) -> String:
   match choice:
     case Exact{value}: value
     case _: ""
 
-def apply_binding(choice: Choice, thread: String, wanted: String, runs: List<&2, T3Run>) -> String:
-  match choice:
-    case Exact{session}: chosen_run(scoped_run(thread, wanted, session, runs, Missing{}))
-    case _: ""
+def scoped_run(+thread: String, +wanted: String, +refs: List<&2,T3Binding>, runs: List<&2,T3Run>, found: Choice) -> Choice:
+  match runs:
+    case []: found
+    case T3Run{owner,+id,started,completed,provider} <> rest:
+      +matches = Bool.and(String.eq(owner,thread),String.eq(id,wanted))
+      +session = chosen_run(binding(thread,provider,refs,Missing{}))
+      scoped_run(thread,wanted,refs,rest,select(matches,found,run(id,thread,session,started,completed)))
 
-def t3_run(+thread: String, wanted: String, refs: List<&2, T3Binding>, runs: List<&2, T3Run>) -> String:
-  apply_binding(binding(thread, refs, Missing{}), thread, wanted, runs)
+def t3_run(thread: String, wanted: String, refs: List<&2,T3Binding>, runs: List<&2,T3Run>) -> String:
+  chosen_run(scoped_run(thread,wanted,refs,runs,Missing{}))

@@ -14,6 +14,7 @@ collection_health.health_self_metrics "alloy" {
 
 otelcol.receiver.filelog "codex" {
   include           = ["/spool/codex.jsonl", "/spool/codex/*.jsonl"]
+  fingerprint_size  = "1024B"
   include_file_name = false
   start_at          = "beginning"
   storage           = otelcol.storage.file.positions.handler

@@ -11,9 +11,10 @@ test("bounded T3 read projects an exact local run and rejects ambiguous bindings
   const scratch = mkdtempSync("/tmp/apparent-dev-plow-t3-fixture-");
   const token = join(scratch, "token");
   writeFileSync(token, "synthetic-read-token\n", { mode: 0o600 });
-  const refs = [{ appThreadId: "fixture-thread", driver: "codex", nativeThreadRef: {
+  const refs = [{ id: "provider-fixture", appThreadId: "fixture-thread", driver: "codex", nativeThreadRef: {
     driver: "codex", strength: "strong", nativeId: "fixture-session",
   } }];
+  refs.push({ ...refs[0], id: "other-provider", nativeThreadRef: { ...refs[0].nativeThreadRef, nativeId: "other-session" } });
   const server = createServer((request, response) => {
     assert.equal(request.url, "/api/orchestration/threads/fixture-thread/bounded?dedupeBodies=1");
     assert.equal(request.headers.authorization, "Bearer synthetic-read-token");
@@ -22,7 +23,7 @@ test("bounded T3 read projects an exact local run and rejects ambiguous bindings
     response.end(JSON.stringify({ projection: {
       thread: { id: "fixture-thread", title: "fixture private canary" },
       providerThreads: refs,
-      runs: [{ threadId: "fixture-thread", id: "run:fixture", startedAt: "2025-06-03T12:00:00Z",
+      runs: [{ threadId: "fixture-thread", id: "run:fixture", providerThreadId: "provider-fixture", startedAt: "2025-06-03T12:00:00Z",
         completedAt: "2025-06-03T12:00:10Z" }],
     } }));
   });
@@ -64,6 +65,7 @@ test("T3 live head and durable opaque backfill advance independently", async () 
   const cursor = "+opaque/fixture=";
   let unavailable = false;
   let discovered = false;
+  let completed = false;
   let pageReads = 0;
   const active = [{ id: "thread-active", updatedAt: now }];
   const archived = { id: "thread-archived", updatedAt: old };
@@ -83,12 +85,13 @@ test("T3 live head and durable opaque backfill advance independently", async () 
     }
     const more = id === "thread-archived";
     const start = more ? old : now;
+    const end = completed && !more ? new Date(Date.parse(now) + 1000).toISOString() : null;
     return reply({ hasMoreHistory: more, historyCursor: more ? cursor : null, snapshotSequence: 1,
-      projection: { thread: { id, updatedAt: start, title: "private fixture title" },
+      projection: { thread: { id, updatedAt: end ?? start, title: "private fixture title" },
         providerThreads: more ? [] : [{ id: "provider-ref", appThreadId: id, driver: "codex",
           nativeThreadRef: { driver: "codex", strength: "strong", nativeId: "safe-session" } }], turnItems: [],
         runs: [{ id: id + "-run", threadId: id, providerThreadId: "provider-ref",
-          requestedAt: start, startedAt: start, completedAt: null, status: "running" }] } });
+          requestedAt: start, startedAt: start, completedAt: end, status: end ? "completed" : "running" }] } });
   });
   server.on("upgrade", (request, socket) => {
     const accept = createHash("sha1").update(request.headers["sec-websocket-key"] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
@@ -133,7 +136,16 @@ test("T3 live head and durable opaque backfill advance independently", async () 
     assert.equal(marks()["thread-archived"].cursor, "");
     assert.equal(await capture("backfill"), 0);
     assert.equal(pageReads, 2);
-    const output = readdirSync(join(spool, "t3")).map(file => readFileSync(join(spool, "t3", file), "utf8")).join("");
+    completed = true;
+    active[0].updatedAt = new Date(Date.parse(now) + 1000).toISOString();
+    assert.equal(await capture("live"), 0);
+    const chunks = readdirSync(join(spool, "t3")).map(file => [file, readFileSync(join(spool, "t3", file))] as const);
+    const revisions = chunks.filter(([file, chunk]) => file.startsWith("fixture-live-") && chunk.includes('"id":"thread-active-run"'))
+      .map(([, chunk]) => chunk);
+    assert.equal(revisions.length, 2);
+    assert.notDeepEqual(revisions[0].subarray(0, 128), revisions[1].subarray(0, 128));
+    assert.ok(revisions.some(chunk => chunk.includes('"completedMs":' + Date.parse(active[0].updatedAt))));
+    const output = chunks.map(([, chunk]) => chunk).join("");
     assert.match(output, /thread-new-run/);
     assert.match(output, /thread-archived-run/);
     assert.match(output, /"sessionId":""/);
