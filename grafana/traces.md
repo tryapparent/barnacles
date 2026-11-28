@@ -6,7 +6,7 @@ Select a **Trace ID** to open the native Grafana Traces panel with the same abso
 
 The view covers emitted OTLP spans received by Tempo. Retained fields include native trace and parent/span IDs, clocks, operation names, status codes, and allowlisted conversation, turn and call identities when present. The Alloy transport removes incoming resource and scope attributes, links, trace state, free-form status text and other private fields. The provisioned search uses the normalized instrumentation name `plow.codex`.
 
-An empty search means no matching traces in that UTC range under the selected filter. Check **Any status**, widen the range, or check collection receipts. An absent exact ID produces a lookup error with Tempo’s not-found message. A backend outage produces a datasource error. Neither is evidence of zero activity. Trace timings are exporter span clocks. A tool handler’s span can end at its first yield while the process continues. See the historical run view for evidence about tool and process clocks.
+An empty search means no matching traces in that UTC range under the selected filter. Check **Any status**, widen the range, or check collection receipts. On the detail page, Grafana 12.3 reports that a trace ID is required while the field is blank. An absent exact ID produces Tempo’s not-found message. A backend outage produces a datasource error. The native waterfall header formats its start clock in the browser timezone. The dashboard range and recent table remain in UTC. Trace timings are exporter span clocks. A tool handler’s span can end at its first yield while the process continues. See the historical run view for evidence about tool and process clocks.
 
 ## Trace Viewer input
 
