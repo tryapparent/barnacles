@@ -88,5 +88,20 @@
     "infra/access/package-lock.json",
     "infra/access/check.sh",
     "infra/access/access.test.mjs"
+  ],
+  "Static Plow site assets and browser and container formats": [
+    "public/assets/blade.jpg",
+    "public/assets/field.jpg",
+    "public/assets/hands.jpg",
+    "public/assets/plow-cool-mist.png",
+    "public/assets/plow-cream.png",
+    "public/assets/plow-ink.png",
+    "public/assets/source-serif-4-ofl.txt",
+    "public/assets/source-serif-4.woff2",
+    "public/assets/youngserif-ofl.txt",
+    "public/assets/youngserif.woff2",
+    "public/brand/index.html",
+    "public/compose.yaml",
+    "public/index.html"
   ]
 }

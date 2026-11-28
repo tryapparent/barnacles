@@ -9,13 +9,7 @@ RUN CGO_ENABLED=0 go build -mod=readonly -trimpath -o "/out/gpx_plow_linux_$(go 
 FROM caddy:2.10-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d AS brand
 ADD --checksum=sha256:ed6f7e8b07fa6bc6922c3e6a41948408833bb0c60a2a867579437048718dc5d5 https://grafana.com/api/plugins/marcusolsson-dynamictext-panel/versions/6.3.1/download /tmp/business-text.zip
 RUN unzip -q /tmp/business-text.zip -d /plugins
-ADD --checksum=sha256:6ba68b9927ad2a640d32cbea050ffc2b5d0ae6cbaa785afe470da9d6bf0ef39f https://raw.githubusercontent.com/tryapparent/plow/100c02f1802d626a8150120c5073ce293f3058ad/public/assets/youngserif.woff2 /brand/youngserif.woff2
-ADD --checksum=sha256:a6608ab32f7090f577e51a3b6d4b4f0609762686b88f9084d65a5623b44da11d https://raw.githubusercontent.com/tryapparent/plow/100c02f1802d626a8150120c5073ce293f3058ad/public/assets/source-serif-4.woff2 /brand/source-serif-4.woff2
-ADD --checksum=sha256:39f676ae87250f747d2bb5d4bbde83d575b79922037ab1cdaa2abc70508d1114 https://raw.githubusercontent.com/tryapparent/plow/100c02f1802d626a8150120c5073ce293f3058ad/public/assets/youngserif-ofl.txt /brand/youngserif-ofl.txt
-ADD --checksum=sha256:0fd8b796c1c6220a559a5682cfd00d1c8488b428369f7cb70deb671888cef85f https://raw.githubusercontent.com/tryapparent/plow/100c02f1802d626a8150120c5073ce293f3058ad/public/assets/source-serif-4-ofl.txt /brand/source-serif-4-ofl.txt
-ADD --checksum=sha256:727a37a311aa6157801961a1a41413dc3c44a6ed4388bf8e4507a0bf58601b10 https://raw.githubusercontent.com/tryapparent/plow/100c02f1802d626a8150120c5073ce293f3058ad/public/assets/field.jpg /brand/field.jpg
-RUN chmod 0644 /brand/*
-
+COPY public/assets/youngserif.woff2 public/assets/source-serif-4.woff2 public/assets/youngserif-ofl.txt public/assets/source-serif-4-ofl.txt public/assets/field.jpg /brand/
 FROM node:22.23.0-bookworm-slim@sha256:d9f850096136edbc402debdd8729579a288aac64574ada0ff4db26b6ae58b0b2 AS policy
 WORKDIR /src
 COPY tooling/bend.ts tooling/bend.ts

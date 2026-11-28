@@ -26,7 +26,7 @@ The dashboards use a common Wet Earth and Cream header with a Meadow outline. Me
 
 The signed Business Text panel renders the Plow headings in Young Serif and the Collection Health coverage guidance in Source Serif 4. The heading component preserves each dashboard’s panel ID and uses semantic text and an image with alternate text. It renders independently of the evidence queries. The templates use scoped styles with Grafana’s default HTML sanitization.
 
-Collection Health panel 2 uses **The Long Field**, the original image from the Plow landing page. The horizon stays visible behind the cream wordmark and heading in both the dashboard and the focused panel. The tracked Dockerfile pins the plugin, original artwork, font files, and their font licenses by SHA-256. Grafana serves the assets from its own origin in both the root and subpath deployments. The tracked cream PNG is the original from the Plow brand guide.
+Collection Health panel 2 uses **The Long Field**, the original image from the Plow landing page. The horizon stays visible behind the cream wordmark and heading in both the dashboard and the focused panel. The tracked Dockerfile verifies the plugin archive by SHA-256 and copies the original artwork, fonts and font licenses from the [Plow brand site assets](../public/assets/). Grafana serves the assets from its own origin in both the root and subpath deployments. The tracked cream PNG is the original from the [Plow brand guide](../public/brand.md).
 
 ## Activity
 
