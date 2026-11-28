@@ -1,0 +1,336 @@
+.category-tile,
+.parcel-button,
+.batch-trigger,
+.batch-parcel,
+.path-labels {
+  position: absolute;
+}
+.category-tile,
+.parcel-button {
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  text-align: left;
+}
+.category-tile {
+  display: grid;
+  align-content: start;
+  justify-content: start;
+}
+.parcel-type {
+  display: block;
+  pointer-events: none;
+  line-height: 1.03;
+}
+.category-tile .parcel-type {
+  padding: clamp(9px, 1.8vw, 28px);
+  font-family: "Source Serif 4", Georgia, serif;
+  color: #fff4d2;
+  text-shadow:
+    0 2px 4px #211801,
+    0 0 9px #272005;
+}
+#tiles .soil .parcel-type {
+  color: #fff4df;
+}
+.category-name {
+  font-weight: 650;
+  font-size: clamp(17px, 2.5vw, 36px);
+}
+.category-metric {
+  display: block;
+  margin-top: 4px;
+  font:
+    700 clamp(23px, 3.4vw, 55px) / 1.03 Georgia,
+    serif;
+}
+#tiles :is(.grain, .fog) .category-name {
+  font-size: clamp(15px, 1.85vw, 28px);
+}
+#tiles :is(.grain, .fog) .category-metric {
+  font-size: clamp(21px, 2.8vw, 42px);
+}
+#tiles .fog {
+  align-content: center;
+}
+#tiles .fog .parcel-type {
+  padding: 3px 13px;
+  color: #1a130d;
+  text-shadow: 0 1px 3px #fff4dfa6;
+}
+#tiles .fog .category-metric {
+  margin-top: 0;
+}
+.path-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+}
+.path-labels button,
+.batch-trigger {
+  padding: 1px 5px;
+  border: 0;
+  border-bottom: 1px solid #f1deb583;
+  background: #252b16d9;
+  color: #fff2d4;
+  font-size: 14px;
+}
+.batch-trigger {
+  background: transparent;
+  text-shadow: 0 1px 4px #151508;
+  min-height: 30px;
+}
+.batch-trigger::before {
+  content: "▦ ";
+}
+.trend-plot svg {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  overflow: visible;
+}
+.trend-plot text {
+  font:
+    650 14px "Source Serif 4",
+    Georgia,
+    serif;
+  fill: #fff0ca;
+  paint-order: stroke;
+  stroke: #39371d;
+  stroke-width: 1px;
+}
+.trend-series {
+  fill: none;
+  stroke: #f2d785;
+  stroke-width: 1.5px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.trend-ground {
+  fill: #6d863e;
+}
+.trend-soil {
+  fill: #63492d;
+}
+.farm-ready :is(.trend-ground, .trend-soil) {
+  fill: transparent;
+}
+.batch-parcel {
+  background: transparent;
+}
+.parcel-button {
+  text-align: center;
+  display: grid;
+  place-content: center;
+  overflow: hidden;
+}
+.parcel-button .parcel-type {
+  position: absolute;
+  left: var(--label-x, 50%);
+  top: var(--label-y, 50%);
+  width: max-content;
+  transform: translate(-50%, -50%) scaleY(calc(1 / var(--pitch)));
+  max-width: 100%;
+  padding: calc(3px / var(--scale)) calc(5px / var(--scale));
+  color: #fff3cc;
+  background: transparent;
+  border-radius: calc(3px / var(--scale));
+  text-shadow: 0 1px 2px #111;
+  font:
+    600 calc(clamp(14px, 1.5vw, 20px) / var(--scale)) / 1.05 Georgia,
+    serif;
+}
+.parcel-button .category-name {
+  font: inherit;
+}
+.parcel-button .category-metric {
+  font: inherit;
+  font-size: 0.85em;
+  white-space: nowrap;
+  margin-top: calc(2px / var(--scale));
+}
+.parcel-button:focus-visible {
+  outline: calc(2px / var(--scale)) solid #dfc77c;
+  outline-offset: calc(-2px / var(--scale));
+}
+.parcel-button:focus-visible .parcel-type {
+  outline: calc(2px / var(--scale)) solid #ffe79a;
+}
+body[data-focused]:not([data-focused=""])
+  main
+  :is(
+    h2,
+    .field-story,
+    .tick,
+    .axis,
+    .meta,
+    .sample-title,
+    .batch-trigger,
+    .path-labels
+  ) {
+  visibility: hidden;
+}
+.parcel-button[data-compact] .parcel-type {
+  visibility: hidden;
+}
+.phase-target {
+  position: absolute;
+  overflow: hidden;
+  display: grid;
+  align-content: center;
+  justify-content: center;
+  border: 0;
+  padding: 0;
+  color: #fff1ce;
+  background: transparent;
+}
+.phase-target .parcel-type {
+  width: max-content;
+  max-width: 100%;
+  padding: 1px 3px;
+  background: transparent;
+  transform: scaleY(calc(1 / var(--pitch)));
+}
+.phase-target .category-name {
+  font:
+    600 calc(15px / var(--scale)) / 1.1 "Source Serif 4",
+    Georgia,
+    serif;
+}
+.phase-target .category-metric {
+  font-size: calc(14px / var(--scale));
+}
+.phase-target[aria-pressed="true"],
+.batch-parcel[aria-pressed="true"] {
+  outline: calc(2px / var(--scale)) solid #ffe698;
+  outline-offset: calc(-2px / var(--scale));
+}
+
+body[data-focused="field"] #tiles [aria-expanded="true"] .parcel-type {
+  visibility: hidden;
+}
+body[data-focused]:not([data-focused=""]):not([data-focused="batch"]) .trend-plot text {
+  visibility: hidden;
+}
+body[data-focused="batch"] .trend-plot text {
+  visibility: visible;
+  font-size: calc(15px / var(--scale));
+  stroke-width: calc(2px / var(--scale));
+}
+.farm-ready .trend-series {
+  stroke: transparent;
+}
+.parcel-button .parcel-type, .phase-target .parcel-type {
+  text-shadow: 0 1px 3px #201a0e, 0 0 4px #302710;
+}
+.parcel-button.fog .parcel-type, .phase-target.fog .parcel-type {
+  color: #201f17;
+  text-shadow: 0 1px 3px #fff8df;
+}
+.parcel-button[aria-pressed="true"]:not(:focus-visible),
+.phase-target[aria-pressed="true"]:not(:focus-visible),
+.batch-parcel[aria-pressed="true"]:not(:focus-visible) {
+  outline: none;
+}
+.parcel-button[aria-pressed="true"] .category-name,
+.phase-target[aria-pressed="true"] .category-name {
+  text-decoration: underline;
+  text-underline-offset: .2em;
+}
+
+.ground-labels {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.ground-labels > span {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  color: #fff8e8;
+  text-shadow: 0 1px 2px #221a0d, 0 0 4px #242012;
+  font: 650 clamp(15px, 1.25vw, 20px)/1.05 "Source Serif 4", Georgia, serif;
+  white-space: nowrap;
+  text-align: center;
+}
+.ground-labels strong {
+  display: block;
+  margin-top: 2px;
+  font-size: .9em;
+}
+.ground-labels [data-selected] { text-decoration: underline; text-underline-offset: .18em; }
+.ground-labels [data-fog] { color: #16180f; text-shadow: 0 1px 3px #fff7e4; }
+.ground-labels .scale-reading { transform: translate(-100%, -50%); }
+.ground-labels .batch-reading { transform: translate(-50%, -135%); }
+.ground-labels .range-reading { transform: translate(-50%, 0); }
+body[data-focused]:not([data-focused=""]) :is(.category-tile,.parcel-button,.phase-target) .parcel-type,
+body[data-focused="batch"] .trend-plot text { opacity: 0; }
+
+.ground-labels [data-inline] strong { display: inline; margin-left: .35em; }
+@media (forced-colors: active) {
+  .farm-ready .trend-series { stroke: CanvasText; }
+  .ground-labels > span { color: CanvasText; text-shadow: none; }
+}
+
+.ground-labels .failure-stake {
+  width: 2px;
+  height: 18px;
+  background: #422c1d;
+  box-shadow: 1px 0 #ddcba5;
+  transform: translate(-50%, -100%);
+}
+.failure-stake::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 2px;
+  width: 13px;
+  height: 9px;
+  background: #cc673b;
+  clip-path: polygon(0 0, 100% 22%, 87% 45%, 100% 67%, 0 100%);
+}
+
+:is(#summary-panel,.agent-work-trend,#timeline-panel) {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+:is(#summary-panel,.agent-work-trend,#timeline-panel) button { pointer-events: auto; }
+
+main.board { transform-style: preserve-3d; pointer-events: none; }
+
+.ground-labels .operation-reading {
+  font-size: clamp(19px, 1.7vw, 27px);
+  font-weight: 630;
+  text-shadow: 0 1px 2px #24190c, 0 0 5px #30220e;
+}
+.ground-labels .operation-reading strong {
+  font-family: Georgia,serif;
+  font-size: 1.1em;
+  font-variant-numeric: tabular-nums;
+}
+.ground-labels .neighbor-reading { font-size: clamp(14px, 1.1vw, 17px); }
+
+.farm-ready .category-tile .parcel-type,
+.farm-ready main :is(.tick,.utc) { opacity: 0; }
+.ground-labels .field-reading {
+  font-size: clamp(17px,1.65vw,26px);
+  font-weight: 550;
+}
+.ground-labels .field-reading strong {
+  font: 700 1.14em/1.05 Georgia,serif;
+}
+.ground-labels .time-reading {
+  transform: translateY(-50%);
+  font: 550 13px/1.15 "Source Serif 4",Georgia,serif;
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 2px #211c12;
+}
+.ground-labels .time-reading strong { margin: 0; font: inherit; }
+.ground-labels [data-fog] { color: #242721; text-shadow: 0 1px 1px #fff3d8a8; }
+
+.ground-labels .field-reading[data-fog] { font-size: clamp(14px,1.12vw,18px); }
+.ground-labels .field-reading[data-fog] strong { display: inline; margin-left: .35em; }

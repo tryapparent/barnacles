@@ -1,0 +1,245 @@
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  overflow: hidden;
+  width: 100%;
+  height: 100%;
+}
+body {
+  font:
+    500 16px/1.25 "Source Serif 4",
+    Georgia,
+    serif;
+  color: #fff2d5;
+  background: #424420;
+}
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+button:focus-visible,
+[tabindex="-1"]:focus-visible {
+  outline: 3px solid #fff0ac;
+  outline-offset: -3px;
+}
+#plow-root {
+  position: relative;
+  width: 100%;
+  height: 100dvh;
+  overflow: clip;
+  isolation: isolate;
+  touch-action: none;
+  background: #414529 var(--meadow) center/cover;
+}
+#landscape-stage,
+#farm-scene,
+#landscape-ui {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+#landscape-stage {
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+#farm-scene {
+  z-index: 0;
+}
+#landscape-ui {
+  z-index: 2;
+}
+main {
+  position: absolute;
+  inset: 0 auto auto 0;
+  transform-origin: 0 0;
+}
+h2,
+p {
+  margin: 0;
+}
+main h2 {
+  position: absolute;
+  font:
+    400 clamp(24px, 2.5vw, 39px) / 1.18 "Young Serif",
+    Georgia,
+    serif;
+  text-shadow:
+    0 2px 6px #261d0c,
+    0 0 2px #191c0e;
+}
+main p,
+.axis,
+.tick {
+  position: absolute;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.field-story,
+.tick,
+.axis,
+.meta {
+  color: #ffefce;
+  font-size: 13px;
+  text-shadow:
+    0 1px 4px #242011,
+    0 0 2px #242011;
+}
+.axis {
+  font-size: 12px;
+  font-weight: 700;
+}
+.tick {
+  font-size: 12px;
+  line-height: 1;
+  pointer-events: none;
+}
+.tick span,
+.meta {
+  display: block;
+}
+.meta {
+  font-size: 11px;
+}
+.trace .inspectable,
+.bar,
+.rail,
+.field-span,
+.failure-point {
+  position: absolute;
+}
+.inspectable,
+.bar,
+.batch-parcel,
+.category-tile,
+.parcel-button {
+  background: transparent;
+  border: 0;
+}
+.inspectable {
+  padding: 0 4px 0 0;
+  text-align: left;
+  overflow: hidden;
+  height: 100%;
+  color: #fff2d5;
+  text-shadow: 0 1px 4px #1a1509;
+}
+.sample-title {
+  font:
+    650 16px "Source Serif 4",
+    Georgia,
+    serif;
+  display: block;
+  text-decoration: underline dotted #dec9a77a;
+  text-underline-offset: 3px;
+}
+.inspectable:hover .sample-title {
+  text-decoration-style: solid;
+}
+.category-tile:hover .category-name,
+.parcel-button:hover .category-name,
+.phase-target:hover .category-name {
+  text-decoration: underline;
+  text-underline-offset: .2em;
+}
+.rail {
+  background: #474d23aa;
+  border-bottom: 1px solid #e7d6a444;
+}
+.farm-ready .rail {
+  background: transparent;
+  border: 0;
+}
+.farm-ready .field-span {
+  visibility: hidden;
+}
+.soil {
+  background: #63462c var(--soil) center/140px;
+}
+.grain {
+  background: #637634 var(--grain) center/125px;
+}
+.fog {
+  background: #b2bbb7;
+}
+.farm-ready :is(.category-tile, .parcel-button, .bar, .batch-parcel) {
+  background: transparent;
+}
+.failure-point {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  display: grid;
+  align-items: center;
+  justify-content: center;
+}
+.no-rows,
+.empty-trend {
+  color: #ffefd1;
+  text-shadow: 0 1px 4px #191904;
+}
+.inspectable .sample-title {
+  white-space: nowrap;
+}
+.trace[data-match="false"] .rail {
+  background: transparent;
+}
+.trace[data-match="true"] .rail {
+  border-bottom: 1px solid #f3dc96;
+}
+body:not(.farm-ready) #farm-scene {
+  visibility: hidden;
+}
+#plow-root[data-supported="false"] {
+  background: #282c1e;
+  touch-action: auto;
+}
+.width-notice {
+  display: grid;
+  align-content: center;
+  justify-items: start;
+  height: 100%;
+  max-width: 36rem;
+  margin: auto;
+  padding: 2rem;
+  color: #fff2d5;
+}
+.width-notice h1 {
+  font:
+    400 32px "Young Serif",
+    Georgia,
+    serif;
+  margin: 0 0 0.5rem;
+}
+.width-notice p {
+  font-size: 17px;
+}
+
+#timeline .field-story {
+  position: static;
+  margin-left: 1em;
+  vertical-align: baseline;
+  font: 500 14px "Source Serif 4", Georgia, serif;
+}
+.trace .inspectable {
+  overflow: visible;
+  display: flex;
+  align-items: center;
+  padding-left: 12px;
+}
+.trace .inspectable .meta { display: none; }
