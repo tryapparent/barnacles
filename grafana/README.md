@@ -10,7 +10,9 @@ The [datasource plugin](../analyze/datasource/) interpolates the textbox variabl
 
 ## Dashboard palette
 
-The Compose deployment selects Grafana's Gilded Grove preset. It provides a dark green canvas and amber controls. Users can choose Zen for a light theme with green controls, or select another preset in Grafana preferences. Grafana 12.3 ships both presets behind the `extraThemes` flag. The Plow palette below applies in each preset independently.
+The Compose deployment defaults to the Plow theme. Its canvas is warm charcoal (`#211813`), its panels use Wet Earth (`#392820`), its text uses Cream (`#FFF4DF`), and its primary controls use Meadow (`#6A934F`). The dashboard headings use Young Serif and the native charts, tables, and controls keep Grafana’s interface font. Existing personal theme preferences take precedence. Select **Plow** in Profile preferences or set `PLOW_GRAFANA_THEME=gildedgrove` to change the deployment default.
+
+Grafana 12.3 validates theme IDs against a built-in server list. The image reuses its experimental `debug` ID as **Plow** in the theme picker. Gilded Grove, Zen, and other regular presets are still available. The Docker build validates the exact Grafana asset before replacing the theme definition and writes a new content-addressed filename and integrity hashes. On upgrade, revalidate that patch against the new image and confirm the default, a saved preference, and a switch back to a stock theme in Grafana.
 
 Activity is the default home from both the private Grafana root and the Access gateway. Activity links to Collection Health and Codex traces, and each Plow view links back to Activity. Open run and trace detail from the relevant overview to carry its selected identity and time range.
 
@@ -18,7 +20,7 @@ The Plow dashboard header pairs Wet Earth (`#392820`) with the [original cream w
 
 Use [named field overrides and value mappings](https://grafana.com/docs/grafana/latest/visualizations/panels-visualizations/configure-value-mappings/) for table colors. Original Cream highlights elapsed values and a complete source read. Wet Earth marks unknown elapsed values, findings, and a partial source read. The labels carry the evidence state and Grafana supplies contrasting text on each fill in both themes. Keep Meadow for graphics. Complete describes the bounded source read, and the findings and unknown calls describe gaps in the evidence it returned.
 
-The dashboards use a common Wet Earth and Cream header with a Meadow outline. Meadow highlights measured activity and receipt rates. Amber marks waiting time, muted violet shows CI execution, and red marks failures or collector problems. Timelines and tables keep the corresponding labels. Grafana supplies the charts, controls, navigation and theme selection. Bespoke theme tokens in this OSS version live in Grafana's frontend build. [Shell branding](https://grafana.com/docs/grafana/latest/setup-grafana/configure-grafana/configure-custom-branding/) requires Grafana Enterprise or a supported paid Grafana Cloud account.
+The dashboards use a common Wet Earth and Cream header with a Meadow outline. Meadow highlights measured activity and receipt rates. Amber marks waiting time, muted violet shows CI execution, and red marks failures or collector problems. Timelines and tables keep the corresponding labels. Grafana supplies the charts, controls, navigation and theme selection. [Shell branding](https://grafana.com/docs/grafana/latest/setup-grafana/configure-grafana/configure-custom-branding/) requires Grafana Enterprise or a supported paid Grafana Cloud account.
 
 ### Plow typography and Collection Health artwork
 

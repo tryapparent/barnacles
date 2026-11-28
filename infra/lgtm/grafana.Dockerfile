@@ -49,3 +49,68 @@ ENV GF_PATHS_PLUGINS=/opt/plow/plugins \
     PLOW_POLICY_COMMAND=/opt/plow/policy/analyze \
     PLOW_POLICY_MODULE=/opt/plow/policy/run.mjs \
     PLOW_ACTIVITY_MODULE=/opt/plow/policy/activity.mjs
+
+USER root
+RUN node --input-type=module <<'JS'
+import { createHash } from 'node:crypto';
+import { readFileSync, writeFileSync, unlinkSync } from 'node:fs';
+
+const build = '/usr/share/grafana/public/build';
+const manifestPath = build + '/assets-manifest.json';
+const original = '5923.b9c876b4bf528d8511cb.js';
+const asset = readFileSync(build + '/' + original, 'utf8');
+const hash = (algorithm, data, encoding = 'hex') => createHash(algorithm).update(data).digest(encoding);
+if (hash('sha256', asset) !== '64f28eb77a28d4ba3e16a84dd62b2bd5e8dbcba95a302058af169b81aaf7cbe9') {
+  throw new Error('Grafana theme bundle changed. Recheck the Plow theme patch.');
+}
+
+const cream = '#FFF4DF';
+const ink = '#1A130D';
+const meadow = '#6A934F';
+const focus = '#B6CE91';
+const theme = {
+  name: 'Plow',
+  colors: {
+    mode: 'dark',
+    background: { canvas: '#211813', primary: '#392820', secondary: '#30221B', elevated: '#463329' },
+    text: { primary: cream, secondary: '#E1CDB8', disabled: '#B9A18B', link: focus, maxContrast: '#FFFFFF' },
+    border: { weak: '#FFF4DF26', medium: '#FFF4DF40', strong: '#FFF4DF66' },
+    primary: {
+      main: meadow, shade: '#80A764', text: focus, border: focus, contrastText: ink,
+      transparent: '#6A934F33', borderTransparent: '#B6CE9166',
+    },
+    action: { hover: '#FFF4DF1F', selected: '#6A934F33', selectedBorder: focus, focus: '#B6CE914D' },
+    gradients: {
+      brandHorizontal: 'linear-gradient(270deg, #6A934F 0%, #B6CE91 100%)',
+      brandVertical: 'linear-gradient(0deg, #6A934F 0%, #B6CE91 100%)',
+    },
+  },
+};
+const definition = /s=\{name:"Debug",.*?\},M=\{name:"Desert bloom"/g;
+if ([...asset.matchAll(definition)].length !== 1) {
+  throw new Error('Expected one Grafana Debug theme definition.');
+}
+const patched = asset.replace(definition, 's=' + JSON.stringify(theme) + ',M={name:"Desert bloom"')
+  .split('\n//# sourceMappingURL=')[0] + '\n';
+const replacement = '5923.' + hash('sha256', patched).slice(0, 20) + '.js';
+const oldSource = 'public/build/' + original;
+const newSource = 'public/build/' + replacement;
+const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+if (manifest[original]?.src !== oldSource ||
+    !manifest.entrypoints.app.assets.js.includes(oldSource) ||
+    !manifest.entrypoints.swagger.assets.js.includes(oldSource)) {
+  throw new Error('Grafana asset manifest no longer matches the patched bundle.');
+}
+manifest[replacement] = {
+  src: newSource,
+  integrity: ['sha384', 'sha512'].map(algorithm => algorithm + '-' + hash(algorithm, patched, 'base64')).join(' '),
+};
+delete manifest[original];
+for (const entrypoint of Object.values(manifest.entrypoints)) {
+  entrypoint.assets.js = entrypoint.assets.js.map(src => src === oldSource ? newSource : src);
+}
+writeFileSync(build + '/' + replacement, patched);
+writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+unlinkSync(build + '/' + original);
+JS
+USER 472
