@@ -9,6 +9,7 @@ cleanup() {
   status=$?
   if (( status != 0 )); then
     compose logs > "$PLOW_LGTM_WORKDIR/compose.log" 2>&1 || true
+    tail -80 "$PLOW_LGTM_WORKDIR/compose.log" >&2
     printf 'Verification failed. Evidence: %s\n' "$PLOW_LGTM_WORKDIR" >&2
   fi
   compose down --volumes > "$PLOW_LGTM_WORKDIR/cleanup.log" 2>&1
@@ -44,7 +45,7 @@ jq -e '.type == "plow-agent-observability-datasource" and .jsonData.lokiTenant =
 
 query() {
   local selector='{plow_source=~"codex_history|t3"}'
-  curl -fsSG --max-time 5 -H 'X-Scope-OrgID: plow-fixture' -H 'X-Loki-Response-Encoding-Flags: categorize-labels' \
+  curl -fsSG --max-time 15 --retry 2 --retry-max-time 35 -H 'X-Scope-OrgID: plow-fixture' -H 'X-Loki-Response-Encoding-Flags: categorize-labels' \
     --data-urlencode "query=${1:-$selector}" \
     --data-urlencode 'start=2025-06-03T11:59:00Z' --data-urlencode 'end=2025-06-03T12:01:00Z' \
     "http://$loki/loki/api/v1/query_range"
@@ -64,10 +65,19 @@ await_lines() {
 }
 
 await_lines 4
-query > "$PLOW_LGTM_WORKDIR/loki.json"
 expected=$(jq -csS 'sort_by(.kind, .eventId)' "$PLOW_LGTM_WORKDIR"/spool/*.jsonl)
-actual=$(jq -ceS '[.data.result[].values[][1] | fromjson] | sort_by(.kind, .eventId)' "$PLOW_LGTM_WORKDIR/loki.json")
-[[ $actual == "$expected" ]]
+read_history() {
+  local observed
+  for ((attempt=0; attempt<5; attempt++)); do
+    if query > "$PLOW_LGTM_WORKDIR/loki.json" &&
+      observed=$(jq -ceS '[.data.result[].values[][1] | fromjson] | sort_by(.kind, .eventId)' "$PLOW_LGTM_WORKDIR/loki.json") &&
+      [[ $observed == "$expected" ]]; then return; fi
+    sleep 1
+  done
+  printf 'Loki did not return the expected historical records after ingestion\n' >&2
+  return 1
+}
+read_history
 jq -e '
   ([.data.result[].stream.plow_source] | sort | unique) == ["codex_history", "t3"]
   and all(.data.result[].values[];
