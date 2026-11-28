@@ -1,0 +1,39 @@
+services:
+  github-collector:
+    image: node:22.23.0-bookworm-slim@sha256:d9f850096136edbc402debdd8729579a288aac64574ada0ff4db26b6ae58b0b2
+    user: ${PLOW_GITHUB_COLLECTOR_USER:?Set the GitHub collector UID and GID}
+    working_dir: /app
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp:mode=1777]
+    restart: ${PLOW_LGTM_RESTART:-no}
+    entrypoint: [flock, -n, -F, /state/github/writer.lock, node, collect/github/main.ts]
+    environment:
+      PLOW_BEND_BUNDLE: /compiler
+      PLOW_GITHUB_REPOSITORIES: ${PLOW_GITHUB_REPOSITORIES:?Set the GitHub repositories and aliases}
+      PLOW_GITHUB_ACTIONS_SINCE: ${PLOW_GITHUB_ACTIONS_SINCE:?Set the GitHub Actions history floor}
+      PLOW_GITHUB_READ_TOKEN_FILE: /run/secrets/github-read
+      PLOW_GITHUB_MAX_REQUESTS: ${PLOW_GITHUB_MAX_REQUESTS:-160}
+      PLOW_GITHUB_MAX_STEPS: ${PLOW_GITHUB_MAX_STEPS:-40}
+      PLOW_GITHUB_JOB_NAMES: ${PLOW_GITHUB_JOB_NAMES:-}
+    volumes:
+      - .:/app:ro
+      - ${PLOW_LGTM_WORKDIR:?Set the private runtime directory}/spool:/spool
+      - type: bind
+        source: ${PLOW_LGTM_WORKDIR:?Set the private runtime directory}/github-state
+        target: /state/github
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PLOW_BEND_BUNDLE:?Set a verified compiler bundle path}
+        target: /compiler
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PLOW_GITHUB_CREDENTIAL_DIR:?Set the private GitHub credential directory}
+        target: /run/secrets
+        read_only: true
+        bind:
+          create_host_path: false

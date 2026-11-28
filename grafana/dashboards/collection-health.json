@@ -1,0 +1,1085 @@
+{
+  "uid": "plow-collection-health",
+  "title": "Collection Health",
+  "tags": [
+    "Plow",
+    "Collection"
+  ],
+  "editable": false,
+  "timezone": "utc",
+  "schemaVersion": 42,
+  "refresh": "1m",
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 2,
+      "type": "canvas",
+      "datasource": {
+        "type": "datasource",
+        "uid": "-- Grafana --"
+      },
+      "targets": [],
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 3
+      },
+      "options": {
+        "inlineEditing": false,
+        "panZoom": false,
+        "zoomToContent": false,
+        "root": {
+          "name": "Plow header",
+          "type": "frame",
+          "background": {
+            "color": {
+              "fixed": "#392820"
+            }
+          },
+          "elements": [
+            {
+              "name": "Plow wordmark",
+              "type": "rectangle",
+              "constraint": {
+                "horizontal": "left",
+                "vertical": "center"
+              },
+              "placement": {
+                "left": 24,
+                "top": 0,
+                "width": 112,
+                "height": 58
+              },
+              "background": {
+                "image": {
+                  "fixed": "plow-cream.png"
+                },
+                "size": "contain"
+              }
+            },
+            {
+              "name": "Meadow divider",
+              "type": "rectangle",
+              "constraint": {
+                "horizontal": "left",
+                "vertical": "center"
+              },
+              "placement": {
+                "left": 156,
+                "top": 0,
+                "width": 10,
+                "height": 32
+              },
+              "background": {
+                "color": {
+                  "fixed": "#6A934F"
+                }
+              }
+            },
+            {
+              "name": "Collection health",
+              "type": "text",
+              "constraint": {
+                "horizontal": "leftright",
+                "vertical": "center"
+              },
+              "placement": {
+                "left": 180,
+                "right": 24,
+                "top": 12,
+                "height": 24
+              },
+              "config": {
+                "text": {
+                  "fixed": "Collection health"
+                },
+                "color": {
+                  "fixed": "#FFF4DF"
+                },
+                "size": 18,
+                "align": "left",
+                "valign": "middle"
+              }
+            },
+            {
+              "name": "Collector reports, source clocks and backfill coverage",
+              "type": "text",
+              "constraint": {
+                "horizontal": "leftright",
+                "vertical": "center"
+              },
+              "placement": {
+                "left": 180,
+                "right": 24,
+                "top": -12,
+                "height": 24
+              },
+              "config": {
+                "text": {
+                  "fixed": "Collector reports, source clocks and backfill coverage"
+                },
+                "color": {
+                  "fixed": "#FFF4DF"
+                },
+                "size": 13,
+                "align": "left",
+                "valign": "middle"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": 9,
+      "type": "text",
+      "title": "",
+      "gridPos": {
+        "x": 0,
+        "y": 3,
+        "w": 24,
+        "h": 2
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "**Expected status reports** \u00b7 T3, Codex history and GitHub \u00b7 Live and backfill lanes  \nA missing lane has no report in this range. Widen the range to find older reports. Clocks are shown in UTC."
+      }
+    },
+    {
+      "id": 3,
+      "type": "table",
+      "title": "Latest report per lane",
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 24,
+        "h": 8
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "plow-collection-status"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "plow-collection-status"
+          },
+          "expr": "topk by (collector, scope, lane) (1, max_over_time({plow_source=\"collector_health\"} | json collector, scope, lane, status, observedMs, lastSuccessMs, newestSourceMs, oldestScannedMs, scannedUnits, eligibleUnits, ingestedRecords, unit, gapCode | label_format lastSuccessMs=`{{ default \"Unknown\" .lastSuccessMs }}`, newestSourceMs=`{{ default \"Unknown\" .newestSourceMs }}`, oldestScannedMs=`{{ default \"Unknown\" .oldestScannedMs }}`, scannedUnits=`{{ default \"Unknown\" .scannedUnits }}`, eligibleUnits=`{{ default \"Unknown\" .eligibleUnits }}`, ingestedRecords=`{{ default \"Unknown\" .ingestedRecords }}` | unwrap observedMs | __error__=\"\" [$__range]) by (collector, scope, lane, status, lastSuccessMs, newestSourceMs, oldestScannedMs, scannedUnits, eligibleUnits, ingestedRecords, unit, gapCode))",
+          "queryType": "instant",
+          "editorMode": "code"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {
+            "mode": "columns"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "oldestScannedMs": true,
+              "scannedUnits": true,
+              "eligibleUnits": true,
+              "ingestedRecords": true,
+              "unit": true,
+              "gapCode": true
+            },
+            "indexByName": {
+              "collector": 0,
+              "scope": 1,
+              "lane": 2,
+              "status": 3,
+              "Value #A": 4,
+              "lastSuccessMs": 5,
+              "newestSourceMs": 6
+            },
+            "renameByName": {
+              "collector": "Collector",
+              "scope": "Scope",
+              "lane": "Lane",
+              "status": "Last status",
+              "Value #A": "Report age",
+              "lastSuccessMs": "Last success",
+              "newestSourceMs": "Newest source"
+            }
+          }
+        },
+        {
+          "id": "convertFieldType",
+          "options": {
+            "conversions": [
+              {
+                "targetField": "Last success",
+                "destinationType": "number"
+              },
+              {
+                "targetField": "Newest source",
+                "destinationType": "number"
+              }
+            ]
+          }
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "Collector",
+            "desc": false
+          },
+          {
+            "displayName": "Scope",
+            "desc": false
+          },
+          {
+            "displayName": "Lane",
+            "desc": false
+          }
+        ]
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "Unknown",
+          "custom": {
+            "minWidth": 72
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Collector"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 126
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "t3": {
+                        "text": "T3"
+                      },
+                      "codex_history": {
+                        "text": "Codex history"
+                      },
+                      "github": {
+                        "text": "GitHub"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Scope"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 118
+              },
+              {
+                "id": "custom.inspect",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Lane"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 84
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "live": {
+                        "text": "Live"
+                      },
+                      "backfill": {
+                        "text": "Backfill"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Last status"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 100
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "working": {
+                        "text": "Working"
+                      },
+                      "idle": {
+                        "text": "Idle"
+                      },
+                      "retrying": {
+                        "text": "Retrying"
+                      },
+                      "blocked": {
+                        "text": "Blocked"
+                      },
+                      "complete": {
+                        "text": "Complete"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Report age"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dateTimeFromNow"
+              },
+              {
+                "id": "custom.width",
+                "value": 133
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Last success"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "time:YYYY-MM-DD HH:mm:ss"
+              },
+              {
+                "id": "custom.width",
+                "value": 162
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Newest source"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "time:YYYY-MM-DD HH:mm:ss"
+              },
+              {
+                "id": "custom.width",
+                "value": 162
+              }
+            ]
+          }
+        ]
+      },
+      "description": "Latest report in the selected time range for each collector, scope and lane. Use report age and the collector\u2019s expected cadence to assess freshness. Last success can be a poll that found no new records.",
+      "links": [
+        {
+          "title": "View health report history",
+          "url": "/d/plow-collection-health/collection-health?viewPanel=11&${__url_time_range}",
+          "targetBlank": false
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "table",
+      "title": "Coverage and progress",
+      "gridPos": {
+        "x": 0,
+        "y": 13,
+        "w": 24,
+        "h": 8
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "plow-collection-status"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "plow-collection-status"
+          },
+          "expr": "topk by (collector, scope, lane) (1, max_over_time({plow_source=\"collector_health\"} | json collector, scope, lane, status, observedMs, lastSuccessMs, newestSourceMs, oldestScannedMs, scannedUnits, eligibleUnits, ingestedRecords, unit, gapCode | label_format lastSuccessMs=`{{ default \"Unknown\" .lastSuccessMs }}`, newestSourceMs=`{{ default \"Unknown\" .newestSourceMs }}`, oldestScannedMs=`{{ default \"Unknown\" .oldestScannedMs }}`, scannedUnits=`{{ default \"Unknown\" .scannedUnits }}`, eligibleUnits=`{{ default \"Unknown\" .eligibleUnits }}`, ingestedRecords=`{{ default \"Unknown\" .ingestedRecords }}` | unwrap observedMs | __error__=\"\" [$__range]) by (collector, scope, lane, status, lastSuccessMs, newestSourceMs, oldestScannedMs, scannedUnits, eligibleUnits, ingestedRecords, unit, gapCode))",
+          "queryType": "instant",
+          "editorMode": "code"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {
+            "mode": "columns"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value #A": true,
+              "status": true,
+              "lastSuccessMs": true,
+              "newestSourceMs": true
+            },
+            "indexByName": {
+              "collector": 0,
+              "scope": 1,
+              "lane": 2,
+              "oldestScannedMs": 3,
+              "scannedUnits": 4,
+              "eligibleUnits": 5,
+              "unit": 6,
+              "ingestedRecords": 7,
+              "gapCode": 8
+            },
+            "renameByName": {
+              "collector": "Collector",
+              "scope": "Scope",
+              "lane": "Lane",
+              "oldestScannedMs": "Oldest scanned",
+              "scannedUnits": "Scanned",
+              "eligibleUnits": "Eligible",
+              "unit": "Unit",
+              "ingestedRecords": "Ingested",
+              "gapCode": "Reported gap"
+            }
+          }
+        },
+        {
+          "id": "convertFieldType",
+          "options": {
+            "conversions": [
+              {
+                "targetField": "Oldest scanned",
+                "destinationType": "number"
+              },
+              {
+                "targetField": "Scanned",
+                "destinationType": "number"
+              },
+              {
+                "targetField": "Eligible",
+                "destinationType": "number"
+              },
+              {
+                "targetField": "Ingested",
+                "destinationType": "number"
+              }
+            ]
+          }
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "Collector",
+            "desc": false
+          },
+          {
+            "displayName": "Scope",
+            "desc": false
+          },
+          {
+            "displayName": "Lane",
+            "desc": false
+          }
+        ]
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "Unknown",
+          "custom": {
+            "minWidth": 72
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Collector"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 126
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "t3": {
+                        "text": "T3"
+                      },
+                      "codex_history": {
+                        "text": "Codex history"
+                      },
+                      "github": {
+                        "text": "GitHub"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Scope"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 118
+              },
+              {
+                "id": "custom.inspect",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Lane"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 84
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "live": {
+                        "text": "Live"
+                      },
+                      "backfill": {
+                        "text": "Backfill"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Oldest scanned"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "time:YYYY-MM-DD HH:mm:ss"
+              },
+              {
+                "id": "custom.width",
+                "value": 150
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Scanned"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 78
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Eligible"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 75
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Unit"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 78
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Ingested"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 80
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Reported gap"
+            },
+            "properties": [
+              {
+                "id": "custom.minWidth",
+                "value": 132
+              },
+              {
+                "id": "custom.inspect",
+                "value": true
+              },
+              {
+                "id": "noValue",
+                "value": "\u2014"
+              }
+            ]
+          }
+        ]
+      },
+      "description": "Scanned and eligible counts are comparable within the same report and unit. Ingested counts are records. Complete means the available authorized history was exhausted. A reported gap can still limit its coverage."
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Alloy self-scrape",
+      "gridPos": {
+        "x": 0,
+        "y": 21,
+        "w": 6,
+        "h": 3
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "plow-mimir"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "plow-mimir"
+          },
+          "expr": "last_over_time(up{job=\"plow-collection-alloy\"}[45s])",
+          "queryType": "instant",
+          "editorMode": "code",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "options": {
+        "graphMode": "none",
+        "colorMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "noValue": "Unobserved",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "Reporting"
+                },
+                "0": {
+                  "text": "Scrape failed",
+                  "color": "red"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "description": "A sample in the last 45 seconds at the selected range end shows whether Mimir received Alloy\u2019s self-scrape. Missing samples can mean Alloy or the metrics path is unavailable."
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Health export queue",
+      "gridPos": {
+        "x": 6,
+        "y": 21,
+        "w": 6,
+        "h": 3
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "plow-mimir"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "plow-mimir"
+          },
+          "expr": "last_over_time(otelcol_exporter_queue_size{job=\"plow-collection-alloy\",exporter=~\".*health_loki.*\"}[45s])",
+          "queryType": "instant",
+          "editorMode": "code",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "options": {
+        "graphMode": "none",
+        "colorMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "noValue": "Unobserved",
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "description": "Queued health export batches at the selected range end. This signal covers the dedicated Loki exporter."
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Health send failures",
+      "gridPos": {
+        "x": 12,
+        "y": 21,
+        "w": 6,
+        "h": 3
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "plow-mimir"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "plow-mimir"
+          },
+          "expr": "last_over_time(otelcol_exporter_send_failed_log_records_total{job=\"plow-collection-alloy\",exporter=~\".*health_loki.*\"}[45s])",
+          "queryType": "instant",
+          "editorMode": "code",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "options": {
+        "graphMode": "none",
+        "colorMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "noValue": "Unobserved",
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "description": "Failed log record sends reported since Alloy started. An unobserved counter leaves the number of failed sends unknown."
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "Live Codex OTLP spans",
+      "gridPos": {
+        "x": 18,
+        "y": 21,
+        "w": 6,
+        "h": 3
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "plow-mimir"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "plow-mimir"
+          },
+          "expr": "sum(last_over_time(otelcol_receiver_accepted_spans_total{job=\"plow-collection-alloy\",receiver=~\".*codex_live.*\"}[45s]))",
+          "queryType": "instant",
+          "editorMode": "code",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "options": {
+        "graphMode": "none",
+        "colorMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "noValue": "Unobserved",
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "description": "Spans accepted since Alloy started, read at the selected range end. This measures receiver volume and has no historical completeness denominator."
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Retrying and blocked reports",
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 14,
+        "h": 6
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "plow-collection-status"
+      },
+      "description": "Count of status reports per interval. A continuing failure can produce multiple reports.",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "plow-collection-status"
+          },
+          "expr": "sum by (collector, lane) (count_over_time({plow_source=\"collector_health\"} | json collector, lane, status | status=~\"retrying|blocked\" [$__interval]))",
+          "queryType": "range",
+          "editorMode": "code",
+          "legendFormat": "{{collector}} \u00b7 {{lane}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "decimals": 0,
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 65,
+            "lineWidth": 1,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Live Codex OTLP receipt rate",
+      "gridPos": {
+        "x": 14,
+        "y": 24,
+        "w": 10,
+        "h": 6
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "plow-mimir"
+      },
+      "description": "Rate of spans accepted by Alloy. Gaps show missing receiver metrics.",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "plow-mimir"
+          },
+          "expr": "sum(rate(otelcol_receiver_accepted_spans_total{job=\"plow-collection-alloy\",receiver=~\".*codex_live.*\"}[$__rate_interval]))",
+          "queryType": "range",
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "interval": "15s",
+          "legendFormat": "Accepted spans"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "unit": "suffix: spans/s",
+          "custom": {
+            "fillOpacity": 15,
+            "lineWidth": 2
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": false
+        },
+        "tooltip": {
+          "mode": "single"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "logs",
+      "title": "Health report history",
+      "gridPos": {
+        "x": 0,
+        "y": 30,
+        "w": 24,
+        "h": 9
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "plow-collection-status"
+      },
+      "description": "Recent status-only records in the selected range. Expand a row to inspect the report, including its full source clocks.",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "plow-collection-status"
+          },
+          "expr": "{plow_source=\"collector_health\"}",
+          "queryType": "range",
+          "editorMode": "code",
+          "maxLines": 100
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": false,
+        "showCommonLabels": false,
+        "wrapLogMessage": false,
+        "enableLogDetails": true,
+        "sortOrder": "Descending"
+      }
+    }
+  ]
+}

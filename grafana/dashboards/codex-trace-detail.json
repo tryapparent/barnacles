@@ -1,0 +1,163 @@
+{
+  "uid": "plow-codex-trace",
+  "title": "Plow trace detail",
+  "description": "Inspect one redacted trace by its native Tempo ID.",
+  "schemaVersion": 41,
+  "version": 1,
+  "editable": false,
+  "timezone": "utc",
+  "time": { "from": "now-2h", "to": "now" },
+  "links": [
+    { "type": "link", "title": "Recent traces", "url": "/d/plow-codex-traces/plow-codex-traces", "keepTime": true }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "traceId",
+        "label": "Trace ID",
+        "type": "textbox",
+        "description": "Paste the hexadecimal Trace ID and press Enter. Set the time range to include the span clocks.",
+        "query": "",
+        "current": { "text": "", "value": "" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Span waterfall",
+      "description": "Select any span for its retained attributes and OTLP status. If no trace is found, check the identifier and time range. Instrumented coverage may be partial.",
+      "type": "traces",
+      "gridPos": { "x": 0, "y": 3, "w": 24, "h": 16 },
+      "datasource": { "type": "tempo", "uid": "plow-tempo" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "tempo", "uid": "plow-tempo" },
+          "queryType": "traceql",
+          "query": "$traceId"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "canvas",
+      "datasource": {
+        "type": "datasource",
+        "uid": "-- Grafana --"
+      },
+      "targets": [],
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 3
+      },
+      "options": {
+        "inlineEditing": false,
+        "panZoom": false,
+        "zoomToContent": false,
+        "root": {
+          "name": "Plow header",
+          "type": "frame",
+          "background": {
+            "color": {
+              "fixed": "#392820"
+            }
+          },
+          "elements": [
+            {
+              "name": "Plow wordmark",
+              "type": "rectangle",
+              "constraint": {
+                "horizontal": "left",
+                "vertical": "center"
+              },
+              "placement": {
+                "left": 24,
+                "top": 0,
+                "width": 112,
+                "height": 58
+              },
+              "background": {
+                "image": {
+                  "fixed": "plow-cream.png"
+                },
+                "size": "contain"
+              }
+            },
+            {
+              "name": "Meadow divider",
+              "type": "rectangle",
+              "constraint": {
+                "horizontal": "left",
+                "vertical": "center"
+              },
+              "placement": {
+                "left": 156,
+                "top": 0,
+                "width": 10,
+                "height": 32
+              },
+              "background": {
+                "color": {
+                  "fixed": "#6A934F"
+                }
+              }
+            },
+            {
+              "name": "Trace evidence",
+              "type": "text",
+              "constraint": {
+                "horizontal": "leftright",
+                "vertical": "center"
+              },
+              "placement": {
+                "left": 180,
+                "right": 24,
+                "top": 12,
+                "height": 24
+              },
+              "config": {
+                "text": {
+                  "fixed": "Trace detail"
+                },
+                "color": {
+                  "fixed": "#FFF4DF"
+                },
+                "size": 18,
+                "align": "left",
+                "valign": "middle"
+              }
+            },
+            {
+              "name": "Exact lookup",
+              "type": "text",
+              "constraint": {
+                "horizontal": "leftright",
+                "vertical": "center"
+              },
+              "placement": {
+                "left": 180,
+                "right": 24,
+                "top": -12,
+                "height": 24
+              },
+              "config": {
+                "text": {
+                  "fixed": "Paste a Trace ID and press Enter"
+                },
+                "color": {
+                  "fixed": "#FFF4DF"
+                },
+                "size": 13,
+                "align": "left",
+                "valign": "middle"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
