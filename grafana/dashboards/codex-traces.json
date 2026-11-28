@@ -8,7 +8,8 @@
   "timezone": "utc",
   "time": { "from": "now-2h", "to": "now" },
   "links": [
-    { "type": "link", "title": "Find a Trace ID", "url": "/d/plow-codex-trace/plow-codex-trace", "keepTime": true }
+    {"type": "link", "title": "Find a Trace ID", "url": "/d/plow-codex-trace/plow-codex-trace", "keepTime": true},
+    {"type": "link", "title": "Activity", "url": "/d/plow-activity/activity", "keepTime": false}
   ],
   "templating": {
     "list": [
@@ -111,36 +112,17 @@
               }
             },
             {
-              "name": "Meadow divider",
-              "type": "rectangle",
-              "constraint": {
-                "horizontal": "left",
-                "vertical": "center"
-              },
-              "placement": {
-                "left": 156,
-                "top": 0,
-                "width": 10,
-                "height": 32
-              },
-              "background": {
-                "color": {
-                  "fixed": "#6A934F"
-                }
-              }
-            },
-            {
-              "name": "Trace evidence",
+              "name": "Codex traces",
               "type": "text",
               "constraint": {
                 "horizontal": "leftright",
                 "vertical": "center"
               },
               "placement": {
-                "left": 180,
+                "left": 156,
                 "right": 24,
-                "top": 12,
-                "height": 24
+                "top": 0,
+                "height": 28
               },
               "config": {
                 "text": {
@@ -149,37 +131,18 @@
                 "color": {
                   "fixed": "#FFF4DF"
                 },
-                "size": 18,
-                "align": "left",
-                "valign": "middle"
-              }
-            },
-            {
-              "name": "Trace coverage",
-              "type": "text",
-              "constraint": {
-                "horizontal": "leftright",
-                "vertical": "center"
-              },
-              "placement": {
-                "left": 180,
-                "right": 24,
-                "top": -12,
-                "height": 24
-              },
-              "config": {
-                "text": {
-                  "fixed": "Redacted Codex OTLP \u00b7 Emitted spans only"
-                },
-                "color": {
-                  "fixed": "#FFF4DF"
-                },
-                "size": 13,
+                "size": 20,
                 "align": "left",
                 "valign": "middle"
               }
             }
-          ]
+          ],
+          "border": {
+            "color": {
+              "fixed": "#6A934F"
+            },
+            "width": 2
+          }
         }
       }
     }

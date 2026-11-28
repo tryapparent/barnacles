@@ -175,6 +175,7 @@ test('Grafana 12.3.0 candidate serves only verified Viewer requests through both
       assert.equal(canonical.headers.location, origin + '/app/?from=now-1h')
       const home = await call(entry, '/app/')
       assert.equal(home.code, 302)
+      assert.equal(home.headers.location, origin + '/app/d/plow-activity/activity')
       const dashboard = await call(entry, new URL(home.headers.location).pathname)
       assert.equal(dashboard.code, 200)
       const html = dashboard.body.toString()

@@ -6,7 +6,7 @@ import { createRemoteJWKSet, jwtVerify } from 'jose'
 
 export const publicHost = 'plow.tryapparent.com'
 const app = '/app'
-const dashboard = '/app/d/plow-run-breakdown/run-breakdown'
+const dashboard = '/app/d/plow-activity/activity'
 const live = '/app/api/live/ws'
 const upstreamHeaders = [
   'accept', 'accept-encoding', 'accept-language', 'content-length', 'content-type',
