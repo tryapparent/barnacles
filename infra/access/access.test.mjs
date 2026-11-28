@@ -6,7 +6,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import test from 'node:test'
 import { createRemoteJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose'
-import { plan, transition } from './cloudflare.mjs'
+import { plan, probeDenied, transition } from './cloudflare.mjs'
 import { accessIdentity, gateway, publicHost } from './gateway.mjs'
 
 const caller = 'viewer@example.invalid'
@@ -106,6 +106,19 @@ async function listen(t, server, socket) {
   await once(server, 'listening')
   return socket ? { socketPath: socket } : { host: '127.0.0.1', port: server.address().port }
 }
+
+test('Cloudflare cutover probes the unauthenticated public gateway with its actual Host', async t => {
+  const requests = []
+  const address = await listen(t, gateway({
+    origin: publicOrigin, viewer: caller, socketPath: '/unused',
+    authenticate: headers => {
+      requests.push(headers['cf-access-jwt-assertion'])
+      return false
+    },
+  }))
+  await probeDenied(address.port)
+  assert.deepEqual(requests, ['invalid', 'invalid', 'invalid'])
+})
 
 test('Grafana 12.3.0 candidate serves only verified Viewer requests through both ingress listeners',
   { skip: !process.env.PLOW_LGTM_WORKDIR }, async t => {

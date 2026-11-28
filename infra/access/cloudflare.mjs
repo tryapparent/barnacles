@@ -149,21 +149,34 @@ async function signedOut(team) {
   return statuses
 }
 
-async function probeViewer(directory, viewer, origin) {
-  if (!directory || !viewer || !origin) throw Error('Set the gateway runtime and Tailscale viewer inputs for apply.')
-  const status = await new Promise((resolve, reject) => {
-    const req = request({
-      socketPath: join(directory, 'access-tailnet.sock'), path: '/app/api/user',
-      headers: { 'x-forwarded-host': new URL(origin).host, 'tailscale-user-login': viewer },
-      signal: AbortSignal.timeout(5000),
-    }, response => {
+function probeStatus(options) {
+  return new Promise((resolve, reject) => {
+    const req = request({ ...options, signal: AbortSignal.timeout(5000) }, response => {
       response.resume()
       resolve(response.statusCode)
     })
     req.on('error', reject)
     req.end()
   })
+}
+
+async function probeViewer(directory, viewer, origin) {
+  if (!directory || !viewer || !origin) throw Error('Set the gateway runtime and Tailscale viewer inputs for apply.')
+  const status = await probeStatus({
+    socketPath: join(directory, 'access-tailnet.sock'), path: '/app/api/user',
+    headers: { 'x-forwarded-host': new URL(origin).host, 'tailscale-user-login': viewer },
+  })
   if (status !== 200) throw Error('Gateway could not reach Grafana as its provisioned Viewer.')
+}
+
+export async function probeDenied(port) {
+  for (const path of ['/app', '/app/', '/app/api/user']) {
+    const status = await probeStatus({
+      hostname: '127.0.0.1', port, path,
+      headers: { host, 'cf-access-jwt-assertion': 'invalid', 'tailscale-user-login': 'probe@example.invalid' },
+    })
+    if (status !== 401) throw Error('Gateway denial check failed on ' + path + '.')
+  }
 }
 
 async function main(action) {
@@ -232,15 +245,7 @@ async function main(action) {
     },
     probe: async () => {
       await probeViewer(directory, viewer, tailnet)
-      const origin = 'http://127.0.0.1:' + port
-      for (const path of ['/app', '/app/', '/app/api/user']) {
-        const response = await fetch(origin + path, {
-          redirect: 'manual', signal: AbortSignal.timeout(5_000),
-          headers: { host, 'cf-access-jwt-assertion': 'invalid', 'tailscale-user-login': 'probe@example.invalid' },
-        })
-        await response.body?.cancel()
-        if (response.status !== 401) throw Error('Gateway denial check failed.')
-      }
+      await probeDenied(+port)
     },
     validate: () => signedOut(team),
   })
