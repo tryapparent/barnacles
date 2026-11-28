@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 
 const (
 	t3Selector            = `{plow_source="t3"}`
+	t3HistorySelector     = `{plow_source="t3_history"}`
 	historySelector       = `{plow_source="codex_history"}`
 	maxResponseBytes      = 4 << 20
 	maxLineBytes          = 16 << 10
@@ -225,38 +227,40 @@ func lokiTransportFailure(err error) *backend.DataResponse {
 	}
 }
 
-func (ds *datasource) readHistoryRun(ctx context.Context, window backend.TimeRange, id string) (runRecord, *backend.DataResponse) {
-	selector := `{plow_source="t3_history"} | json plow_kind="kind", plow_run_id="run.id" | plow_kind="t3_activity_run" | plow_run_id=` + strconv.Quote(id)
-	lines, gaps, failure := ds.loki.read(ctx, window, selector, "t3_history", runLimit)
+func (ds *datasource) readHistoryRun(ctx context.Context, window backend.TimeRange, id string) (runRecord, string, *backend.DataResponse) {
+	selector := t3HistorySelector + ` | json plow_kind="kind", plow_run_id="run.id" | plow_kind="t3_activity_run" | plow_run_id=` + strconv.Quote(id)
+	lines, gaps, failure := ds.loki.read(ctx, window, selector, "t3_history", eventLimit)
 	if failure != nil {
-		return runRecord{}, failure
+		return runRecord{}, "", failure
 	}
 	if len(gaps) != 0 {
-		return runRecord{}, lokiFailure(backend.StatusBadGateway, "Incomplete T3 history lookup")
+		return runRecord{}, "T3 run history lookup is incomplete. " + strings.Join(gaps, ". "), nil
 	}
 	raw, failure := runPolicy(ctx, ds.policy, map[string]any{
-		"range": "24h", "view": "lookup", "to": time.Now().UnixMilli(),
+		"range": "24h", "view": "lookup", "to": time.Now().UnixMilli(), "runId": id,
 		"records": map[string][]string{"t3_history": lines},
 	})
 	if failure != nil {
-		return runRecord{}, failure
+		return runRecord{}, "", failure
 	}
-	var rows []struct {
+	var row struct {
 		Thread  string
 		Run     string
 		Session string
 		Start   *int64
 		End     *int64
+		Gap     string
 	}
-	if err := json.Unmarshal(raw, &rows); err != nil {
-		return runRecord{}, policyFailure(backend.StatusInternal, "Invalid T3 history result")
+	if err := json.Unmarshal(raw, &row); err != nil {
+		return runRecord{}, "", policyFailure(backend.StatusInternal, "Invalid T3 history result")
 	}
-	if len(rows) != 1 || rows[0].Run != id || !identifier.MatchString(rows[0].Session) ||
-		rows[0].Start == nil || rows[0].End == nil || *rows[0].Start == 0 || *rows[0].End == 0 {
-		return runRecord{}, lokiFailure(backend.StatusNotFound, "No unambiguous, strongly bound run in this time range")
+	if message := historyGap(row.Gap); message != "" {
+		return runRecord{}, message, nil
 	}
-	row := rows[0]
-	return runRecord{ID: row.Run, ThreadID: row.Thread, SessionID: row.Session, StartedMS: row.Start, CompletedMS: row.End}, nil
+	if row.Run != id || !identifier.MatchString(row.Session) || row.Start == nil || row.End == nil || row.Gap != "" {
+		return runRecord{}, "", policyFailure(backend.StatusInternal, "Invalid T3 history result")
+	}
+	return runRecord{ID: row.Run, ThreadID: row.Thread, SessionID: row.Session, StartedMS: row.Start, CompletedMS: row.End}, "", nil
 }
 
 type activityRead struct {

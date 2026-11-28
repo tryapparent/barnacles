@@ -131,8 +131,13 @@ func (ds *datasource) query(ctx context.Context, query backend.DataQuery) backen
 
 	var run runRecord
 	var failure *backend.DataResponse
-	if model.History == "1" {
-		run, failure = ds.readHistoryRun(ctx, window, model.RunID)
+	history := model.History == "1"
+	if history {
+		var gap string
+		run, gap, failure = ds.readHistoryRun(ctx, window, model.RunID)
+		if gap != "" {
+			return renderUnavailable(model.RunID, gap)
+		}
 	} else {
 		run, failure = ds.loki.readRun(ctx, window, model.RunID)
 	}
@@ -147,9 +152,12 @@ func (ds *datasource) query(ctx context.Context, query backend.DataQuery) backen
 		gaps = append(gaps, "Selected time range excludes part of the run")
 	}
 
-	output, failure := executePolicy(ctx, ds.policy, policyInput{Run: run, Events: events})
+	output, failure := executePolicy(ctx, ds.policy, policyInput{Run: run, Events: events, History: history})
 	if failure != nil {
 		return *failure
+	}
+	if gap := historyGap(output.Coverage.Gap); gap != "" {
+		gaps = append(gaps, gap)
 	}
 	return render(output, gaps)
 }

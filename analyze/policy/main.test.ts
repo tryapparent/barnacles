@@ -117,6 +117,29 @@ test("round-trips signed millisecond clocks and rejects invalid run windows", ()
   assert.match(invalid.stderr, /Policy rejected the run identity or clock window/);
 });
 
+test("exact history selects a terminal revision and distinguishes missing evidence", () => {
+  const terminal = { kind: "t3_activity_run", eventId: "local:run-fixture",
+    revisionMs: run.completedMs, run: { ...run, status: "completed" } };
+  const running = { ...terminal, revisionMs: run.startedMs,
+    run: { ...terminal.run, status: "running", completedMs: null } };
+  function lookup(rows: unknown[]) {
+    const result = execute({ view: "lookup", range: "24h", to: epoch + 20_000, runId: run.id,
+      records: { t3_history: rows.map(row => JSON.stringify(row)) } });
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout);
+  }
+  assert.deepEqual(lookup([terminal, running, terminal]), { thread: run.threadId, run: run.id,
+    session: run.sessionId, start: run.startedMs, end: run.completedMs, gap: "" });
+  assert.equal(lookup([running]).gap, "run_open");
+  assert.equal(lookup([]).gap, "missing_run");
+  assert.equal(lookup([{ ...terminal, run: { ...terminal.run, sessionId: "" } }]).gap, "missing_binding");
+  assert.equal(lookup([{ ...running, run: { ...running.run, status: "completed" } }]).gap, "missing_clocks");
+  assert.equal(lookup([terminal, { ...terminal, run: { ...run, sessionId: "other" } }]).gap, "conflicting_run");
+  const result = execute({ run, history: true, events: [event("outside", "tool", -1)] });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout).coverage, { events: 0, paired: 0, unknown: 0, gap: "missing_events" });
+});
+
 test("Activity clips and disjoins threads, preserves cross-thread time, and leaves empty buckets null", () => {
   const hour = 3_600_000;
   const to = epoch + 100 * hour;

@@ -54,20 +54,6 @@ def run_status(status: String) -> String:
     case "interrupted": "interrupted"
     case _: "unknown"
 
-def exact_session(choice: P.Choice) -> String:
-  match choice:
-    case P.Exact{session}: session
-    case _: ""
-
-def run_binding(+thread: String,+provider: String,refs: List<&2,P.T3Binding>,prior: P.Choice) -> P.Choice:
-  match refs:
-    case []: prior
-    case P.T3Binding{owner,driver,native,strength,+session,reference} <> rest:
-      +id = Bool.and(Bool.not(String.is_empty(provider)),String.eq(provider,reference))
-      +kind = Bool.and(String.eq(driver,"codex"),Bool.and(String.eq(native,"codex"),String.eq(strength,"strong")))
-      +matches = Bool.and(Bool.and(id,kind),Bool.and(String.eq(owner,thread),P.token(session)))
-      run_binding(thread,provider,rest,P.select(matches,prior,session))
-
 def run(+scope: String,+thread: String,+id: String,owner: String,status: String,requested: String,
     started: String,completed: String,updated: String,observed: String,provider: String,refs: List<&2,P.T3Binding>) -> String:
   +r = value(requested)
@@ -76,7 +62,7 @@ def run(+scope: String,+thread: String,+id: String,owner: String,status: String,
   +rev = value(updated)
   +seen = value(observed)
   +at = Nat.max(r,Nat.max(s,e))
-  +session = exact_session(run_binding(thread,provider,refs,P.Missing{}))
+  +session = P.chosen_run(P.binding(thread,provider,refs,P.Missing{}))
   +valid = Bool.and(Bool.and(P.token(scope),stock_id(thread)),Bool.and(stock_id(id),String.eq(thread,owner)))
   +key = fresh_identity(scope,id)
   row : J.Val = J.Obj{[str("kind","t3_activity_run"),str("eventId",key),

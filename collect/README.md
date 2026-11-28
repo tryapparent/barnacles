@@ -18,7 +18,7 @@ The projector uses Node 22 and [the pinned compiler bootstrap](../tooling/bend.t
 
 ## One T3 run
 
-Use an existing read-scoped bearer file. The adapter reads the latest bounded projection, requires exactly one strong local Codex session binding and the exact completed run, and prints one allowlisted JSON record. To stage it for Alloy, redirect stdout into a new spool using the T3 filename `t3.jsonl`. The reader supports a single run per request. Older runs that fall outside the snapshot require a paginated source adapter.
+Use an existing read-scoped bearer file. The adapter reads the latest bounded projection and resolves the requested run's provider-thread pointer to exactly one strong local Codex session binding. It requires start and completion clocks and prints one allowlisted JSON record. To stage it for Alloy, redirect stdout into a new spool using the T3 filename `t3.jsonl`. The reader supports a single run per request. Older runs that fall outside the snapshot require a paginated source adapter.
 
 ```sh
 PLOW_T3_ORIGIN=https://t3.example.invalid PLOW_T3_READ_TOKEN_FILE=/private/t3-read-token \
@@ -35,6 +35,54 @@ JSONL chunks. A worker syncs each chunk and its directory before advancing
 its private checkpoint. Alloy also persists its file positions and sending
 queue. These are separate receipts. A producer handoff does not establish
 Loki delivery.
+
+New T3 and Codex history chunks put the normalized chunk's SHA-256 in the
+first record as `chunkId`. Alloy identifies files by their initial bytes.
+Successive T3 heads and overlapping Codex reads can share a leading record
+while carrying different later evidence. The digest appears inside both
+receivers' fingerprint windows. Padding a small chunk to its receiver's
+fingerprint size preserves the configured fingerprint sizes and file
+positions. Alloy removes the transport marker before sending to Loki. Exact
+replays retain their content identity, and event IDs and clocks stay
+independent of chunk identity.
+
+### Replay previously staged history
+
+After deploying the new file reader, run the following from the pinned release
+directory against the private capture spool. Each invocation restages at most
+100 retained chunks per source. Repeat until both counts are zero. Existing
+checkpoints and original chunks stay in place. The digest check accepts only
+unchanged chunks emitted by the earlier capture workers. Records that were
+never staged still require the original retained sources.
+
+```sh
+PLOW_CAPTURE_SPOOL=/private/plow/runtime/spool node --input-type=module <<'JS'
+import { createHash } from "node:crypto";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
+import { publish } from "./collect/fixture.ts";
+
+const root = process.env.PLOW_CAPTURE_SPOOL ?? "";
+if (!isAbsolute(root)) throw Error("Set an absolute private capture spool");
+for (const [source, fingerprint] of [["t3", 128], ["codex", 1024]]) {
+  const directory = join(root, source);
+  let staged = 0;
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const match = /^([A-Za-z0-9][A-Za-z0-9_-]*-(?:live|backfill))-([a-f0-9]{64})\.jsonl$/.exec(entry.name);
+    if (!entry.isFile() || !match) continue;
+    const [, prefix, digest] = match;
+    if (existsSync(join(directory, prefix + "-v2-" + digest + ".jsonl"))) continue;
+    const body = readFileSync(join(directory, entry.name), "utf8");
+    if (!body.startsWith("{") || !body.endsWith("\n") || createHash("sha256").update(body).digest("hex") !== digest) {
+      throw Error("Invalid staged history chunk");
+    }
+    publish(directory, prefix, body.slice(0, -1).split("\n"), fingerprint);
+    if (++staged === 100) break;
+  }
+  console.log(source, staged);
+}
+JS
+```
 
 | Input | Purpose |
 | --- | --- |

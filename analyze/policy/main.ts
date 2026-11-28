@@ -158,7 +158,7 @@ async function activity(request: Record<string, unknown>, module: string) {
   }
   const { default: policy } = await import(pathToFileURL(module).href);
   const report = request.view === "lookup"
-    ? array(policy.lookup(input, nat(request.to)), row => row)
+    ? policy.lookup(input, nat(request.to), string(request, "runId"), partial)
     : policy.activity(input, string(request, "range"), nat(request.to), partial, string(request, "operation"));
   process.stdout.write(JSON.stringify(report, (_key, value) => {
     if (typeof value === "bigint") return Number(value);
@@ -200,7 +200,7 @@ async function main() {
     if (range) return await activity(request, module);
     const { run, events } = decode(request);
     const { default: policy } = await import(pathToFileURL(module).href) as {
-      default: { analyze(run: Run, events: List<ToolEvent>): Report };
+      default: { analyze(run: Run, events: List<ToolEvent>): Report; evidence_gap(events: bigint): string };
     };
     const report = policy.analyze(run, events);
     if (report.$ === "Rejected") throw Error("Policy rejected the run identity or clock window");
@@ -214,7 +214,8 @@ async function main() {
         durationMs: nullable(durationMs),
       })),
       findings: array(report.findings, ({ callId, reason }) => ({ callId, reason })),
-      coverage: { events: Number(report.events), paired: Number(report.paired), unknown: Number(report.unknown) },
+      coverage: { events: Number(report.events), paired: Number(report.paired), unknown: Number(report.unknown),
+        gap: request.history === true ? policy.evidence_gap(report.events) || undefined : undefined },
     }) + "\n");
   } finally {
     if (scratch) rmSync(scratch, { recursive: true, force: true });

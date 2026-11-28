@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { gzipSync, zstdCompressSync } from "node:zlib";
 import { appendFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { after, test } from "node:test";
-import { capturePolicy, fixturePolicy, projectRollout, projectRun } from "./fixture.ts";
+import { capturePolicy, fixturePolicy, projectRollout, projectRun, publish } from "./fixture.ts";
 
 const workdir = mkdtempSync("/tmp/apparent-dev-plow-collect-");
 after(() => rmSync(workdir, { recursive: true, force: true }));
@@ -41,6 +41,23 @@ test("rejects an unbound or reversed T3 run", () => {
   const t3 = fixture("t3.json");
   assert.throws(() => projectRun(policy, t3.replace("fixture-session", "")), /Invalid T3 run/);
   assert.throws(() => projectRun(policy, t3.replace("12:00:06.000Z", "11:59:59.000Z")), /Invalid T3 run/);
+});
+
+test("history chunks distinguish shared prefixes and remain immutable on replay", () => {
+  const directory = join(workdir, "fingerprints");
+  const [start, end] = projectRollout(policy, fixture("codex.jsonl"));
+  publish(directory, "fixture-live", [start], 1024);
+  publish(directory, "fixture-live", [start, end], 1024);
+  publish(directory, "fixture-live", [start, end], 1024);
+  const chunks = readdirSync(directory).map(file => readFileSync(join(directory, file)));
+  assert.equal(chunks.length, 2);
+  assert.ok(chunks.every(chunk => chunk.length >= 1024));
+  assert.notDeepEqual(chunks[0].subarray(0, 1024), chunks[1].subarray(0, 1024));
+  for (const chunk of chunks) {
+    const { chunkId, ...event } = JSON.parse(chunk.toString().split("\n")[0]);
+    assert.match(chunkId, /^[a-f0-9]{64}$/);
+    assert.deepEqual(event, JSON.parse(start));
+  }
 });
 
 test("Codex capture restarts, admits new arrivals beside backfill and preserves fork replay identities", async () => {

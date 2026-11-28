@@ -177,3 +177,6 @@ def analyze(+run: Run, +events: List<&2, ToolEvent>) -> Report:
     case Run{+id, thread, session, from, until}:
       +valid = Bool.and(Nat.is_le(from, until), Bool.and(named(id), Bool.and(named(thread), named(session))))
       analyze_valid(valid, id, run, events)
+
+def evidence_gap(events: Nat) -> String:
+  Bool.pick(String,Nat.is_eq(events,0n),"missing_events","")

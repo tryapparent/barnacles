@@ -97,11 +97,15 @@ function durableFile(path: string, content: string, immutable: boolean) {
   }
 }
 
-export function publish(directory: string, prefix: string, lines: string[]) {
+export function publish(directory: string, prefix: string, lines: string[], fingerprintBytes = 0) {
   if (!lines.length) return;
   const body = lines.join("\n") + "\n";
   const digest = createHash("sha256").update(body).digest("hex");
-  durableFile(join(directory, prefix + "-" + digest + ".jsonl"), body, true);
+  const field = '{"chunkId":"' + digest + '",';
+  const padding = fingerprintBytes - Buffer.byteLength(body) - field.length + 1;
+  const wire = fingerprintBytes ? field + " ".repeat(Math.max(0, padding)) + body.slice(1) : body;
+  const version = fingerprintBytes ? "-v2-" : "-";
+  durableFile(join(directory, prefix + version + digest + ".jsonl"), wire, true);
 }
 
 export function checkpoint(path: string, value: unknown) {
@@ -276,7 +280,7 @@ async function captureCodex(lane: string, once: boolean) {
       for (const file of queue.slice(0, 8)) {
         try {
           const result = await codexFile(file, state.paths[file], project, policy);
-          publish(join(spool, "codex"), scope + "-" + lane, result.lines);
+          publish(join(spool, "codex"), scope + "-" + lane, result.lines, 1024);
           state.paths[file] = result.mark;
           delete retries[file];
           if (result.oldest) state.oldest = state.oldest ? Math.min(state.oldest, result.oldest) : result.oldest;
@@ -301,7 +305,7 @@ async function captureCodex(lane: string, once: boolean) {
     health(policy, spool, "codex_history", scope, lane, status, observed, state.last, state.oldest, state.newest ?? 0, scanned, eligible, state.count, reason);
     publish(join(spool, "codex"), scope + "-" + lane, [
       policy.coverage(scope, "codex_coverage", lane, status, String(observed), state.oldest ? String(state.oldest) : "", state.last ? String(state.last) : ""),
-    ]);
+    ], 1024);
     if (once && reason) process.exitCode = 1;
     if (!once) await wait(30_000);
   } while (!once);

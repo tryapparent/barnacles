@@ -30,8 +30,9 @@ type eventRecord struct {
 }
 
 type policyInput struct {
-	Run    runRecord     `json:"run"`
-	Events []eventRecord `json:"events"`
+	Run     runRecord     `json:"run"`
+	Events  []eventRecord `json:"events"`
+	History bool          `json:"history,omitempty"`
 }
 
 type policyOutput struct {
@@ -51,6 +52,7 @@ type policyOutput struct {
 		Events  *int64 `json:"events"`
 		Paired  *int64 `json:"paired"`
 		Unknown *int64 `json:"unknown"`
+		Gap     string `json:"gap"`
 	} `json:"coverage"`
 }
 
@@ -128,6 +130,37 @@ func (o *boundedOutput) Write(p []byte) (int, error) {
 func policyFailure(status backend.Status, message string) *backend.DataResponse {
 	response := backend.ErrDataResponseWithSource(status, backend.ErrorSourcePlugin, message)
 	return &response
+}
+
+func historyGap(reason string) string {
+	switch reason {
+	case "missing_run":
+		return "T3 run history is unavailable in the selected time range"
+	case "run_open":
+		return "T3 has no terminal run snapshot in the selected time range"
+	case "missing_clocks":
+		return "T3 run history has no valid start and completion clocks"
+	case "missing_binding":
+		return "T3 run history has no unique strong Codex session binding"
+	case "conflicting_run":
+		return "T3 run history contains conflicting run records"
+	case "unreadable_run":
+		return "T3 run history contains unreadable records"
+	case "missing_events":
+		return "No Codex tool events were observed inside the run window"
+	default:
+		return ""
+	}
+}
+
+func renderUnavailable(id, gap string) backend.DataResponse {
+	var output policyOutput
+	var zero int64
+	output.RunID = id
+	output.Coverage.Events = &zero
+	output.Coverage.Paired = &zero
+	output.Coverage.Unknown = &zero
+	return render(output, []string{gap})
 }
 
 func render(output policyOutput, gaps []string) backend.DataResponse {
