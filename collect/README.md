@@ -46,6 +46,30 @@ positions. Alloy removes the transport marker before sending to Loki. Exact
 replays retain their content identity, and event IDs and clocks stay
 independent of chunk identity.
 
+Two old T3 chunks can share their first 128 bytes. Alloy can reuse the
+shorter file's saved offset in a longer file, even when both files contain
+valid JSONL. A resumed record can then begin inside a JSON line. The
+transport drops rows that fail JSON object decoding or lack a usable event
+clock and record kind. It filters those rows before the durable Loki queue
+and keeps downstream delivery retries enabled. In Alloy metrics,
+`otelcol_processor_filter_logs_filtered_total` for
+`otelcol.processor.filter.transport` counts dropped records. It includes
+neither file names nor input bodies. The spool remains a private input
+for records already allowlisted by Bend2.
+
+The managed deployment checks the immutable T3 spool before selecting
+versioned-only reads. Every legacy JSONL file must have a same-lane v2
+counterpart with the exact bytes produced by the current chunk framing.
+The audit checks at most 100,000 JSONL files and reads at
+most 1 GiB of paired chunk contents. Missing counterparts, unrecognized
+filenames, mismatched bytes or an unavailable audit retain the full legacy
+glob. Direct Compose runs also use the full glob by default. The selection
+only affects the `spool/t3/` history directory. Alloy keeps the same T3
+receiver identity, fingerprint size and storage, so known v2 offsets
+survive a reapply. The singleton `spool/t3.jsonl` reader remains available.
+Run `bash infra/lgtm/deploy.sh --verify-t3-v2 /path/to/spool/t3` for the
+read-only audit. It exits with status 1 when exact coverage cannot be proven.
+
 Continuous T3 capture adds `run.codexTurnId` when the bounded projection
 proves that a terminal run has one active attempt and one strong Codex root
 turn. The attempt’s original native session must agree with the strong
@@ -55,10 +79,11 @@ bindings remain available for tool history. See [the trace lookup](../grafana/tr
 
 ### Replay previously staged history
 
-After deploying the new file reader, run the following from the pinned release
+To fill missing v2 counterparts, run the following from the pinned release
 directory against the private capture spool. Each invocation restages at most
 100 retained chunks per source. Repeat until both counts are zero. Existing
-checkpoints and original chunks stay in place. The digest check accepts only
+checkpoints and original chunks stay in place. Reapply the managed deployment
+to reevaluate exact T3 coverage. The digest check accepts only
 unchanged chunks emitted by the earlier capture workers. Records that were
 never staged still require the original retained sources.
 
@@ -75,7 +100,7 @@ for (const [source, fingerprint] of [["t3", 128], ["codex", 1024]]) {
   const directory = join(root, source);
   let staged = 0;
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
-    const match = /^([A-Za-z0-9][A-Za-z0-9_-]*-(?:live|backfill))-([a-f0-9]{64})\.jsonl$/.exec(entry.name);
+    const match = /^([A-Za-z0-9_-]{1,48}-(?:live|backfill))-([a-f0-9]{64})\.jsonl$/.exec(entry.name);
     if (!entry.isFile() || !match) continue;
     const [, prefix, digest] = match;
     if (existsSync(join(directory, prefix + "-v2-" + digest + ".jsonl"))) continue;

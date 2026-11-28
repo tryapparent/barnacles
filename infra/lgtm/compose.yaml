@@ -134,6 +134,7 @@ services:
     environment:
       PLOW_HOST_ALIAS: ${PLOW_HOST_ALIAS:-loopback-fixture}
       PLOW_HOST_PROCFS: /run/plow/host-proc
+      PLOW_T3_HISTORY_GLOB: ${PLOW_T3_HISTORY_GLOB:-}
     ports:
       - target: 4318
         published: "${PLOW_TEMPO_ALLOY_PORT:-0}"

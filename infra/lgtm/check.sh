@@ -189,7 +189,7 @@ jq -nc --argjson end "$end_ms" '
 activity_loki() {
   curl -fsSG --max-time 6 -H 'X-Scope-OrgID: plow-fixture' -H 'X-Loki-Response-Encoding-Flags: categorize-labels' \
     --data-urlencode 'query={plow_source="t3_history"}' --data-urlencode "start=${old_ms}000000" \
-    --data-urlencode "end=$((end_ms + 1))000000" "http://$loki/loki/api/v1/query_range"
+    --data-urlencode "end=$((end_ms + 300000))000000" "http://$loki/loki/api/v1/query_range"
 }
 await_activity() {
   local predicate=$1 file=$2
@@ -200,9 +200,10 @@ await_activity() {
   return 1
 }
 await_activity '([.data.result[].values[]]|length)==1' "$PLOW_LGTM_WORKDIR/activity-current.json"
-jq -nc --argjson old "$old_ms" --argjson end "$end_ms" '
+jq -nrc --argjson old "$old_ms" --argjson end "$end_ms" '
   def run($id;$thread;$r;$s;$e): {kind:"t3_activity_run",eventId:$id,timestampMs:$e,revisionMs:$e,observedMs:$end,
     run:{id:$id,threadId:$thread,sessionId:"",requestedMs:$r,startedMs:$s,completedMs:$e}};
+  "{\"private\":\"fixture-transport-canary\"}}",
   run("old";"other";$old - 9000;$old - 5000;$old),
   run("recent";"thread-a";$end - 3604000;$end - 3602000;$end - 3600000)
 ' > "$PLOW_LGTM_WORKDIR/activity-runs.jsonl"
