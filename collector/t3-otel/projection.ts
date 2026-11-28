@@ -48,7 +48,7 @@ export function t3Snapshot(input: unknown, rules: SourcePolicy, runLimit = 50): 
       source, state: policy.link_state(str(link.state)), owning: policy.owns_pr(source) };
   });
   return { instance: token(snapshot.instance), id: t3Id(thread.threadId), created, updated,
-    title: policy.source_title(str(thread.title)),
+    title: policy.source_title(typeof thread.title === "string" ? thread.title : ""),
     status: policy.thread_status(str(thread.status)), origin: policy.origin(str(thread.createdBy), str(thread.creationSource)),
     settled: thread.settled === true, runs, pullRequests };
 }
@@ -133,9 +133,9 @@ export function stockProjection(instance: string, id: string, input: unknown, po
       source: link.source, state: row(link.snapshot ?? {}).state }));
   return {
     thread: t3Snapshot({ instance, thread: { threadId: id, createdAt: thread.createdAt, updatedAt: thread.updatedAt,
-      createdBy: thread.createdBy, creationSource: thread.creationSource, settled: millis(thread.settledAt) > 0 },
+      title: thread.title, status: thread.status, createdBy: thread.createdBy, creationSource: thread.creationSource, settled: millis(thread.settledAt) > 0 },
       recentRuns, links: { nextCursor: null, pullRequests } }, policy, 4096),
-    references: nativeBindings(array(projection.providerThreads, 64)),
+    references: nativeBindings(array(projection.providerThreads, 64)), titleObserved: true,
   };
 }
 
@@ -213,7 +213,7 @@ export async function refreshAnalysis() {
     const candidate = activity ? join(activity, "timeline.next") : undefined;
     try {
       if (candidate) {
-        const feed = await projectPlowFeed(path, scratch, asOf, t3Instance);
+        const feed = await projectPlowFeed(path, scratch, asOf, t3Instance, process.env.PLOW_ANALYSIS_T3_ENVIRONMENT_ID);
         writeFileSync(candidate, JSON.stringify(feed), { mode: 0o600 });
       }
       const result = await publishJoinedAnalysis(path, output, scratch, asOf, readAnalysisImpact(receipts, scratch),

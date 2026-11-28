@@ -111,14 +111,15 @@ test("Plow feed projects weekly activity and linked timing detail", async () => 
           ('codex','rollout','partial','linked','RunningReceipt',700,NULL);
     `)
     db.close()
-    const latestTrace = { startUtcMs: 1500, end: .9, work: [], wait: [[.5,.9,'T3 admission']], errors: [], detail: [], ci: [] };
-    const olderTrace = { startUtcMs: 100, end: .8, work: [[.2,.8,'Provider run']], wait: [[.01,.2,'T3 admission']], errors: [.8],
-      detail: [[.3,.4,'Model sampling']], ci: [[.4,.6,'CI watcher observation']] };
-    assert.deepEqual(await projectPlowFeed(dbPath, job, 86401000), {
-      observed: 3000,
-      overview: { from: 0, to: 86401000, traces: [latestTrace, olderTrace] },
-      traces: [latestTrace, olderTrace],
-    });
+    const feed = await projectPlowFeed(dbPath, job, 86401000)
+    assert.deepEqual([feed.observed, feed.overview.from, feed.overview.to], [3000, 0, 86401000])
+    assert.deepEqual(feed.overview.traces, feed.traces)
+    assert.deepEqual(feed.traces.map(({startUtcMs,end,work,wait,errors,detail,ci}) =>
+      [startUtcMs,end,work,wait,errors,detail,ci]), [
+      [1500,.9,[],[[.5,.9,'T3 admission']],[],[],[]],
+      [100,.8,[[.2,.8,'Provider run']],[[.01,.2,'T3 admission']],[.8],
+        [[.3,.4,'Model sampling']],[[.4,.6,'CI watcher observation']]],
+    ])
     const expanded = new DatabaseSync(dbPath)
     const thread = expanded.prepare("INSERT INTO t3_threads VALUES (?,?,?,?,'settled','fixture',1,2)")
     const run = expanded.prepare("INSERT INTO t3_runs VALUES (?,?,?,?,?,?,?)")

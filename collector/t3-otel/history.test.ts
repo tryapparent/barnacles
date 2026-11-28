@@ -152,23 +152,22 @@ test("the ordinary refresh reads a persisted stock T3 projection and joins exact
       nativeThreadRef: { driver: "codex", nativeId: "session-fixture", strength: "strong" } };
     const projection = stockProjection(instance, id, {
       thread: { id, createdAt: iso(now), updatedAt: iso(now + 1000), createdBy: "user", creationSource: "web",
-        settledAt: iso(now + 1000), title: "discard this title", worktreePath: "discard this worktree",
+        settledAt: iso(now + 1000), title: "Fix labels", worktreePath: "discard this worktree",
         pullRequests: [pullRequest, { ...pullRequest, host: "gitlab.com" }] },
       runs: [run, { ...run, threadId: "inherited" }], providerThreads: [reference],
     }, codec, policy.local_row);
     const shared = join(job, "projection", "evidence.sqlite");
     const store = openT3History(history, instance, policy.replay, policy.stale_item, shared);
     try {
-      assert.ok(policy.projection_due(now, 0, now));
-      assert.ok(!policy.projection_due(now, now, now));
-      assert.ok(!policy.projection_due(now - 86400001, 0, now));
+      assert.ok(policy.projection_due(now, now, now, false));
+      assert.ok(!policy.projection_due(now, now, now, true));
+      assert.ok(!policy.projection_due(now - 604800001, 0, now, false));
       store.commit(id, "", "", 1, [], undefined, projection);
       assert.throws(() => store.commit(id, "another-reader", "", 2, [], undefined, projection));
       const stale = { ...projection, thread: { ...projection.thread, updated: now, runs: [] } };
       store.commit(id, "", "", 2, [], undefined, stale);
       const saved = readT3Projections(shared, instance, now);
       assert.deepEqual(saved, [projection]);
-      assert.equal(projection.thread.title, "");
       assert.equal(projection.thread.runs.length, 1);
       assert.equal(projection.thread.pullRequests.length, 1);
     } finally { store.close(); }
@@ -190,7 +189,7 @@ test("the ordinary refresh reads a persisted stock T3 projection and joins exact
       assert.equal(feed.overview.to, Date.parse(summary.analyzedAt));
       assert.equal(feed.overview.traces.length, 1);
       assert.equal(feed.overview.traces[0].startUtcMs, now);
-      assert.ok(!JSON.stringify(feed).includes(id));
+      assert.equal(feed.traces[0].title, "Fix labels");
     } finally { output.close(); }
     assert.equal(refresh().recomputed, 0);
   } finally { rmSync(job, { recursive: true, force: true }); }

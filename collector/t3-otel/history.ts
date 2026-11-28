@@ -153,7 +153,7 @@ export type HistoryPolicy = HistoryCodec & {
   plan(target: Target, cursor: string, known: boolean, revision: number, frontier: number, refresh: boolean):
     { $: "Some"; value: Task } | { $: "None" };
   batch(input: List<Task>): List<Task>;
-  projection_due(updated: number, saved: number, now: number): boolean;
+  projection_due(updated: number, saved: number, now: number, titleObserved: boolean): boolean;
   older_frontier(previous: number, oldest: number): number;
   stale_item: NonNullable<Parameters<typeof openT3History>[3]>;
   reconcile_batch(input: List<PendingT3Command>): List<PendingT3Command>;
@@ -234,7 +234,8 @@ export async function pollT3History([job, instance, flag, ...extra]: string[]) {
           const saved = store.projectionRevisions();
           const now = Date.now();
           for (const { id, updated } of all) {
-            if (policy.projection_due(updated, saved.get(id) ?? 0, now)) refresh.add(id);
+            const projection = saved.get(id);
+            if (policy.projection_due(updated, projection?.revision ?? 0, now, projection?.titleObserved ?? false)) refresh.add(id);
           }
         }
         const deferred = new Set<string>();

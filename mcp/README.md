@@ -9,7 +9,7 @@ through Cloudflare Access when the client prompts.
 | --- | --- | --- |
 | `get_plow_bottlenecks` | Empty object | Latest 24-hour analysis, including its window, timestamp, coverage, priorities, and thread IDs. |
 | `get_plow_thread` | `threadId` from the summary | The selected thread's costs, findings, and source coverage. |
-| `get_plow_timeline` | Optional `range` (`24h` or `7d`) | Anonymous dashboard timeline rows, UTC starts, and failures. Elapsed values use seconds. |
+| `get_plow_timeline` | Optional `range` (`24h` or `7d`) | Dashboard timeline rows with thread titles and links, UTC starts, and failures. Elapsed values use seconds. |
 | `get_plow_charts` | Optional `range` (`24h` or `7d`) | Where time went and Agent work share for the selected time frame. Times use milliseconds and shares use basis points. |
 
 The [Bend2 tool definitions](tools.bend) compile at startup. The existing
