@@ -35,3 +35,20 @@ Loki uses TSDB schema v13 and native OTLP ingestion. This fixture stack admits o
 The Grafana image builds the [data source plugin](../../analyze/datasource/) and compiles the Bend2 rule before the stack starts. The image allows this single unsigned plugin for the loopback candidate. Open the [run breakdown dashboard](../../grafana/) using the displayed Grafana port.
 
 Grafana MCP v2.3.0 does not include the Plow data source in its `run_panel_query` allowlist. The fixture uses Grafana MCP’s read-only `grafana_api_request` with `POST /api/ds/query` and the same target and time range as the dashboard. It compares the resulting data frames with Grafana’s direct result. The stack publishes no standalone MCP server. Outside the fixture, set up a Viewer account and choose the allowed tools for the Grafana instance.
+
+## Private Clanker deployment
+
+Deploy a pinned source revision from a durable release directory. Preserve Git file modes with `git archive REV | tar -xp -C RELEASE_DIRECTORY` so nonroot containers can read the mounted configuration. Set a private, persistent runtime directory as `PLOW_LGTM_WORKDIR`. Seed its `spool/codex.jsonl` and `spool/t3.jsonl` with bounded, allowlisted records. Keep the directory mode at 0700. Leave the old stack and unrelated Serve routes in their own projects.
+
+```sh
+export PLOW_LGTM_WORKDIR=/private/plow/runtime
+export PLOW_TAILNET_VIEWER=viewer@example.invalid
+export PLOW_TAILNET_HTTPS_PORT=19480
+export PLOW_GRAFANA_PORT=19481
+export PLOW_TAILNET_SUDO=true
+bash infra/lgtm/deploy.sh
+```
+
+The deployment publishes Grafana on the configured loopback port in the `plow-grafana` Compose project. Its dedicated Tailscale Serve HTTPS endpoint forwards the authenticated tailnet identity to Grafana. Grafana admits only preprovisioned identities. The script creates or confirms the requested Viewer and leaves the random bootstrap administrator credential in the private runtime directory. Choose ports unused by other services. It keeps Loki, Tempo, Mimir, and Alloy on loopback. Follow the returned URL from a device signed in as the Viewer.
+
+Reapply with the same runtime directory and environment to retain the volumes and the Viewer. To stop serving just this endpoint, use `tailscale serve --https="$PLOW_TAILNET_HTTPS_PORT" off`. To stop the Compose project while preserving telemetry, run `docker compose -p plow-grafana stop` from the deployed release directory with the same runtime environment. Verify Grafana's authenticated `/api/user` returns the intended read-only identity and query the imported run with its original time range.

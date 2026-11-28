@@ -55,6 +55,7 @@
     "grafana/assets/plow-cream.png",
     "grafana/provisioning/datasources/telemetry.yaml",
     "infra/lgtm/tempo.yaml",
-    "infra/lgtm/mimir.yaml"
+    "infra/lgtm/mimir.yaml",
+    "infra/lgtm/deploy.sh"
   ]
 }
