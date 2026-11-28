@@ -53,9 +53,11 @@ export function dashboardData(raw, type, policy, range) {
   const { from, to, covered, indices } = policy.activity(all, range, overview?.to ?? observed,
     overview?.from !== undefined, overview?.from ?? 0);
   if (!covered) return;
-  const selected = chartJson("", indices);
-  if (type === "Timeline") return JSON.stringify({ observed, range, from, to, traces: selected.map(index => candidates[index]) });
-  const chart = policy.charts(bendList(selected.map(index => rows[index])), all, range, from, to);
+  if (type === "Timeline") {
+    const selected = chartJson("", indices);
+    return JSON.stringify({ observed, range, from, to, traces: selected.map(index => candidates[index]) });
+  }
+  const chart = policy.charts(all, range, from, to);
   return JSON.stringify({ observed, range, ...chart }, chartJson);
 }
 
