@@ -55,12 +55,16 @@ type policyOutput struct {
 }
 
 func runPolicy(ctx context.Context, path string, input any) ([]byte, *backend.DataResponse) {
+	return runPolicyWithin(ctx, path, input, ioTimeout)
+}
+
+func runPolicyWithin(ctx context.Context, path string, input any, timeout time.Duration) ([]byte, *backend.DataResponse) {
 	body, err := json.Marshal(input)
 	if err != nil {
 		return nil, policyFailure(backend.StatusInternal, "Could not encode the policy input")
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, ioTimeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	stdout := &boundedOutput{}
 	command := exec.CommandContext(ctx, path)
@@ -168,11 +172,9 @@ func render(output policyOutput, gaps []string) backend.DataResponse {
 type activityLane struct {
 	ID    string
 	Spans []struct {
-		First     int64
-		Last      int64
-		Category  string
-		Operation string
-		Run       string
+		First     int64  `json:"a"`
+		Last      int64  `json:"b"`
+		Operation string `json:"n"`
 	}
 }
 
@@ -183,6 +185,7 @@ type activityTotal struct {
 }
 
 type activityOutput struct {
+	Partial         bool
 	From            int64
 	Cutoff          int64
 	Oldest          int64

@@ -165,6 +165,9 @@ async function activity(request: Record<string, unknown>, module: string) {
     if (value?.$ === "None") return null;
     if (value?.$ === "Some") return value.value;
     if (value?.$ === "Con" || value?.$ === "Nil") return array(value, row => row);
+    if (request.view === "activity" && value?.$ === "Span") {
+      return { a: value.first, b: value.last, n: value.operation };
+    }
     if (value?.$) {
       const { $: _, ...fields } = value;
       return fields;

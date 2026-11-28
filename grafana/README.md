@@ -32,10 +32,10 @@ Open `/d/plow-activity/activity`. Use **Last 24h** or **Last 7 days** to move
 the Grafana UTC viewport and select the matching analysis window. The
 latest successful live T3 capture checkpoint anchors the analysis. The
 coverage panel displays the cutoff, the oldest observed T3 clock, and gaps.
-The datasource reads at most 5,000 entries per evidence source over eight
-days, including carry-in, and separate bounded latest coverage receipts.
-A capped read stays partial. An older carry-in beyond the read bound is
-unknown.
+The datasource assembles one bounded snapshot for matching panels. It reads
+evidence over eight days, including carry-in, and requests recent checkpoint
+receipts separately. A capped or warned read is partial. A failed source call
+returns a downstream error. An older carry-in beyond the read bound is unknown.
 
 Where time went adds disjoint intervals for each thread. Overlapping
 threads contribute independently. Provider time takes precedence over

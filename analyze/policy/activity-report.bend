@@ -52,12 +52,12 @@ def category_totals(items: List<&2,Totals>, table: Map<&2,Totals>) -> Map<&2,Tot
 def categories(items: List<&2,Totals>) -> List<&2,Totals>:
   List.sort(~Totals,~by_time,Map.values(&2,Totals,category_totals(items,Map.new(&2,Totals))))
 
-def score(spans: List<&2, S.Span>, current: Score) -> Score:
+def score(spans: List<&2, S.Span>, +from: Nat, +to: Nat, current: Score) -> Score:
   match spans current:
     case [] _: current
     case S.Span{a,b,+kind,_,_} <> rest Score{work,admission}:
-      +ms = Nat.sub(b,a)
-      score(rest,Score{Nat.add(work,Bool.pick(Nat,String.eq(kind,"Provider"),ms,0n)),
+      +ms = Nat.sub(Nat.min(b,to),Nat.max(a,from))
+      score(rest,from,to,Score{Nat.add(work,Bool.pick(Nat,String.eq(kind,"Provider"),ms,0n)),
         Nat.add(admission,Bool.pick(Nat,String.eq(kind,"T3 admission"),ms,0n))})
 
 type Mean is Data:
@@ -77,7 +77,7 @@ def shares(threads: List<&2, S.Thread>, +from: Nat, +to: Nat, total: Mean) -> Bu
       +basis = Nat.div(Nat.add(points,Nat.mul(count,50n)),Nat.mul(Nat.max(1n,count),100n))
       Bucket{from,count,Bool.pick(Maybe<&2,Nat>,Nat.is_eq(count,0n),None{},Some{basis})}
     case S.Thread{_,spans} <> rest Mean{count,points}:
-      shares(rest,from,to,next_share(score(S.clip(spans,from,to),Score{0n,0n}),count,points))
+      shares(rest,from,to,next_share(score(spans,from,to,Score{0n,0n}),count,points))
 
 def series(buckets: Nat, +threads: List<&2, S.Thread>, +from: Nat, +step: Nat) -> List<&2, Bucket>:
   match buckets:
