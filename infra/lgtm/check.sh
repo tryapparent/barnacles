@@ -214,7 +214,7 @@ jq -e '([.data.result[].values[]]|length) == 3 and (.data.result|length)==3 and
 grafana_api dashboards/uid/plow-activity > "$PLOW_LGTM_WORKDIR/activity-dashboard.json"
 for period in 7d 24h; do
   jq -c --arg from "$start_ms" --arg to "$end_ms" --arg period "$period" '
-    {from:$from,to:$to,queries:[.dashboard.panels[].targets[]? | select(.activityView) |
+    {from:$from,to:$to,queries:[.dashboard.panels[] | recurse(.panels[]?) | .targets[]? | select(.activityView) |
       . + {refId:.activityView,range:$period,operation:"all"}]}
   ' "$PLOW_LGTM_WORKDIR/activity-dashboard.json" > "$PLOW_LGTM_WORKDIR/activity-query.json"
   grafana_post ds/query "$(cat "$PLOW_LGTM_WORKDIR/activity-query.json")" > "$PLOW_LGTM_WORKDIR/activity.json"

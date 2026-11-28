@@ -2,6 +2,7 @@ import Base
 import ./activity-spans.bend as S
 import ./activity-report.bend as R
 import ./activity-ci.bend as CI
+import ./activity-summary.bend as Summary
 
 type Receipt is Data:
   Missing{}
@@ -34,6 +35,14 @@ def operation_query(limit: Nat) -> String:
     " | line_format `{{ if .plow_seen }}{{.plow_prefix}}{{.plow_suffix}}{{ else }}{{ __line__ }}{{ end }}`",
     " | drop plow_prefix, plow_seen, plow_suffix"])
 
+type Overview is Data:
+  Overview{from: Nat, cutoff: Nat, oldest: Nat, t3Coverage: String, codexCoverage: String,
+    ciCoverage: String, outcomeCoverage: String, partial: Bool, unknownRuns: Nat, conflicts: Nat,
+    totals: List<&2, R.Totals>, categories: List<&2, R.Totals>, buckets: List<&2, R.Bucket>, findings: List<&2, R.Issue>}
+
+type Summaries is Data:
+  Summaries{day: Overview, week: Overview}
+
 def key(+left: String,right: String) -> String:
   String.concat([Nat.show(String.length(left)),":",left,right])
 
@@ -63,7 +72,7 @@ def entity(item: S.Evidence) -> String:
       +action = Bool.or(String.eq(kind,"github_actions_job"),String.eq(kind,"github_actions_attempt"))
       key(source,key(kind,Bool.pick(String,action,key(repo,key(run,key(attempt,job))),id)))
 
-def index(items: List<&2, S.Evidence>, +limit: Nat, +table: Map<&2, Receipt>) -> Map<&2, Receipt>:
+def index(items: List<&2, S.Evidence>, +limit: Nat, +observed: Nat, +table: Map<&2, Receipt>) -> Map<&2, Receipt>:
   match items:
     case []: table
     case +item <> rest:
@@ -71,8 +80,8 @@ def index(items: List<&2, S.Evidence>, +limit: Nat, +table: Map<&2, Receipt>) ->
         case S.Evidence{source,+kind,+id,_,_,_,_,_,stamp,seen,revision,_,_,_,_,_,_,_}:
           +identity = entity(item)
           +valid = Bool.and(Bool.not(Bool.or(String.is_empty(id),String.is_empty(kind))),
-            Bool.and(Nat.is_le(stamp,limit),Nat.is_le(seen,limit)))
-          index(rest,limit,Bool.pick(Map<&2,Receipt>,valid,
+            Bool.and(Nat.is_le(stamp,limit),Nat.is_le(seen,observed)))
+          index(rest,limit,observed,Bool.pick(Map<&2,Receipt>,valid,
             update(Map.get(Receipt,Missing{},table,identity),identity,item,revision),table))
 
 type Indexed is Data:
@@ -202,9 +211,9 @@ def lookup_selected(result: Indexed, wanted: String) -> RunLookup:
     case Indexed{rows,0n}: exact_run(classifiers(rows,"run"),wanted)
     case _: lookup_gap("conflicting_run")
 
-def lookup(rows: List<&2,S.Evidence>, limit: Nat, wanted: String, partial: Bool) -> RunLookup:
+def lookup(rows: List<&2,S.Evidence>, +limit: Nat, wanted: String, partial: Bool) -> RunLookup:
   Bool.pick(RunLookup,partial,lookup_gap("unreadable_run"),
-    lookup_selected(selected(Map.values(&2,Receipt,index(rows,limit,Map.new(&2,Receipt))),[],0n),wanted))
+    lookup_selected(selected(Map.values(&2,Receipt,index(rows,limit,limit,Map.new(&2,Receipt))),[],0n),wanted))
 
 def coverage_status(mark: Watermark) -> String:
   match mark:
@@ -240,4 +249,16 @@ def analyzed(indexed: Indexed, range: String, to: Nat, partial: Bool, operation:
       report(watermark(rows,"t3_coverage",Watermark{0n,0n,0n,"No T3 capture checkpoint"}),rows,conflicts,range,to,partial,operation)
 
 def activity(records: List<&2, S.Evidence>, range: String, +to: Nat, +partial: Bool, operation: String) -> Activity:
-  analyzed(selected(Map.values(&2,Receipt,index(records,to,Map.new(&2,Receipt))),[],0n),range,to,partial,operation)
+  analyzed(selected(Map.values(&2,Receipt,index(records,to,to,Map.new(&2,Receipt))),[],0n),range,to,partial,operation)
+
+def overview(result: Activity) -> Overview:
+  match result:
+    case Activity{from,cutoff,oldest,t3,codex,ci,outcome,partial,unknown,conflicts,_,_,_,totals,categories,buckets,findings}:
+      Overview{from,cutoff,oldest,t3,codex,ci,outcome,partial,unknown,conflicts,totals,categories,buckets,findings}
+
+def summaries(records: List<&2,S.Evidence>, +to: Nat, observed: Nat, +partial: Bool) -> Summaries:
+  +input = selected(Map.values(&2,Receipt,index(records,to,observed,Map.new(&2,Receipt))),[],0n)
+  Summaries{overview(analyzed(input,"24h",to,partial,"all")),overview(analyzed(input,"7d",to,partial,"all"))}
+
+def activity_summary(items: List<&2,Summary.Snapshot>, period: String, to: Nat, partial: Bool) -> Summary.Selection:
+  Summary.select(items,period,to,partial)

@@ -2,13 +2,18 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -491,5 +496,387 @@ func TestActivityContinuationKeepsPrefixAfterReadDeadline(t *testing.T) {
 	got := ds.loki.readActivityShard(ctx, read, 0, activityShardBytes, &pages)
 	if requests.Load() != 2 || got.failure != nil || got.gaps != activityReadDeadline || len(got.lines) != activityPageLimit-1 {
 		t.Fatalf("deadline returned %d rows with gaps %v and error %v after %d requests", len(got.lines), got.gaps, got.failure, requests.Load())
+	}
+
+}
+
+func TestActivitySummaryWire(t *testing.T) {
+	t.Setenv("PLOW_ACTIVITY_SUMMARIES", "1")
+	policy := writePolicy(t, `case "$(cat)" in
+		*'"revision":"ababab'*) printf '%s' '{"index":1,"status":"Stale","partial":false}';;
+		*) exit 2;;
+	esac`)
+	cutoff := time.Now().UTC().Truncate(time.Minute).Add(-time.Minute)
+	var reads atomic.Int64
+	var fail atomic.Bool
+	ds := newFixtureDatasource(t, policy, func(w http.ResponseWriter, r *http.Request) {
+		reads.Add(1)
+		if r.Method != "GET" || r.Header.Get("X-Scope-OrgID") != "plow-activity" ||
+			r.Header.Get("Authorization") != "Bearer synthetic-token" || r.URL.Path != "/proxy/loki/api/v1/query_range" ||
+			r.URL.Query().Get("query") != `{plow_source="activity_summary",period="24h"}` ||
+			r.URL.Query().Get("direction") != "backward" || r.URL.Query().Get("limit") != strconv.Itoa(summaryEntryLimit) {
+			t.Error("Overview used an unexpected source request")
+		}
+		if fail.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		summary := summaryFixture(cutoff, cutoff, cutoff.Add(-time.Hour), "ab")
+		writeSummaryFixture(t, w, summaryEntry{cutoff.Add(time.Microsecond), summary})
+	})
+	for _, view := range []string{"breakdown", "share", "findings", "coverage"} {
+		result := ds.activity(context.Background(), cutoff.Add(5*time.Second), view, "24h", "all")
+		if result.Error != nil || len(result.Frames) == 0 || len(result.Frames[0].Meta.Notices) == 0 {
+			t.Fatalf("%s: expected frames with stale notice: %+v", view, result)
+		}
+		switch view {
+		case "share":
+			assertCell(t, result.Frames[0], 1, 0, (*float64)(nil))
+		case "findings":
+			assertCell(t, result.Frames[0], 3, 0, (*int64)(nil))
+		case "coverage":
+			assertCell(t, result.Frames[0], 1, 0, "Stale · Partial")
+			assertCell(t, result.Frames[0], 2, 0, &cutoff)
+			assertCell(t, result.Frames[0], 2, 2, timeField(cutoff.Add(-time.Hour).UnixMilli()))
+		}
+	}
+	if reads.Load() != 1 {
+		t.Fatalf("matching Overview panels used %d Loki requests", reads.Load())
+	}
+	fail.Store(true)
+	assertFailure(t, ds.activity(context.Background(), cutoff.Add(time.Minute), "coverage", "24h", "all"), backend.StatusBadGateway, "Loki returned HTTP 503")
+	if reads.Load() != 2 {
+		t.Fatalf("failed Overview query retried another source: %d requests", reads.Load())
+	}
+}
+
+func TestCompiledActivitySummarySelection(t *testing.T) {
+	policy := os.Getenv("PLOW_TEST_POLICY_COMMAND")
+	if policy == "" {
+		t.Skip("set PLOW_TEST_POLICY_COMMAND to exercise the compiled Activity policy")
+	}
+	cutoff := time.Now().UTC().Truncate(time.Minute).Add(-2 * time.Minute)
+	published := cutoff.Add(10 * time.Second)
+	corrected := published.Add(time.Minute)
+	ds := newFixtureDatasource(t, policy, func(w http.ResponseWriter, _ *http.Request) {
+		future := corrected.Add(time.Second)
+		writeSummaryFixture(t, w,
+			summaryEntry{future, summaryFixture(cutoff.Add(time.Minute), future, cutoff, "cd")},
+			summaryEntry{corrected, summaryFixture(cutoff, corrected, cutoff, "ef")},
+			summaryEntry{published, summaryFixture(cutoff, published, cutoff.Add(-time.Hour), "ab")})
+	})
+	ds.summaries = &activitySummaries{loki: ds.loki, gate: make(chan struct{}, 1), cache: make(map[string]activitySummaryCache)}
+	result := ds.activity(context.Background(), cutoff, "coverage", "24h", "all")
+	if result.Error != nil {
+		t.Fatal(result.Error)
+	}
+	custom := result.Frames[0].Meta.Custom.(map[string]any)
+	if custom["revision"] != strings.Repeat("ef", 32) || custom["status"] != "Fresh" {
+		t.Fatalf("expected corrected same-cutoff snapshot, got %v", custom)
+	}
+	result = ds.activity(context.Background(), cutoff.Add(-time.Minute), "coverage", "24h", "all")
+	if result.Error != nil {
+		t.Fatal(result.Error)
+	}
+	assertCell(t, result.Frames[0], 1, 0, "Snapshot missing. Refresh to retry.")
+}
+
+func summaryFixture(cutoff, published, watermark time.Time, revision string) string {
+	return fmt.Sprintf(`{"version":1,"period":"24h","cutoffMs":%d,"publishedMs":%d,"revision":%q,"report":{
+		"cutoff":%d,"t3Coverage":"fixture","codexCoverage":"fixture","ciCoverage":"fixture","outcomeCoverage":"fixture",
+		"partial":true,"categories":[],"totals":[],"buckets":[{"time":%d,"share":null}],
+		"findings":[{"kind":"Fixture","occurrences":1,"measured":0,"ms":null}],"padding":%q}}`,
+		cutoff.UnixMilli(), published.UnixMilli(), strings.Repeat(revision, 32), watermark.UnixMilli(), watermark.UnixMilli(), strings.Repeat("a", 17<<10))
+}
+
+type summaryEntry struct {
+	published time.Time
+	line      string
+}
+
+func writeSummaryFixture(t *testing.T, w http.ResponseWriter, entries ...summaryEntry) {
+	t.Helper()
+	values := make([][]string, 0, len(entries))
+	for _, entry := range entries {
+		values = append(values, []string{strconv.FormatInt(entry.published.UnixNano(), 10), entry.line})
+	}
+	stream := map[string]any{"stream": map[string]string{"plow_source": activitySummarySource, "period": "24h"}, "values": values}
+	if err := json.NewEncoder(w).Encode(map[string]any{"status": "success",
+		"data": map[string]any{"resultType": "streams", "result": []any{stream}}}); err != nil {
+		t.Error(err)
+	}
+}
+
+type retainedRow struct {
+	at   int64
+	kind string
+	line string
+}
+
+func TestActivityRefresh(t *testing.T) {
+	policy := os.Getenv("PLOW_TEST_POLICY_COMMAND")
+	if policy == "" {
+		t.Skip("set PLOW_TEST_POLICY_COMMAND to the compiled Bend2 CLI wrapper")
+	}
+	cutoff := time.Now().UTC().Truncate(time.Minute).Add(-2 * time.Minute)
+	at := cutoff.UnixMilli()
+	oldest := cutoff.Add(-7 * activityDay).UnixMilli()
+	watermark := cutoff.Add(-time.Hour).UnixMilli()
+	seen := at - 1
+	retained := make(map[string][]retainedRow)
+	add := func(source, kind string, stamp int64, fields string) {
+		line := fmt.Sprintf(`{"kind":%q,"timestampMs":%d,%s}`, kind, stamp, fields)
+		retained[source] = append(retained[source], retainedRow{stamp * int64(time.Millisecond), kind, line})
+	}
+
+	for lane := range 120 {
+		start := at - int64(7+lane)*time.Hour.Milliseconds()
+		thread := fmt.Sprintf("retained-thread-%03d", lane/2)
+		end := start + 20_000
+		add("t3_history", "t3_activity_run", end, fmt.Sprintf(
+			`"eventId":"run-%d","revisionMs":%d,"observedMs":%d,"run":{"id":"run-%d","threadId":%q,"sessionId":"bound-%d","requestedMs":%d,"startedMs":%d,"completedMs":%d}`,
+			lane, end, seen, lane, thread, lane, start-1_000, start, end))
+		for operation := range 180 {
+			clock := start + 100*int64(operation)
+			add("t3_history", "operation", clock+180, fmt.Sprintf(
+				`"eventId":"op-%d-%d","threadId":%q,"t3RunId":"run-%d","operation":"command_execution","startedMs":%d,"completedMs":%d,"observedMs":%d`,
+				lane, operation, thread, lane, clock, clock+180, seen))
+		}
+	}
+	add("t3_history", "t3_coverage", seen, fmt.Sprintf(
+		`"eventId":"t3-checkpoint","status":"idle","cutoffMs":%d,"oldestSourceMs":%d,"observedMs":%d`, watermark, oldest, seen))
+	add("codex_history", "codex_coverage", seen, `"eventId":"codex-checkpoint","status":"working"`)
+	start := cutoff.Add(-3 * time.Hour).UnixMilli()
+	add("t3_history", "t3_activity_run", start+60_000, fmt.Sprintf(
+		`"eventId":"unknown-run","observedMs":%d,"run":{"id":"unknown-run","threadId":"missing-clock","requestedMs":%d,"startedMs":null,"completedMs":%d}`,
+		seen, start, start+60_000))
+	add("t3_history", "t3_pr_link", start, `"eventId":"pr-link","threadId":"retained-thread-000","repository":"sample/project","prNumber":"42"`)
+	ci := fmt.Sprintf(`"repository":"sample/project","runId":4,"attempt":2,"headSha":%q,"observedMs":%d`, strings.Repeat("a", 40), seen)
+	add("github_history", "github_actions_attempt", start, ci+fmt.Sprintf(
+		`,"eventId":"attempt","prNumber":"42","createdMs":%d,"startedMs":%d,"completedMs":%d`, start-2000, start-1000, start))
+	add("github_history", "github_actions_job", start, ci+fmt.Sprintf(
+		`,"eventId":"job","jobId":5,"executionStartedMs":%d,"executionCompletedMs":%d,"conclusion":"failure"`, start-900, start))
+	retained["github_history"] = append(retained["github_history"], retained["github_history"][1])
+
+	late := retainedRow{start * int64(time.Millisecond), "confirmed_delay", fmt.Sprintf(
+		`{"kind":"confirmed_delay","eventId":"late-delay","timestampMs":%d,"observedMs":%d,"startedMs":%d,"completedMs":%d}`,
+		start, at+1, start-789, start)}
+	var mode atomic.Int32
+	var cappedPages atomic.Int32
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/read/loki/api/v1/query_range" ||
+			r.Header.Get("X-Scope-OrgID") != "fixture" || r.Header.Get("Authorization") != "Bearer fixture-reader" {
+			t.Errorf("unexpected source request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		stage := mode.Load()
+		if stage == 3 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		params := r.URL.Query()
+		query := params.Get("query")
+		_, rest, _ := strings.Cut(query, `plow_source="`)
+		source, _, _ := strings.Cut(rest, `"`)
+		from, _ := strconv.ParseInt(params.Get("start"), 10, 64)
+		end, _ := strconv.ParseInt(params.Get("end"), 10, 64)
+		limit, _ := strconv.Atoi(params.Get("limit"))
+		if end > cutoff.UnixNano()+1 || from < cutoff.Add(-8*activityDay).UnixNano() ||
+			limit < 1 || limit > activityPageLimit || !strings.Contains(query, " | drop plow_kind") {
+			t.Errorf("unexpected read bounds: %s", params.Encode())
+		}
+		rows := retained[source]
+		if stage == 1 && source == "t3_history" {
+			rows = append(slices.Clone(rows), late, late)
+		}
+		var matches []retainedRow
+		for _, row := range rows {
+			if row.at >= from && row.at < end && strings.Contains(query, row.kind) {
+				matches = append(matches, row)
+			}
+		}
+		sort.SliceStable(matches, func(i, j int) bool { return matches[i].at < matches[j].at })
+		if params.Get("direction") == "backward" {
+			slices.Reverse(matches)
+		}
+		if len(matches) >= limit {
+			cappedPages.Add(1)
+			matches = matches[:limit]
+		}
+		values := make([][2]string, 0, len(matches))
+		for _, row := range matches {
+			values = append(values, [2]string{strconv.FormatInt(row.at, 10), row.line})
+		}
+		reply := map[string]any{"status": "success", "data": map[string]any{
+			"resultType": "streams", "result": []any{map[string]any{
+				"stream": map[string]string{"plow_source": source}, "values": values,
+			}},
+		}}
+		if stage == 2 && strings.Contains(query, "codex_coverage") {
+			reply["warnings"] = []string{"synthetic bounded-read gap"}
+		}
+		if err := json.NewEncoder(w).Encode(reply); err != nil {
+			t.Error(err)
+		}
+	}))
+	defer source.Close()
+
+	writes := make(chan summaryEnvelope, 16)
+	sink := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/write/loki/api/v1/push" ||
+			r.Header.Get("X-Scope-OrgID") != "plow-activity" || r.Header.Get("Authorization") != "Bearer fixture-writer" ||
+			r.Header.Get("Content-Type") != "application/json" {
+			t.Errorf("unexpected sink request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		var payload struct {
+			Streams []struct {
+				Stream map[string]string
+				Values [][2]string
+			}
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || len(payload.Streams) != 1 || len(payload.Streams[0].Values) != 1 {
+			t.Errorf("invalid atomic push: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		stream := payload.Streams[0]
+		value := stream.Values[0]
+		var got summaryEnvelope
+		publishedNS, clockErr := strconv.ParseInt(value[0], 10, 64)
+		clock := time.Unix(0, publishedNS).UnixMilli()
+		if err := json.Unmarshal([]byte(value[1]), &got); err != nil || clockErr != nil ||
+			clock != got.PublishedMS || clock <= at || got.CutoffMS != at || got.Version != 1 || len(value[1]) > 128<<10 {
+			t.Errorf("invalid summary envelope: %v", err)
+		}
+		stable, _ := json.Marshal(got.summaryContent)
+		if got.Revision != fmt.Sprintf("%x", sha256.Sum256(stable)) ||
+			!reflect.DeepEqual(stream.Stream, map[string]string{"plow_source": "activity_summary", "period": got.Period}) {
+			t.Error("incorrect content hash or stream labels")
+		}
+		if mode.Load() == 4 && got.Period == "7d" {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		t.Logf("published %s envelope, %d bytes", got.Period, len(value[1]))
+		writes <- got
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer sink.Close()
+
+	t.Setenv("PLOW_POLICY_COMMAND", policy)
+	t.Setenv("PLOW_ACTIVITY_SOURCE_URL", source.URL+"/read")
+	t.Setenv("PLOW_ACTIVITY_SOURCE_TOKEN", "fixture-reader")
+	t.Setenv("PLOW_ACTIVITY_SOURCE_TENANT", "fixture")
+	t.Setenv("PLOW_ACTIVITY_SINK_URL", sink.URL+"/write")
+	t.Setenv("PLOW_ACTIVITY_SINK_TOKEN", "fixture-writer")
+	refresh := func(stage int32, want int, failure string) map[string]summaryEnvelope {
+		t.Helper()
+		mode.Store(stage)
+		args := []string{"--cutoff-ms", strconv.FormatInt(at, 10)}
+		started := time.Now()
+		var err error
+		if binary := os.Getenv("PLOW_TEST_REFRESH_BINARY"); binary != "" {
+			out, childErr := exec.Command(binary, args...).CombinedOutput()
+			if childErr != nil {
+				err = fmt.Errorf("%w: %s", childErr, out)
+			}
+		} else {
+			err = runActivityRefresh(args)
+		}
+		if failure == "" && err != nil || failure != "" && (err == nil || !strings.Contains(err.Error(), failure)) {
+			t.Fatalf("refresh stage %d, expected failure %q, got %v", stage, failure, err)
+		}
+		t.Logf("refresh stage %d took %s", stage, time.Since(started).Round(time.Millisecond))
+		if len(writes) != want {
+			t.Fatalf("expected %d accepted writes, got %d", want, len(writes))
+		}
+		results := make(map[string]summaryEnvelope, want)
+		for range want {
+			report := <-writes
+			results[report.Period] = report
+		}
+		return results
+	}
+
+	initial := refresh(0, 2, "")
+	reader, err := refreshLokiClient("PLOW_ACTIVITY_SOURCE", "query_range", "fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ds := &datasource{loki: reader, policy: policy}
+	for _, period := range []string{"24h", "7d"} {
+		started := time.Now()
+		ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
+		raw, failure := ds.loadActivityReport(ctx, activityKey{cutoff, period, "all"})
+		cancel()
+		if failure != nil {
+			t.Fatal(failure.Error)
+		}
+		t.Logf("raw %s report took %s", period, time.Since(started).Round(time.Millisecond))
+		if len(raw.Threads) == 0 || len(raw.Links) == 0 || len(raw.CI) != 2 ||
+			raw.Cutoff != watermark || raw.Oldest != oldest || raw.UnknownRuns != 1 || raw.Partial ||
+			!strings.Contains(string(initial[period].Report), `"share":null`) {
+			t.Fatalf("insufficient fixture coverage for %s", period)
+		}
+		if !slices.ContainsFunc(raw.Findings, func(finding struct {
+			Kind        string
+			Occurrences int64
+			Measured    int64
+			MS          *int64
+			Next        string
+		}) bool {
+			return finding.Kind == "CI failures" && finding.Occurrences == 1 && finding.MS != nil && *finding.MS == 900
+		}) {
+			t.Fatalf("missing exact deduplicated CI finding for %s", period)
+		}
+		var overview activityOutput
+		if err := json.Unmarshal(initial[period].Report, &overview); err != nil {
+			t.Fatal(err)
+		}
+		raw.Threads, raw.Links, raw.CI = nil, nil, nil
+		if !reflect.DeepEqual(raw, overview) {
+			t.Fatalf("summary differs from raw Activity overview for %s", period)
+		}
+	}
+	if cappedPages.Load() == 0 {
+		t.Fatal("fixture did not exercise bounded Loki page splitting")
+	}
+
+	revised := refresh(1, 2, "")
+	replay := refresh(1, 2, "")
+	partial := refresh(2, 2, "")
+	refresh(3, 0, "Loki returned HTTP 503")
+	refresh(4, 1, "refresh 7d: Loki push returned HTTP 503")
+	t.Setenv("PLOW_POLICY_COMMAND", t.TempDir()+"/missing-policy")
+	refresh(0, 0, "Policy executable failed")
+
+	for _, period := range []string{"24h", "7d"} {
+		next, again := revised[period], replay[period]
+		if next.Revision == initial[period].Revision || next.Revision != again.Revision ||
+			next.PublishedMS <= initial[period].PublishedMS || again.PublishedMS <= next.PublishedMS ||
+			!strings.Contains(string(next.Report), `"ms":789`) || !reflect.DeepEqual(next.Report, again.Report) {
+			t.Fatalf("late backfill or replay lost revision semantics for %s", period)
+		}
+		if !strings.Contains(string(partial[period].Report), `"partial":true`) ||
+			!strings.Contains(string(partial[period].Report), `"t3Coverage":"idle"`) ||
+			!strings.Contains(string(partial[period].Report), `"codexCoverage":"working"`) {
+			t.Fatalf("partial result lost coverage for %s", period)
+		}
+	}
+}
+
+func TestActivityRefreshRejectsOversizedOrInvalidResult(t *testing.T) {
+	report := `{"from":1,"cutoff":0,"oldest":0,"t3Coverage":"%s","codexCoverage":"","ciCoverage":"","outcomeCoverage":"","partial":false,"unknownRuns":0,"conflicts":0,"totals":[],"categories":[],"buckets":[],"findings":[]}`
+	for _, tc := range []struct{ body, want string }{
+		{"{}", "invalid Activity overview"},
+		{fmt.Sprintf(report, strings.Repeat("x", 128<<10)), "exceeds 128 KiB"},
+	} {
+		err := pushSummary(context.Background(), lokiClient{}, summaryContent{"24h", 60_000, json.RawMessage(tc.body)}, time.Now())
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("expected %q, got %v", tc.want, err)
+		}
 	}
 }
