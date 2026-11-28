@@ -164,6 +164,35 @@
                   "value": "ms"
                 },
                 {
+                  "id": "custom.cellOptions",
+                  "value": {
+                    "type": "color-background",
+                    "mode": "basic"
+                  }
+                },
+                {
+                  "id": "color",
+                  "value": {
+                    "mode": "fixed",
+                    "fixedColor": "#FFF4DF"
+                  }
+                },
+                {
+                  "id": "mappings",
+                  "value": [
+                    {
+                      "type": "special",
+                      "options": {
+                        "match": "null",
+                        "result": {
+                          "text": "Unknown",
+                          "color": "#392820"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
                   "id": "noValue",
                   "value": "Unknown"
                 }
@@ -178,6 +207,20 @@
                 {
                   "id": "displayName",
                   "value": "Finding"
+                },
+                {
+                  "id": "custom.cellOptions",
+                  "value": {
+                    "type": "color-background",
+                    "mode": "basic"
+                  }
+                },
+                {
+                  "id": "color",
+                  "value": {
+                    "mode": "fixed",
+                    "fixedColor": "#392820"
+                  }
                 },
                 {
                   "id": "mappings",
@@ -204,7 +247,7 @@
                           "text": "Invalid event"
                         },
                         "conflicting_event_id": {
-                          "text": "Conflicts for one event ID"
+                          "text": "Conflicting records for one event ID"
                         }
                       }
                     }
@@ -275,16 +318,25 @@
                   "value": "Source read"
                 },
                 {
+                  "id": "custom.cellOptions",
+                  "value": {
+                    "type": "color-background",
+                    "mode": "basic"
+                  }
+                },
+                {
                   "id": "mappings",
                   "value": [
                     {
                       "type": "value",
                       "options": {
                         "true": {
-                          "text": "Complete"
+                          "text": "Complete",
+                          "color": "#FFF4DF"
                         },
                         "false": {
-                          "text": "Partial"
+                          "text": "Partial",
+                          "color": "#392820"
                         }
                       }
                     }
@@ -341,6 +393,12 @@
                 "fixed": "#392820"
               }
             },
+            "border": {
+              "color": {
+                "fixed": "#6A934F"
+              },
+              "width": 2
+            },
             "elements": [
               {
                 "name": "Plow wordmark",
@@ -363,25 +421,6 @@
                 }
               },
               {
-                "name": "Meadow divider",
-                "type": "rectangle",
-                "constraint": {
-                  "horizontal": "left",
-                  "vertical": "center"
-                },
-                "placement": {
-                  "left": 156,
-                  "top": 0,
-                  "width": 10,
-                  "height": 32
-                },
-                "background": {
-                  "color": {
-                    "fixed": "#6A934F"
-                  }
-                }
-              },
-              {
                 "name": "Run evidence",
                 "type": "text",
                 "constraint": {
@@ -389,10 +428,10 @@
                   "vertical": "center"
                 },
                 "placement": {
-                  "left": 180,
+                  "left": 156,
                   "right": 24,
-                  "top": 12,
-                  "height": 24
+                  "top": 0,
+                  "height": 28
                 },
                 "config": {
                   "text": {
@@ -402,31 +441,6 @@
                     "fixed": "#FFF4DF"
                   },
                   "size": 18,
-                  "align": "left",
-                  "valign": "middle"
-                }
-              },
-              {
-                "name": "Fixture provenance",
-                "type": "text",
-                "constraint": {
-                  "horizontal": "leftright",
-                  "vertical": "center"
-                },
-                "placement": {
-                  "left": 180,
-                  "right": 24,
-                  "top": -12,
-                  "height": 24
-                },
-                "config": {
-                  "text": {
-                    "fixed": "Source times in UTC"
-                  },
-                  "color": {
-                    "fixed": "#FFF4DF"
-                  },
-                  "size": 13,
                   "align": "left",
                   "valign": "middle"
                 }
@@ -588,7 +602,7 @@
                 },
                 "config": {
                   "text": {
-                    "fixed": "Thread time and linked CI \u00b7 UTC"
+                    "fixed": "Thread time and linked CI · UTC"
                   },
                   "color": {
                     "fixed": "#FFF4DF"
@@ -1069,7 +1083,7 @@
                 },
                 {
                   "id": "noValue",
-                  "value": "\u2014"
+                  "value": "—"
                 },
                 {
                   "id": "custom.width",
@@ -1089,7 +1103,7 @@
                 },
                 {
                   "id": "noValue",
-                  "value": "\u2014"
+                  "value": "—"
                 },
                 {
                   "id": "custom.width",
@@ -1113,7 +1127,7 @@
                 },
                 {
                   "id": "noValue",
-                  "value": "\u2014"
+                  "value": "—"
                 }
               ]
             },
@@ -1133,7 +1147,7 @@
                 },
                 {
                   "id": "noValue",
-                  "value": "\u2014"
+                  "value": "—"
                 }
               ]
             },
@@ -1153,7 +1167,7 @@
                 },
                 {
                   "id": "noValue",
-                  "value": "\u2014"
+                  "value": "—"
                 }
               ]
             },
@@ -1173,7 +1187,7 @@
                 },
                 {
                   "id": "noValue",
-                  "value": "\u2014"
+                  "value": "—"
                 }
               ]
             }
