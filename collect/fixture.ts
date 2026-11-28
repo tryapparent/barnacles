@@ -325,3 +325,12 @@ if (import.meta.main && process.argv[2] === "--capture") {
   writeFileSync(join(spool, "codex.jsonl"), events.join("\n") + "\n", { flag: "wx", mode: 0o600 });
   writeFileSync(join(spool, "t3.jsonl"), run + "\n", { flag: "wx", mode: 0o600 });
 }
+
+
+export function array(input: unknown, cap: number) {
+  if (!Array.isArray(input) || input.length > cap) throw Error("bounded_inventory");
+  return input.map(value => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw Error("Invalid source row");
+    return value as Record<string, unknown>;
+  });
+}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os/exec"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ type runRecord struct {
 	ID          string `json:"id"`
 	ThreadID    string `json:"threadId"`
 	SessionID   string `json:"sessionId"`
+	TurnID      string `json:"codexTurnId,omitempty"`
 	StartedMS   *int64 `json:"startedMs"`
 	CompletedMS *int64 `json:"completedMs"`
 }
@@ -349,4 +351,76 @@ func renderTimeline(lanes []activityLane) data.Frames {
 		frames = append(frames, frame)
 	}
 	return frames
+}
+
+type traceLink struct {
+	ID    string
+	Start int64
+	End   int64
+	Gap   string
+}
+
+func (ds *datasource) runTrace(ctx context.Context, window backend.TimeRange, id string, history bool) backend.DataResponse {
+	if !history {
+		return traceFrame(traceLink{}, "No exact Codex turn was recorded for this run")
+	}
+	run, gap, failure := ds.readHistoryRun(ctx, window, id, "traceBinding")
+	if failure != nil {
+		return traceFrame(traceLink{}, "T3 run evidence is unavailable")
+	}
+	if gap != "" {
+		return traceFrame(traceLink{}, gap)
+	}
+	if !nativeUUID.MatchString(run.SessionID) || !nativeUUID.MatchString(run.TurnID) {
+		return traceFrame(traceLink{}, "No exact Codex turn was recorded for this run")
+	}
+
+	now := time.Now().UTC().Truncate(time.Second).Add(time.Second)
+	middle := now.Add(-maxRange)
+	oldest := middle.Add(-maxRange)
+	if ds.tempo == nil || time.UnixMilli(*run.StartedMS).Before(oldest) {
+		return traceFrame(traceLink{}, "The retained Tempo search cannot cover this run")
+	}
+	recent, recentComplete := ds.tempoSearch(ctx, middle, now, run)
+	var older []tempoMatch
+	var olderComplete bool
+	if recentComplete {
+		older, olderComplete = ds.tempoSearch(ctx, oldest, middle, run)
+	}
+	matches := append(make([]tempoMatch, 0, len(recent)+len(older)), recent...)
+	raw, failure := runPolicy(ctx, ds.policy, map[string]any{
+		"view": "exactTrace", "session": run.SessionID, "turn": run.TurnID,
+		"matches": append(matches, older...), "complete": recentComplete && olderComplete,
+	})
+	var trace traceLink
+	if failure != nil || json.Unmarshal(raw, &trace) != nil {
+		return traceFrame(traceLink{}, "Trace verification is unavailable")
+	}
+	switch trace.Gap {
+	case "missing":
+		return traceFrame(traceLink{}, "Tempo has no retained trace for this Codex turn")
+	case "ambiguous":
+		return traceFrame(traceLink{}, "Tempo has conflicting traces or clocks for this Codex turn")
+	case "incomplete":
+		return traceFrame(traceLink{}, "Tempo could not complete the search. Refresh to retry")
+	}
+	if trace.Gap != "" || !nativeTraceID.MatchString(trace.ID) || trace.Start <= 0 || trace.End <= trace.Start {
+		return traceFrame(traceLink{}, "Trace verification is unavailable")
+	}
+	return traceFrame(trace, "Matched the run’s exact Codex turn")
+}
+
+func traceFrame(trace traceLink, status string) backend.DataResponse {
+	label := "Unknown"
+	field := data.NewField("Trace", nil, []string{label})
+	if trace.ID != "" {
+		field.Set(0, "Open Codex trace")
+		field.Config = &data.FieldConfig{Links: []data.DataLink{{
+			Title: "Open Codex trace",
+			URL:   fmt.Sprintf("/d/plow-codex-trace/plow-codex-trace?var-traceId=%s&from=%d&to=%d", trace.ID, trace.Start, trace.End),
+		}}}
+	}
+	return backend.DataResponse{Frames: data.Frames{
+		data.NewFrame("trace", field, data.NewField("Evidence", nil, []string{status})),
+	}}
 }

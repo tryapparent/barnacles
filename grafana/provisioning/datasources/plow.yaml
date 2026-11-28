@@ -8,3 +8,4 @@ datasources:
     jsonData:
       lokiUrl: http://loki:3100
       lokiTenant: plow-fixture
+      tempoUrl: http://tempo:3200

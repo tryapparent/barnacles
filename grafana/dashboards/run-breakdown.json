@@ -3,7 +3,7 @@
     "uid": "plow-run-breakdown",
     "title": "Plow historical runs",
     "schemaVersion": 41,
-    "version": 4,
+    "version": 5,
     "editable": false,
     "timezone": "utc",
     "time": {
@@ -361,6 +361,53 @@
                 {
                   "id": "custom.inspect",
                   "value": true
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "id": 3,
+        "type": "table",
+        "title": "Codex trace",
+        "gridPos": {
+          "x": 0,
+          "y": 11,
+          "w": 24,
+          "h": 4
+        },
+        "datasource": {
+          "type": "plow-agent-observability-datasource",
+          "uid": "plow-agent-observability"
+        },
+        "targets": [
+          {
+            "refId": "A",
+            "datasource": {
+              "type": "plow-agent-observability-datasource",
+              "uid": "plow-agent-observability"
+            },
+            "runId": "$runId",
+            "history": "$history",
+            "trace": true
+          }
+        ],
+        "options": {
+          "showHeader": false
+        },
+        "fieldConfig": {
+          "defaults": {},
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "Trace"
+              },
+              "properties": [
+                {
+                  "id": "custom.width",
+                  "value": 160
                 }
               ]
             }

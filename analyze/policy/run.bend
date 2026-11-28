@@ -180,3 +180,26 @@ def analyze(+run: Run, +events: List<&2, ToolEvent>) -> Report:
 
 def evidence_gap(events: Nat) -> String:
   Bool.pick(String,Nat.is_eq(events,0n),"missing_events","")
+
+type TraceMatch is Data:
+  TraceMatch{id: String, session: String, turn: String, start: Nat, end: Nat}
+
+type TraceLink is Data:
+  TraceLink{id: String, start: Nat, end: Nat, gap: String}
+
+def trace_candidates(+session: String,+turn: String,rows: List<&2,TraceMatch>,+prior: TraceLink) -> TraceLink:
+  match rows prior:
+    case [] _: prior
+    case _ TraceLink{"",_,_,"incomplete"}: prior
+    case TraceMatch{+id,owner,key,+a,+b} <> rest TraceLink{+prev,+x,+y,previous_gap}:
+      +valid = Bool.and(Bool.and(named(id),Nat.is_lt(0n,a)),Bool.and(Nat.is_lt(a,b),
+        Bool.and(String.eq(session,owner),String.eq(turn,key))))
+      +same = Bool.or(String.is_empty(prev),Bool.and(String.eq(id,prev),Bool.and(Nat.is_eq(a,x),Nat.is_eq(b,y))))
+      +next = Bool.pick(TraceLink,Bool.not(valid),TraceLink{"",0n,0n,"incomplete"},
+        Bool.pick(TraceLink,Bool.and(same,Bool.not(String.eq(previous_gap,"ambiguous"))),
+          TraceLink{id,a,b,""},TraceLink{"",0n,0n,"ambiguous"}))
+      trace_candidates(session,turn,rest,next)
+
+def trace(+session: String,+turn: String,complete: Bool,rows: List<&2,TraceMatch>) -> TraceLink:
+  Bool.pick(TraceLink,Bool.and(complete,Bool.and(named(session),named(turn))),
+    trace_candidates(session,turn,rows,TraceLink{"",0n,0n,"missing"}),TraceLink{"",0n,0n,"incomplete"})

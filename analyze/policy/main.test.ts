@@ -122,8 +122,8 @@ test("exact history selects a terminal revision and distinguishes missing eviden
     revisionMs: run.completedMs, run: { ...run, status: "completed" } };
   const running = { ...terminal, revisionMs: run.startedMs,
     run: { ...terminal.run, status: "running", completedMs: null } };
-  function lookup(rows: unknown[]) {
-    const result = execute({ view: "lookup", range: "24h", to: epoch + 20_000, runId: run.id,
+  function lookup(rows: unknown[], view = "lookup") {
+    const result = execute({ view, range: "24h", to: epoch + 20_000, runId: run.id,
       records: { t3_history: rows.map(row => JSON.stringify(row)) } });
     assert.equal(result.status, 0, result.stderr);
     return JSON.parse(result.stdout);
@@ -135,6 +135,10 @@ test("exact history selects a terminal revision and distinguishes missing eviden
   assert.equal(lookup([{ ...terminal, run: { ...terminal.run, sessionId: "" } }]).gap, "missing_binding");
   assert.equal(lookup([{ ...running, run: { ...running.run, status: "completed" } }]).gap, "missing_clocks");
   assert.equal(lookup([terminal, { ...terminal, run: { ...run, sessionId: "other" } }]).gap, "conflicting_run");
+  const bound = { ...terminal, run: { ...terminal.run, codexTurnId: "exact-turn" } };
+  assert.equal(lookup([bound, running, bound], "traceBinding").turn, "exact-turn");
+  assert.equal(lookup([bound, terminal], "traceBinding").gap, "conflicting_run");
+  assert.equal(lookup([terminal], "traceBinding").turn, "");
   const result = execute({ run, history: true, events: [event("outside", "tool", -1)] });
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(JSON.parse(result.stdout).coverage, { events: 0, paired: 0, unknown: 0, gap: "missing_events" });
@@ -225,4 +229,24 @@ test("Activity classifies operation history at backfill scale", () => {
   assert.deepEqual(report.threads[0].spans, [{ a: epoch, b: epoch + 20_000, n: "Command execution" }]);
   assert.deepEqual(report.totals[0], { category: "Provider", operation: "Command execution", ms: 2_400_000 });
   assert.equal(report.partial, false);
+});
+
+test("exact trace policy requires a complete read of one native trace with matching conversation and turn", () => {
+  const candidate = { id: "11111111111111111111111111111111", session: run.sessionId, turn: "native-turn",
+    start: epoch, end: epoch + 100 };
+  const scenarios = [
+    { matches: [candidate, candidate], complete: true, turn: candidate.turn, gap: "", id: candidate.id },
+    { matches: [], complete: true, turn: candidate.turn, gap: "missing", id: "" },
+    { matches: [candidate], complete: false, turn: candidate.turn, gap: "incomplete", id: "" },
+    { matches: [candidate], complete: true, turn: "", gap: "incomplete", id: "" },
+    { matches: [candidate, { ...candidate, session: "other" }], complete: true, turn: candidate.turn, gap: "incomplete", id: "" },
+    { matches: [candidate, { ...candidate, id: "22222222222222222222222222222222" }], complete: true, turn: candidate.turn, gap: "ambiguous", id: "" },
+  ];
+  for (const { matches, complete, turn, gap, id } of scenarios) {
+    const result = execute({ view: "exactTrace", session: run.sessionId, turn, complete, matches });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), {
+      id, gap, start: id ? candidate.start : 0, end: id ? candidate.end : 0,
+    });
+  }
 });

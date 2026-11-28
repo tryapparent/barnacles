@@ -16,13 +16,15 @@ Grafana’s native Tempo decoder emits zero rows for a batch with no resource at
 
 ## Activity and run links
 
-Link Activity to `/d/plow-codex-traces/plow-codex-traces` as **Codex traces**. A link from a run with a verified trace ID can open its exact waterfall. Use the trace’s UTC clock window in epoch milliseconds as `from` and `to`.
+Activity links to **Codex traces** for browsing and to **Run evidence** for individual runs. The **Codex trace** panel on Run evidence opens the native waterfall when Plow verifies one trace. The link carries the Tempo trace ID and its UTC clock window in epoch milliseconds.
 
 ```text
 /d/plow-codex-trace/plow-codex-trace?var-traceId=11111111111111111111111111111111&from=1748951940000&to=1748952060000
 ```
 
-When only conversation, turn or call identity is verified, keep the exact trace ID **Unknown**. An operator with Explore access can use that identity and its clock window to investigate, for example with `{ instrumentation:name = "plow.codex" && span.turn.id = "22222222-2222-2222-2222-222222222222" }`. A conversation can span multiple turns and traces. An exact link requires verified run-level identity, such as an explicit run-to-trace receipt, or a verified run-to-turn binding that maps to a unique native trace in Bend2. Matching timestamps or a session association alone does not establish that identity. A Viewer without a match can use the recent traces dashboard.
+T3’s bounded projection exposes the active attempt, the attempt’s original native session and the provider turn’s explicit reference back to that attempt. The Codex adapter records the native turn ID as strong. Plow requires one attempt and one root provider turn for a terminal run. It verifies the provider-thread identity and the original session against the strong Codex thread binding. The collector keeps only the verified native turn ID on the existing run record. [T3 orchestration contracts](https://github.com/pingdotgg/t3code/blob/e70368d582ac5c5d7d966a39eaf7e81d84aeb417/packages/contracts/src/orchestrationV2.ts) [T3 Codex adapter](https://github.com/pingdotgg/t3code/blob/e70368d582ac5c5d7d966a39eaf7e81d84aeb417/apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts#L2868-L2888)
+
+Tempo searches for both identities on the same `plow.codex` span. Two seven-day reads cover the tracked Tempo version’s default 14-day retention horizon. Bend2 accepts one distinct trace ID with agreeing clocks across complete search responses. A missing or stale T3 binding, competing attempts, conflicting run snapshots, multiple Tempo traces or an incomplete search shows **Unknown** with its reason. Old captures without a verified turn remain unknown until a newer eligible snapshot is observed. The displayed association describes retained evidence at query time. [Tempo 2.10.2 search and retention configuration](https://github.com/grafana/tempo/blob/v2.10.2/docs/sources/tempo/configuration/_index.md)
 
 ## Optional live fan-out
 

@@ -46,6 +46,13 @@ positions. Alloy removes the transport marker before sending to Loki. Exact
 replays retain their content identity, and event IDs and clocks stay
 independent of chunk identity.
 
+Continuous T3 capture adds `run.codexTurnId` when the bounded projection
+proves that a terminal run has one active attempt and one strong Codex root
+turn. The attempt’s original native session must agree with the strong
+provider-thread binding. The collector emits an empty value when this chain
+is missing, disagrees or exceeds its bounds. Existing run clocks and session
+bindings remain available for tool history. See [the trace lookup](../grafana/traces.md#activity-and-run-links).
+
 ### Replay previously staged history
 
 After deploying the new file reader, run the following from the pinned release
