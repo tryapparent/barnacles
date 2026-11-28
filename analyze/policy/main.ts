@@ -142,9 +142,14 @@ function evidence(source: string, value: unknown, traceBinding: boolean) {
 }
 
 async function activity(request: Record<string, unknown>, module: string) {
+  const { default: policy } = await import(pathToFileURL(module).href);
+  if (request.view === "operationQuery") {
+    process.stdout.write(JSON.stringify(policy.operation_query(nat(request.to))));
+    return;
+  }
   const records = object(request.records, "source records");
   let input: List<ReturnType<typeof evidence>> = { $: "Nil" };
-  let partial = request.partial === true;
+  let decodeGap = false;
   for (const [source, lines] of Object.entries(records)) {
     if (lines === null) continue;
     if (!Array.isArray(lines)) throw Error("Expected a bounded list of source records");
@@ -153,15 +158,17 @@ async function activity(request: Record<string, unknown>, module: string) {
         const head = evidence(source, JSON.parse(line), request.view === "traceBinding");
         input = { $: "Con", head, tail: input };
       } catch {
-        partial = true;
+        decodeGap = true;
       }
     }
   }
-  const { default: policy } = await import(pathToFileURL(module).href);
-  const report = request.view === "lookup" || request.view === "traceBinding"
+  const partial = request.partial === true || decodeGap;
+  const lookup = request.view === "lookup" || request.view === "traceBinding";
+  const report = lookup
     ? policy.lookup(input, nat(request.to), string(request, "runId"), partial)
     : policy.activity(input, string(request, "range"), nat(request.to), partial, string(request, "operation"));
-  process.stdout.write(JSON.stringify(report, (_key, value) => {
+  const result = lookup || !decodeGap ? report : { ...report, decodeGap };
+  process.stdout.write(JSON.stringify(result, (_key, value) => {
     if (_key === "turn" && request.view === "lookup") return undefined;
     if (typeof value === "bigint") return Number(value);
     if (value?.$ === "None") return null;

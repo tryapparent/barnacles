@@ -20,6 +20,20 @@ type Activity is Data:
     threads: List<&2, S.Thread>, links: List<&2, RunLink>, ci: List<&2, S.Thread>, totals: List<&2, R.Totals>, categories: List<&2, R.Totals>,
     buckets: List<&2, R.Bucket>, findings: List<&2, R.Issue>}
 
+def operation_query(limit: Nat) -> String:
+  +number : String = "(?:0|[1-9][0-9]{0,14})"
+  +nullable = String.concat(["(?:null|",number,")"])
+  String.concat([
+    " | drop plow_prefix, plow_seen, plow_suffix",
+    " | regexp `^(?P<plow_prefix>\\{\"kind\":\"operation\",\"eventId\":\"[A-Za-z0-9_:%-]+\",",
+    "\"threadId\":\"[A-Za-z0-9_:%-]+\",\"t3RunId\":\"[A-Za-z0-9_:%-]+\",",
+    "\"operation\":\"command_execution\",\"timestampMs\":",number,",\"revisionMs\":",number,"),",
+    "\"observedMs\":(?P<plow_seen>",number,")(?P<plow_suffix>,\"startedMs\":",nullable,
+    ",\"completedMs\":",nullable,"\\})$`",
+    " | plow_seen=\"\" or plow_seen <= ",Nat.show(limit),
+    " | line_format `{{ if .plow_seen }}{{.plow_prefix}}{{.plow_suffix}}{{ else }}{{ __line__ }}{{ end }}`",
+    " | drop plow_prefix, plow_seen, plow_suffix"])
+
 def key(+left: String,right: String) -> String:
   String.concat([Nat.show(String.length(left)),":",left,right])
 
@@ -206,7 +220,6 @@ def report(mark: Watermark, +rows: List<&2, S.Evidence>, conflicts: Nat, +range:
       +start = Nat.sub(end,Nat.mul(step,count))
       +runs = classifiers(rows,"run")
       +threads = List.sort(~S.Thread,~thread_before,prepare(Map.values(&2,Batch,batches(rows,Map.new(&2,Batch))),start,end))
-      +coverage = Bool.pick(String,partial,"Partial Loki read",status)
       +attempts = classifiers(rows,"github_actions_attempt")
       +ci = CI.join(List.concat(&2,S.Evidence,[attempts,classifiers(rows,"github_actions_job")]),
         List.concat(&2,S.Evidence,[classifiers(rows,"t3_ci_link"),classifiers(rows,"t3_pr_link")]),attempts)
@@ -216,7 +229,7 @@ def report(mark: Watermark, +rows: List<&2, S.Evidence>, conflicts: Nat, +range:
       +confirmed = classifiers(rows,"confirmed_delay")
       +codex = coverage_status(watermark(rows,"codex_coverage",Watermark{0n,0n,0n,"No Codex collection checkpoint"}))
       +totals = R.breakdown(threads)
-      Activity{start,cutoff,oldest,coverage,codex,
+      Activity{start,cutoff,oldest,status,codex,
         ci_status,"No confirmed outcome feed checkpoint",partial,clock_gaps(runs,start,end),conflicts,
         filter(threads,operation),run_links(runs,start,end),lanes,totals,R.categories(totals),R.series(count,threads,start,step),
         R.rank(List.concat(&2,S.Evidence,[runs,ci,confirmed]),start,end)}

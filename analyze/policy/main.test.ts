@@ -174,8 +174,8 @@ test("Activity clips and disjoins threads, preserves cross-thread time, and leav
   const newer = record("d", "t1", at(12), at(11.5), at(11));
   newer.revisionMs++;
   newer.observedMs = to + 1;
-  function activity(input: unknown[], range: string, operation = "all") {
-    const result = execute({ to, range, operation, records: {
+  function activity(input: unknown[], range: string, operation = "all", partial = false) {
+    const result = execute({ to, range, operation, partial, records: {
       t3_history: input.map(item => JSON.stringify(item)),
       github_history: [workflow, job, { ...job, eventId: "prior-job-a", observedMs: to - 1,
         executionStartedMs: at(13) }, { ...job, eventId: "job-b", jobId: 12, headSha: "b".repeat(40) }].map(item => JSON.stringify(item)),
@@ -202,6 +202,14 @@ test("Activity clips and disjoins threads, preserves cross-thread time, and leav
   assert.equal(days.length, 7);
   assert.equal(days[1].time - days[0].time, 24 * hour);
   assert.equal(activity([...input, ...input].reverse(), "24h"), output);
+  assert.deepEqual(JSON.parse(activity(input, "24h", "all", true)), { ...result, partial: true });
+  const malformed = execute({ to, view: "activity", range: "24h", operation: "all",
+    records: { t3_history: [JSON.stringify(rows.at(-1)), "!"] } });
+  assert.equal(malformed.status, 0, malformed.stderr);
+  const coverage = JSON.parse(malformed.stdout);
+  assert.equal(coverage.t3Coverage, "idle");
+  assert.equal(coverage.partial, true);
+  assert.equal(coverage.decodeGap, true);
 });
 
 test("Activity classifies operation history at backfill scale", () => {

@@ -32,27 +32,35 @@ const fixturePolicyOutput = `{"runId":"fixture-run","intervals":[{"callId":"pair
 func TestQueryDataFramesAndReplay(t *testing.T) {
 	t.Run("wire contract", func(t *testing.T) {
 		policyPath := writePolicy(t, "input=$(cat)\ncase \"$input\" in *'private fixture field'*) exit 7;; esac\nprintf '%s' '"+fixturePolicyOutput+"'")
-		assertQueryFrames(t, policyPath, false)
+		assertQueryFrames(t, policyPath, false, false)
 	})
 	t.Run("compiled Bend2 policy", func(t *testing.T) {
 		policyPath := os.Getenv("PLOW_TEST_POLICY_COMMAND")
 		if policyPath == "" {
 			t.Skip("set PLOW_TEST_POLICY_COMMAND to the absolute path of the Bend2 CLI wrapper")
 		}
-		assertQueryFrames(t, policyPath, true)
+		assertQueryFrames(t, policyPath, true, false)
+		assertQueryFrames(t, policyPath, true, true)
 	})
 }
 
-func assertQueryFrames(t *testing.T, policyPath string, replay bool) {
+func assertQueryFrames(t *testing.T, policyPath string, replay, history bool) {
 	t.Helper()
 	ds := newFixtureDatasource(t, policyPath, func(w http.ResponseWriter, r *http.Request) {
 		checkRequest(t, r)
 		switch r.URL.Query().Get("query") {
 		case `{plow_source="t3"} | json plow_kind="kind", plow_run_id="run.id" | plow_kind="t3_run" | plow_run_id="fixture-run"`:
-			if r.URL.Query().Get("limit") != "100" {
+			if history || r.URL.Query().Get("limit") != "100" {
 				t.Error("run lookup did not use configured cap")
 			}
 			lokiReply(t, w, "t3", []string{fixtureRun, fixtureRun}, nil)
+		case `{plow_source="t3_history"} | json plow_kind="kind", plow_run_id="run.id" | plow_kind="t3_activity_run" | plow_run_id="fixture-run"`:
+			if !history || r.URL.Query().Get("limit") != "2000" {
+				t.Error("history lookup did not use configured cap")
+			}
+			terminal := `{"kind":"t3_activity_run","eventId":"history-fixture","revisionMs":7000,"run":{"id":"fixture-run","threadId":"fixture-thread","sessionId":"fixture-session","status":"completed","startedMs":1000,"completedMs":7000}}`
+			prior := `{"kind":"t3_activity_run","eventId":"history-fixture","revisionMs":1000,"run":{"id":"fixture-run","threadId":"fixture-thread","status":"running","startedMs":1000}}`
+			lokiReply(t, w, "t3_history", []string{prior, terminal, terminal}, nil)
 		case `{plow_source="codex_history"} | json plow_session_id="sessionId" | plow_session_id="fixture-session"`:
 			if r.URL.Query().Get("limit") != "2000" {
 				t.Error("event lookup did not use configured cap")
@@ -68,7 +76,15 @@ func assertQueryFrames(t *testing.T, policyPath string, replay bool) {
 		}
 	})
 
-	result := queryFixture(t, ds)
+	query := fixtureQuery()
+	if history {
+		query.JSON = json.RawMessage(`{"runId":"fixture-run","history":"1"}`)
+	}
+	response, err := ds.QueryData(context.Background(), &backend.QueryDataRequest{Queries: []backend.DataQuery{query}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := response.Responses["A"]
 	if result.Error != nil {
 		t.Fatal(result.Error)
 	}
@@ -314,6 +330,7 @@ func TestActivityReadContracts(t *testing.T) {
 	var status atomic.Int64
 	var warned atomic.Bool
 	policy := writePolicy(t, `case "$(cat)" in
+		*'"view":"operationQuery"'*) printf '%s' '" | fixture_operation_projection"';;
 		*'"partial":true'*) printf '%s' '{"from":1,"partial":true}';;
 		*) printf '%s' '{"from":1}';;
 	esac`)
@@ -321,6 +338,10 @@ func TestActivityReadContracts(t *testing.T) {
 		requests.Add(1)
 		if r.Header.Get("X-Scope-OrgID") != "fixture-tenant" {
 			t.Error("wrong tenant")
+		}
+		expr := r.URL.Query().Get("query")
+		if strings.Contains(expr, "fixture_operation_projection") != strings.Contains(expr, "confirmed_delay") {
+			t.Error("operation projection applied outside Activity data slices")
 		}
 		if code := status.Load(); code != 0 {
 			w.WriteHeader(int(code))
@@ -338,7 +359,7 @@ func TestActivityReadContracts(t *testing.T) {
 	if result := query(cutoff, "timeline"); result.Error != nil || len(result.Frames) != 0 {
 		t.Fatalf("empty timeline: %v", result)
 	}
-	if result := query(cutoff, "coverage"); result.Error != nil || requests.Load() != int64(len(activityReads(cutoff))) {
+	if result := query(cutoff, "coverage"); result.Error != nil || requests.Load() != int64(len(activityReads(cutoff, ""))) {
 		t.Fatalf("matching views repeated source work: %d requests, %v", requests.Load(), result.Error)
 	}
 	warned.Store(true)
@@ -346,6 +367,129 @@ func TestActivityReadContracts(t *testing.T) {
 	if partial.Error != nil || partial.Frames[0].Meta == nil {
 		t.Fatalf("missing partial-read notice: %v", partial)
 	}
+	var notices []string
+	for _, notice := range partial.Frames[0].Meta.Notices {
+		notices = append(notices, notice.Text)
+	}
+	if !strings.Contains(strings.Join(notices, " "), "Loki warned about T3 history.") ||
+		strings.Contains(strings.Join(notices, " "), "fixture warning") {
+		t.Fatalf("expected a source-specific notice with sanitized text, got %v", notices)
+	}
 	status.Store(http.StatusGatewayTimeout)
 	assertFailure(t, query(cutoff.Add(2*time.Second), "coverage"), backend.StatusTimeout, "Loki query timed out")
+}
+
+func TestActivityReportsSliceAndSnapshotLimits(t *testing.T) {
+	cutoff := time.UnixMilli(1800000000000).UTC()
+	source := "t3_history"
+	policy := writePolicy(t, `case "$(cat)" in
+		*'"view":"operationQuery"'*) printf '%s' '" | fixture_operation_projection"';;
+		*) printf '%s' '{"from":1,"partial":true}';;
+	esac`)
+	ds := newFixtureDatasource(t, policy, func(w http.ResponseWriter, r *http.Request) {
+		params := r.URL.Query()
+		var values [][2]string
+		if strings.Contains(params.Get("query"), "t3_activity_run") {
+			start, _ := strconv.ParseInt(params.Get("start"), 10, 64)
+			end, _ := strconv.ParseInt(params.Get("end"), 10, 64)
+			limit, _ := strconv.Atoi(params.Get("limit"))
+			for clock := cutoff.Add(-8 * activityDay); clock.Before(cutoff); clock = clock.Add(3 * time.Hour) {
+				if clock.UnixNano() < start || clock.UnixNano() >= end {
+					continue
+				}
+				rows := 1000
+				if clock.Equal(cutoff.Add(-3 * time.Hour)) {
+					rows = limit
+				}
+				for i := 0; i < rows && len(values) < limit; i++ {
+					values = append(values, [2]string{strconv.FormatInt(clock.UnixNano(), 10), "{}"})
+				}
+			}
+		}
+		if len(values) == 0 {
+			io.WriteString(w, `{"status":"success","data":{"resultType":"streams","result":[]}}`)
+			return
+		}
+		stream := map[string]any{"stream": map[string]string{"plow_source": source}, "values": values}
+		json.NewEncoder(w).Encode(map[string]any{"status": "success", "data": map[string]any{
+			"resultType": "streams", "result": []any{stream},
+		}})
+	})
+	result := ds.activity(context.Background(), cutoff, "coverage", "7d", "all")
+	if result.Error != nil {
+		t.Fatal(result.Error)
+	}
+	if result.Frames[0].Meta == nil {
+		t.Fatal("missing Activity read notices")
+	}
+	want := []data.Notice{{Severity: data.NoticeSeverityWarning, Inspect: data.InspectTypeData,
+		Text: "A T3 history query still hit Loki’s entry limit after splitting. The Activity row limit omitted T3 history slices."}}
+	got := result.Frames[0].Meta.Notices
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Activity notices = %v, want %v", got, want)
+	}
+}
+
+func TestActivityContinuationKeepsTimestampTies(t *testing.T) {
+	from := time.UnixMilli(1800000000000)
+	tie := from.Add(time.Minute).UnixNano()
+	var requests atomic.Int64
+	ds := newFixtureDatasource(t, "/bin/false", func(w http.ResponseWriter, r *http.Request) {
+		var values [][2]string
+		switch requests.Add(1) {
+		case 1:
+			for i := 0; i < activityPageLimit-1; i++ {
+				values = append(values, [2]string{strconv.FormatInt(from.UnixNano(), 10), "prefix"})
+			}
+			values = append(values, [2]string{strconv.FormatInt(tie, 10), "tie-a"})
+		case 2:
+			if got := r.URL.Query().Get("start"); got != strconv.FormatInt(tie, 10) {
+				t.Errorf("continuation start = %s, want %d", got, tie)
+			}
+			values = append(values, [2]string{strconv.FormatInt(tie, 10), "tie-a"},
+				[2]string{strconv.FormatInt(tie, 10), "tie-b"})
+		default:
+			t.Error("unexpected extra request")
+		}
+		stream := map[string]any{"stream": map[string]string{"plow_source": "t3_history"}, "values": values}
+		json.NewEncoder(w).Encode(map[string]any{"status": "success", "data": map[string]any{
+			"resultType": "streams", "result": []any{stream},
+		}})
+	})
+	pages := 2
+	read := activityRead{window: backend.TimeRange{From: from, To: from.Add(time.Hour)}, source: "t3_history"}
+	got := ds.loki.readActivityShard(context.Background(), read, 0, activityShardBytes, &pages)
+	if got.failure != nil || got.gaps != 0 || len(got.lines) != activityPageLimit+1 {
+		t.Fatalf("continuation returned %d rows with gaps %v and error %v", len(got.lines), got.gaps, got.failure)
+	}
+	if tail := got.lines[len(got.lines)-2:]; !reflect.DeepEqual(tail, []string{"tie-a", "tie-b"}) {
+		t.Fatalf("continuation ties = %v", tail)
+	}
+}
+
+func TestActivityContinuationKeepsPrefixAfterReadDeadline(t *testing.T) {
+	var requests atomic.Int64
+	ds := newFixtureDatasource(t, "/bin/false", func(w http.ResponseWriter, r *http.Request) {
+		if requests.Add(1) == 2 {
+			<-r.Context().Done()
+			return
+		}
+		values := make([][2]string, activityPageLimit)
+		for i := range values {
+			values[i] = [2]string{"1000000000", "prefix"}
+		}
+		values[len(values)-1] = [2]string{"2000000000", "unresolved-boundary"}
+		stream := map[string]any{"stream": map[string]string{"plow_source": "t3_history"}, "values": values}
+		json.NewEncoder(w).Encode(map[string]any{"status": "success", "data": map[string]any{
+			"resultType": "streams", "result": []any{stream},
+		}})
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	pages := 2
+	read := activityRead{window: fixtureQuery().TimeRange, source: "t3_history"}
+	got := ds.loki.readActivityShard(ctx, read, 0, activityShardBytes, &pages)
+	if requests.Load() != 2 || got.failure != nil || got.gaps != activityReadDeadline || len(got.lines) != activityPageLimit-1 {
+		t.Fatalf("deadline returned %d rows with gaps %v and error %v after %d requests", len(got.lines), got.gaps, got.failure, requests.Load())
+	}
 }

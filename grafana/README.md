@@ -38,7 +38,8 @@ latest successful live T3 capture checkpoint anchors the analysis. The
 coverage panel displays the cutoff, the oldest observed T3 clock, and gaps.
 The datasource assembles one bounded snapshot for matching panels. It reads
 evidence over eight days, including carry-in, and requests recent checkpoint
-receipts separately. A capped or warned read is partial. A failed source call
+receipts separately. Panel warnings identify sources affected by read limits
+or Loki warnings alongside the collection checkpoints. A failed source call
 returns a downstream error. An older carry-in beyond the read bound is unknown.
 
 Where time went adds disjoint intervals for each thread. Overlapping

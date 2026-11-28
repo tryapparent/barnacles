@@ -226,11 +226,9 @@ func (ds *datasource) activity(ctx context.Context, cutoff time.Time, view, peri
 		return *failure
 	}
 	frames := renderActivity(report, view)
-	if report.Partial {
+	if len(report.notices) != 0 {
 		for _, frame := range frames {
-			frame.Meta = &data.FrameMeta{Notices: []data.Notice{
-				{Severity: data.NoticeSeverityWarning, Text: "Partial Loki read. Activity may omit evidence."},
-			}}
+			frame.Meta = &data.FrameMeta{Notices: report.notices}
 		}
 	}
 	return backend.DataResponse{Frames: frames}
@@ -256,13 +254,23 @@ func (ds *datasource) activityReport(ctx context.Context, key activityKey) (acti
 }
 
 func (ds *datasource) loadActivityReport(ctx context.Context, key activityKey) (activityOutput, *backend.DataResponse) {
-	records, partial, failure := ds.loki.readActivity(ctx, key.cutoff)
+	query, failure := runPolicy(ctx, ds.policy, map[string]any{
+		"to": key.cutoff.UnixMilli(), "view": "operationQuery", "range": key.period,
+	})
+	if failure != nil {
+		return activityOutput{}, failure
+	}
+	var operationQuery string
+	if json.Unmarshal(query, &operationQuery) != nil || operationQuery == "" {
+		return activityOutput{}, policyFailure(backend.StatusInternal, "Policy executable returned an invalid Activity query")
+	}
+	records, gaps, failure := ds.loki.readActivity(ctx, key.cutoff, operationQuery)
 	if failure != nil {
 		return activityOutput{}, failure
 	}
 	raw, failure := runPolicyWithin(ctx, ds.policy, map[string]any{
 		"to": key.cutoff.UnixMilli(), "view": "activity", "range": key.period, "operation": key.operation,
-		"records": records, "partial": partial,
+		"records": records, "partial": len(gaps) != 0,
 	}, activityPolicyTimeout)
 	if failure != nil {
 		return activityOutput{}, failure
@@ -271,5 +279,6 @@ func (ds *datasource) loadActivityReport(ctx context.Context, key activityKey) (
 	if json.Unmarshal(raw, &report) != nil || report.From == 0 {
 		return activityOutput{}, policyFailure(backend.StatusInternal, "Policy executable returned an invalid Activity result")
 	}
+	report.notices = activityNotices(gaps, report)
 	return report, nil
 }
