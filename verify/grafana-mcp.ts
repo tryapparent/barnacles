@@ -3,14 +3,10 @@ import { spawn } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 
-const [url, tokenFile, queryFile, directFile, resultFile, comparison] = process.argv.slice(2);
-const child = spawn("docker", [
-  "run", "--rm", "-i", "--network", "host",
-  "-e", "GRAFANA_URL", "-e", "GRAFANA_SERVICE_ACCOUNT_TOKEN",
-  "grafana/mcp-grafana:2.3.0@sha256:c27248b5919d09d64ea273ca1b128b32902c6796f6e2dfcd11849d4f1363f9ed",
-  "-t", "stdio", "--enabled-tools=api", "--disable-write", "--enable-query", "--usage-stats=disabled",
+const [queryFile, directFile, resultFile, comparison, ...composeArgs] = process.argv.slice(2);
+const child = spawn("docker", ["compose", ...composeArgs,
+  "run", "--rm", "--no-deps", "-T", "grafana-mcp",
 ], {
-  env: { ...process.env, GRAFANA_URL: url, GRAFANA_SERVICE_ACCOUNT_TOKEN: readFileSync(tokenFile, "utf8").trim() },
   stdio: ["pipe", "pipe", "inherit"],
 });
 const lines = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
@@ -38,13 +34,29 @@ try {
   assert.ok(hello.serverInfo);
   send("notifications/initialized", {});
   const tools = await request("tools/list", {});
-  assert.ok(tools.tools.some((tool: { name: string }) => tool.name === "grafana_api_request"));
-  const result = await request("tools/call", {
-    name: "grafana_api_request",
-    arguments: { endpoint: "/api/ds/query", method: "POST", body: readFileSync(queryFile, "utf8") },
+  assert.deepEqual(tools.tools.map((tool: { name: string }) => tool.name), ["grafana_api_request"]);
+  const api = (arguments_: object) => request("tools/call", {
+    name: "grafana_api_request", arguments: arguments_,
   });
+  const decode = (result: { structuredContent?: unknown; content: { text: string }[] }) =>
+    result.structuredContent ?? JSON.parse(result.content[0].text);
+  const search = decode(await api({ endpoint: "/api/search?type=dash-db" }));
+  assert.equal(search.status, 200);
+  assert.ok(search.data.some((entry: { uid: string }) => entry.uid === "plow-run-breakdown"));
+  const dashboard = decode(await api({
+    endpoint: "/api/dashboards/uid/plow-run-breakdown",
+    headers: { Authorization: "Bearer invalid" },
+  }));
+  assert.equal(dashboard.status, 200);
+  assert.equal(dashboard.data.meta.provisioned, true);
+  const write = await api({ endpoint: "/api/dashboards/db", method: "POST", body: "{}" });
+  assert.ok(write.isError);
+  const admin = decode(await api({ endpoint: "/api/admin/settings" }));
+  assert.equal(admin.status, 403);
+  assert.equal(admin.data, "");
+  const result = await api({ endpoint: "/api/ds/query", method: "POST", body: readFileSync(queryFile, "utf8") });
   assert.ok(!result.isError, JSON.stringify(result));
-  const response = result.structuredContent ?? JSON.parse(result.content[0].text);
+  const response = decode(result);
   assert.equal(response.status, 200);
   const expected = JSON.parse(readFileSync(directFile, "utf8"));
   function stableFrames(result: typeof expected) {

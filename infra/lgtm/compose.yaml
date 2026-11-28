@@ -36,6 +36,24 @@ x-t3-capture: &t3-capture
     - ${PLOW_T3_READ_TOKEN_FILE:-/dev/null}:/run/plow-t3-bearer:ro
 
 services:
+  grafana-mcp:
+    profiles: [grafana-mcp]
+    build:
+      context: ../..
+      dockerfile: infra/lgtm/grafana.Dockerfile
+      target: grafana-mcp
+    user: "65534:65534"
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - type: bind
+        source: ${PLOW_MCP_TOKEN_FILE:-/dev/null}
+        target: /run/plow-mcp-token
+        read_only: true
+        bind:
+          create_host_path: false
   grafana:
     image: ${PLOW_GRAFANA_IMAGE:-plow-grafana-greenfield:local}
     build:

@@ -33,6 +33,13 @@ RUN mkdir /opt/plow/policy && node --input-type=module -e 'import { buildPolicie
 ENV PLOW_COLLECT_MODULE=/opt/plow/policy/collect.mjs \
     PLOW_CAPTURE_MODULE=/opt/plow/policy/capture.mjs
 
+FROM grafana/mcp-grafana:2.3.0@sha256:c27248b5919d09d64ea273ca1b128b32902c6796f6e2dfcd11849d4f1363f9ed AS grafana-mcp-upstream
+
+FROM node:22.23.0-bookworm-slim@sha256:d9f850096136edbc402debdd8729579a288aac64574ada0ff4db26b6ae58b0b2 AS grafana-mcp
+COPY --from=grafana-mcp-upstream /app/mcp-grafana /usr/local/bin/mcp-grafana
+COPY infra/access/gateway.mjs /opt/plow/gateway.mjs
+ENTRYPOINT ["node", "/opt/plow/gateway.mjs", "mcp"]
+
 FROM grafana/grafana:12.3.0-ubuntu@sha256:cee936306135e1925ab21dffa16f8a411535d16ab086bef2309339a8e74d62df
 COPY --from=policy /usr/local/bin/node /usr/local/bin/node
 COPY --from=plugin /out/ /opt/plow/plugins/plow-agent-observability-datasource/

@@ -11,7 +11,7 @@ compose() {
 cleanup() {
   status=$?
   if (( status != 0 )); then compose logs > "$PLOW_LGTM_WORKDIR/compose.log" 2>&1 || true; fi
-  rm -f "$PLOW_LGTM_WORKDIR/mcp-token"
+  rm -f "$PLOW_LGTM_WORKDIR/mcp/token"
   compose down --volumes > "$PLOW_LGTM_WORKDIR/cleanup.log" 2>&1
 }
 trap cleanup EXIT
@@ -39,6 +39,7 @@ services:
 YAML
 
 compose config -q
+compose build grafana-mcp
 compose run --rm --no-deps alloy validate --stability.level=public-preview /etc/alloy/config.alloy
 compose up -d --no-build --wait --wait-timeout 90
 grafana=$(compose port grafana 3000)
@@ -135,13 +136,17 @@ received() {
 }
 await received '. == 10' "$PLOW_LGTM_WORKDIR/received-count.json"
 account=$(api serviceaccounts --data '{"name":"plow-health-mcp","role":"Viewer"}' | jq -er .id)
-(umask 077; api "serviceaccounts/$account/tokens" --data '{"name":"verification","secondsToLive":300}' | jq -er .key > "$PLOW_LGTM_WORKDIR/mcp-token")
+export PLOW_MCP_TOKEN_FILE="$PLOW_LGTM_WORKDIR/mcp/token"
+mkdir -m 0700 "$(dirname "$PLOW_MCP_TOKEN_FILE")"
+(umask 077; api "serviceaccounts/$account/tokens" --data '{"name":"verification","secondsToLive":300}' | jq -er .key > "$PLOW_MCP_TOKEN_FILE")
+chmod 0444 "$PLOW_MCP_TOKEN_FILE"
 query > "$PLOW_LGTM_WORKDIR/replay.json"
 jq -S '[.results.A.frames[]] | map(del(.schema.meta.stats)) | sort_by(.data.values[1][0])' "$PLOW_LGTM_WORKDIR/health.json" > "$PLOW_LGTM_WORKDIR/snapshot.json"
 jq -S '[.results.A.frames[]] | map(del(.schema.meta.stats)) | sort_by(.data.values[1][0])' "$PLOW_LGTM_WORKDIR/replay.json" | diff -u "$PLOW_LGTM_WORKDIR/snapshot.json" -
-node verify/grafana-mcp.ts "http://$grafana" "$PLOW_LGTM_WORKDIR/mcp-token" \
-  "$PLOW_LGTM_WORKDIR/query.json" "$PLOW_LGTM_WORKDIR/replay.json" "$PLOW_LGTM_WORKDIR/mcp.json" --ignore-query-stats
-rm "$PLOW_LGTM_WORKDIR/mcp-token"
+node verify/grafana-mcp.ts "$PLOW_LGTM_WORKDIR/query.json" "$PLOW_LGTM_WORKDIR/replay.json" \
+  "$PLOW_LGTM_WORKDIR/mcp.json" --ignore-query-stats -p "plow-collection-health-${job,,}" \
+  -f infra/lgtm/compose.yaml -f "$PLOW_LGTM_WORKDIR/compose.yaml"
+rm "$PLOW_MCP_TOKEN_FILE"
 
 send_span() {
   local trace_time

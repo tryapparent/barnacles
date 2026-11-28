@@ -1,4 +1,10 @@
 services:
+  grafana-mcp:
+    network_mode: none
+    environment:
+      PLOW_MCP_GRAFANA_SOCKET: /run/plow-grafana/grafana.sock
+    volumes:
+      - ${PLOW_LGTM_WORKDIR}/access-grafana:/run/plow-grafana:ro
   grafana:
     image: ${PLOW_ACCESS_IMAGE:-plow-grafana-greenfield:local}
     ports: !reset []

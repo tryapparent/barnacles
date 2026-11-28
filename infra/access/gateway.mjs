@@ -1,8 +1,8 @@
 import { createServer, request } from 'node:http'
-import { lstatSync, unlinkSync } from 'node:fs'
+import { spawn } from 'node:child_process'
+import { lstatSync, readFileSync, unlinkSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { createRemoteJWKSet, jwtVerify } from 'jose'
 
 export const publicHost = 'plow.tryapparent.com'
 const app = '/app'
@@ -20,6 +20,7 @@ const hopHeaders = [
 export function accessIdentity(keys, issuer, audience, viewer) {
   return async token => {
     try {
+      const { jwtVerify } = await import('jose')
       const { payload } = await jwtVerify(token, keys, {
         algorithms: ['RS256'], issuer, audience, requiredClaims: ['exp', 'sub', 'email'],
       })
@@ -144,7 +145,7 @@ export function gateway({ origin, viewer, socketPath, authenticate, privateRoute
   return server
 }
 
-function start() {
+async function start() {
   const {
     PLOW_ACCESS_TEAM: team, PLOW_ACCESS_AUDIENCE: audience, PLOW_ACCESS_EMAIL: email,
     PLOW_TAILNET_VIEWER: viewer, PLOW_TAILNET_ORIGIN: tailnet,
@@ -156,6 +157,7 @@ function start() {
       !/^\d+$/.test(PLOW_ACCESS_PORT) || +PLOW_ACCESS_PORT < 1024 || +PLOW_ACCESS_PORT > 65535 ||
       !directory?.startsWith('/')) throw Error('Invalid gateway environment')
   const issuer = 'https://' + team + '.cloudflareaccess.com'
+  const { createRemoteJWKSet } = await import('jose')
   const keys = createRemoteJWKSet(new URL('/cdn-cgi/access/certs', issuer))
   const verify = accessIdentity(keys, issuer, audience, email)
   const privateSocket = join(directory, 'access-tailnet.sock')
@@ -190,6 +192,70 @@ function start() {
   })
 }
 
+function startMcp() {
+  const token = readFileSync('/run/plow-mcp-token', 'utf8').trim()
+  if (!/^[A-Za-z0-9_=-]+$/.test(token)) throw Error('Invalid Grafana Viewer token')
+  const socketPath = process.env.PLOW_MCP_GRAFANA_SOCKET
+  const grafana = socketPath ? { socketPath } : { hostname: 'grafana', port: 3000 }
+  const server = createServer((incoming, response) => {
+    const send = status => response.writeHead(status).end()
+    const [path] = incoming.url.split('?')
+    const query = incoming.method === 'POST' && path === '/api/ds/query'
+    const read = incoming.method === 'GET' && (path === '/api/search' ||
+      /^\/api\/dashboards\/uid\/[a-zA-Z0-9_-]+$/.test(path))
+    if (!query && !read) return send(403)
+    const headers = { authorization: 'Bearer ' + token }
+    if (query) headers['content-type'] = 'application/json'
+    const upstream = request({
+      ...grafana, method: incoming.method, path: (socketPath ? app : '') + incoming.url, headers,
+    }, result => {
+      if (result.statusCode >= 300 && result.statusCode < 400) {
+        result.resume()
+        return send(502)
+      }
+      response.writeHead(result.statusCode, {
+        'content-type': result.headers['content-type'] ?? 'application/json',
+      })
+      result.once('error', () => response.destroy())
+      result.pipe(response)
+    })
+    response.once('close', () => upstream.destroy())
+    upstream.once('error', () => {
+      if (response.headersSent) response.destroy()
+      else send(502)
+    })
+    upstream.setTimeout(30_000, () => upstream.destroy())
+    if (query) incoming.pipe(upstream)
+    else upstream.end()
+  })
+  server.maxHeadersCount = 40
+  server.listen(0, '127.0.0.1', () => {
+    const child = spawn('/usr/local/bin/mcp-grafana', [
+      '-t', 'stdio', '--enabled-tools=api', '--disable-write', '--enable-query', '--usage-stats=disabled',
+    ], {
+      env: { GRAFANA_URL: 'http://127.0.0.1:' + server.address().port },
+      stdio: 'inherit',
+    })
+    const close = code => {
+      server.closeAllConnections()
+      server.close()
+      process.exitCode = code ?? 1
+    }
+    child.once('error', () => close(1))
+    child.once('exit', close)
+    process.once('SIGTERM', () => child.kill('SIGTERM'))
+    process.once('SIGINT', () => child.kill('SIGINT'))
+  })
+  server.once('error', () => {
+    console.error('Grafana MCP listener failed')
+    process.exitCode = 1
+  })
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  try { start() } catch { console.error('Gateway startup failed'); process.exitCode = 1 }
+  const mcp = process.argv[2] === 'mcp'
+  Promise.resolve().then(mcp ? startMcp : start).catch(() => {
+    console.error(mcp ? 'Grafana MCP startup failed. Check the Viewer token file.' : 'Gateway startup failed')
+    process.exitCode = 1
+  })
 }
