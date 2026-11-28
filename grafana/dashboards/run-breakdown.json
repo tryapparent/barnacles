@@ -204,7 +204,7 @@
                           "text": "Invalid event"
                         },
                         "conflicting_event_id": {
-                          "text": "Conflicting records for one event ID"
+                          "text": "Conflicts for one event ID"
                         }
                       }
                     }
@@ -1198,7 +1198,7 @@
             {
               "matcher": {
                 "id": "byName",
-                "options": "Runs with missing clocks"
+                "options": "Missing run clocks"
               },
               "properties": [
                 {
@@ -1218,7 +1218,7 @@
             {
               "matcher": {
                 "id": "byName",
-                "options": "Conflicting records"
+                "options": "Conflicts"
               },
               "properties": [
                 {

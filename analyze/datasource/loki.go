@@ -107,6 +107,7 @@ func (l lokiClient) readDirection(ctx context.Context, window backend.TimeRange,
 		return nil, nil, lokiFailure(backend.StatusInternal, "Could not build the Loki request")
 	}
 	request.Header.Set("Accept", "application/json")
+	request.Header.Set("X-Loki-Response-Encoding-Flags", "categorize-labels")
 	request.Header.Set("X-Scope-OrgID", l.tenant)
 	if l.token != "" {
 		request.Header.Set("Authorization", "Bearer "+l.token)

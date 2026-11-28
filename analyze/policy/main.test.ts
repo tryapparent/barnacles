@@ -138,8 +138,9 @@ test("Activity clips and disjoins threads, preserves cross-thread time, and leav
     { kind: "t3_coverage", eventId: "checkpoint", timestampMs: to, status: "idle", observedMs: to },
   ];
   const ci = { repository: "fixture/repo", runId: 4, attempt: 2, headSha: "a".repeat(40), observedMs: to };
-  const link = { ...ci, kind: "t3_ci_link", eventId: "link", threadId: "t1", timestampMs: at(12) };
-  const workflow = { ...ci, kind: "github_actions_attempt", eventId: "attempt", timestampMs: at(10),
+  const link = { kind: "t3_pr_link", eventId: "link", threadId: "t1", repository: ci.repository,
+    prNumber: "42", timestampMs: at(12) };
+  const workflow = { ...ci, kind: "github_actions_attempt", eventId: "attempt", prNumber: "42", timestampMs: at(10),
     createdMs: at(14), startedMs: at(13), completedMs: at(10) };
   const job = { ...ci, kind: "github_actions_job", eventId: "job-a", jobId: 11, timestampMs: at(10),
     createdMs: at(13), executionStartedMs: at(12), executionCompletedMs: at(10), conclusion: "failure" };
@@ -149,7 +150,8 @@ test("Activity clips and disjoins threads, preserves cross-thread time, and leav
   function activity(input: unknown[], range: string, operation = "all") {
     const result = execute({ to, range, operation, records: {
       t3_history: input.map(item => JSON.stringify(item)),
-      github_history: [workflow, job, { ...job, eventId: "job-b", jobId: 12, headSha: "b".repeat(40) }].map(item => JSON.stringify(item)),
+      github_history: [workflow, job, { ...job, eventId: "prior-job-a", observedMs: to - 1,
+        executionStartedMs: at(13) }, { ...job, eventId: "job-b", jobId: 12, headSha: "b".repeat(40) }].map(item => JSON.stringify(item)),
     } });
     assert.equal(result.status, 0, result.stderr);
     return result.stdout;

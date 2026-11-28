@@ -233,8 +233,8 @@ func renderActivity(report activityOutput, view string) data.Frames {
 			data.NewField("Coverage", nil, []string{report.T3Coverage, report.CodexCoverage, report.CICoverage, report.OutcomeCoverage}),
 			data.NewField("Cutoff (UTC)", nil, []*time.Time{timeField(report.Cutoff), nil, nil, nil}),
 			data.NewField("Oldest source clock", nil, []*time.Time{timeField(report.Oldest), nil, nil, nil}),
-			data.NewField("Runs with missing clocks", nil, []*int64{&report.UnknownRuns, nil, nil, nil}),
-			data.NewField("Conflicting records", nil, []*int64{&report.Conflicts, nil, nil, nil}),
+			data.NewField("Missing run clocks", nil, []*int64{&report.UnknownRuns, nil, nil, nil}),
+			data.NewField("Conflicts", nil, []*int64{&report.Conflicts, nil, nil, nil}),
 		)}
 	case "breakdown":
 		categories := data.NewFrame("Categories",

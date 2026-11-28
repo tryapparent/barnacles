@@ -84,8 +84,11 @@ test("T3 live head and durable opaque backfill advance independently", async () 
     const more = id === "thread-archived";
     const start = more ? old : now;
     return reply({ hasMoreHistory: more, historyCursor: more ? cursor : null, snapshotSequence: 1,
-      projection: { thread: { id, updatedAt: start, title: "private fixture title" }, providerThreads: [], turnItems: [],
-        runs: [{ id: id + "-run", threadId: id, requestedAt: start, startedAt: start, completedAt: null, status: "running" }] } });
+      projection: { thread: { id, updatedAt: start, title: "private fixture title" },
+        providerThreads: more ? [] : [{ id: "provider-ref", appThreadId: id, driver: "codex",
+          nativeThreadRef: { driver: "codex", strength: "strong", nativeId: "safe-session" } }], turnItems: [],
+        runs: [{ id: id + "-run", threadId: id, providerThreadId: "provider-ref",
+          requestedAt: start, startedAt: start, completedAt: null, status: "running" }] } });
   });
   server.on("upgrade", (request, socket) => {
     const accept = createHash("sha1").update(request.headers["sec-websocket-key"] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
@@ -130,6 +133,7 @@ test("T3 live head and durable opaque backfill advance independently", async () 
     assert.match(output, /thread-new-run/);
     assert.match(output, /thread-archived-run/);
     assert.match(output, /"sessionId":""/);
+    assert.match(output, /"sessionId":"safe-session"/);
     assert.doesNotMatch(output, /private fixture title|fixture-read|opaque/);
   } finally {
     server.close();

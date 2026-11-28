@@ -30,7 +30,7 @@ const (
 
 var (
 	identifier = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
-	historyID  = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9:_-]|%[0-9A-Fa-f]{2}){0,511}$`)
+	historyID  = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9:_-]|%[0-9A-Fa-f]{2})*$`)
 	tenantID   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 	minTime    = time.Unix(0, 0)
 	maxTime    = time.Unix(0, 1<<63-2)
@@ -166,7 +166,8 @@ func (ds *datasource) activity(ctx context.Context, cutoff time.Time, view, peri
 		latest bool
 	}{
 		{"t3", "", false},
-		{"t3_history", ` | json plow_kind="kind" | plow_kind!="t3_coverage"`, false},
+		{"t3_history", ` | json plow_kind="kind" | plow_kind=~"t3_activity_run|t3_pr_link|t3_ci_link|confirmed_delay"`, false},
+		{"t3_history", ` | json plow_kind="kind" | plow_kind="operation"`, false},
 		{"t3_history", ` | json plow_kind="kind" | plow_kind="t3_coverage"`, true},
 		{"github_history", ` | json plow_kind="kind" | plow_kind=~"github_actions_attempt|github_actions_job"`, false},
 		{"github_history", ` | json plow_kind="kind" | plow_kind="github_coverage"`, true},

@@ -200,7 +200,7 @@ function page(policy: Capture, scope: string, thread: string, input: Record<stri
 type T3Mark = { revision: number; cursor: string; oldest: number; uncertain: boolean; previous: string[] };
 type State = { last: number; oldest: number; count: number; marks: Record<string, T3Mark> };
 
-async function capture(lane: string, once: boolean, origin: string, token: string) {
+async function capture(lane: string, once: boolean, origin: string, tokenFile: string) {
   const scope = scopeArg(process.env.PLOW_CAPTURE_SCOPE);
   const { PLOW_CAPTURE_STATE: stateDir, PLOW_CAPTURE_SPOOL: spool } = process.env;
   if (!stateDir || !spool || !["live", "backfill"].includes(lane)) throw Error("Configure T3 capture state and spool");
@@ -217,6 +217,7 @@ async function capture(lane: string, once: boolean, origin: string, token: strin
     let reason = "";
     let status = "retrying";
     try {
+      const token = readFileSync(tokenFile, "utf8").trim();
       const inventory = await Promise.allSettled([
         source(sourceURL("/api/orchestration/shell", origin), token, 64 << 20, "GET", 15_000),
         archived(origin, token),
@@ -295,7 +296,7 @@ async function main() {
   const [thread, run, ...extra] = process.argv.slice(2);
   const { PLOW_T3_ORIGIN: origin, PLOW_T3_READ_TOKEN_FILE: tokenFile } = process.env;
   if (thread === "--capture" && run && origin && tokenFile) {
-    return capture(run, extra[0] === "--once", origin, readFileSync(tokenFile, "utf8").trim());
+    return capture(run, extra[0] === "--once", origin, tokenFile);
   }
   if (!origin || !tokenFile || !thread || !run || extra.length) {
     throw Error("Set PLOW_T3_ORIGIN and PLOW_T3_READ_TOKEN_FILE and pass THREAD RUN");

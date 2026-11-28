@@ -8,6 +8,10 @@ otelcol.receiver.filelog "codex" {
   start_at          = "beginning"
   storage           = otelcol.storage.file.positions.handler
   resource          = { "plow_source" = "codex_history" }
+  retry_on_failure {
+    enabled          = true
+    max_elapsed_time = "0s"
+  }
   output {
     logs = [otelcol.processor.transform.transport.input]
   }
@@ -31,6 +35,10 @@ otelcol.receiver.filelog "t3_history" {
   start_at          = "beginning"
   storage           = otelcol.storage.file.positions.handler
   resource          = { "plow_source" = "t3_history" }
+  retry_on_failure {
+    enabled          = true
+    max_elapsed_time = "0s"
+  }
   output {
     logs = [otelcol.processor.transform.transport.input]
   }
@@ -43,6 +51,10 @@ otelcol.receiver.filelog "github_history" {
   start_at          = "beginning"
   storage           = otelcol.storage.file.positions.handler
   resource          = { "plow_source" = "github_history" }
+  retry_on_failure {
+    enabled          = true
+    max_elapsed_time = "0s"
+  }
   output {
     logs = [otelcol.processor.transform.transport.input]
   }
