@@ -16,16 +16,19 @@ import (
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	grafanads "github.com/grafana/grafana-plugin-sdk-go/backend/datasource"
 	"github.com/grafana/grafana-plugin-sdk-go/backend/instancemgmt"
+	"github.com/grafana/grafana-plugin-sdk-go/data"
 )
 
 const (
-	pluginID     = "plow-agent-observability-datasource"
-	runLimit     = 100
-	eventLimit   = 2000
-	maxQueries   = 8
-	maxRange     = 7 * 24 * time.Hour
-	queryTimeout = 12 * time.Second
-	ioTimeout    = 4 * time.Second
+	pluginID              = "plow-agent-observability-datasource"
+	runLimit              = 100
+	eventLimit            = 2000
+	maxQueries            = 8
+	maxRange              = 7 * 24 * time.Hour
+	queryTimeout          = 12 * time.Second
+	ioTimeout             = 4 * time.Second
+	activityCacheTTL      = 5 * time.Second
+	activityPolicyTimeout = 8 * time.Second
 )
 
 var (
@@ -37,8 +40,9 @@ var (
 )
 
 type datasource struct {
-	loki   lokiClient
-	policy string
+	loki          lokiClient
+	policy        string
+	activityCache activityCache
 }
 
 func newDatasource(_ context.Context, settings backend.DataSourceInstanceSettings) (instancemgmt.Instance, error) {
@@ -79,7 +83,8 @@ func newDatasource(_ context.Context, settings backend.DataSourceInstanceSetting
 				},
 			},
 		},
-		policy: policy,
+		policy:        policy,
+		activityCache: activityCache{gate: make(chan struct{}, 1)},
 	}, nil
 }
 
@@ -149,69 +154,6 @@ func (ds *datasource) query(ctx context.Context, query backend.DataQuery) backen
 	return render(output, gaps)
 }
 
-func (ds *datasource) activity(ctx context.Context, cutoff time.Time, view, period, operation string) backend.DataResponse {
-	if period != "24h" && period != "7d" || len(operation) > 128 {
-		return backend.ErrDataResponse(backend.StatusBadRequest, "Select Last 24h or Last 7 days")
-	}
-	window := backend.TimeRange{From: cutoff.Add(-maxRange - 24*time.Hour), To: cutoff}
-	type sourceResult struct {
-		source  string
-		lines   []string
-		partial bool
-		failure *backend.DataResponse
-	}
-	selectors := []struct {
-		source string
-		filter string
-		latest bool
-	}{
-		{"t3", "", false},
-		{"t3_history", ` | json plow_kind="kind" | plow_kind=~"t3_activity_run|t3_pr_link|t3_ci_link|confirmed_delay"`, false},
-		{"t3_history", ` | json plow_kind="kind" | plow_kind="operation"`, false},
-		{"t3_history", ` | json plow_kind="kind" | plow_kind="t3_coverage"`, true},
-		{"github_history", ` | json plow_kind="kind" | plow_kind=~"github_actions_attempt|github_actions_job"`, false},
-		{"github_history", ` | json plow_kind="kind" | plow_kind="github_coverage"`, true},
-		{"codex_history", ` | json plow_kind="kind" | plow_kind="codex_coverage"`, true},
-	}
-	results := make(chan sourceResult, len(selectors))
-	for _, item := range selectors {
-		go func() {
-			selector := `{plow_source="` + item.source + `"}` + item.filter
-			limit := 5000
-			if item.latest {
-				limit = 32
-			}
-			lines, gaps, failure := ds.loki.readDirection(ctx, window, selector, item.source, limit, item.latest)
-			results <- sourceResult{item.source, lines, len(gaps) != 0, failure}
-		}()
-	}
-	records := make(map[string][]string, len(selectors))
-	partial := false
-	for range selectors {
-		result := <-results
-		if result.failure != nil {
-			return *result.failure
-		}
-		records[result.source] = append(records[result.source], result.lines...)
-		partial = partial || result.partial
-	}
-	raw, failure := runPolicy(ctx, ds.policy, map[string]any{
-		"to": cutoff.UnixMilli(), "view": view, "range": period, "operation": operation, "records": records, "partial": partial,
-	})
-	if failure != nil {
-		return *failure
-	}
-	var report activityOutput
-	if json.Unmarshal(raw, &report) != nil || report.From == 0 {
-		return *policyFailure(backend.StatusInternal, "Policy executable returned an invalid Activity result")
-	}
-	frames := renderActivity(report, view)
-	if frames == nil {
-		return backend.ErrDataResponse(backend.StatusBadRequest, "Unknown Activity view")
-	}
-	return backend.DataResponse{Frames: frames}
-}
-
 func (ds *datasource) CheckHealth(ctx context.Context, _ *backend.CheckHealthRequest) (*backend.CheckHealthResult, error) {
 	info, err := os.Stat(ds.policy)
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0111 == 0 {
@@ -229,4 +171,81 @@ func main() {
 	if err := grafanads.Manage(pluginID, newDatasource, grafanads.ManageOpts{}); err != nil {
 		log.Fatal(err)
 	}
+}
+
+type activityKey struct {
+	cutoff    time.Time
+	period    string
+	operation string
+}
+
+type activityCache struct {
+	gate    chan struct{}
+	key     activityKey
+	expires time.Time
+	report  activityOutput
+	failure *backend.DataResponse
+}
+
+func (ds *datasource) activity(ctx context.Context, cutoff time.Time, view, period, operation string) backend.DataResponse {
+	if period != "24h" && period != "7d" || len(operation) > 128 {
+		return backend.ErrDataResponse(backend.StatusBadRequest, "Select Last 24h or Last 7 days")
+	}
+	switch view {
+	case "breakdown", "share", "timeline", "ci", "runs", "coverage", "findings":
+	default:
+		return backend.ErrDataResponse(backend.StatusBadRequest, "Unknown Activity view")
+	}
+
+	report, failure := ds.activityReport(ctx, activityKey{cutoff.UTC(), period, operation})
+	if failure != nil {
+		return *failure
+	}
+	frames := renderActivity(report, view)
+	if report.Partial {
+		for _, frame := range frames {
+			frame.Meta = &data.FrameMeta{Notices: []data.Notice{
+				{Severity: data.NoticeSeverityWarning, Text: "Partial Loki read. Activity may omit evidence."},
+			}}
+		}
+	}
+	return backend.DataResponse{Frames: frames}
+}
+
+func (ds *datasource) activityReport(ctx context.Context, key activityKey) (activityOutput, *backend.DataResponse) {
+	cache := &ds.activityCache
+	select {
+	case cache.gate <- struct{}{}:
+		defer func() { <-cache.gate }()
+	case <-ctx.Done():
+		return activityOutput{}, lokiTransportFailure(ctx.Err())
+	}
+	if key == cache.key && time.Now().Before(cache.expires) {
+		return cache.report, cache.failure
+	}
+	report, failure := ds.loadActivityReport(ctx, key)
+	if ctx.Err() == nil {
+		cache.key, cache.report, cache.failure = key, report, failure
+		cache.expires = time.Now().Add(activityCacheTTL)
+	}
+	return report, failure
+}
+
+func (ds *datasource) loadActivityReport(ctx context.Context, key activityKey) (activityOutput, *backend.DataResponse) {
+	records, partial, failure := ds.loki.readActivity(ctx, key.cutoff)
+	if failure != nil {
+		return activityOutput{}, failure
+	}
+	raw, failure := runPolicyWithin(ctx, ds.policy, map[string]any{
+		"to": key.cutoff.UnixMilli(), "view": "activity", "range": key.period, "operation": key.operation,
+		"records": records, "partial": partial,
+	}, activityPolicyTimeout)
+	if failure != nil {
+		return activityOutput{}, failure
+	}
+	var report activityOutput
+	if json.Unmarshal(raw, &report) != nil || report.From == 0 {
+		return activityOutput{}, policyFailure(backend.StatusInternal, "Policy executable returned an invalid Activity result")
+	}
+	return report, nil
 }

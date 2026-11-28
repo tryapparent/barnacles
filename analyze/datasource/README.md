@@ -63,3 +63,13 @@ The CLI accepts a single run record. Identical copies of its input fields can po
 | `coverage` | `runId`, `events`, `paired`, `unknown`, `sourceComplete`, `sourceGaps` |
 
 The policy can report unknown intervals even when the bounded read completed. Table panels can use the frame names to choose which rows to display. Grafana MCP consumes the same panel query response.
+
+## Activity reads
+
+Both Activity periods retain eight days of source context before the Grafana cutoff. This covers the weekly view, a lagging collection checkpoint, and the prior runs needed to measure gaps. The Bend2 policy selects the checkpoint, clips the analysis, resolves revisions, and computes every view from the same records.
+
+T3 history and GitHub CI evidence are read in UTC day slices. Each slice requests up to 2,000 entries. When a page reaches that limit or the response exceeds 4 MiB, the datasource bisects the slice at the log timestamp and reads both halves. Slices share four concurrent readers and can split six times. The raw evidence budget is 8 MiB per slice and 32 MiB or 50,000 rows per snapshot. A slice that would exceed the snapshot budget is omitted. The separate T3 and Codex checkpoint queries read the latest 32 receipts each. The tenant and authentication headers and four-second Loki timeout apply throughout. Bend2 has up to eight seconds to build the Activity report within the same 12-second request deadline.
+
+The datasource reuses the result for five seconds within the same instance, exact cutoff, period and operation. Each panel renders its own frames from that report. Loki warnings or a remaining read cap surface as partial coverage and frame notices. A transport or Loki serving failure returns a downstream datasource error. An empty successful read produces empty evidence with the policy's missing-checkpoint and nullable-clock states. The exact run lookup keeps its original limits.
+
+Activity timeline spans carry only the two clocks and operation label needed by the Grafana SDK. The compact CLI encoding keeps the report under the shared 4 MiB output limit at higher evidence volumes. An oversized policy result returns a plugin error.

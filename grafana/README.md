@@ -14,23 +14,17 @@ The Compose deployment selects Grafana's Gilded Grove preset. It provides a dark
 
 Activity is the default home from both the private Grafana root and the Access gateway. Activity links to Collection Health and Codex traces, and each Plow view links back to Activity. Open run and trace detail from the relevant overview to carry its selected identity and time range.
 
-The built-in Grafana OSS Canvas header pairs Wet Earth (`#392820`) with the [original cream wordmark](assets/plow-cream.png) and uses Meadow (`#6A934F`) for its outline. Original Cream (`#FFF4DF`) text on Wet Earth reaches 12.85:1 contrast.
+The Plow dashboard header pairs Wet Earth (`#392820`) with the [original cream wordmark](assets/plow-cream.png) and uses Meadow (`#6A934F`) for its outline. Original Cream (`#FFF4DF`) text on Wet Earth reaches 12.85:1 contrast.
 
 Use [named field overrides and value mappings](https://grafana.com/docs/grafana/latest/visualizations/panels-visualizations/configure-value-mappings/) for table colors. Original Cream highlights elapsed values and a complete source read. Wet Earth marks unknown elapsed values, findings, and a partial source read. The labels carry the evidence state and Grafana supplies contrasting text on each fill in both themes. Keep Meadow for graphics. Complete describes the bounded source read, and the findings and unknown calls describe gaps in the evidence it returned.
 
-The dashboards use a common Wet Earth and Cream header with a Meadow outline. Meadow highlights measured activity and receipt rates. Amber marks waiting time, muted violet shows CI execution, and red marks failures or collector problems. Timelines and tables keep the corresponding labels. Grafana provides its native typography, controls, and theme selection. Bespoke theme tokens in this OSS version live in Grafana's frontend build. [Shell branding](https://grafana.com/docs/grafana/latest/setup-grafana/configure-grafana/configure-custom-branding/) requires Grafana Enterprise or a supported paid Grafana Cloud account.
+The dashboards use a common Wet Earth and Cream header with a Meadow outline. Meadow highlights measured activity and receipt rates. Amber marks waiting time, muted violet shows CI execution, and red marks failures or collector problems. Timelines and tables keep the corresponding labels. Grafana supplies the charts, controls, navigation and theme selection. Bespoke theme tokens in this OSS version live in Grafana's frontend build. [Shell branding](https://grafana.com/docs/grafana/latest/setup-grafana/configure-grafana/configure-custom-branding/) requires Grafana Enterprise or a supported paid Grafana Cloud account.
 
-### Canvas asset
+### Plow typography and Collection Health artwork
 
-Grafana 12.3 resolves the Canvas image filename relative to its public build directory. Mount `grafana/assets/plow-cream.png` read-only at `/usr/share/grafana/public/build/plow-cream.png` or copy it to that path in the Grafana image. From `infra/lgtm/compose.yaml`, the bind mount is:
+The signed Business Text panel renders the Plow headings in Young Serif and the Collection Health coverage guidance in Source Serif 4. The heading component preserves each dashboard’s panel ID and uses semantic text and an image with alternate text. It renders independently of the evidence queries. The templates use scoped styles with Grafana’s default HTML sanitization.
 
-```yaml
-- ../../grafana/assets/plow-cream.png:/usr/share/grafana/public/build/plow-cream.png:ro
-```
-
-The PNG is the byte-for-byte original from the Plow brand guide.
-
-Grafana 12.3 includes both static Canvas elements in the tab order. The wordmark is an unnamed stop and the caption is announced as a button. The outline is a frame style and adds no stop. The dashboard's Run ID, time range, and table selector use Grafana's native keyboard controls.
+Collection Health panel 2 uses **The Long Field**, the original image from the Plow landing page. The horizon stays visible behind the cream wordmark and heading in both the dashboard and the focused panel. The tracked Dockerfile pins the plugin, original artwork, font files, and their font licenses by SHA-256. Grafana serves the assets from its own origin in both the root and subpath deployments. The tracked cream PNG is the original from the Plow brand guide.
 
 ## Activity
 
@@ -38,10 +32,10 @@ Open `/d/plow-activity/activity`. Use **Last 24h** or **Last 7 days** to move
 the Grafana UTC viewport and select the matching analysis window. The
 latest successful live T3 capture checkpoint anchors the analysis. The
 coverage panel displays the cutoff, the oldest observed T3 clock, and gaps.
-The datasource reads at most 5,000 entries per evidence source over eight
-days, including carry-in, and separate bounded latest coverage receipts.
-A capped read stays partial. An older carry-in beyond the read bound is
-unknown.
+The datasource assembles one bounded snapshot for matching panels. It reads
+evidence over eight days, including carry-in, and requests recent checkpoint
+receipts separately. A capped or warned read is partial. A failed source call
+returns a downstream error. An older carry-in beyond the read bound is unknown.
 
 Where time went adds disjoint intervals for each thread. Overlapping
 threads contribute independently. Provider time takes precedence over

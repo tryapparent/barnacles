@@ -53,7 +53,28 @@ The deployment publishes Grafana on the configured loopback port in the `plow-gr
 
 Reapply with the same runtime directory and environment to retain the volumes and the Viewer. To stop serving just this endpoint, use `tailscale serve --https="$PLOW_TAILNET_HTTPS_PORT" off`. To stop the Compose project while preserving telemetry, run `docker compose -p plow-grafana stop` from the deployed release directory with the same runtime environment. Verify Grafana's authenticated `/api/user` returns the intended read-only identity and query the imported run with its original time range.
 
-The [GitHub collector deployment](../../collect/github/README.md#compose-deployment) runs continuous polling and historical backfill in one worker. Set `PLOW_GITHUB_CREDENTIAL_LAYOUT=per-alias` and provision a separate repository-scoped credential file for each configured alias. Existing single-repository deployments can keep the default legacy layout. Use `bash infra/lgtm/deploy.sh --github-only` for worker-only activation or set `PLOW_GITHUB_ENABLED=true` to include it when reapplying the whole stack. The [Codex trace guide](../../grafana/traces.md) describes the provisioned Tempo views and the optional fan-out from the existing Codex Collector.
+The [GitHub collector deployment](../../collect/github/README.md#compose-deployment) runs continuous polling and historical backfill in one worker. Set `PLOW_GITHUB_CREDENTIAL_LAYOUT=per-alias` and provision a separate repository-scoped credential file for each configured alias. Existing single-repository deployments can keep the default legacy layout. Use `bash infra/lgtm/deploy.sh --github-only` for worker-only activation or set `PLOW_GITHUB_ENABLED=true` to include it when reapplying the whole stack.
+
+### Optional Codex trace fan-out
+
+The `codex-trace-fanout` Compose profile adopts an existing standalone Codex Collector. Its pinned image adds Alloy as a second destination after the legacy authenticated input and redaction pipeline. The original Codex listener, evidence receiver, and credentials are reused.
+
+Set these inputs in the private deployment environment. Set `PLOW_TEMPO_ALLOY_PORT` to a free fixed IPv4 loopback port distinct from the source and evidence ports. Reapply the LGTM stack without enabling the profile to publish Alloy on that port. Confirm the mapping with `docker compose -p plow-grafana port alloy 4318`.
+
+- `PLOW_CODEX_TRACE_BASE_CONFIG` is the absolute path to the exact legacy `otelcol.yaml` from a verified, retained release. Keep this pinned at every reapply.
+- `PLOW_CODEX_TRACE_ENV_FILE` is the absolute path to a private mode-0600 env file containing `PLOW_CODEX_OTLP_TOKEN`, `PLOW_OTLP_EVIDENCE_TOKEN`, and the existing `PLOW_CODEX_OTLP_PORT` and `PLOW_OTLP_EVIDENCE_PORT` values. Inject credentials through the existing secret store.
+- `PLOW_LGTM_RESTART=unless-stopped` enables restart after a host reboot or process failure.
+
+Validate the merged configuration before changing who owns the source port. Run these commands with the same Compose files, project and environment used for the LGTM deployment.
+
+```sh
+docker compose -p plow-grafana run --rm --no-deps codex-trace-fanout \
+  validate --config=/etc/plow.yaml --config=/etc/plow-fanout.yaml
+```
+
+The overlay preserves the original `otlp_http` exporter in the traces pipeline. Check the pinned base exporter list before changing the base version. At the authorized cutover, stop the standalone Collector, retain its configuration for rollback, then start the tracked service with `docker compose -p plow-grafana up -d --no-deps codex-trace-fanout`. Only one Collector can bind the original port. The evidence receiver stays running. Check a fresh authenticated Codex export in both sinks and compare the exact span identity and clocks. Reapply the same command on future releases, or persist `COMPOSE_PROFILES=codex-trace-fanout` with these inputs in the deployment environment after adoption. To roll back, remove the profile from that environment, stop the Compose service with `docker compose -p plow-grafana --profile codex-trace-fanout stop codex-trace-fanout`, and restart the original Collector on its existing port.
+
+See the [Codex trace guide](../../grafana/traces.md) for the Viewer routes, receipt metric and coverage limits.
 
 [Collection Health](../../grafana/collection-health.md) uses a separate Loki tenant for allowlisted progress reports and the existing Mimir data source for Alloy self-metrics.
 Activity reads evidence in bounded windows up to eight days. The single-node

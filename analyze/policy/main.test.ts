@@ -176,3 +176,30 @@ test("Activity clips and disjoins threads, preserves cross-thread time, and leav
   assert.equal(days[1].time - days[0].time, 24 * hour);
   assert.equal(activity([...input, ...input].reverse(), "24h"), output);
 });
+
+test("Activity classifies operation history at backfill scale", () => {
+  const day = 86_400_000;
+  const to = epoch + 7 * day;
+  const lines = [];
+  for (let lane = 0; lane < 120; lane++) {
+    const id = `run-${lane}`;
+    const threadId = `thread-${lane}`;
+    const from = epoch + lane * 4_000_000;
+    lines.push(JSON.stringify({ kind: "t3_activity_run", eventId: id, timestampMs: from + 20_000,
+      run: { id, threadId, sessionId: id, requestedMs: from - 1_000, startedMs: from, completedMs: from + 20_000 } }));
+    for (let operation = 0; operation < 200; operation++) {
+      const time = from + operation * 100;
+      lines.push(JSON.stringify({ kind: "operation", eventId: `${id}-${operation}`, threadId, t3RunId: id,
+        operation: "command_execution", timestampMs: time + 100, startedMs: time, completedMs: time + 100 }));
+    }
+  }
+  const result = execute({ to, view: "activity", range: "7d", operation: "all", records: { t3_history: lines } });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.links.length, 120);
+  assert.equal(report.threads.length, 120);
+  assert.deepEqual(report.threads[0].spans, [{ a: epoch, b: epoch + 20_000, n: "Command execution" }]);
+  assert.deepEqual(report.totals[0], { category: "Provider", operation: "Command execution", ms: 2_400_000 });
+  assert.equal(report.partial, false);
+});

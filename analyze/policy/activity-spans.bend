@@ -58,26 +58,60 @@ def active(spans: List<&2, Span>, +lo: Nat, +hi: Nat, best: Span, +priority: U32
         Span{lo,hi,prior_category,prior_name,prior_run})
       active(rest,lo,hi,next,Bool.pick(U32,higher,score,priority))
 
-def emit(tail: List<&2, Span>, part: Span) -> List<&2, Span>:
-  match tail part:
-    case [] Span{a,b,+kind,name,run}:
-      Bool.pick(List<&2,Span>,String.is_empty(kind),[],[Span{a,b,kind,name,run}])
-    case Span{+c,+d,+next_kind,+next_name,+next_run} <> +rest Span{+a,+b,+kind,+name,+run}:
-      +same = Bool.and(Nat.is_eq(b,c),Bool.and(String.eq(kind,next_kind),
-        Bool.and(String.eq(name,next_name),String.eq(run,next_run))))
-      Bool.pick(List<&2, Span>,String.is_empty(kind),Span{c,d,next_kind,next_name,next_run} <> rest,
-        Bool.pick(List<&2, Span>,same,Span{a,d,kind,name,run} <> rest,
-          Span{a,b,kind,name,run} <> Span{c,d,next_kind,next_name,next_run} <> rest))
+def emit(+parts: List<&2, Span>, part: Span) -> List<&2, Span>:
+  match parts part:
+    case _ Span{_,_,"",_,_}: parts
+    case Span{+c,+d,+prior_kind,+prior_name,+prior_run} <> +rest Span{+a,+b,+kind,+name,+run}:
+      +same = Bool.and(Nat.is_eq(a,d),Bool.and(String.eq(kind,prior_kind),
+        Bool.and(String.eq(name,prior_name),String.eq(run,prior_run))))
+      Bool.pick(List<&2,Span>,same,Span{c,b,kind,name,run} <> rest,Span{a,b,kind,name,run} <> parts)
+    case _ _: part <> parts
 
-def divide(clocks: List<&2, Nat>, +spans: List<&2, Span>) -> List<&2, Span>:
+def expire(items: List<&2,Span>, +at: Nat, +remaining: List<&2,Span>) -> List<&2,Span>:
+  match items:
+    case []: remaining
+    case +item <> rest:
+      match item:
+        case Span{_,end,_,_,_}:
+          expire(rest,at,Bool.pick(List<&2,Span>,Nat.is_lt(at,end),item <> remaining,remaining))
+
+def ready(pending: List<&2,Span>, at: Nat) -> Bool:
+  match pending:
+    case Span{first,_,_,_,_} <> _: Nat.is_le(first,at)
+    case []: False{}
+
+type Frontier is Data:
+  Frontier{pending: List<&2,Span>, live: List<&2,Span>}
+
+def pending(frontier: Frontier) -> List<&2,Span>:
+  match frontier:
+    case Frontier{rows,_}: rows
+
+def live(frontier: Frontier) -> List<&2,Span>:
+  match frontier:
+    case Frontier{_,rows}: rows
+
+def open(+pending: List<&2,Span>, ready_now: Bool, +at: Nat, +current: List<&2,Span>) -> Frontier:
+  match pending ready_now:
+    case item <> +rest True{}: open(rest,ready(rest,at),at,item <> current)
+    case _ _: Frontier{pending,current}
+
+def divide(clocks: List<&2,Nat>, +future: List<&2,Span>, +current: List<&2,Span>, +parts: List<&2,Span>) -> List<&2,Span>:
   match clocks:
     case +a <> +b <> rest:
-      +tail = divide(b <> rest,spans)
-      Bool.pick(List<&2, Span>,Nat.is_lt(a,b),emit(tail,active(spans,a,b,Span{a,b,"","",""},0)),tail)
-    case _: []
+      +opened = open(future,ready(future,a),a,expire(current,a,[]))
+      +active_rows = live(opened)
+      +part = active(active_rows,a,b,Span{a,b,"","",""},0)
+      +next = Bool.pick(List<&2,Span>,Nat.is_lt(a,b),emit(parts,part),parts)
+      divide(b <> rest,pending(opened),active_rows,next)
+    case _: List.reverse(&2,Span,parts)
+
+def starts_before(a: Span,b: Span) -> Bool:
+  match a b:
+    case Span{x,_,_,_,_} Span{y,_,_,_,_}: Nat.is_lt(x,y)
 
 def disjoint(+spans: List<&2, Span>) -> List<&2, Span>:
-  divide(List.sort(~Nat,~earlier,points(spans,[])),spans)
+  divide(List.sort(~Nat,~earlier,points(spans,[])),List.sort(~Span,~starts_before,spans),[],[])
 
 def first_clock(+a: Nat, +b: Nat, c: Nat) -> Nat:
   Bool.pick(Nat,Nat.is_gt(a,0n),a,Bool.pick(Nat,Nat.is_gt(b,0n),b,c))
@@ -102,8 +136,7 @@ def operations(items: List<&2, Evidence>, +id: String, +link: String, +s: Nat, +
       +name = safe_operation(group)
       +matches = Bool.and(String.eq(run,id),Bool.and(Bool.not(String.is_empty(name)),
         Bool.and(Nat.is_le(s,a),Nat.is_le(b,e))))
-      +next = operations(rest,id,link,s,e,tail)
-      Bool.pick(List<&2, Span>,matches,span(a,b,"Provider",name,link,next),next)
+      operations(rest,id,link,s,e,Bool.pick(List<&2,Span>,matches,span(a,b,"Provider",name,link,tail),tail))
 
 def from_runs(runs: List<&2, Evidence>, +ops: List<&2, Evidence>, +frontier: Nat, +completion: Nat) -> List<&2, Span>:
   match runs:
