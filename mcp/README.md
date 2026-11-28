@@ -1,9 +1,42 @@
 # Plow MCP
 
 Plow MCP gives coding agents read-only access to the analysis, timeline, and charts
-shown in the dashboard. Add `https://plow.tryapparent.com/app/mcp` as a Streamable HTTP MCP
-server in an RFC 8707-compatible client once the route is enabled. Sign in
-through Cloudflare Access when the client prompts.
+shown in the dashboard. Use the MCP client's built-in OAuth flow for Cloudflare
+Access. Plow's Streamable HTTP endpoint is `https://plow.tryapparent.com/app/mcp`.
+Clients must support the OAuth resource parameter (RFC 8707).
+
+## Connect from Codex or T3 Code
+
+If the Plow tools are already available, call them directly. Otherwise, check
+`codex mcp list` in the same environment and Codex profile that will run the
+tools. For T3 Code, use the Codex profile selected for the thread.
+
+If `plow` is missing, register it once in that profile from an interactive
+terminal. Complete the browser sign-in if `add` prompts for it.
+
+```sh
+codex mcp add plow --url https://plow.tryapparent.com/app/mcp
+```
+
+If `plow` is registered and needs authorization, run `codex mcp login plow` in
+that profile. If the browser and Codex run on different machines, use
+`codex mcp login plow --no-browser` in a terminal that keeps stdin open. Open the
+printed URL, sign in, and paste the full callback URL into the waiting command.
+The callback page may show a connection error. Treat the URL as a credential
+and enter it directly in the terminal or use the host's secure input handoff.
+
+If Codex reports `No OAuth callback URL received before input closed`, restart
+native login in an interactive terminal before asking the user to sign in. Each
+callback belongs to the login process that generated it, and its authorization
+code can be exchanged only once. Keep OAuth in the configured MCP client so it
+can reuse its stored credentials across sessions. If the agent cannot keep the
+terminal open or deliver the callback securely, have the user complete native
+login in the selected profile.
+
+After first-time setup, start a fresh session in that profile and verify it can
+call `get_plow_charts` with `{"range":"24h"}`.
+
+## Tools
 
 | Tool | Input | Result |
 | --- | --- | --- |
