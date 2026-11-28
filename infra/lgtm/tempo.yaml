@@ -11,5 +11,6 @@ storage:
     backend: local
     wal:
       path: /var/tempo/wal
+      ingestion_time_range_slack: 48h
     local:
       path: /var/tempo/blocks
