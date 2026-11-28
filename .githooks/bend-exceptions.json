@@ -57,5 +57,14 @@
     "infra/lgtm/tempo.yaml",
     "infra/lgtm/mimir.yaml",
     "infra/lgtm/deploy.sh"
+  ],
+  "GitHub HTTPS and foreign API decoding, Node CLI wiring, durable filesystem transport and synthetic HTTP verification": [
+    "collect/github/http.ts",
+    "collect/github/attempts.ts",
+    "collect/github/inventory.ts",
+    "collect/github/cycle.ts",
+    "collect/github/main.ts",
+    "collect/github/store.ts",
+    "collect/github/history.test.ts"
   ]
 }
