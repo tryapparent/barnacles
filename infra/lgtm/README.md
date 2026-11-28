@@ -53,7 +53,7 @@ The deployment publishes Grafana on the configured loopback port in the `plow-gr
 
 Reapply with the same runtime directory and environment to retain the volumes and the Viewer. To stop serving just this endpoint, use `tailscale serve --https="$PLOW_TAILNET_HTTPS_PORT" off`. To stop the Compose project while preserving telemetry, run `docker compose -p plow-grafana stop` from the deployed release directory with the same runtime environment. Verify Grafana's authenticated `/api/user` returns the intended read-only identity and query the imported run with its original time range.
 
-The [GitHub collector overlay](../../collect/github/README.md#compose-deployment) adds continuous polling and historical backfill when supplied with an authorized repository configuration and credential. The [Codex trace guide](../../grafana/traces.md) describes the provisioned Tempo views and the optional fan-out from the existing Codex Collector.
+The [GitHub collector deployment](../../collect/github/README.md#compose-deployment) adds continuous polling and historical backfill when supplied with a repository-scoped credential. Use `bash infra/lgtm/deploy.sh --github-only` for worker-only activation or set `PLOW_GITHUB_ENABLED=true` to include it when reapplying the whole stack. The [Codex trace guide](../../grafana/traces.md) describes the provisioned Tempo views and the optional fan-out from the existing Codex Collector.
 
 [Collection Health](../../grafana/collection-health.md) uses a separate Loki tenant for allowlisted progress reports and the existing Mimir data source for Alloy self-metrics.
 Activity reads evidence in bounded windows up to eight days. The single-node
