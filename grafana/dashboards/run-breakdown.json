@@ -3,7 +3,7 @@
     "uid": "plow-run-breakdown",
     "title": "Plow historical runs",
     "schemaVersion": 41,
-    "version": 3,
+    "version": 4,
     "editable": false,
     "timezone": "utc",
     "time": {
@@ -421,7 +421,7 @@
                 },
                 "config": {
                   "text": {
-                    "fixed": "Synthetic fixture \u00b7 Source times in UTC"
+                    "fixed": "Source times in UTC"
                   },
                   "color": {
                     "fixed": "#FFF4DF"
@@ -441,7 +441,7 @@
     "uid": "plow-activity",
     "title": "Activity",
     "schemaVersion": 41,
-    "version": 2,
+    "version": 3,
     "editable": false,
     "timezone": "utc",
     "time": {
@@ -653,6 +653,10 @@
                 {
                   "id": "custom.width",
                   "value": 112
+                },
+                {
+                  "id": "displayName",
+                  "value": "Elapsed"
                 }
               ]
             },
@@ -670,6 +674,10 @@
                       "url": "/d/plow-activity/activity?var-range=${range:percentencode}&var-operation=${__value.raw:percentencode}&${__url_time_range}"
                     }
                   ]
+                },
+                {
+                  "id": "displayName",
+                  "value": "Operation"
                 }
               ]
             },
@@ -680,10 +688,6 @@
               },
               "properties": [
                 {
-                  "id": "custom.width",
-                  "value": 122
-                },
-                {
                   "id": "links",
                   "value": [
                     {
@@ -691,6 +695,10 @@
                       "url": "/d/plow-activity/activity?var-range=${range:percentencode}&var-operation=${__value.raw:percentencode}&${__url_time_range}"
                     }
                   ]
+                },
+                {
+                  "id": "displayName",
+                  "value": "Category"
                 }
               ]
             }
@@ -785,7 +793,9 @@
           "rowHeight": 0.6,
           "alignValue": "center",
           "legend": {
-            "showLegend": false
+            "showLegend": true,
+            "displayMode": "list",
+            "placement": "bottom"
           },
           "tooltip": {
             "mode": "single"
@@ -911,7 +921,9 @@
           "rowHeight": 0.6,
           "alignValue": "center",
           "legend": {
-            "showLegend": false
+            "showLegend": true,
+            "displayMode": "list",
+            "placement": "bottom"
           },
           "tooltip": {
             "mode": "single"
@@ -1087,7 +1099,7 @@
           "w": 24,
           "h": 7
         },
-        "description": "The newest T3 capture checkpoint supplies the cutoff. Empty clocks and stages without linked evidence are shown as unknown.",
+        "description": "The latest successful T3 capture supplies the cutoff. Clock gaps counts runs with missing timing. Empty clocks and stages without linked evidence are unknown.",
         "datasource": {
           "type": "plow-agent-observability-datasource",
           "uid": "plow-agent-observability"
@@ -1198,7 +1210,7 @@
             {
               "matcher": {
                 "id": "byName",
-                "options": "Missing run clocks"
+                "options": "Clock gaps"
               },
               "properties": [
                 {

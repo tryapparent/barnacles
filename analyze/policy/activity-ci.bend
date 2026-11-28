@@ -66,10 +66,10 @@ def join(rows: List<&2,S.Evidence>, +links: List<&2,S.Evidence>, +attempts: List
 
 def lane(record: S.Evidence, +lo: Nat, +hi: Nat, +tail: List<&2,S.Thread>) -> List<&2,S.Thread>:
   match record:
-    case S.Evidence{_,kind,_,thread,run,_,_,+status,_,_,_,created,+start,end,repo,attempt,job_sha,job}:
+    case S.Evidence{_,kind,_,_,run,_,_,+status,_,_,_,created,+start,end,repo,attempt,job_sha,job}:
       +attempt_lane = String.eq(kind,"github_actions_attempt")
-      +name = Bool.pick(String,attempt_lane,"Attempt ",String.concat(["Job ",job," · attempt "]))
-      +id = String.concat([thread," · ",repo," #",run," · ",name,attempt])
+      +label = Bool.pick(String,attempt_lane,"Attempt",String.concat(["Job ",job]))
+      +id = String.concat([label," · ",repo," #",run,"/",attempt])
       +execute = Bool.pick(String,attempt_lane,"Attempt elapsed",
         Bool.pick(String,Bool.or(String.eq(status,"failure"),String.eq(status,"timed_out")),"Job failed","Job execution"))
       +queue = Bool.pick(String,attempt_lane,"Attempt queue","Job queue")
