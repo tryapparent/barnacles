@@ -511,7 +511,7 @@
           "x": 0,
           "y": 3,
           "w": 12,
-          "h": 6
+          "h": 7
         },
         "description": "Elapsed time summed across threads. Use the table selector for Operations. Choose a category or operation to filter the thread timeline.",
         "datasource": {
@@ -643,7 +643,7 @@
           "x": 12,
           "y": 3,
           "w": 12,
-          "h": 6
+          "h": 7
         },
         "description": "Mean of per-thread provider shares, with request-to-start time in the denominator. Four-hour buckets for Last 24h and daily buckets for Last 7 days.",
         "datasource": {
@@ -697,9 +697,9 @@
         "type": "table",
         "gridPos": {
           "x": 0,
-          "y": 9,
+          "y": 10,
           "w": 24,
-          "h": 8
+          "h": 9
         },
         "description": "T3 shows the measured cutoff. In summary mode, freshness is measured at the end of the selected range. The summary input cutoff and publication have separate clocks. Use Refresh to retry.",
         "datasource": {
@@ -858,9 +858,9 @@
         "type": "table",
         "gridPos": {
           "x": 0,
-          "y": 17,
+          "y": 19,
           "w": 24,
-          "h": 6
+          "h": 7
         },
         "description": "Ranked evidence in this range. Confirmed outcome delay, T3 request-to-start waits and failed CI job execution measure different clocks.",
         "datasource": {
@@ -972,7 +972,7 @@
         "collapsed": true,
         "gridPos": {
           "x": 0,
-          "y": 23,
+          "y": 26,
           "w": 24,
           "h": 1
         },
@@ -983,7 +983,7 @@
             "type": "state-timeline",
             "gridPos": {
               "x": 0,
-              "y": 24,
+              "y": 27,
               "w": 24,
               "h": 9
             },
@@ -1081,7 +1081,7 @@
             "type": "state-timeline",
             "gridPos": {
               "x": 0,
-              "y": 33,
+              "y": 36,
               "w": 24,
               "h": 8
             },
@@ -1169,7 +1169,7 @@
             "type": "table",
             "gridPos": {
               "x": 0,
-              "y": 41,
+              "y": 44,
               "w": 24,
               "h": 7
             },
