@@ -27,7 +27,7 @@ test("lexical comment parsers distinguish comments from literals", async () => {
     }
     await assert.rejects(comments("example.unknown", Buffer.from("x")), /Unsupported comment syntax/);
     await assert.rejects(comments("example.json", Buffer.from('{"x":1 /* marked */}')));
-    for (const path of ["evidence/storage/actions.sql", "evidence/storage/sources.sql", ".githooks/pre-commit"]) {
+    for (const path of [".githooks/pre-commit", "analyze/datasource/go.mod", "analyze/datasource/go.sum"]) {
       assert.deepEqual(await comments(path, readFileSync(path)), []);
     }
   });

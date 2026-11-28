@@ -4,13 +4,13 @@ Plow is a public MIT-licensed project for observing how coding-agent work reache
 
 ## Ownership
 
-- [Collector](collector/README.md) reads source evidence and emits allowlisted records.
-- [Evidence](evidence/README.md) owns SQLite, record identities, delivery joins, and metric definitions.
-- [Plow](dashboard/plow/README.md) owns the browser dashboard and its Clanker origin. The [dashboard guide](dashboard/README.md) documents local snapshot preparation.
+Plow is the agent observability value stream. See [the architecture](ARCHITECTURE.md) for the repository boundaries.
 
-Build the Plow interface in React with the shared [shadcn controls](dashboard/web/controls.tsx). Keep timeline geometry in the chart renderer and evidence decisions in Bend2.
+- [Collection](collect/README.md) reads sources and emits allowlisted evidence.
+- [Analysis](analyze/policy/README.md) owns evidence identity, pairing, coverage, and timing decisions. The [Grafana data source](analyze/datasource/README.md) handles bounded source reads and frames the result.
+- [Grafana](grafana/README.md) owns the dashboards and provisioning. [Infrastructure](infra/lgtm/README.md) owns the reproducible Compose candidate.
 
-Keep the dependency direction from collector to evidence and from dashboard to evidence views. Keep source clients and credentials out of evidence queries and dashboards. Put commands and focused verification instructions in the owning directory as they become runnable.
+Use native Grafana dashboards and controls. Keep evidence decisions in Bend2.
 
 ## Infrastructure as code
 
@@ -21,16 +21,15 @@ Keep the dependency direction from collector to evidence and from dashboard to e
 
 ## Plow hosting
 
-- Follow the [Plow deployment guide](dashboard/plow/README.md#deployment) for the Docker Compose origin and Cloudflare Access at `plow.tryapparent.com/app`. Keep candidate checks on loopback.
-- When asked to use Plow MCP, call the registered tools. If setup or login is needed, follow the [native MCP OAuth instructions](mcp/README.md#connect-from-codex-or-t3-code) in the agent's client profile.
+- Keep Grafana prototype checks on loopback.
 
 ## Bend2 is the implementation language
 
 - Use Bend2 by default for authored code. Implement all Plow product behavior in Bend2. This includes pairing, correlation, filtering, classification, validation of evidence, state updates, selection and ranking, attribution, and metric calculations. Apply this rule to new code and migrate the complete decision when changing existing behavior.
-- Keep the TypeScript host to external I/O, foreign-format decoding and encoding, compiler wiring, and SQLite transactions. SQL supplies schema, storage constraints, and raw evidence reads. Make domain decisions in Bend2 even when a TypeScript loop or SQL query could do the work.
+- Keep host code to external I/O, foreign-format decoding and encoding, compiler wiring, and the Grafana SDK. Make domain decisions in Bend2.
 - If the pinned compiler or runtime blocks a required Bend2 implementation, record the exact limitation and affected behavior. Get an explicit scope decision before adding a host-language implementation of that product behavior.
 - Keep non-Bend host and tooling exceptions in the [exact-path registry](.githooks/bend-exceptions.json). New exceptions require an explicit decision and a concrete reason. The commit and push hooks check new paths.
-- Review every changed host and SQL branch for misplaced product decisions. Exercise the compiled Bend2 code through the real entry point before claiming completion. Keep generated modules out of Git.
+- Review every changed host branch for misplaced product decisions. Exercise the compiled Bend2 code through the real entry point before claiming completion. Keep generated modules out of Git.
 
 ## Evidence and privacy
 

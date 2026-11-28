@@ -7,39 +7,19 @@
   "scripts": {
     "hooks:install": "node tooling/bend.ts --install-hooks",
     "test:hooks": "node tooling/verify.ts hooks",
-    "verify": "node tooling/verify.ts",
-    "demo": "node examples/demo.ts"
+    "verify": "node tooling/verify.ts"
   },
   "devDependencies": {
     "@repomix/tree-sitter-wasms": "0.1.17",
-    "@types/react": "19.3.3",
-    "@types/react-dom": "19.3.0",
-    "@vitejs/plugin-react": "6.3.0",
     "@willbooster/tree-sitter-sql": "3.0.2",
     "@willbooster/web-tree-sitter": "23.0.1",
     "js-tiktoken": "1.0.21",
     "markdown-it": "15.0.3",
     "parse5": "8.1.1",
-    "playwright": "1.65.1",
     "tree-sitter-bash": "0.25.1",
     "tree-sitter-wasms": "0.1.13",
-    "typescript": "7.0.2",
-    "vite": "8.4.0",
     "web-tree-sitter": "0.25.10",
     "yaml": "2.9.0"
   },
-  "type": "module",
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "1.32.2",
-    "@octokit/auth-app": "8.3.1",
-    "@octokit/core": "7.0.8",
-    "@radix-ui/react-slot": "1.5.0",
-    "@ui-sdk/core": "0.1.0-beta.17",
-    "@ui-sdk/react": "0.1.0-beta.17",
-    "class-variance-authority": "0.7.1",
-    "jose": "6.2.18",
-    "react": "19.3.1",
-    "react-dom": "19.3.1",
-    "zod": "4.6.7"
-  }
+  "type": "module"
 }

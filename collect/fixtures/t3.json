@@ -1,0 +1,8 @@
+{
+  "id": "fixture-run",
+  "threadId": "fixture-thread",
+  "sessionId": "fixture-session",
+  "startedAt": "2025-06-03T12:00:00.000Z",
+  "completedAt": "2025-06-03T12:00:06.000Z",
+  "prompt": "PRIVATE_FIXTURE_T3_PROMPT"
+}

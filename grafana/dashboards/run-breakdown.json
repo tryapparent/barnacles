@@ -1,0 +1,196 @@
+{
+  "uid": "plow-run-breakdown",
+  "title": "Plow historical runs",
+  "schemaVersion": 41,
+  "version": 2,
+  "editable": false,
+  "timezone": "utc",
+  "time": { "from": "2025-06-03T11:59:00.000Z", "to": "2025-06-03T12:01:00.000Z" },
+  "templating": {
+    "list": [
+      {
+        "name": "runId",
+        "label": "Run ID",
+        "type": "textbox",
+        "description": "Run to look up. The dashboard time range selects the source time of its evidence.",
+        "query": "fixture-run",
+        "current": { "text": "fixture-run", "value": "fixture-run" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "table",
+      "title": "Run breakdown",
+      "description": "Use the selector below the table to view intervals, findings, or coverage for the selected run. Coverage describes the source read for this time range. Set the time range to include the run's source timestamps.",
+      "gridPos": { "x": 0, "y": 3, "w": 24, "h": 8 },
+      "datasource": { "type": "plow-agent-observability-datasource", "uid": "plow-agent-observability" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "plow-agent-observability-datasource", "uid": "plow-agent-observability" },
+          "runId": "$runId"
+        }
+      ],
+      "options": { "showHeader": true },
+      "fieldConfig": {
+        "defaults": { "custom": { "minWidth": 110 } },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "callId" },
+            "properties": [{ "id": "displayName", "value": "Call ID" }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "kind" },
+            "properties": [
+              { "id": "displayName", "value": "Interval" },
+              { "id": "mappings", "value": [
+                { "type": "value", "options": { "function_call": { "text": "Tool call" } } }
+              ] }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "startMs" },
+            "properties": [
+              { "id": "displayName", "value": "Started" },
+              { "id": "unit", "value": "dateTimeAsIso" },
+              { "id": "noValue", "value": "Unknown" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "endMs" },
+            "properties": [
+              { "id": "displayName", "value": "Ended" },
+              { "id": "unit", "value": "dateTimeAsIso" },
+              { "id": "noValue", "value": "Unknown" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "durationMs" },
+            "properties": [
+              { "id": "displayName", "value": "Elapsed" },
+              { "id": "unit", "value": "ms" },
+              { "id": "noValue", "value": "Unknown" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "reason" },
+            "properties": [
+              { "id": "displayName", "value": "Finding" },
+              { "id": "mappings", "value": [
+                { "type": "value", "options": {
+                  "missing_start": { "text": "Call start missing" },
+                  "missing_end": { "text": "Call result missing" },
+                  "ambiguous_start": { "text": "Ambiguous call start" },
+                  "ambiguous_end": { "text": "Ambiguous call result" },
+                  "reversed_clock": { "text": "Result timestamp precedes call start" },
+                  "invalid_event": { "text": "Invalid event" },
+                  "conflicting_event_id": { "text": "Conflicting records for one event ID" }
+                } }
+              ] }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "runId" },
+            "properties": [{ "id": "displayName", "value": "Run ID" }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "events" },
+            "properties": [{ "id": "displayName", "value": "Events" }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "paired" },
+            "properties": [
+              { "id": "displayName", "value": "Pairs" },
+              { "id": "custom.width", "value": 90 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "unknown" },
+            "properties": [{ "id": "displayName", "value": "Unknown calls" }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "sourceComplete" },
+            "properties": [
+              { "id": "displayName", "value": "Source read" },
+              { "id": "mappings", "value": [
+                { "type": "value", "options": {
+                  "true": { "text": "Complete" },
+                  "false": { "text": "Partial" }
+                } }
+              ] }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "sourceGaps" },
+            "properties": [
+              { "id": "displayName", "value": "Source gaps" },
+              { "id": "custom.width", "value": 320 },
+              { "id": "custom.inspect", "value": true }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 2,
+      "type": "canvas",
+      "datasource": { "type": "datasource", "uid": "-- Grafana --" },
+      "targets": [],
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 3 },
+      "options": {
+        "inlineEditing": false,
+        "panZoom": false,
+        "zoomToContent": false,
+        "root": {
+          "name": "Plow header",
+          "type": "frame",
+          "background": { "color": { "fixed": "#392820" } },
+          "elements": [
+            {
+              "name": "Plow wordmark",
+              "type": "rectangle",
+              "constraint": { "horizontal": "left", "vertical": "center" },
+              "placement": { "left": 24, "top": 0, "width": 112, "height": 58 },
+              "background": { "image": { "fixed": "plow-cream.png" }, "size": "contain" }
+            },
+            {
+              "name": "Meadow divider",
+              "type": "rectangle",
+              "constraint": { "horizontal": "left", "vertical": "center" },
+              "placement": { "left": 156, "top": 0, "width": 10, "height": 32 },
+              "background": { "color": { "fixed": "#6A934F" } }
+            },
+            {
+              "name": "Run evidence",
+              "type": "text",
+              "constraint": { "horizontal": "leftright", "vertical": "center" },
+              "placement": { "left": 180, "right": 24, "top": 12, "height": 24 },
+              "config": {
+                "text": { "fixed": "Tool timing and evidence coverage" },
+                "color": { "fixed": "#FFF4DF" },
+                "size": 18,
+                "align": "left",
+                "valign": "middle"
+              }
+            },
+            {
+              "name": "Fixture provenance",
+              "type": "text",
+              "constraint": { "horizontal": "leftright", "vertical": "center" },
+              "placement": { "left": 180, "right": 24, "top": -12, "height": 24 },
+              "config": {
+                "text": { "fixed": "Synthetic fixture · Source times in UTC" },
+                "color": { "fixed": "#FFF4DF" },
+                "size": 13,
+                "align": "left",
+                "valign": "middle"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
