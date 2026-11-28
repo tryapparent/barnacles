@@ -16,12 +16,9 @@
   "panels": [
     {
       "id": 2,
-      "type": "canvas",
-      "datasource": {
-        "type": "datasource",
-        "uid": "-- Grafana --"
-      },
-      "targets": [],
+      "type": "marcusolsson-dynamictext-panel",
+      "datasource": {"type": "grafana", "uid": "grafana"},
+      "targets": [{"refId": "A", "queryType": "snapshot", "snapshot": []}],
       "gridPos": {
         "x": 0,
         "y": 0,
@@ -29,76 +26,16 @@
         "h": 3
       },
       "options": {
-        "inlineEditing": false,
-        "panZoom": false,
-        "zoomToContent": false,
-        "root": {
-          "name": "Plow header",
-          "type": "frame",
-          "background": {
-            "color": {
-              "fixed": "#392820"
-            }
-          },
-          "elements": [
-            {
-              "name": "Plow wordmark",
-              "type": "rectangle",
-              "constraint": {
-                "horizontal": "left",
-                "vertical": "center"
-              },
-              "placement": {
-                "left": 24,
-                "top": 0,
-                "width": 112,
-                "height": 58
-              },
-              "background": {
-                "image": {
-                  "fixed": "plow-cream.png"
-                },
-                "size": "contain"
-              }
-            },
-            {
-              "name": "Collection health",
-              "type": "text",
-              "constraint": {
-                "horizontal": "leftright",
-                "vertical": "center"
-              },
-              "placement": {
-                "left": 156,
-                "right": 24,
-                "top": 0,
-                "height": 28
-              },
-              "config": {
-                "text": {
-                  "fixed": "Collection health"
-                },
-                "color": {
-                  "fixed": "#FFF4DF"
-                },
-                "size": 20,
-                "align": "left",
-                "valign": "middle"
-              }
-            }
-          ],
-          "border": {
-            "color": {
-              "fixed": "#6A934F"
-            },
-            "width": 2
-          }
-        }
-      }
+        "defaultContent": "<div class=\"plow-heading plow-heading--field\"><img class=\"plow-wordmark\" src=\"public/build/plow-cream.png\" alt=\"Plow\"><h1>Collection health</h1></div>",
+        "styles": "@font-face { font-family: 'Plow Young Serif'; src: url('public/build/plow-brand/youngserif.woff2') format('woff2'); font-display: swap; }\n& > .dt-row { margin: 0; padding: 0; border: 0; flex: 1; display: flex; }\n.plow-heading { display: flex; align-items: center; flex: 1; gap: 20px; padding: 12px 28px; min-width: 0; color: #FFF4DF; background-color: #392820; border: 1px solid #6A934F; border-radius: 3px; }\n.plow-wordmark { width: clamp(92px, 9vw, 128px); height: auto; flex: 0 0 auto; }\n.plow-heading h1 { color: inherit; margin: 0; font: 400 clamp(24px, 2.5vw, 40px) / 1.15 'Plow Young Serif', Georgia, serif; }\n.plow-heading--field { background-image: linear-gradient(90deg, #392820 0%, #392820ed 30%, #39282052 61%, #39282000 85%), url('public/build/plow-brand/field.jpg'); background-size: cover; background-position: right 86%; }"
+      },
+      "transparent": true
     },
     {
       "id": 9,
-      "type": "text",
+      "type": "marcusolsson-dynamictext-panel",
+      "datasource": {"type": "grafana", "uid": "grafana"},
+      "targets": [{"refId": "A", "queryType": "snapshot", "snapshot": []}],
       "title": "",
       "gridPos": {
         "x": 0,
@@ -107,8 +44,8 @@
         "h": 2
       },
       "options": {
-        "mode": "markdown",
-        "content": "**Expected status reports** · T3, Codex history and GitHub · Live and backfill lanes  \nGitHub appears when its collector reports. Widen the range for older reports. Clocks are shown in UTC."
+        "defaultContent": "<p class=\"plow-coverage-note\"><strong>Expected status reports</strong> · T3, Codex history and GitHub · Live and backfill lanes<br>GitHub appears when its collector reports. Widen the range for older reports. Clocks are shown in UTC.</p>",
+        "styles": "@font-face { font-family: 'Plow Source Serif'; src: url('public/build/plow-brand/source-serif-4.woff2') format('woff2'); font-display: swap; }\n& > .dt-row { border: 0; margin: 0; padding: 8px 16px; }\n.plow-coverage-note { margin: 0; color: inherit; font: 400 15px / 1.35 'Plow Source Serif', Georgia, serif; }"
       }
     },
     {

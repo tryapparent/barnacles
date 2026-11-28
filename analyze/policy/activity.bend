@@ -16,7 +16,7 @@ type RunLink is Data:
 
 type Activity is Data:
   Activity{from: Nat, cutoff: Nat, oldest: Nat, t3Coverage: String, codexCoverage: String,
-    ciCoverage: String, outcomeCoverage: String, unknownRuns: Nat, conflicts: Nat,
+    ciCoverage: String, outcomeCoverage: String, partial: Bool, unknownRuns: Nat, conflicts: Nat,
     threads: List<&2, S.Thread>, links: List<&2, RunLink>, ci: List<&2, S.Thread>, totals: List<&2, R.Totals>, categories: List<&2, R.Totals>,
     buckets: List<&2, R.Bucket>, findings: List<&2, R.Issue>}
 
@@ -71,14 +71,16 @@ def selected(items: List<&2, Receipt>, +rows: List<&2, S.Evidence>, +conflicts: 
     case Conflict{_} <> rest: selected(rest,rows,Nat.add(conflicts,1n))
     case Missing{} <> rest: selected(rest,rows,conflicts)
 
-def classifiers(rows: List<&2, S.Evidence>, +kind: String) -> List<&2, S.Evidence>:
+def classified(rows: List<&2, S.Evidence>, +kind: String, +matches: List<&2,S.Evidence>) -> List<&2, S.Evidence>:
   match rows:
-    case []: []
+    case []: List.reverse(&2,S.Evidence,matches)
     case +row <> rest:
       match row:
         case S.Evidence{_,label,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_}:
-          +tail = classifiers(rest,kind)
-          Bool.pick(List<&2,S.Evidence>,String.eq(label,kind),row <> tail,tail)
+          classified(rest,kind,Bool.pick(List<&2,S.Evidence>,String.eq(label,kind),row <> matches,matches))
+
+def classifiers(rows: List<&2, S.Evidence>, kind: String) -> List<&2, S.Evidence>:
+  classified(rows,kind,[])
 
 def collect(entry: Map<&2, Batch> & Batch, +id: String, kind: String, +item: S.Evidence) -> Map<&2, Batch>:
   match entry:
@@ -166,7 +168,7 @@ def coverage_status(mark: Watermark) -> String:
   match mark:
     case Watermark{_,_,_,status}: status
 
-def report(mark: Watermark, +rows: List<&2, S.Evidence>, conflicts: Nat, +range: String, +to: Nat, partial: Bool, operation: String) -> Activity:
+def report(mark: Watermark, +rows: List<&2, S.Evidence>, conflicts: Nat, +range: String, +to: Nat, +partial: Bool, operation: String) -> Activity:
   match mark:
     case Watermark{_,+cutoff,oldest,status}:
       +days = String.eq(range,"7d")
@@ -187,7 +189,7 @@ def report(mark: Watermark, +rows: List<&2, S.Evidence>, conflicts: Nat, +range:
       +codex = coverage_status(watermark(rows,"codex_coverage",Watermark{0n,0n,0n,"No Codex collection checkpoint"}))
       +totals = R.breakdown(threads)
       Activity{start,cutoff,oldest,coverage,codex,
-        ci_status,"No confirmed outcome feed checkpoint",clock_gaps(runs,start,end),conflicts,
+        ci_status,"No confirmed outcome feed checkpoint",partial,clock_gaps(runs,start,end),conflicts,
         filter(threads,operation),run_links(runs,start,end),lanes,totals,R.categories(totals),R.series(count,threads,start,step),
         R.rank(List.concat(&2,S.Evidence,[runs,ci,confirmed]),start,end)}
 
@@ -196,5 +198,5 @@ def analyzed(indexed: Indexed, range: String, to: Nat, partial: Bool, operation:
     case Indexed{+rows,conflicts}:
       report(watermark(rows,"t3_coverage",Watermark{0n,0n,0n,"No T3 capture checkpoint"}),rows,conflicts,range,to,partial,operation)
 
-def activity(records: List<&2, S.Evidence>, range: String, +to: Nat, partial: Bool, operation: String) -> Activity:
+def activity(records: List<&2, S.Evidence>, range: String, +to: Nat, +partial: Bool, operation: String) -> Activity:
   analyzed(selected(Map.values(&2,Receipt,index(records,to,Map.new(&2,Receipt))),[],0n),range,to,partial,operation)
