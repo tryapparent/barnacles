@@ -10,7 +10,7 @@ The [datasource plugin](../analyze/datasource/) interpolates the textbox variabl
 
 ## Dashboard palette
 
-The Compose deployment defaults to the Plow theme. Its canvas is warm charcoal (`#211813`), its panels use Wet Earth (`#392820`), its text uses Cream (`#FFF4DF`), and its primary controls use Meadow (`#6A934F`). The dashboard headings use Young Serif and the native charts, tables, and controls keep Grafana’s interface font. Existing personal theme preferences take precedence. Select **Plow** in Profile preferences or set `PLOW_GRAFANA_THEME=gildedgrove` to change the deployment default.
+The Compose deployment defaults to the Plow theme. Its canvas is Ink (`#1A130D`), its panels use Wet Earth (`#392820`), its text uses Cream (`#FFF4DF`), and its primary controls use Meadow (`#6A934F`). The dashboard headings use Young Serif and the native charts, tables, and controls keep Grafana’s interface font. Existing personal theme preferences take precedence. Select **Plow** in Profile preferences or set `PLOW_GRAFANA_THEME=gildedgrove` to change the deployment default.
 
 Grafana 12.3 validates theme IDs against a built-in server list. The image reuses its experimental `debug` ID as **Plow** in the theme picker. Gilded Grove, Zen, and other regular presets are still available. The Docker build validates the exact Grafana asset before replacing the theme definition and writes a new content-addressed filename and integrity hashes. On upgrade, revalidate that patch against the new image and confirm the default, a saved preference, and a switch back to a stock theme in Grafana.
 
