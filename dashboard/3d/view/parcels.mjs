@@ -164,7 +164,7 @@ export function landscapeLayout(scene, width, revision, selection, policy) {
   const threadWidth = Math.min(181, width * 0.125);
   const axis = rect(
     margin + threadWidth,
-    timeline.y + 102,
+    timeline.y + 126,
     usable - threadWidth,
     0,
   );

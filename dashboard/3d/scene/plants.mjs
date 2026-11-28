@@ -1,4 +1,4 @@
-export function botanicalModel(cut) {
+export function botanicalModel(distant) {
   const v = [];
   const shade = (c, q) => c.map((n) => n * q);
   function vertex(p, c) {
@@ -30,17 +30,17 @@ export function botanicalModel(cut) {
       facet(p, t, s, col);
     }
   }
-  if (cut) {
-    for (let j = 0; j < 4; j++) {
-      const a = j * 2.4;
-      stem(
-        Math.cos(a) * 0.37,
-        Math.sin(a) * 0.37,
-        0.55 + j * 0.11,
-        0.073,
-        [0.74, 0.61, 0.31],
-      );
+  if (distant) {
+    const straw=[.62,.58,.27],leaf=[.36,.45,.13],ear=[.80,.69,.36];
+    facet([-.04,0,0],[.05,0,0],[.12,1.72,0],straw);
+    for(let j=0;j<4;j++) {
+      const a=j*2.41,dx=Math.cos(a),dz=Math.sin(a),y=.15+j*.21;
+      const base=[0,y,0],tip=[.83*dx,y+.28,.83*dz];
+      const ridge=[.43*dx,y+.34,.43*dz];
+      facet(base,[ridge[0]-.15*dz,ridge[1]-.08,ridge[2]+.15*dx],tip,leaf);
+      facet(base,tip,ridge,shade(leaf,1.17));
     }
+    facet([.05,1.40,0],[.20,1.54,.04],[.11,1.95,0],ear);
     return v;
   }
   stem(0, 0, 1.55, 0.048, [0.61, 0.63, 0.2]);

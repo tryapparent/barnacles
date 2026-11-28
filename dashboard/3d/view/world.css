@@ -290,3 +290,25 @@ body[data-focused="batch"] .trend-plot text { opacity: 0; }
   background: #cc673b;
   clip-path: polygon(0 0, 100% 22%, 87% 45%, 100% 67%, 0 100%);
 }
+
+:is(#summary-panel,.agent-work-trend,#timeline-panel) {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+:is(#summary-panel,.agent-work-trend,#timeline-panel) button { pointer-events: auto; }
+
+main.board { transform-style: preserve-3d; pointer-events: none; }
+
+.ground-labels .operation-reading {
+  font-size: clamp(19px, 1.7vw, 27px);
+  font-weight: 630;
+  text-shadow: 0 1px 2px #24190c, 0 0 5px #30220e;
+}
+.ground-labels .operation-reading strong {
+  font-family: Georgia,serif;
+  font-size: 1.1em;
+  font-variant-numeric: tabular-nums;
+}
+.ground-labels .neighbor-reading { font-size: clamp(14px, 1.1vw, 17px); }

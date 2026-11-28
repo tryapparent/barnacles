@@ -1,3 +1,4 @@
+import { groundScreen } from "./camera.mjs";
 import { createElement as h } from "react";
 import { Button, Card } from "../../web/controls.tsx";
 import { rect } from "./parcels.mjs";
@@ -247,28 +248,9 @@ function TimelineView({ b, selected, choose }) {
       "h2",
       { id: "timeline", tabIndex: -1, style: { left: t.x, top: t.y } },
       "Timeline",
+      h("small", {className:"field-story"}, "Meadow lies outside each thread’s recorded time."),
     ),
-    h(
-      "p",
-      {
-        className: "field-story",
-        style: { left: t.x, top: t.y + 38, width: t.w },
-      },
-      "One allotment per thread. Mown grass lies outside its recorded interval.",
-    ),
-    h(
-      "div",
-      { className: "axis", style: { left: t.x, top: a.y - 17 } },
-      "Thread",
-    ),
-    h(
-      "div",
-      {
-        className: "axis utc",
-        style: { left: a.x, top: a.y - 40 },
-      },
-      "UTC",
-    ),
+    h("div", {className:"axis utc",style:{left:a.x-47,top:a.y-32}}, "UTC"),
     b.ticks.map((tick) =>
       h(
         "span",
@@ -299,6 +281,7 @@ function TimelineView({ b, selected, choose }) {
           {
             className: "inspectable",
             "aria-label": "Inspect " + label(thread),
+            title: label(thread),
             "data-target": thread.key,
             tabIndex: selected ? -1 : 0,
             style: box(rect(t.x, thread.r.y, a.x - t.x, thread.r.h)),
@@ -385,33 +368,35 @@ export function GroundLabels({ board, selected }) {
 }
 export function projectLabels(root, pose) {
   const w=root.clientWidth, h=root.clientHeight;
-  const [breadth,slope,tilt,offset]=pose.lens;
+  const project=(x,z)=>groundScreen(pose,w,h,x,z);
   const targets=new Map(Array.from(root.querySelectorAll(".category-tile,.parcel-button,.phase-target"), el=>[el.dataset.target,el]));
   const backups=new Map(Array.from(root.querySelectorAll("[data-fallback]"), el=>[el.dataset.fallback,el]));
   for (const el of root.querySelectorAll("[data-caption]")) {
     const key=el.dataset.caption;
     let x,y;
     if (el.dataset.x !== undefined) {
-      const ground=(pose.y+Number(el.dataset.y)*pose.p*pose.s)/h;
-      const depth=1+tilt*(.5-ground);
-      x=w/2+(pose.x+Number(el.dataset.x)*pose.s-w/2)*breadth/depth;
-      y=h*(offset+slope*ground/depth);
-      el.hidden=depth<=0 || x<0 || x>w || y<45 || y>h;
+      const wx=Number(el.dataset.x), wz=Number(el.dataset.y);
+      [x,y]=project(wx,wz);
+      el.hidden=x<0 || x>w || y<45 || y>h;
     } else {
       const target=targets.get(key);
       if (!target) { el.hidden=true; continue; }
       const bounds=target.getBoundingClientRect();
       const top=Math.max(67,bounds.top),bottom=Math.min(h-12,bounds.bottom);
-      y=(top+bottom)/2;
-      const row=y/h-offset;
-      const ground=row*(1+tilt/2)/(slope+tilt*row);
-      const depth=1+tilt*(.5-ground);
-      const project=x=>w/2+(pose.x+x*pose.s-w/2)*breadth/depth;
-      const start=parseFloat(target.style.left);
-      const left=Math.max(6,project(start)),right=Math.min(w-6,project(start+parseFloat(target.style.width)));
-      x=(left+right)/2;
+      y=top+(bottom-top)*(el.className==="operation-reading"?.69:.5);
+      const {left,top:worldTop,width,height}=target.style;
+      const x0=parseFloat(left),z0=parseFloat(worldTop);
+      const x1=x0+parseFloat(width),z1=z0+parseFloat(height);
+      const corners=[project(x0,z0),project(x1,z0),project(x1,z1),project(x0,z1)];
+      const crossings=[];
+      for(let i=0;i<4;i++){
+        const a=corners[i], b=corners[(i+1)%4];
+        if((a[1]<=y)!==(b[1]<=y)) crossings.push(a[0]+(b[0]-a[0])*(y-a[1])/(b[1]-a[1]));
+      }
+      const start=Math.max(6,Math.min(...crossings)), end=Math.min(w-6,Math.max(...crossings));
+      x=(start+end)/2;
       el.toggleAttribute("data-inline", bottom-top<39);
-      el.hidden=right-left<Math.min(180,Math.max(54,el.firstChild.textContent.length*7.5)) || bottom-top<18;
+      el.hidden=end-start<Math.min(180,Math.max(54,el.firstChild.textContent.length*7.5)) || bottom-top<18;
       if (target.classList.contains("parcel-button")) {
         target.tabIndex=el.hidden ? -1 : 0;
         const backup=backups.get(key);

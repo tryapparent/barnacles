@@ -26,7 +26,7 @@ export function fieldGeometry({
         const x = r.x + (col + 0.33) * gap + hash(col, line, 1) * 0.66;
         const z = r.y + (line + 0.33) * row + hash(col, line, 2) * 0.85;
         if (x >= r.x + r.w || z >= r.y + r.h || (edge && z < edge(x))) continue;
-        const height = (small ? 4.1 : 7.8) * (0.78 + hash(col, line, 3) * 0.46);
+        const height = (small ? 3.6 : 5.8) * (0.78 + hash(col, line, 3) * 0.46);
         (cut ? cutLocations : grassLocations).push(
           x,
           z,
@@ -37,8 +37,8 @@ export function fieldGeometry({
     }
   }
   function furrows(r, small = false) {
-    const gap = small ? 5 : 14,
-      ht = small ? 0.8 : 2.7;
+    const gap = small ? 4.4 : 9.5,
+      ht = small ? .52 : 1.55;
     function surface(a, b, c) {
       for (const [x, y, z, t] of [a, b, c])
         verts.push(x, y, z, 1, 1, 1, 5 + t, 0, 0);
@@ -79,7 +79,7 @@ export function fieldGeometry({
     }
   }
   function timber(x, z, r) {
-    const n = 18,
+    const n = 7,
       span = r * 3.08;
     function vertex(i, j) {
       const u = i / n,
@@ -127,7 +127,7 @@ export function fieldGeometry({
 
   function fogBank(r) {
     if (r.w <= 0 || r.h <= 0) return;
-    const height = Math.min(32, Math.max(3, Math.min(r.w * 0.65, r.h * 0.64)));
+    const height = Math.min(21, Math.max(2.5, Math.min(r.w * 0.65, r.h * 0.64)));
     for (const [u, v] of [
       [0, 0],
       [1, 0],

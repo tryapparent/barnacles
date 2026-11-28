@@ -24,7 +24,7 @@ vec3 plowedSoil(vec2 world, float around, sampler2D tilth) {
   float profile = around + ripple + (clod - .22) * .43;
   float shoulder = .5 + .5 * cos(6.283 * (profile - .31));
   float crest = smoothstep(.67, 1., shoulder) * smoothstep(.16, .52, clod);
-  vec3 diffuse = mix(vec3(.22,.14,.090), mix(loam, crumbs, .28), .51) * mix(.74, 1.22, shoulder);
+  vec3 diffuse = mix(vec3(.30,.188,.103), mix(loam, crumbs, .28), .51) * mix(.84, 1.16, shoulder);
   return (diffuse + vec3(.040, .028, .020) + crest * vec3(.052, .034, .019)) * rakingLight(world);
 }`;
 
@@ -110,7 +110,7 @@ export function mountScenery(root, sources) {
     left: "0", top: "0", right: "0", backgroundColor: "#d6a978",
     backgroundImage: 'url("' + sources.horizon + '")',
     backgroundRepeat: "no-repeat", filter: "saturate(.72)",
-    maskImage: "linear-gradient(to bottom, black 68%, transparent)",
+    maskImage: "linear-gradient(to bottom, black 58%, transparent)",
   });
   const hedge = layer(container, "farm-woodland", {
     left: "0", top: "0",
@@ -147,7 +147,7 @@ export function mountScenery(root, sources) {
     oak.style.width = w * .5 + "px";
     oak.style.height = h * 1.065 + "px";
     verge.style.width = w + "px";
-    verge.style.height = Math.max(60, Math.min(168, h * .175)) + "px";
+    verge.style.height = Math.max(60, Math.min(168, h * .205)) + "px";
     if (pose) view(pose);
   }
   function view(next) {
@@ -163,13 +163,13 @@ export function mountScenery(root, sources) {
     const ridgeBottom = Math.max(0, Math.min(projectedRim, rim + relativeRim * .52 - h * .42 * dive));
     const [, slope, tilt, offset] = pose.lens ?? [1, 1, 0, 0];
     const project = y => offset*h + slope*y/(1+tilt*(.5-y/h));
-    const ridgeSize = ridgeBottom > 0 ? project(ridgeBottom) : 0;
+    const ridgeSize = Math.max(h * .20, project(ridgeBottom));
     hills.style.height = ridgeSize + "px";
     const ridgeWidth = w * Math.max(1.4, 1.4 * zoom ** .21);
-    const ridgeHeight = Math.max(1, project(rim));
+    const ridgeHeight = Math.max(h * .20, project(rim) / (1 + .2 * dive));
     const skyX = Math.min(0, Math.max(w - ridgeWidth, (w - ridgeWidth) * .48 + dx * .12));
     const skyY = Math.min(0, ridgeSize - ridgeHeight);
-    hills.style.backgroundSize = ridgeWidth + "px " + ridgeHeight + "px";
+    hills.style.backgroundSize = ridgeWidth + "px " + (ridgeHeight*4) + "px";
     hills.style.backgroundPosition = skyX + "px " + skyY + "px";
     const woodsBottom = Math.min(projectedRim, rim + relativeRim * .67 - h * .50 * dive);
     hedge.style.transform = "translate(" + dx * .29 + "px," +
@@ -178,7 +178,7 @@ export function mountScenery(root, sources) {
     const oakX = -w * .009 + dx * 1.2 - w * .72 * dive;
     const oakY = -h * .038 + Math.min(0, dy * 1.2 - h * 1.02 * dive);
     oak.style.transform = "translate(" + oakX + "px," + oakY + "px) scale(" + foregroundScale + ")";
-    const vergeHeight = Math.max(60, Math.min(168, h * .175));
+    const vergeHeight = Math.max(60, Math.min(168, h * .205));
     const vergeY = h - vergeHeight * .84 + dy * 1.12 + h * (zoom - 1);
     verge.style.transform = "translate(" + dx * 1.1 + "px," + vergeY + "px) scale(" + foregroundScale + ")";
   }

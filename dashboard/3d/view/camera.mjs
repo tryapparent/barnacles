@@ -1,3 +1,22 @@
+import { hillside } from "../scene/ground.mjs";
+export function groundScreen(pose, w, h, x, z) {
+  const [breadth,slope,tilt,offset]=pose.lens;
+  const ground=(pose.y+z*pose.p*pose.s)/h;
+  const altitude=pose.terrain.height(x,z)*pose.s/h;
+  const depth=1+tilt*(.5-ground-.84*altitude);
+  return [w/2+(pose.x+x*pose.s-w/2)*breadth/depth,
+    h*(offset+(slope*ground-pose.vertical*altitude)/depth)];
+}
+
+function labelOrigin(label,world) {
+  let x=0,z=0;
+  for(let node=label;node && node!==world;node=node.offsetParent){
+    x+=node.offsetLeft;
+    z+=node.offsetTop;
+  }
+  return [x,z];
+}
+
 export function createCamera(root, update) {
   const motion = matchMedia("(prefers-reduced-motion: reduce)");
   const pose = { x: 0, y: 0, s: 1, p: 0.93 };
@@ -10,37 +29,52 @@ export function createCamera(root, update) {
   let layout,
     lastSize,
     active = true;
+  let labelPositions=new WeakMap();
+  document.fonts.ready.then(()=>{labelPositions=new WeakMap(); if(active && layout) paint();});
   function paint() {
     root.style.setProperty("--scale", pose.s);
     root.style.setProperty("--pitch", pose.p);
     const blend = Math.min(1, Math.max(.70, 2 - pose.s / base));
-    const breadth = 1 - .16 * blend;
-    const slope = 1 - .35 * blend;
+    const breadth = 1 - .065 * blend;
+    const slope = 1 - .43 * blend;
     const tilt = .44 * blend;
-    const offset = .115 * blend;
+    const offset = .192 * blend;
     const far = 1 + tilt / 2;
+    pose.terrain = layout && hillside(layout);
     pose.lens = [breadth, slope, tilt, offset];
     const world = root.querySelector("main");
     if (world) {
       const height = root.clientHeight, center = root.clientWidth / 2;
       const k = -tilt / height;
-      const plane = [breadth, 0, 0, 0, center*k, slope-offset*tilt, 0, k,
-        0, 0, 1, 0, center*(far-breadth), offset*height*far, 0, far];
-      const affine = [pose.s, 0, 0, pose.s*pose.p, pose.x, pose.y];
-      world.style.transform = "matrix3d(" + plane + ") matrix(" + affine + ")";
-      const labels = world.querySelectorAll("h2,.category-tile .parcel-type,.field-story,.tick,.axis,.inspectable .sample-title,.inspectable .meta");
-      for (const label of labels) label.style.removeProperty("transform");
-      if (blend > 0) {
-        const bounds = Array.from(labels, label => label.getBoundingClientRect());
-        labels.forEach((label, index) => {
-          const r = bounds[index];
-          const x = r.x + r.width / 2, y = (r.y + r.height / 2) / height - offset;
-          const depth = far - tilt * y * far / (slope + tilt*y);
-          const dx = breadth / depth, dy = slope*far / (depth*depth);
-          const shear = (x-center)*tilt / (height*depth);
-          const size = 1 - .13*blend;
-          label.style.transform = "matrix(" + [size/dx,0,-size*pose.p*shear/(dx*dy),size/dy,0,0] + ")";
-        });
+      const altitude = Math.sqrt(1-pose.p*pose.p);
+      const vertical = altitude + (1.18-altitude)*tilt/.44;
+      pose.vertical = vertical;
+      const plane = [breadth,0,0,0, center*k,slope-offset*tilt,0,k,
+        center*k*.84,-vertical-offset*tilt*.84,1,k*.84, center*(far-breadth),offset*height*far,0,far];
+      const affine = [pose.s,0,0,0, 0,pose.s*pose.p,0,0, 0,0,pose.s,0, pose.x,pose.y,0,1];
+      world.style.transform = "matrix3d(" + plane + ") matrix3d(" + affine + ")";
+      if (pose.terrain) {
+        for (const panel of world.querySelectorAll("#summary-panel,.agent-work-trend,#timeline-panel"))
+          panel.style.transform = "matrix3d(" + pose.terrain.plane(panel.id === "timeline-panel") + ")";
+      }
+      if (pose.terrain && !document.body.dataset.focused) {
+        const labels=world.querySelectorAll("h2,.category-tile .parcel-type,.tick,.axis,.batch-trigger,.inspectable .sample-title");
+        for (const label of labels) {
+          let origin=labelPositions.get(label);
+          if(!origin) {origin=labelOrigin(label,world);labelPositions.set(label,origin);}
+          const [x,z]=origin;
+          const project=(u,v)=>groundScreen(pose,center*2,height,u,v);
+          const [px,py]=project(x,z), [xx,xy]=project(x+1,z), [yx,yy]=project(x,z+1);
+          const a=xx-px,b=xy-py,c=yx-px,d=yy-py;
+          const determinant=a*d-b*c;
+          if(Math.abs(determinant)<.0001) continue;
+          const size=label.closest("#timeline-panel") ? .84 : .95;
+          const scale=Math.min(base*1.08,1)*size/determinant;
+          const inset = label.classList.contains("sample-title") && pose.s <= base*1.01
+            ? Math.max(0,14-px)/determinant : 0;
+          label.style.transformOrigin="0 0";
+          label.style.transform="matrix("+[d*scale,-b*scale,-c*scale,a*scale,d*inset,-b*inset]+")";
+        }
       }
     }
     update(pose, base, goal.s, moved);
@@ -62,6 +96,7 @@ export function createCamera(root, update) {
     tick(start);
   }
   function fit(board, item, immediate = false) {
+    if(layout!==board) labelPositions=new WeakMap();
     layout = board;
     const w = root.clientWidth,
       h = root.clientHeight;
@@ -81,7 +116,7 @@ export function createCamera(root, update) {
       return;
     }
     const r = item.kind === "batch" ? board.trend : item.r,
-      p = 0.59;
+      p = 0.48;
     const s = Math.min(
       base * 9,
       Math.max(
@@ -97,7 +132,7 @@ export function createCamera(root, update) {
         s,
         p,
         x: w * 0.5 - (r.x + r.w * 0.5) * s,
-        y: h * 0.48 - (r.y + r.h * 0.5) * s * p,
+        y: h * .55 - (r.y+r.h/2)*s*p + hillside(board).height(r.x+r.w/2,r.y+r.h/2)*s*1.45,
       },
       immediate,
       item.kind === "category" || item.kind === "operation" ? 1200 : 480,

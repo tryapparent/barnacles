@@ -49,3 +49,36 @@ export function groundMaterials(g, images, rand) {
   }
   return { shade, track };
 }
+
+const crossfall = .049;
+const backslope = -.23;
+const nearSlope = .11;
+export function hillside(board) {
+  const crease = board.summary.y + board.summary.h;
+  const intercept = slope => -crossfall * board.width * .5 - slope * crease;
+  function height(x,z) {
+    const slope=z>crease?nearSlope:backslope;
+    return crossfall*x+slope*z+intercept(slope);
+  }
+  return {
+    height,
+    plane(near) {
+      const slope=near?nearSlope:backslope;
+      return [1,0,crossfall,0, 0,1,slope,0, 0,0,1,0, 0,0,intercept(slope),1];
+    },
+  };
+}
+
+export const hillsideShader = `
+uniform highp float crease;
+float slopeAt(float z){return z>crease?${nearSlope}:${backslope};}
+float heightAt(vec2 xz){return (xz.x-view.x*.5)*${crossfall}+(xz.y-crease)*slopeAt(xz.y);}
+float riseAlong(vec2 ray,float slope){return ray.x*${crossfall}+ray.y*slope;}`;
+
+export function groundMesh() {
+  const vertices = [];
+  for (const [back, front] of [[-16,0],[0,8]])
+    for (const [x,z] of [[-12,back],[12,back],[-12,front],[-12,front],[12,back],[12,front]])
+      vertices.push(x,0,z,1,1,1,-6,0,0);
+  return vertices;
+}

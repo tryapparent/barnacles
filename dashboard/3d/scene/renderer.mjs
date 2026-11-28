@@ -1,5 +1,5 @@
 import { createProgram, bindTextures } from "./gpu.mjs";
-import { groundMaterials } from "./ground.mjs";
+import { groundMaterials, groundMesh } from "./ground.mjs";
 import { fieldGeometry } from "./geometry.mjs";
 import { botanicalModel } from "./plants.mjs";
 import { plotMesh, plotSpecs } from "./plots.mjs";
@@ -29,6 +29,8 @@ export function mountLandscape(root, sources, shoulder = () => {}) {
     antialias: true,
     powerPreference: "low-power",
   });
+  const info=gl?.getExtension("WEBGL_debug_renderer_info");
+  const software=info && /SwiftShader|llvmpipe|software rasterizer/i.test(gl.getParameter(info.UNMASKED_RENDERER_WEBGL));
   const counters = { ...idleMetrics };
   const motion = matchMedia("(prefers-reduced-motion: reduce)");
   const contrast = matchMedia("(forced-colors: active)");
@@ -97,16 +99,8 @@ export function mountLandscape(root, sources, shoulder = () => {}) {
       return { buf, count: data.length / 9 };
     }
     const botanical = instancing ? upload(botanicalModel(false)) : null;
-    const plane = upload(
-      [
-        [0, 0],
-        [1, 0],
-        [0, 1],
-        [0, 1],
-        [1, 0],
-        [1, 1],
-      ].flatMap(([u, v]) => [u, -0.2, v, 1, 1, 1, u, v, 0]),
-    );
+    const distantCrop = instancing ? upload(botanicalModel(true)) : null;
+    const plane = upload(groundMesh());
     function attributes(buf) {
       gl.bindBuffer(gl.ARRAY_BUFFER, buf);
       for (const [i, count, offset] of [
@@ -180,6 +174,12 @@ export function mountLandscape(root, sources, shoulder = () => {}) {
       paintRows(g, b);
       const verts = [];
       const { timber, canopyShadow, cottage, verge } = fieldGeometry({ g, verts, shade });
+      for (const [x,z,r] of [[-.02,b.height*.82,29],[.02,cross+30,15],
+        [.027,b.summary.y+b.summary.h*.47,16],[.062,cross-5,20],[.080,cross-4,8],[.104,cross-7,7],[.119,cross-5,4],
+        [.186,cross-12,5],[.194,cross-14,7],[.205,cross-10,4],[.59,b.summary.y-20,16]]) {
+        timber(b.width*x,z,r);
+        canopyShadow(b.width*x,z,r);
+      }
       const yard = b.trendZone.x + b.trendZone.w;
       cottage(yard + 29, cross - 54, 33, 16, 8, .23);
       cottage(yard + 62, cross - 68, 19, 12, 7, -.29);
@@ -241,7 +241,8 @@ export function mountLandscape(root, sources, shoulder = () => {}) {
       const spot = attrs[4];
       gl.uniform1f(loc("plant"), 1);
       gl.uniform1f(loc("shadow"), shadow);
-      attributes(botanical.buf);
+      const model=shadow || pose.s<2.2 ? distantCrop : botanical;
+      attributes(model.buf);
       gl.enableVertexAttribArray(spot);
       instancing.vertexAttribDivisorANGLE(spot, 1);
       for (const { r, mesh, shade } of items) {
@@ -252,7 +253,7 @@ export function mountLandscape(root, sources, shoulder = () => {}) {
         instancing.drawArraysInstancedANGLE(
           gl.TRIANGLES,
           0,
-          botanical.count,
+          model.count,
           mesh.plants.count,
         );
         counters.lastDrawCalls++;
@@ -268,7 +269,7 @@ export function mountLandscape(root, sources, shoulder = () => {}) {
       sync();
       const vw = root.clientWidth,
         vh = root.clientHeight,
-        dpr = Math.min(1.65, devicePixelRatio);
+        dpr = Math.min(software ? .68 : 1.65, devicePixelRatio);
       if (
         canvas.width !== Math.round(vw * dpr) ||
         canvas.height !== Math.round(vh * dpr)
@@ -281,6 +282,7 @@ export function mountLandscape(root, sources, shoulder = () => {}) {
       const lift = Math.sqrt(1 - pose.p * pose.p) / pose.p;
       gl.clearColor(0.21, 0.25, 0.12, 1);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      gl.uniform1f(loc("crease"), board.summary.y + board.summary.h);
       gl.uniform2f(loc("view"), board.width, board.height);
       gl.uniform2f(loc("screenSize"), vw, vh);
       gl.uniform4fv(loc("lens"), pose.lens ?? [1,1,0,0]);
@@ -302,6 +304,7 @@ export function mountLandscape(root, sources, shoulder = () => {}) {
       for (const { r, mesh, shade } of inView) {
         gl.uniform1f(loc("plotShade"), shade);
         gl.uniform2f(loc("origin"), r.x, r.y);
+        gl.uniform2f(loc("fieldSize"), r.w, r.h);
         gl.uniform1f(loc("cover"), 1);
         triangles(mesh.surface);
         gl.uniform1f(loc("cover"), 2);
@@ -325,8 +328,11 @@ export function mountLandscape(root, sources, shoulder = () => {}) {
       gl.disable(gl.DEPTH_TEST);
       plants(planted, 1);
       gl.uniform2f(loc("origin"), 0, 0);
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.DST_COLOR,gl.ZERO);
       gl.uniform1f(loc("shadow"), 1);
       triangles(trees);
+      gl.disable(gl.BLEND);
       gl.uniform1f(loc("plotShade"), 0);
       gl.uniform1f(loc("shadow"), 0);
       gl.enable(gl.DEPTH_TEST);
@@ -379,7 +385,7 @@ export function mountLandscape(root, sources, shoulder = () => {}) {
     if (images) initialize(images);
   });
   Promise.all(
-    ["tilth", "grain", "oak", "meadow", "road"].map(async (name) => {
+    ["tilth", "grain", "oak", "meadow", "road", "horizon"].map(async (name) => {
       const img = new Image();
       img.src = sources[name];
       await img.decode();

@@ -197,7 +197,7 @@ main p,
   white-space: nowrap;
 }
 .trace[data-match="false"] .rail {
-  background: #272e23aa;
+  background: transparent;
 }
 .trace[data-match="true"] .rail {
   border-bottom: 1px solid #f3dc96;
@@ -229,3 +229,17 @@ body:not(.farm-ready) #farm-scene {
 .width-notice p {
   font-size: 17px;
 }
+
+#timeline .field-story {
+  position: static;
+  margin-left: 1em;
+  vertical-align: baseline;
+  font: 500 14px "Source Serif 4", Georgia, serif;
+}
+.trace .inspectable {
+  overflow: visible;
+  display: flex;
+  align-items: center;
+  padding-left: 12px;
+}
+.trace .inspectable .meta { display: none; }
