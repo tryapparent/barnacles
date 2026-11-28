@@ -3,6 +3,7 @@ WORKDIR /src
 COPY analyze/datasource/go.mod analyze/datasource/go.sum ./
 RUN go mod download
 COPY analyze/datasource/ ./
+RUN CGO_ENABLED=0 go test -mod=readonly ./...
 RUN CGO_ENABLED=0 go build -mod=readonly -trimpath -o "/out/gpx_plow_linux_$(go env GOARCH)" .
 
 FROM node:22.23.0-bookworm-slim@sha256:d9f850096136edbc402debdd8729579a288aac64574ada0ff4db26b6ae58b0b2 AS policy

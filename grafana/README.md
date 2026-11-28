@@ -19,3 +19,5 @@ Grafana 12.3 resolves the Canvas image filename relative to its public build dir
 ```
 
 The PNG is the byte-for-byte original from the Plow brand guide.
+
+Grafana 12.3 includes static Canvas elements in the keyboard tab order, including the decorative shapes. The dashboard's Run ID, time range, and table selector use Grafana's native keyboard controls.

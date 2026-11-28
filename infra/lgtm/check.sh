@@ -33,6 +33,8 @@ alloy=$(compose port alloy 4318)
 grafana_api() {
   curl -fsS --max-time 5 --user "admin:$(cat "$PLOW_LGTM_WORKDIR/grafana-password")" "http://$grafana/api/$1"
 }
+curl -fsS --max-time 5 "http://$grafana/public/build/plow-cream.png" > "$PLOW_LGTM_WORKDIR/wordmark.png"
+cmp grafana/assets/plow-cream.png "$PLOW_LGTM_WORKDIR/wordmark.png"
 grafana_api dashboards/uid/plow-run-breakdown > "$PLOW_LGTM_WORKDIR/dashboard.json"
 jq -e '.meta.provisioned and (.dashboard.templating.list[0].current.value == "fixture-run") and
   any(.dashboard.panels[]; .id == 1 and .type == "table" and .targets[0].runId == "$runId")' "$PLOW_LGTM_WORKDIR/dashboard.json"
@@ -128,7 +130,10 @@ await_query() {
 }
 await_query "http://$tempo/api/traces/$trace_id" 'any(.. | objects; .name? == "codex.sampling")' \
   "$PLOW_LGTM_WORKDIR/tempo.json"
-! grep -Fq fixture-live-canary "$PLOW_LGTM_WORKDIR/tempo.json"
+if grep -Fq fixture-live-canary "$PLOW_LGTM_WORKDIR/tempo.json"; then
+  printf 'Private fixture marker reached Tempo\n' >&2
+  exit 1
+fi
 await_query "http://$mimir/prometheus/api/v1/query?query=node_memory_MemTotal_bytes" \
   'any(.data.result[]; .metric.plow_host == "loopback-fixture" and (.value[1] | tonumber) > 0)' \
   "$PLOW_LGTM_WORKDIR/mimir.json"
