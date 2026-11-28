@@ -346,6 +346,62 @@ func TestActivityReadContracts(t *testing.T) {
 	if partial.Error != nil || partial.Frames[0].Meta == nil {
 		t.Fatalf("missing partial-read notice: %v", partial)
 	}
+	var notices []string
+	for _, notice := range partial.Frames[0].Meta.Notices {
+		notices = append(notices, notice.Text)
+	}
+	if !strings.Contains(strings.Join(notices, " "), "Loki warned about T3 history.") ||
+		strings.Contains(strings.Join(notices, " "), "fixture warning") {
+		t.Fatalf("expected a source-specific notice with sanitized text, got %v", notices)
+	}
 	status.Store(http.StatusGatewayTimeout)
 	assertFailure(t, query(cutoff.Add(2*time.Second), "coverage"), backend.StatusTimeout, "Loki query timed out")
+}
+
+func TestActivityReportsSliceAndSnapshotLimits(t *testing.T) {
+	cutoff := time.UnixMilli(1800000000000).UTC()
+	source := "t3_history"
+	policy := writePolicy(t, `cat >/dev/null; printf '%s' '{"from":1,"partial":true}'`)
+	ds := newFixtureDatasource(t, policy, func(w http.ResponseWriter, r *http.Request) {
+		params := r.URL.Query()
+		var values [][2]string
+		if strings.Contains(params.Get("query"), "t3_activity_run") {
+			start, _ := strconv.ParseInt(params.Get("start"), 10, 64)
+			end, _ := strconv.ParseInt(params.Get("end"), 10, 64)
+			limit, _ := strconv.Atoi(params.Get("limit"))
+			for clock := cutoff.Add(-8 * activityDay); clock.Before(cutoff); clock = clock.Add(3 * time.Hour) {
+				if clock.UnixNano() < start || clock.UnixNano() >= end {
+					continue
+				}
+				rows := 1000
+				if clock.Equal(cutoff.Add(-3 * time.Hour)) {
+					rows = limit
+				}
+				for i := 0; i < rows && len(values) < limit; i++ {
+					values = append(values, [2]string{strconv.FormatInt(clock.UnixNano(), 10), "{}"})
+				}
+			}
+		}
+		if len(values) == 0 {
+			io.WriteString(w, `{"status":"success","data":{"resultType":"streams","result":[]}}`)
+			return
+		}
+		stream := map[string]any{"stream": map[string]string{"plow_source": source}, "values": values}
+		json.NewEncoder(w).Encode(map[string]any{"status": "success", "data": map[string]any{
+			"resultType": "streams", "result": []any{stream},
+		}})
+	})
+	result := ds.activity(context.Background(), cutoff, "coverage", "7d", "all")
+	if result.Error != nil {
+		t.Fatal(result.Error)
+	}
+	if result.Frames[0].Meta == nil {
+		t.Fatal("missing Activity read notices")
+	}
+	want := []data.Notice{{Severity: data.NoticeSeverityWarning, Inspect: data.InspectTypeData,
+		Text: "A T3 history query still hit Loki’s entry limit after splitting. The Activity row limit omitted T3 history slices."}}
+	got := result.Frames[0].Meta.Notices
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Activity notices = %v, want %v", got, want)
+	}
 }

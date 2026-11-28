@@ -206,7 +206,6 @@ def report(mark: Watermark, +rows: List<&2, S.Evidence>, conflicts: Nat, +range:
       +start = Nat.sub(end,Nat.mul(step,count))
       +runs = classifiers(rows,"run")
       +threads = List.sort(~S.Thread,~thread_before,prepare(Map.values(&2,Batch,batches(rows,Map.new(&2,Batch))),start,end))
-      +coverage = Bool.pick(String,partial,"Partial Loki read",status)
       +attempts = classifiers(rows,"github_actions_attempt")
       +ci = CI.join(List.concat(&2,S.Evidence,[attempts,classifiers(rows,"github_actions_job")]),
         List.concat(&2,S.Evidence,[classifiers(rows,"t3_ci_link"),classifiers(rows,"t3_pr_link")]),attempts)
@@ -216,7 +215,7 @@ def report(mark: Watermark, +rows: List<&2, S.Evidence>, conflicts: Nat, +range:
       +confirmed = classifiers(rows,"confirmed_delay")
       +codex = coverage_status(watermark(rows,"codex_coverage",Watermark{0n,0n,0n,"No Codex collection checkpoint"}))
       +totals = R.breakdown(threads)
-      Activity{start,cutoff,oldest,coverage,codex,
+      Activity{start,cutoff,oldest,status,codex,
         ci_status,"No confirmed outcome feed checkpoint",partial,clock_gaps(runs,start,end),conflicts,
         filter(threads,operation),run_links(runs,start,end),lanes,totals,R.categories(totals),R.series(count,threads,start,step),
         R.rank(List.concat(&2,S.Evidence,[runs,ci,confirmed]),start,end)}

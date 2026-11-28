@@ -308,14 +308,25 @@ func activityReads(cutoff time.Time) []activityRead {
 type activityRows struct {
 	lines   []string
 	bytes   int
-	partial bool
+	gaps    activityGap
 	failure *backend.DataResponse
 }
 
-func (l lokiClient) readActivity(ctx context.Context, cutoff time.Time) (map[string][]string, bool, *backend.DataResponse) {
+type activityGap uint8
+
+const (
+	activityWarning activityGap = 1 << iota
+	activityPageLines
+	activityPageBytes
+	activitySliceBytes
+	activityTotalLines
+	activityTotalBytes
+)
+
+func (l lokiClient) readActivity(ctx context.Context, cutoff time.Time) (map[string][]string, map[string]activityGap, *backend.DataResponse) {
 	records := make(map[string][]string)
+	gaps := make(map[string]activityGap)
 	var bytes, count int
-	partial := false
 	reads := activityReads(cutoff)
 	for first := 0; first < len(reads); first += activityReaders {
 		batch := reads[first:min(first+activityReaders, len(reads))]
@@ -329,19 +340,28 @@ func (l lokiClient) readActivity(ctx context.Context, cutoff time.Time) (map[str
 		readers.Wait()
 		for i, result := range results {
 			if result.failure != nil {
-				return nil, false, result.failure
+				return nil, nil, result.failure
 			}
-			if bytes+result.bytes > activitySnapshotBytes || count+len(result.lines) > activitySnapshotLines {
-				partial = true
+			source := batch[i].source
+			var omitted activityGap
+			if bytes+result.bytes > activitySnapshotBytes {
+				omitted |= activityTotalBytes
+			}
+			if count+len(result.lines) > activitySnapshotLines {
+				omitted |= activityTotalLines
+			}
+			if result.gaps|omitted != 0 {
+				gaps[source] |= result.gaps | omitted
+			}
+			if omitted != 0 {
 				continue
 			}
-			records[batch[i].source] = append(records[batch[i].source], result.lines...)
+			records[source] = append(records[source], result.lines...)
 			bytes += result.bytes
 			count += len(result.lines)
-			partial = partial || result.partial
 		}
 	}
-	return records, partial, nil
+	return records, gaps, nil
 }
 
 func (l lokiClient) readActivityShard(ctx context.Context, read activityRead, depth, remaining int) activityRows {
@@ -352,6 +372,10 @@ func (l lokiClient) readActivityShard(ctx context.Context, read activityRead, de
 	page, failure := l.readPage(ctx, read.window, read.selector(), read.source, limit, read.latest)
 	if failure != nil {
 		return activityRows{failure: failure}
+	}
+	var gaps activityGap
+	if page.warned {
+		gaps |= activityWarning
 	}
 	saturated := page.oversized || !read.latest && len(page.lines) == limit
 	if saturated && depth > 0 && !read.latest && read.window.To.After(read.window.From) {
@@ -367,19 +391,25 @@ func (l lokiClient) readActivityShard(ctx context.Context, read activityRead, de
 			return newer
 		}
 		return activityRows{lines: append(older.lines, newer.lines...), bytes: older.bytes + newer.bytes,
-			partial: page.warned || older.partial || newer.partial}
+			gaps: gaps | older.gaps | newer.gaps}
 	}
 
+	switch {
+	case page.oversized:
+		gaps |= activityPageBytes
+	case saturated:
+		gaps |= activityPageLines
+	}
 	lines := page.lines
 	slices.Sort(lines)
 	bytes := 0
 	for i, line := range lines {
 		bytes += len(line)
 		if bytes > remaining {
-			return activityRows{lines: lines[:i], bytes: bytes - len(line), partial: true}
+			return activityRows{lines: lines[:i], bytes: bytes - len(line), gaps: gaps | activitySliceBytes}
 		}
 	}
-	return activityRows{lines: lines, bytes: bytes, partial: saturated || page.warned}
+	return activityRows{lines: lines, bytes: bytes, gaps: gaps}
 }
 
 var (

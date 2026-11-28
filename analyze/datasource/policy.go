@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 
@@ -221,6 +223,8 @@ type activityTotal struct {
 
 type activityOutput struct {
 	Partial         bool
+	DecodeGap       bool
+	notices         []data.Notice
 	From            int64
 	Cutoff          int64
 	Oldest          int64
@@ -253,6 +257,48 @@ type activityOutput struct {
 		MS          *int64
 		Next        string
 	}
+}
+
+func activityNotices(gaps map[string]activityGap, report activityOutput) []data.Notice {
+	labels := map[string]string{
+		"t3": "legacy T3", "t3_history": "T3 history", "codex_history": "Codex checkpoints", "github_history": "GitHub CI",
+	}
+	var reasons []string
+	add := func(message string) {
+		reasons = append(reasons, message)
+	}
+	for _, source := range slices.Sorted(maps.Keys(gaps)) {
+		label := labels[source]
+		flags := gaps[source]
+		if flags&activityWarning != 0 {
+			add("Loki warned about " + label + ". Evidence may be missing.")
+		}
+		if flags&activityPageLines != 0 {
+			add("A " + label + " query still hit Loki’s entry limit after splitting.")
+		}
+		if flags&activityPageBytes != 0 {
+			add("A " + label + " response exceeded the Loki reply size limit.")
+		}
+		if flags&activitySliceBytes != 0 {
+			add("A " + label + " time slice exceeded the Activity size limit.")
+		}
+		if flags&activityTotalLines != 0 {
+			add("The Activity row limit omitted " + label + " slices.")
+		}
+		if flags&activityTotalBytes != 0 {
+			add("The Activity size limit omitted " + label + " slices.")
+		}
+	}
+	if report.DecodeGap {
+		add("Activity skipped unreadable Loki evidence.")
+	}
+	if report.Partial && len(reasons) == 0 {
+		add("Partial Loki read. Activity may omit evidence.")
+	}
+	if len(reasons) == 0 {
+		return nil
+	}
+	return []data.Notice{{Severity: data.NoticeSeverityWarning, Text: strings.Join(reasons, " "), Inspect: data.InspectTypeData}}
 }
 
 func timeField(ms int64) *time.Time {
