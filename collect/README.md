@@ -59,8 +59,8 @@ the run's provider-thread pointer resolves to one strong local native
 Codex binding. The cursor covers turn items, including strongly referenced
 command executions. The stock history response has no separate run ledger.
 The health heartbeat records this distinction even after the turn-item
-cursor is exhausted. Failed pages retain the cursor. An HTTP 400 for a saved
-cursor triggers a fresh head read. No collection predicate uses the Grafana
+cursor is exhausted. Failed pages retain the cursor and retry behind unread work. An HTTP 400
+for a saved cursor triggers a fresh head read. No collection predicate uses the Grafana
 range.
 
 Codex reads newline-complete records from active, rotated and archived
@@ -77,7 +77,7 @@ The Activity streams use `plow_source=t3_history|codex_history|github_history`.
 Alloy preserves event time in Loki when it exists. It assigns the UTC event
 hour on each log and then groups resources by hour for indexing. That keeps
 replays within Loki's per-stream late-arrival window even after a newer
-calendar-hour partition has arrived. Only source and hour are indexed.
+calendar-hour partition has arrived. The configured indexes use source and hour.
 GitHub rows with a null source anchor use Alloy's observation time for
 indexing and retain the null timestamp in the body. Health rows are emitted
 separately to `/spool/health/*.jsonl` with the common collector schema. Health

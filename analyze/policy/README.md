@@ -73,6 +73,7 @@ available to the original tool-envelope pairing policy through exact links.
 A read-only comparison against the legacy Activity projection at
 `2026-11-28T11:00:28.783Z` checked the provider and admission totals per
 thread. Of 327 threads present in both snapshots, 324 matched exactly.
-The live retained projection was read later than the immutable legacy
+All seven work-share bucket values and measured-thread counts matched on
+that common thread set. The live retained projection was read later than the immutable legacy
 cutoff and could contain different revisions. The comparison does not
 establish total parity for operation labels, missing clocks or CI.

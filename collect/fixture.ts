@@ -62,6 +62,7 @@ export type Capture = {
   health(...fields: string[]): string;
   coverage(...fields: string[]): string;
   codex(...fields: string[]): string;
+  poll_priority(updated: number, retry: number, now: number): number;
   inventory(items: WireList<{ $: "Target"; id: string; updated: number }>): WireList<{ id: string }>;
 };
 
@@ -115,9 +116,13 @@ export function resume<T>(path: string, initial: T): T {
   }
 }
 
-export function ordered(policy: Capture, items: { id: string; updated: number }[]) {
+export function ordered(policy: Capture, items: { id: string; updated: number; retry?: number }[]) {
   const output: string[] = [];
-  for (let list = policy.inventory(wireList(items.map(({ id, updated }) => ({ $: "Target", id, updated }))));
+  const now = Date.now();
+  const ranked = items.map(({ id, updated, retry }) => ({
+    $: "Target" as const, id, updated: policy.poll_priority(updated, retry ?? 0, now),
+  }));
+  for (let list = policy.inventory(wireList(ranked));
     list.$ === "Con"; list = list.tail) output.push(list.head.id);
   return output;
 }
@@ -137,7 +142,7 @@ export function health(policy: Capture, spool: string, collector: string, scope:
 }
 
 type Mark = { inode: string; offset: number; session: string; anchor: string; updated: number; size: number; done: boolean };
-type CodexState = { started: number; last: number; oldest: number; newest?: number; count: number; paths: Record<string, Mark> };
+type CodexState = { started: number; last: number; oldest: number; newest?: number; count: number; paths: Record<string, Mark>; retries?: Record<string, number> };
 
 function codexInventory(roots: string[]) {
   const items: { id: string; updated: number; size: number }[] = [];
@@ -249,6 +254,7 @@ async function captureCodex(lane: string, once: boolean) {
   mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   const statePath = join(stateDir, "codex-" + scope + "-" + lane + ".json");
   const state = resume<CodexState>(statePath, { started: Date.now(), last: 0, oldest: 0, count: 0, paths: {} });
+  const retries = state.retries ??= {};
   const policy = await capturePolicy(stateDir);
   const project = await fixturePolicy(stateDir);
   do {
@@ -265,18 +271,20 @@ async function captureCodex(lane: string, once: boolean) {
         return !mark?.done || item.size !== mark.size || item.updated !== mark.updated;
       });
       scanned = current.length - pending.length;
-      const queue = ordered(policy, pending);
+      const queue = ordered(policy, pending.map(item => ({ ...item, retry: retries[item.id] })));
       for (const file of queue.slice(0, 8)) {
         try {
           const result = await codexFile(file, state.paths[file], project, policy);
           publish(join(spool, "codex"), scope + "-" + lane, result.lines);
           state.paths[file] = result.mark;
+          delete retries[file];
           if (result.oldest) state.oldest = state.oldest ? Math.min(state.oldest, result.oldest) : result.oldest;
           state.newest = Math.max(state.newest ?? 0, result.newest);
           state.count += result.lines.length;
           scanned += Number(result.done);
           checkpoint(statePath, state);
         } catch (error) {
+          retries[file] = Date.now();
           reason = error instanceof Error && ["record_limit", "incomplete_projection"].includes(error.message)
             ? error.message : "source_unavailable";
         }

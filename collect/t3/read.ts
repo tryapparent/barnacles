@@ -197,7 +197,7 @@ function page(policy: Capture, scope: string, thread: string, input: Record<stri
   return { lines, next: text(next), oldest, runHistoryGap };
 }
 
-type T3Mark = { revision: number; cursor: string; oldest: number; uncertain: boolean; previous: string[] };
+type T3Mark = { revision: number; cursor: string; oldest: number; uncertain: boolean; previous: string[]; retry?: number };
 type State = { last: number; oldest: number; count: number; marks: Record<string, T3Mark> };
 
 async function capture(lane: string, once: boolean, origin: string, tokenFile: string) {
@@ -211,7 +211,7 @@ async function capture(lane: string, once: boolean, origin: string, tokenFile: s
   Object.setPrototypeOf(state.marks, null);
   do {
     const observed = Date.now();
-    let eligible: number | null = null;
+    let eligible = null;
     let scanned = 0;
     let newest = 0;
     let reason = "";
@@ -240,11 +240,10 @@ async function capture(lane: string, once: boolean, origin: string, tokenFile: s
       const pending = [];
       for (const [id, updated] of targets) {
         const mark = state.marks[id];
-        if (!mark || mark.revision < updated || (lane === "backfill" && mark.cursor)) pending.push({ id, updated: mark?.cursor ? mark.oldest : updated });
+        if (!mark || mark.revision < updated || (lane === "backfill" && mark.cursor)) pending.push({ id, updated: mark?.cursor ? mark.oldest : updated, retry: mark?.retry });
         else scanned++;
       }
-      const orderedTargets = ordered(policy, pending);
-      for (const thread of orderedTargets.slice(0, 8)) {
+      for (const thread of ordered(policy, pending).slice(0, 8)) {
         const old = state.marks[thread];
         const revision = targets.get(thread)!;
         const cursor = lane === "backfill" && old ? old.cursor : "";
@@ -265,10 +264,13 @@ async function capture(lane: string, once: boolean, origin: string, tokenFile: s
           scanned += Number(!state.marks[thread].cursor && state.marks[thread].revision === revision);
           checkpoint(statePath, state);
         } catch (error) {
+          const retry = Date.now();
+          const initial = { cursor: "", revision: -1, oldest: 0, previous: [], uncertain: false };
+          state.marks[thread] = { ...(old ?? initial), retry };
           if (cursor && error instanceof SourceError && error.status === 400) {
-            state.marks[thread] = { ...old!, cursor: "", revision: -1, previous: [] };
-            checkpoint(statePath, state);
+            state.marks[thread] = { ...initial, oldest: old!.oldest, retry };
           }
+          checkpoint(statePath, state);
           reason ||= error instanceof SourceError && [401, 403].includes(error.status) ? "access" : "source_unavailable";
         }
       }

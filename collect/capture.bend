@@ -186,3 +186,6 @@ def pr_link(+scope: String,+thread: String,host: String,+repo: String,+number: S
   row : J.Val = J.Obj{[str("kind","t3_pr_link"),str("eventId",key),str("threadId",fresh_identity(scope,thread)),
     str("repository",String.to_lower(repo)),str("prNumber",number),ms(at),num("revisionMs",at),num("observedMs",value(observed))]}
   Bool.pick(String,Bool.and(valid,Bool.and(repo_chars(repo),Bool.and(Nat.is_gt(value(number),0n),Nat.is_gt(at,0n)))),P.render(row),"")
+
+def poll_priority(updated: Nat, +retry: Nat, +now: Nat) -> Nat:
+  Bool.pick(Nat,Nat.is_gt(retry,0n),Nat.sub(now,retry),Nat.add(now,updated))
