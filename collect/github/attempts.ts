@@ -1,5 +1,5 @@
 import { clock, count, id, object, rows, seconds, SourceError, text, u32 } from "./http.ts";
-import type { github, Row } from "./http.ts";
+import type { Reply, Row } from "./http.ts";
 
 export type List<T> = { $: "Nil" } | { $: "Con"; head: T; tail: List<T> };
 export const list = <T>(items: T[]): List<T> => items.reduceRight<List<T>>((tail, head) => ({ $: "Con", head, tail }), { $: "Nil" });
@@ -7,7 +7,7 @@ export type Projected = { $: "Projected"; key: string; body: string };
 export type Projection = Projected | { $: "Rejected" };
 export type Page = { $: "Invalid" | "More" | "Exhausted" | "Split" | "Capped" };
 export type Run = { run: string; attempt: number; head: string; created: number };
-export type Read = ReturnType<typeof github>;
+export type Read = (repo: string, endpoint: string) => Promise<Reply>;
 type Bounds = { lo: number; hi: number };
 type Link = { $: "Link"; number: string; base: string };
 type Job = { id: string; name: string; status: string; conclusion: string; created: number; start: number; end: number };

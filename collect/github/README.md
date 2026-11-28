@@ -1,11 +1,13 @@
 # GitHub evidence collection
 
-Run the Node 22.18+ producer with a fine-grained token or an externally rotated installation token scoped to the configured repositories. Grant **Pull requests: read** and **Actions: read**. The producer issues authenticated GETs to the fixed GitHub API origin. The optional loopback HTTP origin is for synthetic verification. Requests never follow redirects or API-supplied URLs. Link headers supply page numbers only.
+Run the Node 22.18+ producer with a separate fine-grained token or externally rotated installation token for each repository. Grant **Pull requests: read** and **Actions: read** on that repository. The producer issues authenticated GETs to the fixed GitHub API origin. The optional loopback HTTP origin is for synthetic verification. Requests never follow redirects or API-supplied URLs. Link headers supply page numbers only.
 
 | Environment input | Value |
 | --- | --- |
 | PLOW_GITHUB_REPOSITORIES | Required comma-separated alias=owner/repo pairs. Up to 16 unique repositories and aliases. Repository is normalized to lowercase. Aliases start with a lowercase letter or digit and may contain up to 48 lowercase letters, digits, underscores or hyphens. |
-| PLOW_GITHUB_READ_TOKEN_FILE | Required private regular file, mode 0400 or 0600, at most 4 KiB. The producer reopens it each cycle. Replace it through the credential provider ahead of expiry. |
+| PLOW_GITHUB_CREDENTIAL_LAYOUT | Set to `per-alias` to use one credential file per alias. The default `legacy` layout supports the existing single-repository setup. |
+| PLOW_GITHUB_CREDENTIAL_DIR | Absolute directory path for the per-alias layout. Each configured alias reads `github-read-<alias>` from this directory. |
+| PLOW_GITHUB_READ_TOKEN_FILE | Single credential path required by the legacy layout. |
 | PLOW_GITHUB_ACTIONS_SINCE | Required historical Actions floor as a UTC timestamp such as 2025-01-01T00:00:00Z. This inclusive bound applies to reconciliation as well. PR backfill covers the visible list. Use a fresh state root when intentionally changing the floor. |
 | PLOW_GITHUB_STATE | Private durable state, default /state/github. Contains checkpoint, write-ahead batch, staged IDs and terminal receipts. |
 | PLOW_SPOOL | Private shared spool root, default /spool. Keep its github subdirectory mode 0700. Configure ownership for this producer to write to the shared health subdirectory as well. |
@@ -15,19 +17,19 @@ Run the Node 22.18+ producer with a fine-grained token or an externally rotated 
 | PLOW_BEND_BUNDLE | Path to the pinned compiler bundle produced by npm run hooks:install. Mount read-only in the runtime for offline compilation. |
 | PLOW_GITHUB_ORIGIN | Defaults to https://api.github.com. The only override allowed is plain HTTP on 127.0.0.1. |
 
-Keep one writer per state root and use distinct aliases across instances. Pre-create state and spool directories with private permissions. Use the tracked entry point from a read-only checkout. Mount state and spool writable by the runtime user. Mount the compiler and credential read-only.
+Keep one writer per state root and use distinct aliases across instances. Pre-create state, spool and credential directories with private permissions. Use the tracked entry point from a read-only checkout. Mount state and spool writable by the runtime user. Mount the compiler and credential directory read-only. Each credential must be a regular file owned by the worker's effective UID with mode 0400 or 0600 and a maximum size of 4 KiB. Symlinks are rejected. The worker reopens each file at the start of every cycle, so the credential provider can rotate it with an atomic rename in the mounted directory.
 
 ```sh
 flock -n -F "$PLOW_GITHUB_STATE/writer.lock" node collect/github/main.ts
 ```
 
-Run with `--once` for one bounded cycle. The continuous process yields 15 seconds between cycles. Requests have an 8 MiB body cap, a 10-second timeout and a two-minute cycle deadline. Transient failures retain progress and respect GitHub retry/reset hints.
+Run with `--once` for one bounded cycle. It returns an error after writing health if every configured credential is unreadable. The continuous process yields 15 seconds between cycles. Requests have an 8 MiB body cap, a 10-second timeout and a shared two-minute cycle deadline. Each alias uses only its configured credential. An unreadable credential or denied API request affects the failing repository while other aliases continue to run. Rate limits suspend requests only for the affected repository, including across restarts. A rotated credential resumes when the relevant retry time arrives.
 
 ## Inventory and checkpoints
 
 - PR history starts at the last ascending creation page and walks backward. Recent additions append at the tail. Each page verifies its boundary against the newer page and restarts discovery when the boundary moves. Live PRs independently scan recent updates with a delayed upper watermark and a two-minute overlap.
 - Actions live rechecks a rolling day for recent reruns and uses its last successful upper watermark with overlap to bridge a longer gap. Historical Actions scans newest-first in disjoint creation windows of up to seven days. A result at GitHub's 1,000-result ceiling splits the window, newer half first. A capped one-second window remains a coverage gap while older windows drain. Action sweeps renew six hours after inventory exhaustion to discover reruns of older runs within the configured floor. GitHub's creation query does not expose a global rerun update cursor.
-- Each queued run drains exact attempts from latest through first. The producer compares exact attempt metadata around a bounded, paginated job inventory. A job without an attempt field binds through its exact-attempt endpoint only when run ID and SHA match. A terminal attempt receives a durable receipt after staging evidence from its terminal job inventory. Active, unreadable or capped attempts remain in the durable retry backlog. Retries share the cycle's request budget and do not block fresh inventory. HTTP 404 or 410 remains unavailable, including when GitHub masks authorization or an item expired. GitHub's unobservable retention limit remains visible even when the listed inventory exhausts.
+- Each queued run drains exact attempts from latest through first. The producer compares exact attempt metadata around a bounded, paginated job inventory. A job without an attempt field binds through its exact-attempt endpoint only when run ID and SHA match. A terminal attempt receives a durable receipt after staging evidence from its terminal job inventory. Active, unreadable or capped attempts remain in the durable retry backlog. Retries share the cycle's request budget and do not block fresh inventory. HTTP 404 or 410 remains unavailable, including when GitHub masks authorization or an item expired. The configured floor bounds which Actions runs can be discovered by creation time. GitHub only returns retained evidence, and the producer emits `retention_unknown` even after exhausting the visible inventory. The floor controls source scans. Local staged IDs and receipts persist for replay protection.
 - Bend2 constructs the entity identity and canonical allowlisted revision. The filesystem adapter hashes the canonical body and publishes immutable batches through a durable outbox. It syncs evidence before recording staged IDs and advancing the checkpoint. A restart can replay the same batch. Source replay contributes no new batch for previously staged revisions. Preserve staged IDs and terminal receipts when rotating spool files after downstream acknowledgement. Downstream consumers also deduplicate by event ID, since resetting Alloy positions can replay a file. Staging measures producer handoff only.
 
 ## Evidence and health contract
@@ -47,19 +49,22 @@ Health uses `/spool/health/github-<alias>-<unique>.jsonl` with `kind=collector_h
 
 ## Compose deployment
 
-The [Compose overlay](../../infra/lgtm/github.compose.yaml) runs one worker with a writer lock in the private persistent state directory. The worker runs both lanes. For the existing Clanker stack, apply from the same pinned release directory and with the same private runtime as the Grafana project. The example enables only `tryapparent/plow` and uses an illustrative history floor. Set the authorized repository list and intended floor before the first run.
+The [Compose overlay](../../infra/lgtm/github.compose.yaml) runs one worker with a writer lock in the private persistent state directory. For the existing Clanker stack, apply from the same pinned release directory and with the same private runtime as the Grafana project. Set the authorized repository list and intended floor before the first run.
 
 ```sh
 export PLOW_LGTM_WORKDIR=/private/plow/runtime
 export PLOW_GITHUB_CREDENTIAL_DIR=/private/plow/github-credentials
 export PLOW_BEND_BUNDLE=/private/plow/verified-compiler
 export PLOW_GITHUB_COLLECTOR_USER=0:0
-export PLOW_GITHUB_REPOSITORIES=plow=tryapparent/plow
+export PLOW_GITHUB_REPOSITORIES=plow=tryapparent/plow,apparent=tryapparent/apparent
+export PLOW_GITHUB_CREDENTIAL_LAYOUT=per-alias
 export PLOW_GITHUB_ACTIONS_SINCE=2026-01-01T00:00:00Z
 bash infra/lgtm/deploy.sh --github-only
 ```
 
-Provision `github-read` in `PLOW_GITHUB_CREDENTIAL_DIR` before invoking the script. For Plow alone, select only the `tryapparent/plow` repository under the `tryapparent` resource owner. Grant read access to Pull requests and Actions, with the automatic Metadata read permission. Use a fine-grained token or externally rotated GitHub App installation token. Keep the credential directory private and the file mode at 0400 or 0600. Publish replacements atomically within that directory so the read-only directory mount can see them during an existing run. [GitHub repository permissions](https://docs.github.com/en/rest/authentication/permissions-required-for-fine-grained-personal-access-tokens)
+Provision `github-read-plow` and `github-read-apparent` separately in `PLOW_GITHUB_CREDENTIAL_DIR`, each scoped to its corresponding repository under the `tryapparent` resource owner. Grant read access to Pull requests and Actions, with the automatic Metadata read permission. Keep the directory private.
+
+Existing single-repository deployments can keep `github-read` and omit the layout setting. To expand an existing deployment, keep the runtime directory, existing alias and Actions floor. Add the per-alias files and switch the layout and repository list in the deployment inputs. The worker retains the version 1 checkpoint, cursors, retry queues, receipts and staged IDs. When upgrading a checkpoint from the original collector, the old shared cooldown carries over in legacy mode. Per-alias mode establishes a cooldown independently for each repository. Each newly configured repository starts its own live and backfill cursors.
 
 Use the service UID and GID as seen inside the container. On Clanker's rootless Docker, `0:0` maps to the host account that owns the private runtime. The deploy script prepares `github-state` and uses the existing shared `spool`. Keep the private state, spool and compiler paths stable across reapplications. Keep the aliases, floor and job-name allowlist stable with the checkpoints. Ensure that the worker and Alloy can access the spool under their configured identities.
 
@@ -86,4 +91,4 @@ node --test collect/github/history.test.ts
 npm run verify -- collect
 ```
 
-The CLI test restarts independent Node processes over the same private spool and checkpoint and reads a synthetic loopback API. Set PLOW_GITHUB_KEEP_PROOF=1 with the direct test command to retain the generated synthetic proof in a private temporary directory.
+The CLI test restarts independent Node processes over the same private spool and checkpoint and reads a synthetic loopback API. It expands a legacy checkpoint to two aliases, verifies that an over-permissive file is rejected and confirms that the other alias still reports successful live and backfill reads. Set PLOW_GITHUB_KEEP_PROOF=1 with the direct test command to retain the generated synthetic proof in a private temporary directory.

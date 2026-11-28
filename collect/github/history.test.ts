@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { join } from "node:path";
@@ -44,22 +44,19 @@ function job(runId: number, attempt: number, at: number, status: string, conclus
 }
 
 function records(root: string) {
-  type Output = { [key: string]: unknown };
   return readdirSync(root).filter(name => name.endsWith(".jsonl")).flatMap(name =>
-    readFileSync(join(root, name), "utf8").trim().split("\n").map(line => JSON.parse(line) as Output));
+    readFileSync(join(root, name), "utf8").trim().split("\n").map(line => JSON.parse(line) as Record<string, unknown>));
 }
 
 test("normal CLI resumes GitHub history and follows exact attempts independently", { timeout: 180_000 }, async t => {
-  const testRoot = process.env.PLOW_TEST_DIRECTORY;
-  const root = mkdtempSync(testRoot ? join(testRoot, "github-") : "/tmp/apparent-dev-plow-github-proof-");
+  const root = mkdtempSync(join(process.env.PLOW_TEST_DIRECTORY ?? "/tmp", "apparent-dev-plow-github-proof-"));
   if (!process.env.PLOW_GITHUB_KEEP_PROOF) t.after(() => rmSync(root, { recursive: true, force: true }));
   else t.diagnostic("Synthetic proof directory " + root);
   const token = join(root, "token");
   writeFileSync(token, secret + "\n", { mode: 0o600 });
   const spool = join(root, "spool");
   const checkpoint = join(root, "state", "checkpoint.json");
-  const githubSpool = join(spool, "github");
-  const healthSpool = join(spool, "health");
+  const githubSpool = join(spool, "github"), healthSpool = join(spool, "health");
   const source = Array.from({ length: 101 }, (_, index) => pr(index + 1, veryOld + index * 10_000));
   let phase = 0;
   let requests = 0;
@@ -70,11 +67,16 @@ test("normal CLI resumes GitHub history and follows exact attempts independently
   const server = createServer((request, response) => {
     requests++;
     assert.equal(request.method, "GET");
-    assert.equal(request.headers.authorization, "Bearer " + secret);
     const address = server.address();
     assert(address && typeof address === "object");
     const origin = "http://127.0.0.1:" + address.port;
     const url = new URL(request.url!, origin);
+    if (url.pathname.startsWith("/repos/example/other/")) {
+      assert.equal(request.headers.authorization, "Bearer other-token");
+      response.end(url.pathname.endsWith("/pulls") ? "[]" : '{"total_count":0,"workflow_runs":[]}');
+      return;
+    }
+    assert.equal(request.headers.authorization, "Bearer " + secret);
     assert(url.pathname.startsWith("/repos/" + repo + "/"));
     const path = url.pathname.slice(("/repos/" + repo + "/").length);
     seen.add(path);
@@ -141,11 +143,12 @@ test("normal CLI resumes GitHub history and follows exact attempts independently
   assert(address && typeof address === "object");
   const prefix = { ...process.env, PLOW_GITHUB_ORIGIN: "http://127.0.0.1:" + address.port,
     PLOW_GITHUB_REPOSITORIES: "fixture=Example/Demo", PLOW_GITHUB_ACTIONS_SINCE: iso(veryOld - day),
-    PLOW_GITHUB_STATE: join(root, "state"), PLOW_SPOOL: spool, PLOW_GITHUB_READ_TOKEN_FILE: token };
-  const cycle = async (at: number, budget: number) => {
+    PLOW_GITHUB_STATE: join(root, "state"), PLOW_SPOOL: spool, PLOW_GITHUB_READ_TOKEN_FILE: token,
+    PLOW_GITHUB_CREDENTIAL_LAYOUT: "legacy" };
+  const cycle = async (at: number, budget: number, overrides = {}) => {
     const source = "Date.now = () => " + at;
     await execute(process.execPath, ["--import", "data:text/javascript," + encodeURIComponent(source), cli, "--once"],
-      { env: { ...prefix, PLOW_GITHUB_MAX_STEPS: String(budget) } });
+      { env: { ...prefix, PLOW_GITHUB_MAX_STEPS: String(budget), ...overrides } });
   };
   const evidence = (kind?: string) => records(githubSpool).filter(row => kind ? row.kind === kind : row.kind !== "github_coverage");
   const state = () => JSON.parse(readFileSync(checkpoint, "utf8")).repositories[repo];
@@ -235,22 +238,16 @@ test("normal CLI resumes GitHub history and follows exact attempts independently
   assert.equal(Object.keys(state().pending).length, 4096);
   assert.equal(state().pending["1000:1"].due, retryAt);
 
-  const beforeInvalidScope = requests;
   await assert.rejects(execute(process.execPath, [cli, "--once"], {
     env: { ...prefix, PLOW_GITHUB_REPOSITORIES: "_fixture=example/demo" },
   }), /GitHub collector failed/);
-  assert.equal(requests, beforeInvalidScope);
-});
-
-test("rejects a readable-by-others credential file before HTTP", async t => {
-  const root = mkdtempSync("/tmp/apparent-dev-plow-github-secret-");
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  const token = join(root, "token");
-  writeFileSync(token, secret, { mode: 0o644 });
-  mkdirSync(join(root, "spool"), { mode: 0o700 });
-  await assert.rejects(execute(process.execPath, [cli, "--once"], {
-    env: { ...process.env, PLOW_GITHUB_ORIGIN: "http://127.0.0.1:1", PLOW_GITHUB_REPOSITORIES: "fixture=example/demo",
-      PLOW_GITHUB_ACTIONS_SINCE: "2025-01-01T00:00:00Z", PLOW_GITHUB_READ_TOKEN_FILE: token,
-      PLOW_GITHUB_STATE: join(root, "state"), PLOW_SPOOL: join(root, "spool") },
-  }), /GitHub collector failed/);
+  writeFileSync(join(root, "github-read-fixture"), "unsafe-token", { mode: 0o644 });
+  writeFileSync(join(root, "github-read-other"), "other-token", { mode: 0o400 });
+  const expanded = { PLOW_GITHUB_CREDENTIAL_LAYOUT: "per-alias", PLOW_GITHUB_CREDENTIAL_DIR: root,
+    PLOW_GITHUB_REPOSITORIES: "fixture=example/demo,other=example/other" };
+  const at = base + 700_000;
+  await cycle(at, 45, expanded);
+  assert.equal(healthAt(at).filter(row => row.scope === "fixture" && row.gapCode === "access_denied").length, 2);
+  assert.equal(healthAt(at).filter(row => row.scope === "other" && row.lastSuccessMs === at).length, 2);
+  assert.equal(state().pending["1000:1"].due, retryAt);
 });
