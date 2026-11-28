@@ -1,3 +1,22 @@
+function elapsed(ms) {
+  const seconds = Math.floor(ms / 1000)
+  const minutes = Math.floor(seconds / 60)
+  return Math.floor(minutes / 60) + ':' + String(minutes % 60).padStart(2,'0') + ':' + String(seconds % 60).padStart(2,'0')
+}
+function decodeEvidence(trace) {
+  const end = millis(trace.end)
+  const intervals = [
+    ...trace.work.map(([a, b, name]) => ({ $: 'Interval', a: millis(a), b: millis(b), kind: 2, name })),
+    ...(trace.detail ?? []).map(([a, b, name]) => ({ $: 'Interval', a: millis(a), b: millis(b), kind: 3, name })),
+    ...trace.wait.map(([a, b, name]) => ({ $: 'Interval', a: millis(a), b: millis(b), kind: 1, name })),
+    ...(trace.between ?? []).map(([a, b, name]) => ({ $: 'Interval', a: millis(a), b: millis(b), kind: 0, name })),
+  ]
+  const evidence = policy.evidence(asList(intervals), end)
+  const failures = asList(trace.errors.map(millis))
+  const ci = (trace.ci ?? []).map(([start, end, label]) => ({ start: millis(start), end: millis(end), label }))
+  return { ...trace, end, extent: millis(trace.extent ?? trace.end), ci, evidence, failures, totals: policy.evidence_totals(evidence),
+    recordedFailures: [...values(policy.failure_points(true,end,failures))] }
+}
 const feedStatus = document.getElementById('feed-status')
 const feedContent = document.getElementById('feed-content')
 if (feed.observed > 0) {
@@ -18,7 +37,7 @@ const timelineSelection = document.getElementById('timeline-selection')
 const categories = [
   { kind: 1, name: 'Admission wait', style: 'workflow' },
   { kind: 2, name: 'Provider run', style: 'agent' },
-  { kind: 0, name: 'Unobserved', style: 'unclear' },
+  { kind: 0, name: 'Outside runs', style: 'unclear' },
 ]
 const summaryInput = rows => asList(rows.map((trace, index) => ({
   $: 'SummaryTrace', index: index + 1, start: trace.startUtcMs, parts: trace.evidence,
@@ -28,7 +47,7 @@ const feedStart = feed.overview?.from ?? policy.dashboard_frame('24h', overviewE
 const overviewRows = (feed.overview?.traces ?? feed.traces).map(decodeEvidence)
 const overviewTraces = summaryInput(overviewRows)
 const spans = asList(overviewRows.map(trace => ({
-  $: 'UtcSpan', start: trace.startUtcMs, end: trace.startUtcMs + trace.end,
+  $: 'UtcSpan', start: trace.startUtcMs, end: trace.startUtcMs + trace.extent,
 })))
 let timelineTraces
 let overview
@@ -37,6 +56,7 @@ let previousWindow = ''
 let matches = new Map()
 
 const shareLabel = new Intl.NumberFormat('en', { style: 'percent', maximumFractionDigits: 1 })
+const share = (part, total) => part && part / total < .001 ? '<0.1%' : shareLabel.format(part ? part / total : 0)
 const utc = time => utcDay.format(time) + ' ' + utcClock.format(time)
 const durationLabel = ms => {
   const minutes = Math.round(ms / 60000)
@@ -45,8 +65,10 @@ const durationLabel = ms => {
   return Math.floor(minutes / 60) + 'h ' + minutes % 60 + 'm'
 }
 const threadCount = count => count === 1 ? '1 thread' : count + ' threads'
-const operationLabel = name => selection.category === 0 ? 'Unobserved interval' : name
+const operationLabel = name => name === 'Unobserved' ? 'Unobserved interval' : name
 
+const navigatorTrack = minimap.parentElement
+const miniWindow = minimap.querySelector('.mini-window')
 const miniBrush = minimap.querySelector('.mini-brush')
 function miniPosition(event) {
   const box = minimap.getBoundingClientRect()
@@ -196,7 +218,7 @@ function renderSummary() {
     name: operationLabel(operation.name),
     metric: durationLabel(operation.duration),
     weight: operation.duration,
-    share: shareLabel.format(operation.duration / group.duration),
+    share: share(operation.duration, group.duration),
     active: operation.name === selection.operation,
     select: () => selectOperation(operation.name),
   })) : []
@@ -214,7 +236,7 @@ function renderSummary() {
         ...category,
         duration: group ? durationLabel(group.duration) : '0m',
         weight: group?.duration ?? 0,
-        share: shareLabel.format(group ? group.duration / result.duration : 0),
+        share: share(group?.duration ?? 0, result.duration),
         expanded: category.kind === selection.category,
         select: () => selectCategory(category),
       }
@@ -273,7 +295,7 @@ function paintThreadMatch(row, rail, index) {
 function showRange(range) {
   frame = policy.dashboard_frame(range, overviewEnd)
   const complete = policy.feed_covers(range, frame, feedStart)
-  evidenceRows = complete ? [...values(policy.timeline_indices(spans, 10, frame, 0))].map((index, row) => ({
+  evidenceRows = complete ? [...values(policy.timeline_indices(spans, overviewRows.length, frame, 0))].map((index, row) => ({
     ...overviewRows[index], title: overviewRows[index].title || 'Thread ' + (row + 1),
   })) : []
   feedStatus.hidden = evidenceRows.length > 0
@@ -285,6 +307,8 @@ function showRange(range) {
   clearTooltip()
   if (!evidenceRows.length) return
 
+  viewport.scrollTop = 0
+  document.getElementById('timeline-count').textContent = threadCount(evidenceRows.length)
   selection = policy.initial_overview()
   previousWindow = ''
   timelineTraces = summaryInput(evidenceRows)
@@ -294,10 +318,10 @@ function showRange(range) {
   minimap.querySelector('.mini-threads').replaceChildren(...evidenceRows.map((trace, index) => {
     const mark = makeElement('span')
     const start = Math.max(frame.start, trace.startUtcMs)
-    const end = Math.min(frame.end, trace.startUtcMs + trace.end)
+    const end = Math.min(frame.end, trace.startUtcMs + trace.extent)
     mark.style.left = percent(start - frame.start, scale())
     mark.style.width = percent(end - start, scale())
-    mark.style.top = 3 + index * 2.6 + 'px'
+    mark.style.top = 3 + index % 7 * 2.6 + 'px'
     return mark
   }))
   measurementWidth = undefined

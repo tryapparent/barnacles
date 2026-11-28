@@ -2,11 +2,7 @@ import { useEffect, useRef, useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
 import { Button, Card } from "../controls";
 
-const fieldPalettes = [
-  { kind: "workflow", color: "#543b2a" },
-  { kind: "agent", color: "#91ad5f" },
-  { kind: "unclear", color: "#dfbf89" },
-];
+const fieldPalettes = ["#543b2a", "#91ad5f", "#dfbf89"];
 
 type Category = {
   kind: number;
@@ -67,7 +63,6 @@ function parcelTracks([first, ...rest]: number[], left: number, right: number) {
 
 export function Summary({ fieldTexture }: { fieldTexture?: string }) {
   const model = useSyncExternalStore(subscribe, () => overview);
-  const categoryTracks = model ? parcelTracks(model.categories.map(({ weight }) => weight), 128, 136) : undefined;
   const operationTracks = model ? parcelTracks(model.operations.map(({ weight }) => weight), 104, 104) : undefined;
   return <Card className="summary-panel" id="summary-panel" aria-labelledby="summary-heading" aria-describedby="overview-period"
     onKeyDown={event => {
@@ -86,16 +81,20 @@ export function Summary({ fieldTexture }: { fieldTexture?: string }) {
       </Button>
     </div>
     <div className="summary-tiles">
-    <div id="tiles" className="treemap" inert={!!model?.breakdown} style={categoryTracks}>
+    <div className="summary-proportions" aria-hidden="true" data-breakdown={!!model?.breakdown} hidden={!model?.hasTime}>
+      {model?.categories.map(category => <span key={category.kind}
+        className={`summary-segment ${category.style}`} style={{ flexGrow: category.weight }} />)}
+      {fieldTexture && <FieldSurface texture={fieldTexture} />}
+    </div>
+    <div id="tiles" className="treemap" inert={!!model?.breakdown} hidden={!model?.hasTime}>
       {model?.categories.map(category => <Button type="button" key={category.kind}
         className={`category-tile ${category.style}`} data-kind={category.kind}
         aria-expanded={category.expanded} aria-controls="operation-panel" aria-description={category.share + " of measured time"} onClick={category.select}>
         <span className="category-name">{category.name}</span>
-        <span className="category-metric">{category.duration}</span>
+        <span className="category-metric">{category.duration} <span>{category.share}</span></span>
         <span className="category-icon" aria-hidden="true">{category.expanded ? "−" : "+"}</span>
       </Button>)}
     </div>
-    {fieldTexture && <FieldSurface texture={fieldTexture} />}
     <section id="operation-panel" hidden={!model?.breakdown} aria-labelledby="summary-heading">
       <div id="operation-tiles" role="group" aria-label="Operations" style={operationTracks}>
         {model?.operations.map(operation => <Button type="button" key={operation.key}
@@ -108,7 +107,7 @@ export function Summary({ fieldTexture }: { fieldTexture?: string }) {
           </span>
         </Button>)}
       </div>
-      <p id="operation-empty" className="summary-note" hidden={!model?.emptyOperations}>No recorded operations in the last 24 hours.</p>
+      <p id="operation-empty" className="summary-note" hidden={!model?.emptyOperations}>No recorded operations in this time frame.</p>
       {model?.recovery && <Button type="button" className="operation-recovery"
         data-operation={model.recovery.key} onClick={model.clearOperation}>{model.recovery.name}</Button>}
     </section>
@@ -147,7 +146,7 @@ function safePalette(value: string) {
   let amplitude = 66;
   while (amplitude > 0 && [-amplitude, amplitude].some(end =>
     contrast(labelLight, luminance(shade(center, end))) < 4.5)) amplitude--;
-  return { center, label, amplitude };
+  return { center, amplitude };
 }
 
 function textureLayer(width: number, height: number) {
@@ -183,7 +182,7 @@ function FieldSurface({ texture }: { texture: string }) {
   useEffect(() => {
     const canvas = ref.current;
     const wrapper = canvas?.parentElement;
-    const plot = wrapper?.querySelector<HTMLElement>("#tiles");
+    const plot = wrapper;
     const root = wrapper?.closest("main");
     const context = canvas?.getContext("2d");
     if (!canvas || !wrapper || !plot || !root || !context) return;
@@ -195,32 +194,31 @@ function FieldSurface({ texture }: { texture: string }) {
     let leaves: CanvasRenderingContext2D | null = null;
     let paintedCanopy: CanvasRenderingContext2D | null = null;
     let painted = false;
-    let divide = 0;
-    let horizon = 0;
+    let soilEnd = 0;
+    let cropsEnd = 0;
     function draw() {
       if (!context || !materials.length || !paintedCanopy || !canvas) return;
       const { width, height } = canvas;
       context.drawImage(materials[0].canvas, 0, 0);
-      if (divide >= width) return;
-      if (horizon > 0) {
-        context.drawImage(paintedCanopy.canvas, divide, 0, width - divide, horizon,
-          divide, 0, width - divide, horizon);
+      if (cropsEnd > soilEnd) {
+        context.drawImage(paintedCanopy.canvas, soilEnd, 0, cropsEnd - soilEnd, height,
+          soilEnd, 0, cropsEnd - soilEnd, height);
       }
-      if (horizon < height) {
-        context.drawImage(materials[2].canvas, divide, horizon, width - divide, height - horizon,
-          divide, horizon, width - divide, height - horizon);
+      if (cropsEnd < width) {
+        context.drawImage(materials[2].canvas, cropsEnd, 0, width - cropsEnd, height,
+          cropsEnd, 0, width - cropsEnd, height);
       }
     }
 
     function recolor() {
       if (!canvas || !wrapper || !plot || !root || !map || !sand || !materials.length || !leaves || !paintedCanopy) return;
       const { width, height } = canvas;
-      const tiles = fieldPalettes.map(({ kind }) => plot.querySelector<HTMLElement>(".category-tile." + kind));
-      const [soil, crops] = tiles;
+      const soil = plot.querySelector(".summary-segment.workflow");
+      const crops = plot.querySelector(".summary-segment.agent");
       const size = plot.getBoundingClientRect();
       if (!soil || !crops || !size.width || !size.height) return;
-      divide = Math.round(soil.getBoundingClientRect().width / size.width * width);
-      horizon = Math.round(crops.getBoundingClientRect().height / size.height * height);
+      soilEnd = Math.round((soil.getBoundingClientRect().right - size.left) / size.width * width);
+      cropsEnd = Math.round((crops.getBoundingClientRect().right - size.left) / size.width * width);
       const trend = root.querySelector(".trend-plot svg");
       const trendWidth = trend?.getBoundingClientRect().width;
       if (trendWidth) {
@@ -229,8 +227,7 @@ function FieldSurface({ texture }: { texture: string }) {
       }
       if (!painted) {
         painted = true;
-        const shades = fieldPalettes.map(({ color }) => safePalette(color));
-        tiles.forEach((tile, index) => tile?.style.setProperty("--field-label", shades[index].label));
+        const shades = fieldPalettes.map(safePalette);
         const groundColors = shades.map(({ center, amplitude }, parcel) => Array.from({ length: 256 }, (_, index) =>
           shade(center, (index / 255 * 2 - 1) * amplitude * (parcel === 1 ? .9 : 1))));
         const cropColors = Array.from({ length: 256 }, (_, index) =>
@@ -279,11 +276,14 @@ function FieldSurface({ texture }: { texture: string }) {
     };
     atlas.src = texture;
     resize.observe(plot);
+    const segments = new MutationObserver(recolor);
+    segments.observe(plot, { childList: true, subtree: true, attributes: true, attributeFilter: ["style"] });
     const trendPlot = root.querySelector(".trend-plot");
     if (trendPlot) resize.observe(trendPlot);
     return () => {
       atlas.onload = null;
       resize.disconnect();
+      segments.disconnect();
     };
   }, [texture]);
   return <canvas ref={ref} className="field-canvas" aria-hidden="true" />;

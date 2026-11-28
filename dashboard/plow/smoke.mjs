@@ -9,22 +9,24 @@ const directory = process.argv[2]
 const { accessVerifier, createDashboardServer } = await import(pathToFileURL(resolve(directory, 'worker.mjs')).href)
 const audience = 'fixture-audience'
 const demo = [
-  {startUtcMs: 1795726800000, work: [[12960, 16920, "Release verification"]], wait: [[0, 12960, "Publish artifacts"]], end: 16920},
-  {startUtcMs: 1795719600000, work: [[0, 5040, "Code changes"]], wait: [[5040, 18360, "CI checks"]], end: 20700},
-  {startUtcMs: 1795712400000, work: [[0, 3240, "Code changes"], [13680, 16920, "Local testing"]], wait: [[3240, 13680, "CI checks"]], end: 16920},
-  {startUtcMs: 1795705200000, work: [], wait: [[0, 12240, "CI checks"]], end: 16200},
-  {startUtcMs: 1795698000000, work: [[0, 8640, "Code changes"]], wait: [[8640, 15480, "CI checks"]], end: 15480},
-  {startUtcMs: 1795694400000, work: [], wait: [[5940, 17280, "Publish artifacts"]], end: 17280},
-  {startUtcMs: 1795687200000, work: [[0, 2880, "Code changes"]], wait: [[2880, 7380, "CI checks"]], end: 7380},
-  {startUtcMs: 1795680000000, work: [[10440, 13320, "Local testing"]], wait: [[0, 10440, "CI checks"]], end: 13320},
-  {startUtcMs: 1795676400000, work: [[0, 5400, "Local testing"]], wait: [[5400, 14760, "CI checks"]], end: 14760},
-  {startUtcMs: 1795608000000, work: [[0, 4680, "Code changes"]], wait: [[4680, 14760, "CI checks"]], end: 17280},
+  [1795726800000, [[12960, 16920, "Release verification"]], [[0, 12960, "Publish artifacts"]], 16920],
+  [1795719600000, [[0, 5040, "Code changes"]], [[5040, 18360, "CI checks"]], 20700],
+  [1795712400000, [[0, 3240, "Code changes"], [13680, 16920, "Local testing"]], [[3240, 13680, "CI checks"]], 16920],
+  [1795705200000, [], [[0, 12240, "CI checks"]], 16200],
+  [1795698000000, [[0, 8640, "Code changes"]], [[8640, 15480, "CI checks"]], 15480],
+  [1795694400000, [], [[5940, 17280, "Publish artifacts"]], 17280],
+  [1795687200000, [[0, 2880, "Code changes"]], [[2880, 7380, "CI checks"]], 7380],
+  [1795680000000, [[10440, 13320, "Local testing"]], [[0, 10440, "CI checks"]], 13320],
+  [1795676400000, [[0, 5400, "Local testing"]], [[5400, 14760, "CI checks"]], 14760],
+  [1795608000000, [[0, 4680, "Code changes"]], [[4680, 14760, "CI checks"]], 17280],
 ]
-const traces = demo.map((trace, index) => ({ ...trace, errors: index ? [] : [600, 601] }))
+const traces = demo.map(([startUtcMs, work, wait, end], index) => ({ startUtcMs, work, wait, end, errors: index ? [] : [600, 601] }))
 traces[0].detail = [[13000, 14200, 'Model sampling']]
 traces[0].ci = [[2000, 2100, 'CI watcher observation']]
 const to = 1795744800000
-const feed = { observed: 1795730400000, traces, overview: { from: to - 604800000, to, traces } }
+const weekly = [...traces, ...Array.from({ length: 4 }, (_, index) => ({ ...traces.at(-1),
+  startUtcMs: 1795546800000 - index * 3600000 }))]
+const feed = { observed: 1795730400000, traces, overview: { from: to - 604800000, to, traces: weekly } }
 let storedFeed = JSON.stringify(feed)
 let reads = 0
 const issuer = 'https://fixture.cloudflareaccess.com'
@@ -50,11 +52,10 @@ const request = (assertion, path = '/app', method = 'GET') => fetch(base + path,
   headers: assertion ? { 'Cf-Access-Jwt-Assertion': assertion } : {},
 })
 try {
-  equal((await request()).status, 403)
-  equal((await request('invalid')).status, 403)
-  equal((await request(await sign('another-app'))).status, 403)
-  equal((await request(await sign(audience, 'https://other.cloudflareaccess.com'))).status, 403)
-  equal((await request(await sign(audience, issuer, '-1m'))).status, 403)
+  const wrongIssuer = await sign(audience, 'https://other.cloudflareaccess.com')
+  for (const rejected of [undefined, 'invalid', await sign('another-app'), wrongIssuer, await sign(audience, issuer, '-1m')]) {
+    equal((await request(rejected)).status, 403)
+  }
   equal((await request(token, '/app/other')).status, 404)
   equal((await request(token, '/app', 'POST')).status, 405)
   equal(reads, 0)
@@ -67,15 +68,12 @@ try {
   equal(await (await request(token, '/app/', 'HEAD')).text(), '')
   browser = await chromium.launch({ channel: 'chrome' })
   for (const width of [1024, 1120, 1440, 1920]) {
-    const page = await browser.newPage({ viewport: { width, height: 900 } })
+    const page = await browser.newPage({ viewport: { width, height: 900 }, extraHTTPHeaders: { 'Cf-Access-Jwt-Assertion': token } })
     const errors = []
     page.on('pageerror', error => errors.push(error.message))
     page.on('console', message => {
       if (message.type() === 'error' && !message.text().includes('503')) errors.push(message.text())
     })
-    await page.route(app, route => route.continue({
-      headers: { ...route.request().headers(), 'Cf-Access-Jwt-Assertion': token },
-    }))
     await page.goto(app)
     await page.evaluate(() => document.fonts.ready)
     await page.locator('.field-ready').waitFor()
@@ -99,24 +97,18 @@ try {
     const ci = summary.getByRole('button', { name: /CI checks/ })
     const titles = () => timeline.locator('.trace:visible .sample-title').allTextContents()
     const matchingThreads = ['Thread 1', 'Thread 6']
-    const geometry = () => page.evaluate(() => {
-      const bounds = selector => {
-        const { x, y, width, height } = document.querySelector(selector).getBoundingClientRect()
+    const geometry = () => page.locator('.activity-header, #summary-panel, .summary-top, #tiles, #timeline-panel, .timeline-heading-row, .time-strip, .navigator, #minimap, #timeline-viewport, .inspector-slot').evaluateAll(
+      elements => elements.map(element => {
+        const { x, y, width, height } = element.getBoundingClientRect()
         return [x + scrollX, y + scrollY, width, height]
-      }
-      const selectors = ['.activity-header', '#summary-panel', '.summary-top', '#tiles', '#timeline-panel',
-        '.timeline-heading-row', '.time-strip', '.navigator', '#minimap', '#timeline-viewport', '.inspector-slot']
-      return {
-        page: [document.documentElement.scrollWidth, document.documentElement.scrollHeight],
-        regions: selectors.map(bounds),
-      }
-    })
+      }))
     const rowSlots = () => page.locator('.trace:visible').evaluateAll(rows =>
       rows.map(row => [row.offsetTop, row.offsetHeight]))
     const slots = await rowSlots()
     const assertPacked = async count => deepEqual(await rowSlots(), slots.slice(0, count))
     const overview = await geometry()
-    const assertStable = async state => deepEqual(await geometry(), overview, state)
+    equal(await page.evaluate(() => document.documentElement.scrollWidth), width)
+    const assertStable = async () => deepEqual(await geometry(), overview)
     const total = () => page.locator('#summary-total').innerText()
     const initialTotal = await total()
     match(initialTotal, /across 9 threads/)
@@ -152,17 +144,25 @@ try {
     deepEqual(await window(), [to - 86400000, to])
     await week.press('Space')
     deepEqual(await window(), [to - 604800000, to])
-    equal(await week.getAttribute('aria-pressed'), 'true')
-    equal((await titles()).length, 10)
-    match(await total(), /across 10 threads/)
+    equal((await titles()).length, weekly.length)
+    match(await total(), /across 14 threads/)
+    equal(await page.locator('#timeline-count').textContent(), '14 threads')
+    match(await trendLabel(), /no measured time/)
     equal((await trendLabel()).split(' UTC: ').length - 1, 7)
+    const rulerOffset = () => view.evaluate(el => el.querySelector('.table-head').getBoundingClientRect().top - el.getBoundingClientRect().top)
+    const initialRuler = await rulerOffset()
+    await timeline.getByRole('button', { name: 'Inspect Thread 14', exact: true }).press('Enter')
+    ok(await view.evaluate(el => el.scrollTop > 0))
+    equal(await rulerOffset(), initialRuler)
+    await page.getByRole('region', { name: 'Thread 14 · Recorded timeline' }).press('Escape')
     await screenshot('week')
     await day.press('Enter')
+    equal(await view.evaluate(el => el.scrollTop), 0)
     deepEqual(await window(), [to - 86400000, to])
     equal(await total(), initialTotal)
     equal(await trendLabel(), initialTrend)
     await fit.press('Space')
-    deepEqual(await window(), [demo[0].startUtcMs, demo[0].startUtcMs + demo[0].end * 1000])
+    deepEqual(await window(), [traces[0].startUtcMs, traces[0].startUtcMs + traces[0].end * 1000])
     equal(await fit.evaluate(el => el === document.activeElement), true)
     const tick = await timeline.locator('.marker').first().boundingBox()
     await page.mouse.move(tick.x + tick.width / 2, tick.y + tick.height / 2)
@@ -172,6 +172,7 @@ try {
     const detail = page.getByRole('region', { name: 'Thread 1 · Recorded timeline' })
     match(await detail.innerText(), /Model sampling/)
     match(await detail.innerText(), /CI watcher observation/)
+    equal(await timeline.locator('.ci-span').count(), 1)
     await detail.press('Escape')
     await settle()
     const fitted = await window()
@@ -193,8 +194,7 @@ try {
     await page.keyboard.press('Enter')
     equal(await summary.getByRole('heading').textContent(), 'Admission wait')
     equal((await titles()).length, 9)
-    await assertStable('open operation breakdown')
-    await screenshot('breakdown')
+    await assertStable()
 
     await publish.focus()
     await page.keyboard.press('Space')
@@ -204,7 +204,7 @@ try {
     match(await page.locator('#timeline-selection').innerText(), /Publish artifacts · 2 threads shown/)
     equal(await range(), initial)
     await assertPacked(2)
-    await assertStable('filter to Publish artifacts')
+    await assertStable()
 
     await ci.click()
     equal((await titles()).length, 7)
@@ -213,7 +213,7 @@ try {
     await page.keyboard.press('Escape')
     equal((await titles()).length, 9)
     await assertPacked(9)
-    await assertStable('clear filter with Escape')
+    await assertStable()
     ok(await view.evaluate(el => el.scrollHeight <= el.clientHeight))
     await publish.click()
 
@@ -231,7 +231,7 @@ try {
     equal((await titles()).length, 0)
     await assertPacked(0)
     match(await timeline.innerText(), /No matching threads in this range/)
-    await assertStable('empty filtered range')
+    await assertStable()
     await minimap.focus()
     await page.keyboard.press('ArrowRight')
 
@@ -243,7 +243,7 @@ try {
     equal(await workflow.evaluate(element => element === document.activeElement), true)
     equal((await titles()).length, 9)
     await assertPacked(9)
-    await assertStable('reset zoom and close operation breakdown')
+    await assertStable()
 
     await summary.getByRole('button', { name: /^Provider run/ }).click()
     const testing = summary.getByRole('button', { name: /^Local testing/ })
@@ -262,17 +262,17 @@ try {
     const inspector = timeline.getByRole('region', { name: /Thread 6 · Recorded timeline/ })
     match(await inspector.innerText(), /Publish artifacts/)
     equal(await inspector.evaluate(element => element === document.activeElement), true)
-    await assertStable('open thread inspector')
+    await assertStable()
     await screenshot('inspector')
     await page.keyboard.press('Escape')
     equal(await inspect.getAttribute('aria-expanded'), 'false')
     equal(await inspect.evaluate(element => element === document.activeElement), true)
-    await assertStable('close thread inspector with Escape')
+    await assertStable()
     await page.keyboard.press('Enter')
     equal(await inspector.isVisible(), true)
     await brush(.065, .17)
     equal(await inspector.isVisible(), false)
-    await assertStable('filter excludes inspected thread')
+    await assertStable()
 
     const help = page.getByRole('button', { name: 'Timeline guide' })
     const instructions = page.locator('.timeline-guide')
@@ -283,7 +283,6 @@ try {
     const helpBounds = await help.boundingBox()
     ok(Math.abs(guideBounds.x + guideBounds.width - helpBounds.x - helpBounds.width) < 2)
     ok(guideBounds.y >= helpBounds.y + helpBounds.height)
-    await screenshot('help')
     await page.keyboard.press('Escape')
     equal(await instructions.isVisible(), false)
     storedFeed = JSON.stringify({ observed: 0, traces: [] })

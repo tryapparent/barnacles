@@ -3,7 +3,7 @@ import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { openT3History, sourcePolicy, type List, type StoredT3Projection, type PendingT3Command, type T3Command, type T3HistoryCheckpoint } from "../../evidence/index.ts";
 import { buildPolicies, loadPolicy } from "../../tooling/bend.ts";
-import { stockProjection, type ProjectionCodec } from "./projection.ts";
+import { stockProjection, watchPolicy, type ProjectionCodec, type WatchCodec } from "./projection.ts";
 import { array, bendList, bendValues, boundedFile, boundedResponse, millis, requireStockT3Id, row,
   SourceReadError, stockT3Id, stockT3Origin, stockT3Rpc, str, token } from "../wire.ts";
 
@@ -11,10 +11,11 @@ async function compileHistory(directory: string, withProjection: boolean) {
   const scratch = mkdtempSync(join(directory, "build-"));
   try {
     const entries: [URL, string][] = [[new URL("./history.bend", import.meta.url), "t3-history.mjs"]];
-    if (withProjection) entries.push([sourcePolicy, "sources.mjs"]);
-    const [history, projection] = await buildPolicies(scratch, entries);
+    if (withProjection) entries.push([sourcePolicy, "sources.mjs"], [watchPolicy, "pr-watch.mjs"]);
+    const [history, projection, watch] = await buildPolicies(scratch, entries);
     return { policy: await loadPolicy<HistoryPolicy>(history),
-      projection: projection ? await loadPolicy<ProjectionCodec>(projection) : undefined };
+      projection: projection ? await loadPolicy<ProjectionCodec>(projection) : undefined,
+      watch: watch ? await loadPolicy<WatchCodec>(watch) : undefined };
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
@@ -153,7 +154,7 @@ export type HistoryPolicy = HistoryCodec & {
   plan(target: Target, cursor: string, known: boolean, revision: number, frontier: number, refresh: boolean):
     { $: "Some"; value: Task } | { $: "None" };
   batch(input: List<Task>): List<Task>;
-  projection_due(updated: number, saved: number, now: number, titleObserved: boolean): boolean;
+  projection_due(updated: number, saved: number, now: number, metadataObserved: boolean): boolean;
   older_frontier(previous: number, oldest: number): number;
   stale_item: NonNullable<Parameters<typeof openT3History>[3]>;
   reconcile_batch(input: List<PendingT3Command>): List<PendingT3Command>;
@@ -170,7 +171,7 @@ export async function pollT3History([job, instance, flag, ...extra]: string[]) {
   const source = stockT3HistoryReader(process.env.PLOW_T3_HISTORY_ORIGIN ?? "",
     process.env.PLOW_T3_HISTORY_READ_TOKEN_FILE ?? "/run/secrets/t3_history_read");
   const path = process.env.PLOW_T3_PROJECTION_FILE;
-  const { policy, projection: codec } = await compileHistory(process.env.TMPDIR ?? resolve(job), Boolean(path));
+  const { policy, projection: codec, watch } = await compileHistory(process.env.TMPDIR ?? resolve(job), Boolean(path));
   const store = openT3History(join(resolve(job), "evidence.sqlite"), token(instance), policy.replay, policy.stale_item, path);
   const stop = new AbortController();
   process.once("SIGTERM", () => stop.abort());
@@ -181,8 +182,8 @@ export async function pollT3History([job, instance, flag, ...extra]: string[]) {
       const input = await source.page(id, cursor);
       const result = historyPage(policy, id, input, cursor, covered);
       let projection: StoredT3Projection | undefined;
-      if (!cursor && codec) {
-        try { projection = stockProjection(instance, id, input.projection, codec, policy.local_row); }
+      if (!cursor && codec && watch) {
+        try { projection = stockProjection(instance, id, input.projection, codec, policy.local_row, watch); }
         catch { projectionFailed++; }
       }
       return { ...result, projection };
@@ -235,7 +236,7 @@ export async function pollT3History([job, instance, flag, ...extra]: string[]) {
           const now = Date.now();
           for (const { id, updated } of all) {
             const projection = saved.get(id);
-            if (policy.projection_due(updated, projection?.revision ?? 0, now, projection?.titleObserved ?? false)) refresh.add(id);
+            if (policy.projection_due(updated, projection?.revision ?? 0, now, projection?.metadataObserved ?? false)) refresh.add(id);
           }
         }
         const deferred = new Set<string>();

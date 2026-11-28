@@ -13,7 +13,8 @@ export type T3HistoryCheckpoint = { frontier: number; revision: number; covered?
 
 export type PendingT3Command = { $: "Pending"; thread: string; id: string; status: string; checked: number };
 
-export type StoredT3Projection = { thread: ThreadEvidence; references: NativeBinding[]; titleObserved?: boolean };
+export type StoredPrWatch = { id: string; start: number; end: number };
+export type StoredT3Projection = { thread: ThreadEvidence; references: NativeBinding[]; titleObserved?: boolean; prWatches?: StoredPrWatch[] };
 
 export async function backupAnalysisInput(input: string, output: string) {
   const db = new DatabaseSync(input, { readOnly: true });
@@ -28,9 +29,17 @@ export function readT3Projections(path: string, instance: string, from: number) 
   const db = new DatabaseSync(path, { readOnly: true });
   try {
     db.exec("PRAGMA busy_timeout = 5000");
-    return db.prepare(`SELECT payload FROM t3_history_projections WHERE instance=? AND revision>=?
+    const windows = db.prepare("SELECT 1 FROM sqlite_schema WHERE name='t3_history_pr_watches'").get() &&
+      db.prepare(`SELECT message_id AS id,started_ms AS start,observed_ms AS end FROM t3_history_pr_watches
+        WHERE instance=? AND thread_id=? AND observed_ms>=? ORDER BY started_ms,message_id`);
+    return db.prepare(`SELECT thread_id,payload FROM t3_history_projections WHERE instance=? AND revision>=?
       ORDER BY revision DESC,thread_id`).all(instance, from)
-      .map(({ payload }) => JSON.parse(String(payload)) as StoredT3Projection);
+      .map(({ thread_id, payload }) => {
+        const projection = JSON.parse(String(payload)) as StoredT3Projection;
+        const prWatches: StoredPrWatch[] = (windows ? windows.all(instance, thread_id, from) : [])
+          .map(({ id, start, end }) => ({ id: String(id), start: Number(start), end: Number(end) }));
+        return { ...projection, prWatches };
+      });
   } finally {
     db.close();
   }
@@ -59,6 +68,11 @@ export function openT3History(path: string, instance: string,
         instance TEXT NOT NULL, thread_id TEXT NOT NULL, revision INTEGER NOT NULL, payload TEXT NOT NULL,
         PRIMARY KEY (instance, thread_id)
       ) STRICT, WITHOUT ROWID;
+      CREATE TABLE IF NOT EXISTS ${projectionSchema}.t3_history_pr_watches (
+        instance TEXT NOT NULL, thread_id TEXT NOT NULL, message_id TEXT NOT NULL,
+        started_ms INTEGER NOT NULL, observed_ms INTEGER NOT NULL,
+        PRIMARY KEY (instance, thread_id, message_id)
+      ) STRICT, WITHOUT ROWID;
       CREATE TABLE IF NOT EXISTS t3_history_progress (
         instance TEXT NOT NULL, thread_id TEXT NOT NULL, cursor TEXT NOT NULL,
         PRIMARY KEY (instance, thread_id)
@@ -82,7 +96,9 @@ export function openT3History(path: string, instance: string,
         PRIMARY KEY (instance, thread_id, item_id)
       ) STRICT, WITHOUT ROWID;
     `);
-    const projections = db.prepare(`SELECT thread_id,revision,json_extract(payload, '$.titleObserved') AS title_observed FROM ${projectionSchema}.t3_history_projections WHERE instance=?`);
+    const projections = db.prepare(`SELECT thread_id,revision,json_extract(payload, '$.titleObserved') AS title_observed,
+      json_type(payload, '$.prWatches') AS watches_type FROM ${projectionSchema}.t3_history_projections WHERE instance=?`);
+    const writeWatch = db.prepare(`INSERT INTO ${projectionSchema}.t3_history_pr_watches VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING`);
     const writeProjection = db.prepare(`INSERT INTO ${projectionSchema}.t3_history_projections VALUES (?,?,?,?)
       ON CONFLICT(instance,thread_id) DO UPDATE SET revision=excluded.revision,payload=excluded.payload
       WHERE excluded.revision>=t3_history_projections.revision`);
@@ -117,7 +133,8 @@ export function openT3History(path: string, instance: string,
     return {
       cursor: readCursor,
       projectionRevisions() {
-        return new Map(projections.all(instance).map(row => [String(row.thread_id), { revision: Number(row.revision), titleObserved: row.title_observed === 1 }]));
+        return new Map(projections.all(instance).map(row => [String(row.thread_id),
+          { revision: Number(row.revision), metadataObserved: row.title_observed === 1 && row.watches_type === "array" }]));
       },
       checkpoints() {
         return new Map(resume.all(instance).map(({ thread_id, cursor, frontier, revision, covered, tip }) =>
@@ -163,7 +180,10 @@ export function openT3History(path: string, instance: string,
             if (outcome === "Conflict") throw Error("Conflicting T3 command at the same snapshot sequence");
             if (outcome === "Write") save.run(...key, sequence, ...values);
           }
-          if (projection) writeProjection.run(instance, thread, projection.thread.updated, JSON.stringify(projection));
+          if (projection) {
+            writeProjection.run(instance, thread, projection.thread.updated, JSON.stringify(projection));
+            for (const { id, start, end } of projection.prWatches ?? []) writeWatch.run(instance, thread, id, start, end);
+          }
           progress.run(instance, thread, next);
           if (mark) {
             checkpoint.run(instance, thread, mark.frontier, mark.revision);

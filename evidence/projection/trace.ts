@@ -1,6 +1,7 @@
 import { buildPolicy, loadPolicy } from "../../tooling/bend.ts";
 import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
 import type { List } from "../storage/sources.ts";
+import type { StoredPrWatch } from "../storage/t3/history.ts";
 import type { IntervalIdentity, ObservedInterval } from "./intervals.ts";
 import { rows, type collectTiming, type ProcessAttribution, type Stats } from "./timing.ts";
 
@@ -151,17 +152,19 @@ export function writeTraces(source: DatabaseSync, view: DatabaseSync, policy: Tr
 
 type FeedRun = { $: "Run"; requested: number; started: number; completed: number; status: string };
 type ProviderSpan = { $: "ProviderSpan"; a: number; b: number; operation: string };
-type CiPoll = { $: "CiPoll"; a: number; b: number };
+type CiPoll = { $: "CiPoll"; a: number; b: number; native: boolean };
 type FeedThread = { $: "Thread"; created: number; updated: number; row: number; runs: List<FeedRun>; detail: List<ProviderSpan>; ci: List<CiPoll> };
 type FeedSpan = { a: number; b: number; name: string };
-type FeedTrace = { start: number; end: number; row: number; work: List<FeedSpan>; wait: List<FeedSpan>; errors: List<number>; detail: List<FeedSpan>; ci: List<FeedSpan> };
+type FeedTrace = { start: number; end: number; extent: number; row: number; work: List<FeedSpan>; wait: List<FeedSpan>;
+  errors: List<number>; detail: List<FeedSpan>; ci: List<FeedSpan>; between: List<FeedSpan> };
 type FeedPolicy = { project_feed(threads: List<FeedThread>, asOf: number): { observed: number; traces: List<FeedTrace>;
   overview: List<FeedTrace>; from: number; as_of: number } };
 
 const feedList = <T>(values: T[]): List<T> =>
   values.reduceRight<List<T>>((tail, head) => ({ $: "Con", head, tail }), { $: "Nil" });
 
-export async function projectPlowFeed(path: string, scratch: string, asOf = Date.now(), scope?: string, environment?: string) {
+export async function projectPlowFeed(path: string, scratch: string, asOf = Date.now(), scope?: string, environment?: string,
+  watches?: ReadonlyMap<string, StoredPrWatch[]>) {
   const policy = await loadPolicy<FeedPolicy>(
     await buildPolicy(scratch, new URL("../analysis/plow-feed.bend", import.meta.url), "plow-feed.mjs"));
   const db = new DatabaseSync(path, { readOnly: true });
@@ -191,9 +194,14 @@ export async function projectPlowFeed(path: string, scratch: string, asOf = Date
       detail: feedList(spans.all(thread.instance, thread.thread_id).map(span => ({
         $: "ProviderSpan", a: ms(span.start_ns), b: ms(span.end_ns), operation: String(span.operation),
       }))),
-      ci: feedList(ci.all(thread.instance, thread.thread_id).map(poll => ({
-        $: "CiPoll", a: Number(poll.poll_started_ms), b: Number(poll.poll_result_ms),
-      }))),
+      ci: feedList<CiPoll>([
+        ...ci.all(thread.instance, thread.thread_id).map(poll => ({
+          $: "CiPoll" as const, a: Number(poll.poll_started_ms), b: Number(poll.poll_result_ms), native: false,
+        })),
+        ...(watches?.get(String(thread.thread_id)) ?? []).map(({ start, end }) => ({
+          $: "CiPoll" as const, a: start, b: end, native: true,
+        })),
+      ]),
     }))), asOf);
     const encodeSpans = (list: List<FeedSpan>) => rows(list).map(({ a, b, name }) => [a / 1000, b / 1000, name]);
     const encodeTraces = (list: List<FeedTrace>) => rows(list).map(trace => {
@@ -206,7 +214,8 @@ export async function projectPlowFeed(path: string, scratch: string, asOf = Date
         threadId, title: thread.title ?? "", status: thread.status, origin: thread.origin, settled: Boolean(thread.settled), t3Url,
         pullRequests: links.all(thread.instance, thread.thread_id).map(link =>
           `https://github.com/${link.repository}/pull/${link.pr_number}`),
-        startUtcMs: trace.start, end: trace.end / 1000, work: encodeSpans(trace.work), wait: encodeSpans(trace.wait),
+        startUtcMs: trace.start, end: trace.end / 1000, extent: trace.extent / 1000,
+        work: encodeSpans(trace.work), wait: encodeSpans(trace.wait), between: encodeSpans(trace.between),
         errors: rows(trace.errors).map(at => at / 1000), detail: encodeSpans(trace.detail), ci: encodeSpans(trace.ci),
       };
     });

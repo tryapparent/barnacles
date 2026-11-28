@@ -1,7 +1,8 @@
 # Plow session activity
 
 [Plow session activity](https://plow.tryapparent.com/app) reads a private projection of the
-collector's T3 evidence. It displays up to ten imported threads with measured intervals in the selected time frame.
+collector's T3 evidence. Scroll the Timeline to browse all imported threads with
+measured intervals in the selected time frame. The UTC ruler stays visible.
 **Time frame** switches the dashboard between the last **24h** (default) and
 **7 days**. The charts and Timeline end at the latest feed projection and
 clip intervals to the selected period. Run time measures elapsed provider
@@ -9,10 +10,11 @@ time. Admission time runs from request to provider start. Unknown endpoints
 remain unmeasured. Failures appear when the source records a failed run with
 a measured end. The thread inspector retains the full recorded thread history.
 
-Where time went sums and ranks disjoint intervals across all measured threads
-in the period. Different threads can overlap on the clock. A category expands
+Where time went sums disjoint intervals across all measured threads in the
+period. The lengths show each category's exact share of the total. Different
+threads can overlap on the clock. A category expands
 into its operation breakdown. Selecting an operation filters the Timeline’s
-up-to-ten newest threads in the visible UTC range. Dragging, panning, and
+threads in the visible UTC range. Dragging, panning, and
 zooming change only that viewport and its matches. Selecting the operation
 again clears the filter. Switching time frames resets the Timeline viewport
 and clears the breakdown and inspector selections.
@@ -29,7 +31,8 @@ double-click on the minimap resets the view. The eye button opens the guide.
 
 **Agent work share** uses four-hour buckets for 24h and daily buckets for 7 days. Each point averages the
 share of provider-run time among classified provider and admission time for
-threads with a measured clock in that interval. Missing measurements leave gaps.
+threads with a measured clock in that interval. Hatching marks buckets with no
+measured provider or admission time.
 
 React renders the dashboard shell and operation summary with the shared
 [shadcn controls](../web/controls.tsx). The timeline renderer handles custom UTC
@@ -44,13 +47,14 @@ the field. The Upright Rows material is a 1280 × 640 raster atlas built from
 generated oil-painted soil, foliage, and fine sand studies. The upper half
 stores soil detail, foliage relief, and a mask isolated from the painted
 foliage by channel. The lower half stores fine sand relief with mineral flecks
-for Unobserved. The browser paints the same earth under both upper parcels and
-composites the tinted foliage only on the planted land. FieldSurface reuses the
+for time outside runs. The browser paints the same earth under the first two
+segments and composites foliage on provider time. FieldSurface reuses the
 materials in the trend and in the static grain on timeline spans.
 The trend clips the painted soil and crops at the batch curve and leaves
-gaps for unknown batches. The timeline retains Bend2 phase colors. Both overview cards use a static field palette. Forced colors use system surfaces. Category area follows duration,
-subject to minimum track sizes for readable, clickable tiles. The category name
-leads each tile, with the duration in smaller text. A selected parcel expands
+hatched bands for unknown batches. The timeline retains Bend2 phase colors.
+Both overview cards use a static field palette. Forced colors use system
+surfaces. The proportional plot has separate category controls with durations
+and shares. A selected category expands
 to fill the summary card. Its category replaces the heading and its measured
 operations fill the interior in related shades, with area proportional to
 duration subject to the same readability limits. The expanded view uses the selected parcel’s painted texture. Translucent operation fills tint it in place and an outline marks the selected operation. The trend and timeline stay
@@ -64,11 +68,14 @@ timing intervals, clock labels, thread titles, IDs, source metadata, linked
 pull requests, and an observation timestamp. The dashboard and MCP share
 this Access-protected feed. Prompts and tool outputs stay in T3. A provider span receives a more specific label when an explicitly
 linked, allowlisted operation falls wholly inside a measured provider run.
-The inspector shows linked exact CI watcher observations alongside the primary
-thread phases. These observations can overlap provider time. GitHub job
-queue and execution clocks describe hosted activity and alone cannot establish
-that a thread waited. Unattributed gaps remain Unobserved. Generated files
-and live data stay out of Git and build artifacts.
+The Timeline marks timed CI observations on a lower track and lists them in
+the inspector. A T3 PR watch runs from the recorded watch start to the monitor
+notification. It can overlap provider time or time between runs. Exact GitHub
+queries without observation clocks carry identity evidence only. GitHub job
+queue and execution describe hosted activity. Outside runs includes intervals
+between a recorded completion and a later request and gaps with insufficient
+clocks. The inspector labels them separately. Generated files and live data
+stay out of Git and build artifacts.
 
 The priorities panel appears below Timeline when the analysis API is
 configured. It shows up to three priorities for the selected period and

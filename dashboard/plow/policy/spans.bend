@@ -29,7 +29,7 @@ def covered(input: List<&2, Interval>, +a: Nat, +b: Nat, best: Decision) -> Deci
       +higher = U32.is_gt(kind,k)
       +same = U32.is_eq(kind,k)
       +update = Bool.and(active,Bool.or(higher,same))
-      +generic = Bool.and(same,Bool.not(String.eq(name,n)))
+      +generic = Bool.and(U32.is_ne(kind,0),Bool.and(same,Bool.not(String.eq(name,n))))
       +label = Bool.pick(String,generic,Bool.pick(String,U32.is_ge(kind,2),"Provider run","Admission wait"),name)
       covered(rest,a,b,Bool.pick(Decision,update,Decision{kind,label},Decision{k,n}))
 
