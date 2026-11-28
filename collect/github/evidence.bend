@@ -35,8 +35,12 @@ def repo_parts(parts: List<&2, String>) -> Bool:
 def valid_repo(value: String) -> Bool:
   repo_parts(String.split(value, '/'))
 
-def valid_scope(value: String) -> Bool:
-  safe_atom(value, 48n, "abcdefghijklmnopqrstuvwxyz0123456789-_")
+def valid_scope(+value: String) -> Bool:
+  match value:
+    case SNil{}: False{}
+    case SCon{head, _}:
+      Bool.and(String.contains("abcdefghijklmnopqrstuvwxyz0123456789", SCon{head, SNil{}}),
+        safe_atom(value, 48n, "abcdefghijklmnopqrstuvwxyz0123456789-_"))
 
 def valid_run(+run: String, +attempt: U32, head: String, +created: U32, lo: U32, hi: U32) -> Bool:
   Bool.and(identifier(run), Bool.and(U32.is_gt(attempt, 0), Bool.and(U32.is_le(attempt, 1000),

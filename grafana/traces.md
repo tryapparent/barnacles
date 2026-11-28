@@ -6,16 +6,9 @@ The view covers emitted OTLP spans received by Tempo. Retained fields include na
 
 Missing spans or empty searches can reflect exporter configuration, partial instrumented coverage, ingest availability, retention, or the selected filters and range. Trace timings are exporter span clocks. In particular, a tool handler’s span can end at its first yield while the process continues. See the historical run view for evidence about tool and process clocks.
 
-## Required Alloy integration for the Trace Viewer
+## Trace Viewer input
 
-Grafana OSS 12.3.0’s native Tempo trace decoder emits zero rows for a batch with no resource attributes. Tempo can return the spans and Grafana can list the matching trace while the Trace Viewer stays empty. The integration owner must add one server-owned constant immediately after resource redaction in the `codex_live` transform in `collect/alloy/config.txt`.
-
-```text
-`keep_keys(resource.attributes, [])`,
-`set(resource.attributes["service.name"], "plow.codex")`,
-```
-
-The first statement stays in place. The fixed service label uses the established `plow.codex` scope identity and admits no resource value from the sender. Existing Tempo records without the constant still require a faithful re-export or a reader that supports empty resource attributes. The [Grafana 12.3.0 decoder](https://github.com/grafana/grafana/blob/v12.3.0/pkg/tsdb/tempo/trace_transform.go#L84-L91) is the source of the constraint.
+Grafana OSS 12.3.0’s native Tempo trace decoder emits zero rows for a batch with no resource attributes. The [Alloy transform](../collect/alloy/config.txt) clears incoming resource attributes and sets the server-owned `service.name` to `plow.codex` so the Trace Viewer receives the spans. Existing Tempo records without a resource attribute require a faithful re-export or a reader that supports empty resource attributes. [Grafana 12.3.0 decoder](https://github.com/grafana/grafana/blob/v12.3.0/pkg/tsdb/tempo/trace_transform.go#L84-L91)
 
 ## Activity and run links
 
@@ -31,7 +24,7 @@ When only conversation, turn or call identity is verified, keep the exact trace 
 
 The pinned legacy Codex Collector authenticates loopback OTLP on its existing port, minimizes incoming spans and exports them to the existing authenticated SQLite evidence receiver. The [Collector overlay](../collect/alloy/codex-collector-fanout.yaml) fans out after the **same** authenticated, processed traces pipeline. The secondary pipeline restores the already-allowlisted event name to Alloy’s ingress marker so Alloy’s second redaction can retain it. The original sink receives the base pipeline’s output. Add it only to the separate legacy Collector deployment. Preserve the base config, image, host-network mode, env file, credentials and receiver. The Alloy input must remain bound to the host’s IPv4 loopback.
 
-1. Persist the selected Alloy host port through the owning Grafana Compose deployment and pass that same numeric value as `PLOW_TEMPO_ALLOY_PORT` to the legacy Collector. The base Compose setup uses an ephemeral port, so a sampled port alone is unsuitable across recreations. Set the Alloy port mapping’s `published` field to the Compose expression `${PLOW_TEMPO_ALLOY_PORT:-0}` and retain `host_ip: 127.0.0.1` and container target `4318`. The deployment supplies one free, fixed numeric port to both services when enabling fan-out.
+1. Set `PLOW_TEMPO_ALLOY_PORT` to the same free, fixed numeric value for the Grafana Compose deployment and the legacy Collector. The Compose mapping binds only to IPv4 loopback and defaults to an ephemeral port when fan-out is disabled.
 2. Mount the overlay read-only at `/etc/plow-fanout.yaml` and add `--config=/etc/plow-fanout.yaml` after `--config=/etc/plow.yaml` on the Collector command. Before applying, validate the merged config with Collector 0.166.0 against the exact proposed base and environment. The overlay replaces the traces exporter array and explicitly retains `otlp_http`. Recheck that list if the legacy base adds or renames exporters.
 3. Verify fresh Codex OTLP arriving at both outputs and retrieve one observed trace by exact ID on the private Grafana route. Compare the span identity and clock window to the legacy evidence. If routing needs to be reverted, remove the second config argument and overlay mount from the owning deployment and reapply the original service definition.
 
@@ -44,8 +37,6 @@ Run the loopback proof with Docker Compose, Node 22, curl, jq, ripgrep and OpenS
 ```sh
 bash verify/codex-traces.sh /path/to/verified/legacy/release/source
 ```
-
-Use the integrated Alloy configuration above. To exercise the proposed delta before integration, an isolated Compose override can bind-mount a private copy of the candidate Alloy configuration at `/etc/alloy/config.alloy`. Use the root `compose.yaml` followed by the override in `COMPOSE_FILE`.
 
 The proof checks Collector authentication, the original evidence write plus the Tempo copy, exact Grafana trace search and lookup, synthetic canary removal, and the original write while Alloy is stopped. Grafana MCP 2.3.0 uses a short-lived Viewer token against the isolated Grafana API. Proof files stay in the printed private job directory.
 

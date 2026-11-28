@@ -51,7 +51,6 @@ export type Progress = {
   unique(ids: List<string>): boolean;
   next_attempt(attempt: number): number;
   retain(terminal: boolean, complete: boolean, observed: boolean): boolean;
-  can_retain(existing: boolean, size: number): boolean;
   exhausted(lo: number, floor: number): boolean;
   resume_at(now: number, failureCount: number, hint: number): number;
   active_at(now: number): number;

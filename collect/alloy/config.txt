@@ -2,6 +2,16 @@ otelcol.storage.file "positions" {
   fsync = true
 }
 
+import.file "collection_health" {
+  filename = "/etc/alloy/collection-health.alloy"
+}
+
+collection_health.collector_health "spool" {}
+
+collection_health.health_self_metrics "alloy" {
+  metrics_receiver = prometheus.remote_write.mimir.receiver
+}
+
 otelcol.receiver.filelog "codex" {
   include           = ["/spool/codex.jsonl"]
   include_file_name = false
@@ -21,6 +31,39 @@ otelcol.receiver.filelog "t3" {
   resource          = { "plow_source" = "t3" }
   output {
     logs = [otelcol.processor.transform.transport.input]
+  }
+}
+
+otelcol.receiver.filelog "github_history" {
+  include           = ["/spool/github/*.jsonl"]
+  include_file_name = false
+  fingerprint_size  = "128B"
+  start_at          = "beginning"
+  storage           = otelcol.storage.file.positions.handler
+  resource          = { "plow_source" = "github_history" }
+
+  retry_on_failure {
+    enabled          = true
+    max_elapsed_time = "0s"
+  }
+
+  output {
+    logs = [otelcol.processor.transform.github_history.input]
+  }
+}
+
+otelcol.processor.transform "github_history" {
+  error_mode = "propagate"
+
+  log_statements {
+    context = "log"
+    statements = [
+      `set(time_unix_nano, observed_time_unix_nano)`,
+    ]
+  }
+
+  output {
+    logs = [otelcol.exporter.otlphttp.loki.input]
   }
 }
 
@@ -81,6 +124,7 @@ otelcol.processor.transform "codex_live" {
     statements = [
       `set(resource.schema_url, "")`,
       `keep_keys(resource.attributes, [])`,
+      `set(resource.attributes["service.name"], "plow.codex")`,
     ]
   }
 

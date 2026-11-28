@@ -1,0 +1,12 @@
+apiVersion: 1
+datasources:
+  - name: Plow Collection Status
+    uid: plow-collection-status
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    editable: false
+    jsonData:
+      httpHeaderName1: X-Scope-OrgID
+    secureJsonData:
+      httpHeaderValue1: plow-collection-health

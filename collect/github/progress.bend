@@ -91,9 +91,6 @@ def next_attempt(attempt: U32) -> U32:
 def retain(terminal: Bool, jobs_complete: Bool, observed: Bool) -> Bool:
   Bool.not(Bool.and(observed, Bool.and(terminal, jobs_complete)))
 
-def can_retain(existing: Bool, size: U32) -> Bool:
-  Bool.or(existing, U32.is_lt(size, 4096))
-
 def exhausted(lo: U32, floor: U32) -> Bool:
   U32.is_le(lo, floor)
 

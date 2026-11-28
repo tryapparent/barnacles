@@ -76,9 +76,11 @@ services:
       - mimir
     ports:
       - target: 4318
+        published: "${PLOW_TEMPO_ALLOY_PORT:-0}"
         host_ip: 127.0.0.1
     volumes:
       - ../../collect/alloy/config.txt:/etc/alloy/config.alloy:ro
+      - ../../collect/alloy/collection-health.txt:/etc/alloy/collection-health.alloy:ro
       - ${PLOW_LGTM_WORKDIR:?Set a private fixture work directory}/spool:/spool:ro
       - alloy-data:/var/lib/alloy
 secrets:

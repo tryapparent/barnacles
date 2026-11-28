@@ -74,7 +74,6 @@ async function pullStep(context: Context, lane: Inventory, current: Cursor) {
 function olderWindow(context: Context, lane: Action, current: Cursor) {
   const { progress, now } = context;
   const next = context.state.cursors[lane];
-  if (!current.gap) next.oldest = progress.clock_min(current.oldest, current.lo);
   if (progress.exhausted(current.lo, current.floor)) {
     Object.assign(next, startPage(), { hi: 0, done: true, due: history(lane) || next.gap ? progress.sweep_at(now) : progress.live_at(now),
       watermark: progress.end_live(current.watermark, current.scanUpper, next.gap) });
@@ -86,6 +85,7 @@ function olderWindow(context: Context, lane: Action, current: Cursor) {
 async function actionPage(context: Context, lane: Action, current: Cursor) {
   const { read, repo, progress, evidence } = context;
   if (current.lastPage) {
+    current.oldest = progress.clock_min(current.oldest, current.lo);
     olderWindow(context, lane, current);
     coverage(context, lane, current, undefined, "window_exhausted");
     coverage(context, lane, current);
@@ -126,16 +126,13 @@ async function attemptStep(context: Context, run: Run, requested?: Action) {
       delete state.pending[key];
       for (const lane of associated) coverage(context, lane, state.cursors[lane], run);
     }
-    return true;
+    return;
   }
   const previous = state.pending[key];
   const sources = [...new Set([...(previous?.lanes ?? []), ...(requested ? [requested] : [])])];
   if (previous && !progress.ready(now, previous.due)) {
     previous.lanes = sources;
-    return true;
-  }
-  if (!progress.can_retain(Boolean(previous), Object.keys(state.pending).length)) {
-    return false;
+    return;
   }
   try {
     const result = await collectAttempt(context.read, repo, run, evidence, progress, context.jobNames);
@@ -155,15 +152,20 @@ async function attemptStep(context: Context, run: Run, requested?: Action) {
       gap: error.invalid ? "inventory_changed" : progress.reason(error.status, error.limited) };
   }
   for (const lane of sources) coverage(context, lane, state.cursors[lane], run);
-  return true;
 }
 
 export async function step(context: Context, lane: Lane) {
   const { state, progress, now } = context;
   if (lane === "attempts") {
-    const next = Object.values(state.pending).sort((left, right) => left.due - right.due)[0];
+    let next: Pending | undefined;
+    for (const pending of Object.values(state.pending)) {
+      if (!next || pending.due < next.due) next = pending;
+    }
     if (!next || !progress.ready(now, next.due)) return false;
-    try { return await attemptStep(context, next.run); }
+    try {
+      await attemptStep(context, next.run);
+      return true;
+    }
     catch (error) {
       if (error instanceof SourceError) {
         next.due = progress.resume_at(now, next.failures, error.retryAt);
@@ -183,16 +185,11 @@ export async function step(context: Context, lane: Lane) {
     await pullStep(context, lane, next);
   } else if (next.queue.length) {
     const task = next.queue[0];
-    if (await attemptStep(context, task, lane)) {
-      const earlier = progress.next_attempt(task.attempt);
-      next.queue = earlier ? [{ ...task, attempt: earlier }, ...next.queue.slice(1)] : next.queue.slice(1);
-      next.blocked = "";
-      next.failures = 0;
-    } else {
-      next.blocked = "capped";
-      next.due = progress.live_at(now);
-      coverage(context, lane, next);
-    }
+    await attemptStep(context, task, lane);
+    const earlier = progress.next_attempt(task.attempt);
+    next.queue = earlier ? [{ ...task, attempt: earlier }, ...next.queue.slice(1)] : next.queue.slice(1);
+    next.blocked = "";
+    next.failures = 0;
   } else {
     await actionPage(context, lane, next);
   }

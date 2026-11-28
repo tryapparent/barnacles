@@ -106,6 +106,7 @@ test("normal CLI resumes GitHub history and follows exact attempts independently
       run(4, 1, old, "completed", "timed_out"),
       run(2, 1, veryOld, "completed", "success"),
       ...(phase > 0 ? [run(6, 1, base - 120_000, "completed", "success")] : []),
+      ...(phase > 1 ? [run(7, 1, base + 500_000, "completed", "success")] : []),
     ];
     if (path === "actions/runs") {
       if (failTransient) { failTransient = false; response.writeHead(503).end(); return; }
@@ -218,6 +219,27 @@ test("normal CLI resumes GitHub history and follows exact attempts independently
   }
   assert(healthAt(base + 480_000).some(row => row.lane === "backfill" && row.status === "complete" &&
     row.eligibleUnits === null && !JSON.stringify(row).includes(repo)));
+
+  const checkpointWithBacklog = JSON.parse(readFileSync(checkpoint, "utf8"));
+  const retryAt = Math.floor((base + 3_600_000) / 1000);
+  checkpointWithBacklog.repositories[repo].pending = Object.fromEntries(Array.from({ length: 4096 }, (_, index) => {
+    const id = String(index + 1000);
+    return [id + ":1", { run: { run: id, attempt: 1, head: sha, created: Math.floor(veryOld / 1000) },
+      lanes: ["actions_live", "actions_backfill"], due: retryAt, failures: 1, gap: "unavailable" }];
+  }));
+  writeFileSync(checkpoint, JSON.stringify(checkpointWithBacklog));
+  phase = 2;
+  await cycle(base + 550_000, 45);
+  assert(seen.has("actions/runs/7/attempts/1/jobs"));
+  assert(evidence("github_actions_attempt").some(row => row.runId === "7" && row.conclusion === "success"));
+  assert.equal(Object.keys(state().pending).length, 4096);
+  assert.equal(state().pending["1000:1"].due, retryAt);
+
+  const beforeInvalidScope = requests;
+  await assert.rejects(execute(process.execPath, [cli, "--once"], {
+    env: { ...prefix, PLOW_GITHUB_REPOSITORIES: "_fixture=example/demo" },
+  }), /GitHub collector failed/);
+  assert.equal(requests, beforeInvalidScope);
 });
 
 test("rejects a readable-by-others credential file before HTTP", async t => {

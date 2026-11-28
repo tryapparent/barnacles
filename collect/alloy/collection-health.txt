@@ -1,0 +1,120 @@
+declare "collector_health" {
+  otelcol.storage.file "positions" {
+    fsync = true
+  }
+
+  otelcol.receiver.filelog "snapshots" {
+    include           = ["/spool/health/*.jsonl"]
+    include_file_name = false
+    start_at          = "beginning"
+    storage           = otelcol.storage.file.positions.handler
+    resource          = { "plow_source" = "collector_health" }
+
+    retry_on_failure {
+      enabled          = true
+      max_elapsed_time = "0s"
+    }
+
+    output {
+      logs = [otelcol.processor.transform.status_envelope.input]
+    }
+  }
+
+  otelcol.processor.transform "status_envelope" {
+    error_mode = "ignore"
+
+    log_statements {
+      context = "log"
+      statements = [
+        `set(body, ParseJSON(body)) where IsString(body)`,
+        `keep_keys(body, ["kind", "schemaVersion", "collector", "scope", "lane", "status", "observedMs", "lastSuccessMs", "newestSourceMs", "oldestScannedMs", "scannedUnits", "eligibleUnits", "ingestedRecords", "unit", "gapCode"]) where IsMap(body)`,
+        `delete_key(body, "lastSuccessMs") where IsMap(body) and body["lastSuccessMs"] != nil and not ((IsInt(body["lastSuccessMs"]) or IsDouble(body["lastSuccessMs"])) and Double(body["lastSuccessMs"]) >= 1.0 and Double(body["lastSuccessMs"]) <= 9223372036854.0 and Double(body["lastSuccessMs"]) == Double(Int(body["lastSuccessMs"])))`,
+        `delete_key(body, "newestSourceMs") where IsMap(body) and body["newestSourceMs"] != nil and not ((IsInt(body["newestSourceMs"]) or IsDouble(body["newestSourceMs"])) and Double(body["newestSourceMs"]) >= 1.0 and Double(body["newestSourceMs"]) <= 9223372036854.0 and Double(body["newestSourceMs"]) == Double(Int(body["newestSourceMs"])))`,
+        `delete_key(body, "oldestScannedMs") where IsMap(body) and body["oldestScannedMs"] != nil and not ((IsInt(body["oldestScannedMs"]) or IsDouble(body["oldestScannedMs"])) and Double(body["oldestScannedMs"]) >= 1.0 and Double(body["oldestScannedMs"]) <= 9223372036854.0 and Double(body["oldestScannedMs"]) == Double(Int(body["oldestScannedMs"])))`,
+        `delete_key(body, "scannedUnits") where IsMap(body) and body["scannedUnits"] != nil and not ((IsInt(body["scannedUnits"]) or IsDouble(body["scannedUnits"])) and Double(body["scannedUnits"]) >= 0.0 and Double(body["scannedUnits"]) <= 9007199254740991.0 and Double(body["scannedUnits"]) == Double(Int(body["scannedUnits"])))`,
+        `delete_key(body, "eligibleUnits") where IsMap(body) and body["eligibleUnits"] != nil and not ((IsInt(body["eligibleUnits"]) or IsDouble(body["eligibleUnits"])) and Double(body["eligibleUnits"]) >= 0.0 and Double(body["eligibleUnits"]) <= 9007199254740991.0 and Double(body["eligibleUnits"]) == Double(Int(body["eligibleUnits"])))`,
+        `delete_key(body, "ingestedRecords") where IsMap(body) and body["ingestedRecords"] != nil and not ((IsInt(body["ingestedRecords"]) or IsDouble(body["ingestedRecords"])) and Double(body["ingestedRecords"]) >= 0.0 and Double(body["ingestedRecords"]) <= 9007199254740991.0 and Double(body["ingestedRecords"]) == Double(Int(body["ingestedRecords"])))`,
+        `delete_key(body, "gapCode") where IsMap(body) and body["gapCode"] != nil and (not IsString(body["gapCode"]) or not IsMatch(body["gapCode"], "^[A-Za-z][A-Za-z0-9_-]{0,63}$"))`,
+        `set(time_unix_nano, Int(body["observedMs"]) * 1000000) where IsMap(body) and (IsInt(body["observedMs"]) or IsDouble(body["observedMs"])) and Double(body["observedMs"]) >= 1.0 and Double(body["observedMs"]) <= 9223372036854.0 and Double(body["observedMs"]) == Double(Int(body["observedMs"]))`,
+      ]
+    }
+
+    output {
+      logs = [otelcol.processor.filter.status_envelope.input]
+    }
+  }
+
+  otelcol.processor.filter "status_envelope" {
+    error_mode = "ignore"
+
+    logs {
+      log_record = [
+        `not IsMap(body)`,
+        `not IsString(body["kind"]) or body["kind"] != "collector_health"`,
+        `not (IsInt(body["schemaVersion"]) or IsDouble(body["schemaVersion"])) or Double(body["schemaVersion"]) != 1.0`,
+        `time_unix_nano <= 0`,
+        `not IsString(body["collector"]) or not IsMatch(body["collector"], "^(t3|codex_history|github)$")`,
+        `not IsString(body["scope"]) or not IsMatch(body["scope"], "^[A-Za-z0-9][A-Za-z0-9 _-]{0,63}$")`,
+        `not IsString(body["lane"]) or not IsMatch(body["lane"], "^(live|backfill)$")`,
+        `not IsString(body["status"]) or not IsMatch(body["status"], "^(working|idle|retrying|blocked|complete)$")`,
+        `body["unit"] != nil and (not IsString(body["unit"]) or not IsMatch(body["unit"], "^(thread|session|page|attempt|record)$"))`,
+        `body["unit"] == nil and (body["scannedUnits"] != nil or body["eligibleUnits"] != nil)`,
+      ]
+    }
+
+    output {
+      logs = [otelcol.exporter.otlphttp.health_loki.input]
+    }
+  }
+
+  otelcol.exporter.otlphttp "health_loki" {
+    client {
+      endpoint = "http://loki:3100/otlp"
+      headers  = { "X-Scope-OrgID" = "plow-collection-health" }
+    }
+
+    retry_on_failure {
+      max_elapsed_time = "0s"
+    }
+
+    sending_queue {
+      storage           = otelcol.storage.file.positions.handler
+      num_consumers     = 1
+      block_on_overflow = true
+    }
+  }
+}
+
+declare "health_self_metrics" {
+  argument "metrics_receiver" {}
+
+  prometheus.exporter.self "alloy" {}
+
+  prometheus.scrape "alloy" {
+    targets         = prometheus.exporter.self.alloy.targets
+    job_name        = "plow-collection-alloy"
+    scrape_interval = "15s"
+    scrape_timeout  = "10s"
+    forward_to      = [prometheus.relabel.allowlist.receiver]
+  }
+
+  prometheus.relabel "allowlist" {
+    forward_to = [argument.metrics_receiver.value]
+
+    rule {
+      source_labels = ["__name__", "exporter", "receiver"]
+      regex         = "up;;|otelcol_exporter_(queue_size|send_failed_log_records_total);.*health_loki;|otelcol_receiver_accepted_spans_total;;.*codex_live"
+      action        = "keep"
+    }
+
+    rule {
+      target_label = "job"
+      replacement  = "plow-collection-alloy"
+    }
+
+    rule {
+      action = "labelkeep"
+      regex  = "__name__|job|exporter|receiver|transport"
+    }
+  }
+}

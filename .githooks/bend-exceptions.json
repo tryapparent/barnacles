@@ -18,7 +18,8 @@
     "tooling/verify.ts"
   ],
   "Synthetic integration fixtures and demo": [
-    "tooling/tests/directory-width.test.ts"
+    "tooling/tests/directory-width.test.ts",
+    "verify/collection-health.sh"
   ],
   "Grafana SDK process, Loki HTTP adapter, and data frames": [
     "analyze/datasource/go.mod",
@@ -56,6 +57,7 @@
     "grafana/provisioning/datasources/plow.yaml",
     "infra/lgtm/check.sh",
     "infra/lgtm/compose.yaml",
+    "infra/lgtm/github.compose.yaml",
     "infra/lgtm/grafana.Dockerfile",
     "infra/lgtm/loki.yaml",
     "infra/lgtm/policy.sh",
@@ -63,7 +65,10 @@
     "grafana/provisioning/datasources/telemetry.yaml",
     "infra/lgtm/tempo.yaml",
     "infra/lgtm/mimir.yaml",
-    "infra/lgtm/deploy.sh"
+    "infra/lgtm/deploy.sh",
+    "collect/alloy/collection-health.txt",
+    "grafana/dashboards/collection-health.json",
+    "grafana/provisioning/datasources/status.yaml"
   ],
   "GitHub HTTPS and foreign API decoding, Node CLI wiring, durable filesystem transport and synthetic HTTP verification": [
     "collect/github/http.ts",

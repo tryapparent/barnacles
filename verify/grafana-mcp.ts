@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 
-const [url, tokenFile, queryFile, directFile, resultFile] = process.argv.slice(2);
+const [url, tokenFile, queryFile, directFile, resultFile, comparison] = process.argv.slice(2);
 const child = spawn("docker", [
   "run", "--rm", "-i", "--network", "host",
   "-e", "GRAFANA_URL", "-e", "GRAFANA_SERVICE_ACCOUNT_TOKEN",
@@ -47,9 +47,19 @@ try {
   const response = result.structuredContent ?? JSON.parse(result.content[0].text);
   assert.equal(response.status, 200);
   const expected = JSON.parse(readFileSync(directFile, "utf8"));
-  assert.deepEqual(response.data, expected);
+  function stableFrames(result: typeof expected) {
+    if (comparison !== "--ignore-query-stats") return result;
+    const stable = structuredClone(result);
+    for (const query of Object.values(stable.results) as { frames?: { schema: { meta?: { stats?: unknown } } }[] }[]) {
+      for (const frame of query.frames ?? []) {
+        if (frame.schema.meta) delete frame.schema.meta.stats;
+      }
+    }
+    return stable;
+  }
+  assert.deepEqual(stableFrames(response.data), stableFrames(expected));
   writeFileSync(resultFile, JSON.stringify(response.data) + "\n", { mode: 0o600 });
-  console.log("Grafana MCP returned the same analysis frames as the direct dashboard query.");
+  console.log("Grafana MCP returned the same data frames as the direct dashboard query.");
 } finally {
   clearTimeout(timeout);
   child.stdin.end();
