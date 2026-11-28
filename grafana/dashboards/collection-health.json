@@ -62,25 +62,6 @@
               }
             },
             {
-              "name": "Meadow divider",
-              "type": "rectangle",
-              "constraint": {
-                "horizontal": "left",
-                "vertical": "center"
-              },
-              "placement": {
-                "left": 156,
-                "top": 0,
-                "width": 10,
-                "height": 32
-              },
-              "background": {
-                "color": {
-                  "fixed": "#6A934F"
-                }
-              }
-            },
-            {
               "name": "Collection health",
               "type": "text",
               "constraint": {
@@ -88,10 +69,10 @@
                 "vertical": "center"
               },
               "placement": {
-                "left": 180,
+                "left": 156,
                 "right": 24,
-                "top": 12,
-                "height": 24
+                "top": 0,
+                "height": 28
               },
               "config": {
                 "text": {
@@ -100,37 +81,18 @@
                 "color": {
                   "fixed": "#FFF4DF"
                 },
-                "size": 18,
-                "align": "left",
-                "valign": "middle"
-              }
-            },
-            {
-              "name": "Collector reports, source clocks and backfill coverage",
-              "type": "text",
-              "constraint": {
-                "horizontal": "leftright",
-                "vertical": "center"
-              },
-              "placement": {
-                "left": 180,
-                "right": 24,
-                "top": -12,
-                "height": 24
-              },
-              "config": {
-                "text": {
-                  "fixed": "Collector reports, source clocks and backfill coverage"
-                },
-                "color": {
-                  "fixed": "#FFF4DF"
-                },
-                "size": 13,
+                "size": 20,
                 "align": "left",
                 "valign": "middle"
               }
             }
-          ]
+          ],
+          "border": {
+            "color": {
+              "fixed": "#6A934F"
+            },
+            "width": 2
+          }
         }
       }
     },
@@ -146,7 +108,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "**Expected status reports** \u00b7 T3, Codex history and GitHub \u00b7 Live and backfill lanes  \nA missing lane has no report in this range. Widen the range to find older reports. Clocks are shown in UTC."
+        "content": "**Expected status reports** · T3, Codex history and GitHub · Live and backfill lanes  \nA missing lane has no report in this range. Widen the range to find older reports. Clocks are shown in UTC."
       }
     },
     {
@@ -417,7 +379,7 @@
           }
         ]
       },
-      "description": "Latest report in the selected time range for each collector, scope and lane. Use report age and the collector\u2019s expected cadence to assess freshness. Last success can be a poll that found no new records.",
+      "description": "Latest report in the selected time range for each collector, scope and lane. Use report age and the collector’s expected cadence to assess freshness. Last success can be a poll that found no new records.",
       "links": [
         {
           "title": "View health report history",
@@ -709,7 +671,7 @@
               },
               {
                 "id": "noValue",
-                "value": "\u2014"
+                "value": "—"
               }
             ]
           }
@@ -780,7 +742,7 @@
         },
         "overrides": []
       },
-      "description": "A sample in the last 45 seconds at the selected range end shows whether Mimir received Alloy\u2019s self-scrape. Missing samples can mean Alloy or the metrics path is unavailable."
+      "description": "A sample in the last 45 seconds at the selected range end shows whether Mimir received Alloy’s self-scrape. Missing samples can mean Alloy or the metrics path is unavailable."
     },
     {
       "id": 6,
@@ -963,7 +925,7 @@
           "expr": "sum by (collector, lane) (count_over_time({plow_source=\"collector_health\"} | json collector, lane, status | status=~\"retrying|blocked\" [$__interval]))",
           "queryType": "range",
           "editorMode": "code",
-          "legendFormat": "{{collector}} \u00b7 {{lane}}"
+          "legendFormat": "{{collector}} · {{lane}}"
         }
       ],
       "fieldConfig": {
@@ -978,6 +940,10 @@
               "mode": "normal",
               "group": "A"
             }
+          },
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#B64F50"
           }
         },
         "overrides": []
@@ -1031,6 +997,10 @@
           "custom": {
             "fillOpacity": 15,
             "lineWidth": 2
+          },
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#6A934F"
           }
         },
         "overrides": []
@@ -1080,6 +1050,14 @@
         "enableLogDetails": true,
         "sortOrder": "Descending"
       }
+    }
+  ],
+  "links": [
+    {
+      "type": "link",
+      "title": "Activity",
+      "url": "/d/plow-activity/activity",
+      "keepTime": false
     }
   ]
 }

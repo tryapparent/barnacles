@@ -435,12 +435,12 @@
                 },
                 "config": {
                   "text": {
-                    "fixed": "Tool timing and evidence coverage"
+                    "fixed": "Run evidence"
                   },
                   "color": {
                     "fixed": "#FFF4DF"
                   },
-                  "size": 18,
+                  "size": 20,
                   "align": "left",
                   "valign": "middle"
                 }
@@ -448,6 +448,14 @@
             ]
           }
         }
+      }
+    ],
+    "links": [
+      {
+        "type": "link",
+        "title": "Activity",
+        "url": "/d/plow-activity/activity",
+        "keepTime": false
       }
     ]
   },
@@ -544,75 +552,37 @@
                 }
               },
               {
-                "name": "Meadow divider",
-                "type": "rectangle",
+                "name": "Agent activity",
+                "type": "text",
                 "constraint": {
-                  "horizontal": "left",
+                  "horizontal": "leftright",
                   "vertical": "center"
                 },
                 "placement": {
                   "left": 156,
+                  "right": 24,
                   "top": 0,
-                  "width": 10,
-                  "height": 32
-                },
-                "background": {
-                  "color": {
-                    "fixed": "#6A934F"
-                  }
-                }
-              },
-              {
-                "name": "Run evidence",
-                "type": "text",
-                "constraint": {
-                  "horizontal": "leftright",
-                  "vertical": "center"
-                },
-                "placement": {
-                  "left": 180,
-                  "right": 24,
-                  "top": 12,
-                  "height": 24
+                  "height": 28
                 },
                 "config": {
                   "text": {
-                    "fixed": "Activity"
+                    "fixed": "Agent activity"
                   },
                   "color": {
                     "fixed": "#FFF4DF"
                   },
-                  "size": 18,
-                  "align": "left",
-                  "valign": "middle"
-                }
-              },
-              {
-                "name": "Fixture provenance",
-                "type": "text",
-                "constraint": {
-                  "horizontal": "leftright",
-                  "vertical": "center"
-                },
-                "placement": {
-                  "left": 180,
-                  "right": 24,
-                  "top": -12,
-                  "height": 24
-                },
-                "config": {
-                  "text": {
-                    "fixed": "Thread time and linked CI · UTC"
-                  },
-                  "color": {
-                    "fixed": "#FFF4DF"
-                  },
-                  "size": 13,
+                  "size": 20,
                   "align": "left",
                   "valign": "middle"
                 }
               }
-            ]
+            ],
+            "border": {
+              "color": {
+                "fixed": "#6A934F"
+              },
+              "width": 2
+            }
           }
         }
       },
@@ -713,6 +683,35 @@
                 {
                   "id": "displayName",
                   "value": "Category"
+                },
+                {
+                  "id": "custom.cellOptions",
+                  "value": {
+                    "type": "color-background",
+                    "mode": "basic"
+                  }
+                },
+                {
+                  "id": "mappings",
+                  "value": [
+                    {
+                      "type": "value",
+                      "options": {
+                        "Provider": {
+                          "text": "Provider",
+                          "color": "#FFF4DF"
+                        },
+                        "T3 admission": {
+                          "text": "T3 admission",
+                          "color": "#F3DBB7"
+                        },
+                        "Outside runs": {
+                          "text": "Outside runs",
+                          "color": "#E5DDD1"
+                        }
+                      }
+                    }
+                  ]
                 }
               ]
             }
@@ -765,10 +764,11 @@
             },
             "custom": {
               "drawStyle": "line",
-              "lineWidth": 2,
-              "pointSize": 6,
+              "lineWidth": 3,
+              "pointSize": 7,
               "showPoints": "always",
-              "spanNulls": false
+              "spanNulls": false,
+              "fillOpacity": 14
             }
           },
           "overrides": []
@@ -925,27 +925,27 @@
                 "options": {
                   "Attempt queue": {
                     "text": "Attempt queue",
-                    "color": "#8478B7",
+                    "color": "#B48251",
                     "index": 8
                   },
                   "Attempt elapsed": {
                     "text": "Attempt elapsed",
-                    "color": "#5674B3",
+                    "color": "#8478B7",
                     "index": 9
                   },
                   "Job queue": {
                     "text": "Job queue",
-                    "color": "#8478B7",
+                    "color": "#B48251",
                     "index": 10
                   },
                   "Job execution": {
                     "text": "Job execution",
-                    "color": "#5674B3",
+                    "color": "#8478B7",
                     "index": 11
                   },
                   "Job failed": {
                     "text": "Job failed",
-                    "color": "#D24653",
+                    "color": "#B64F50",
                     "index": 12
                   }
                 }
@@ -1305,6 +1305,18 @@
         "icon": "clock",
         "keepTime": false,
         "includeVars": false
+      },
+      {
+        "type": "link",
+        "title": "Collection Health",
+        "url": "/d/plow-collection-health/collection-health",
+        "keepTime": false
+      },
+      {
+        "type": "link",
+        "title": "Codex traces",
+        "url": "/d/plow-codex-traces/plow-codex-traces",
+        "keepTime": false
       }
     ]
   }
