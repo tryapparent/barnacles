@@ -65,9 +65,11 @@ access_target="unix:$PLOW_LGTM_WORKDIR/access-tailnet.sock"
 accepted_access=""
 if [[ -n $mode ]]; then accepted_access="$access_target"; fi
 admin_socket=()
+viewer_header=Tailscale-User-Login
 if [[ $mode == --access ]]; then
   export PLOW_TAILNET_ORIGIN="https://$authority"
   admin_socket=(--unix-socket "$PLOW_LGTM_WORKDIR/access-grafana/grafana.sock")
+  viewer_header=X-Plow-Viewer
   backend=http://localhost/app
   [[ $(curl --max-time 5 --unix-socket "${access_target#unix:}" -sS -o /dev/null -w '%{http_code}' \
       -H "X-Forwarded-Host: $authority" "$backend/api/user") == 401 ]]
@@ -102,8 +104,23 @@ if ! jq -e --arg user "$PLOW_TAILNET_VIEWER" 'any(.[]; .login == $user)' <<< "$u
 fi
 viewer_id=$(admin "$backend/api/org/users" |
   jq -er --arg user "$PLOW_TAILNET_VIEWER" '.[] | select(.login == $user and .email == $user and .role == "Viewer" and .isDisabled == false) | .userId')
-admin "$backend/api/users/$viewer_id" | jq -e '.isGrafanaAdmin == false and .isDisabled == false' > /dev/null
+viewer_uid=$(admin "$backend/api/users/$viewer_id" | jq -er '
+  select(.isGrafanaAdmin == false and .isDisabled == false) | .uid | select(test("^[a-zA-Z0-9_-]+$"))')
 admin "$backend/api/users/$viewer_id/orgs" | jq -e 'length == 1 and .[0].role == "Viewer"' > /dev/null
+(
+  flock -x 9
+  star_defaults="$PLOW_LGTM_WORKDIR/grafana-star-defaults-$viewer_uid"
+  if [[ ! -f $star_defaults ]]; then
+    viewer() {
+      curl -fsS --max-time 15 "${admin_socket[@]}" -H "$viewer_header: $PLOW_TAILNET_VIEWER" "$@"
+    }
+    viewer "$backend/api/user" | jq -e --arg uid "$viewer_uid" '.uid == $uid' > /dev/null
+    for dashboard in plow-activity plow-collection-health plow-codex-traces; do
+      viewer -X POST "$backend/api/user/stars/dashboard/uid/$dashboard" | jq -e '.message' > /dev/null
+    done
+    touch "$star_defaults"
+  fi
+) 9>"$PLOW_LGTM_WORKDIR/grafana-star-defaults.lock"
 serve_target="$legacy_target"
 if [[ $mode == --access ]]; then serve_target="$access_target"; fi
 if [[ ${PLOW_TAILNET_SUDO:-false} == true ]]; then
