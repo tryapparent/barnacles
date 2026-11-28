@@ -9,13 +9,7 @@ RUN CGO_ENABLED=0 go build -mod=readonly -trimpath -o "/out/gpx_plow_linux_$(go 
 FROM caddy:2.10-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d AS brand
 ADD --checksum=sha256:ed6f7e8b07fa6bc6922c3e6a41948408833bb0c60a2a867579437048718dc5d5 https://grafana.com/api/plugins/marcusolsson-dynamictext-panel/versions/6.3.1/download /tmp/business-text.zip
 RUN unzip -q /tmp/business-text.zip -d /plugins
-ADD --checksum=sha256:6ba68b9927ad2a640d32cbea050ffc2b5d0ae6cbaa785afe470da9d6bf0ef39f https://raw.githubusercontent.com/tryapparent/plow/100c02f1802d626a8150120c5073ce293f3058ad/public/assets/youngserif.woff2 /brand/youngserif.woff2
-ADD --checksum=sha256:a6608ab32f7090f577e51a3b6d4b4f0609762686b88f9084d65a5623b44da11d https://raw.githubusercontent.com/tryapparent/plow/100c02f1802d626a8150120c5073ce293f3058ad/public/assets/source-serif-4.woff2 /brand/source-serif-4.woff2
-ADD --checksum=sha256:39f676ae87250f747d2bb5d4bbde83d575b79922037ab1cdaa2abc70508d1114 https://raw.githubusercontent.com/tryapparent/plow/100c02f1802d626a8150120c5073ce293f3058ad/public/assets/youngserif-ofl.txt /brand/youngserif-ofl.txt
-ADD --checksum=sha256:0fd8b796c1c6220a559a5682cfd00d1c8488b428369f7cb70deb671888cef85f https://raw.githubusercontent.com/tryapparent/plow/100c02f1802d626a8150120c5073ce293f3058ad/public/assets/source-serif-4-ofl.txt /brand/source-serif-4-ofl.txt
-ADD --checksum=sha256:727a37a311aa6157801961a1a41413dc3c44a6ed4388bf8e4507a0bf58601b10 https://raw.githubusercontent.com/tryapparent/plow/100c02f1802d626a8150120c5073ce293f3058ad/public/assets/field.jpg /brand/field.jpg
-RUN chmod 0644 /brand/*
-
+COPY public/assets/youngserif.woff2 public/assets/source-serif-4.woff2 public/assets/youngserif-ofl.txt public/assets/source-serif-4-ofl.txt public/assets/field.jpg /brand/
 FROM node:22.23.0-bookworm-slim@sha256:d9f850096136edbc402debdd8729579a288aac64574ada0ff4db26b6ae58b0b2 AS policy
 WORKDIR /src
 COPY tooling/bend.ts tooling/bend.ts
@@ -49,3 +43,78 @@ ENV GF_PATHS_PLUGINS=/opt/plow/plugins \
     PLOW_POLICY_COMMAND=/opt/plow/policy/analyze \
     PLOW_POLICY_MODULE=/opt/plow/policy/run.mjs \
     PLOW_ACTIVITY_MODULE=/opt/plow/policy/activity.mjs
+
+USER root
+RUN node --input-type=module <<'JS'
+import { createHash } from 'node:crypto';
+import { readFileSync, writeFileSync, unlinkSync } from 'node:fs';
+
+const build = '/usr/share/grafana/public/build';
+const manifestPath = build + '/assets-manifest.json';
+const original = '5923.b9c876b4bf528d8511cb.js';
+const asset = readFileSync(build + '/' + original, 'utf8');
+const hash = (algorithm, data, encoding = 'hex') => createHash(algorithm).update(data).digest(encoding);
+if (hash('sha256', asset) !== '64f28eb77a28d4ba3e16a84dd62b2bd5e8dbcba95a302058af169b81aaf7cbe9') {
+  throw new Error('Grafana theme bundle changed. Recheck the Plow theme patch.');
+}
+
+const cream = '#FFF4DF';
+const ink = '#1A130D';
+const meadow = '#6A934F';
+const focus = '#B6CE91';
+const theme = {
+  name: 'Plow',
+  colors: {
+    mode: 'dark',
+    background: { canvas: ink, primary: '#221E1B', secondary: '#292521', elevated: '#322D28' },
+    text: { primary: cream, secondary: '#E1CDB8', disabled: '#B9A18B', link: focus, maxContrast: '#FFFFFF' },
+    border: { weak: '#FFF4DF26', medium: '#FFF4DF40', strong: '#FFF4DF66' },
+    primary: {
+      main: meadow, shade: '#80A764', text: focus, border: focus, contrastText: ink,
+      transparent: '#6A934F33', borderTransparent: '#B6CE9166',
+    },
+    action: { hover: '#FFF4DF1F', selected: '#6A934F33', selectedBorder: focus, focus: '#B6CE914D' },
+    gradients: {
+      brandHorizontal: 'linear-gradient(270deg, #6A934F 0%, #B6CE91 100%)',
+      brandVertical: 'linear-gradient(0deg, #6A934F 0%, #B6CE91 100%)',
+    },
+  },
+};
+const definition = /s=\{name:"Debug",.*?\},M=\{name:"Desert bloom"/g;
+if ([...asset.matchAll(definition)].length !== 1) {
+  throw new Error('Expected one Grafana Debug theme definition.');
+}
+const profileFilter = 'filter(u=>u.isExtra?y.includes(u.id):!0)';
+if (asset.split(profileFilter).length !== 2) {
+  throw new Error('Expected one Grafana theme picker filter.');
+}
+const themeBuilder = 'build:()=>(0,e.a)(c),isExtra:!0';
+if (asset.split(themeBuilder).length !== 2) {
+  throw new Error('Expected one Grafana experimental theme builder.');
+}
+const patched = asset.replace(definition, 's=' + JSON.stringify(theme) + ',M={name:"Desert bloom"')
+  .replace(themeBuilder, 'build:()=>{const theme=(0,e.a)(c);if(y==="debug"){theme.components.panel.padding=1.5;theme.components.panel.headerHeight=4.5}return theme},isExtra:!0')
+  .replace(profileFilter, 'filter(u=>u.isExtra?u.id==="debug"||y.includes(u.id):!0)')
+  .split('\n//# sourceMappingURL=')[0] + '\n';
+const replacement = '5923.' + hash('sha256', patched).slice(0, 20) + '.js';
+const oldSource = 'public/build/' + original;
+const newSource = 'public/build/' + replacement;
+const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+if (manifest[original]?.src !== oldSource ||
+    !manifest.entrypoints.app.assets.js.includes(oldSource) ||
+    !manifest.entrypoints.swagger.assets.js.includes(oldSource)) {
+  throw new Error('Grafana asset manifest no longer matches the patched bundle.');
+}
+manifest[replacement] = {
+  src: newSource,
+  integrity: ['sha384', 'sha512'].map(algorithm => algorithm + '-' + hash(algorithm, patched, 'base64')).join(' '),
+};
+delete manifest[original];
+for (const entrypoint of Object.values(manifest.entrypoints)) {
+  entrypoint.assets.js = entrypoint.assets.js.map(src => src === oldSource ? newSource : src);
+}
+writeFileSync(build + '/' + replacement, patched);
+writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+unlinkSync(build + '/' + original);
+JS
+USER 472

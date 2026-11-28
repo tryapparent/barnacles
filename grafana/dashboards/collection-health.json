@@ -27,7 +27,7 @@
       },
       "options": {
         "defaultContent": "<div class=\"plow-heading plow-heading--field\"><img class=\"plow-wordmark\" src=\"public/build/plow-cream.png\" alt=\"Plow\"><h1>Collection health</h1></div>",
-        "styles": "@font-face { font-family: 'Plow Young Serif'; src: url('public/build/plow-brand/youngserif.woff2') format('woff2'); font-display: swap; }\n& > .dt-row { margin: 0; padding: 0; border: 0; flex: 1; display: flex; }\n.plow-heading { display: flex; align-items: center; flex: 1; gap: 20px; padding: 12px 28px; min-width: 0; color: #FFF4DF; background-color: #392820; border: 1px solid #6A934F; border-radius: 3px; }\n.plow-wordmark { width: clamp(92px, 9vw, 128px); height: auto; flex: 0 0 auto; }\n.plow-heading h1 { color: inherit; margin: 0; font: 400 clamp(24px, 2.5vw, 40px) / 1.15 'Plow Young Serif', Georgia, serif; }\n.plow-heading--field { background-image: linear-gradient(90deg, #392820 0%, #392820ed 30%, #39282052 61%, #39282000 85%), url('public/build/plow-brand/field.jpg'); background-size: cover; background-position: right 86%; }"
+        "styles": "@font-face { font-family: 'Plow Young Serif'; src: url('public/build/plow-brand/youngserif.woff2') format('woff2'); font-display: swap; }\n& > .dt-row { margin: 0; padding: 0; border: 0; flex: 1; display: flex; }\n.plow-heading { display: flex; align-items: center; flex: 1; gap: 20px; padding: 12px 28px; min-width: 0; color: #FFF4DF; background-color: #1A130D; border: 1px solid #6A934F; border-radius: 3px; }\n.plow-wordmark { width: clamp(92px, 9vw, 128px); height: auto; flex: 0 0 auto; }\n.plow-heading h1 { color: inherit; margin: 0; font: 400 clamp(24px, 2.5vw, 40px) / 1.15 'Plow Young Serif', Georgia, serif; }\n.plow-heading--field { background-image: linear-gradient(90deg, #1A130D 0%, #1A130Ded 30%, #1A130D52 61%, #1A130D00 85%), url('public/build/plow-brand/field.jpg'); background-size: cover; background-position: right 86%; }"
       },
       "transparent": true
     },
@@ -41,11 +41,11 @@
         "x": 0,
         "y": 3,
         "w": 24,
-        "h": 2
+        "h": 3
       },
       "options": {
         "defaultContent": "<p class=\"plow-coverage-note\"><strong>Expected status reports</strong> · T3, Codex history and GitHub · Live and backfill lanes<br>GitHub appears when its collector reports. Widen the range for older reports. Clocks are shown in UTC.</p>",
-        "styles": "@font-face { font-family: 'Plow Source Serif'; src: url('public/build/plow-brand/source-serif-4.woff2') format('woff2'); font-display: swap; }\n& > .dt-row { border: 0; margin: 0; padding: 8px 16px; }\n.plow-coverage-note { margin: 0; color: inherit; font: 400 15px / 1.35 'Plow Source Serif', Georgia, serif; }"
+        "styles": "@font-face { font-family: 'Plow Source Serif'; src: url('public/build/plow-brand/source-serif-4.woff2') format('woff2'); font-display: swap; }\n& > .dt-row { border: 0; margin: 0; padding: 16px 24px; }\n.plow-coverage-note { margin: 0; color: inherit; font: 400 15px / 1.35 'Plow Source Serif', Georgia, serif; }"
       }
     },
     {
@@ -54,9 +54,9 @@
       "title": "Latest report per lane",
       "gridPos": {
         "x": 0,
-        "y": 5,
+        "y": 6,
         "w": 24,
-        "h": 8
+        "h": 9
       },
       "datasource": {
         "type": "loki",
@@ -331,9 +331,9 @@
       "title": "Coverage and progress",
       "gridPos": {
         "x": 0,
-        "y": 13,
+        "y": 15,
         "w": 24,
-        "h": 8
+        "h": 9
       },
       "datasource": {
         "type": "loki",
@@ -640,7 +640,7 @@
       "title": "Alloy self-scrape",
       "gridPos": {
         "x": 0,
-        "y": 21,
+        "y": 24,
         "w": 6,
         "h": 3
       },
@@ -705,7 +705,7 @@
       "title": "Health export queue",
       "gridPos": {
         "x": 6,
-        "y": 21,
+        "y": 24,
         "w": 6,
         "h": 3
       },
@@ -757,7 +757,7 @@
       "title": "Health send failures",
       "gridPos": {
         "x": 12,
-        "y": 21,
+        "y": 24,
         "w": 6,
         "h": 3
       },
@@ -809,7 +809,7 @@
       "title": "Live Codex OTLP spans",
       "gridPos": {
         "x": 18,
-        "y": 21,
+        "y": 24,
         "w": 6,
         "h": 3
       },
@@ -861,7 +861,7 @@
       "title": "Retrying and blocked reports",
       "gridPos": {
         "x": 0,
-        "y": 24,
+        "y": 27,
         "w": 14,
         "h": 6
       },
@@ -920,7 +920,7 @@
       "title": "Live Codex OTLP receipt rate",
       "gridPos": {
         "x": 14,
-        "y": 24,
+        "y": 27,
         "w": 10,
         "h": 6
       },
@@ -975,7 +975,7 @@
       "title": "Health report history",
       "gridPos": {
         "x": 0,
-        "y": 30,
+        "y": 33,
         "w": 24,
         "h": 9
       },

@@ -53,7 +53,7 @@ services:
       GF_AUTH_PROXY_AUTO_SIGN_UP: "false"
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_USERS_AUTO_ASSIGN_ORG_ROLE: Viewer
-      GF_USERS_DEFAULT_THEME: gildedgrove
+      GF_USERS_DEFAULT_THEME: ${PLOW_GRAFANA_THEME:-debug}
       GF_USERS_HOME_PAGE: /d/plow-activity/activity
       GF_FEATURE_TOGGLES_ENABLE: extraThemes
       GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_password
