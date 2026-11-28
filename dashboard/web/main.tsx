@@ -53,7 +53,9 @@ function priorityLabels(item: Priority) {
     reach: item.affectedOutcomes, unit: "outcome", event: "delay observation", longest: "Longest outcome delay",
   };
   if (item.kind === "t3-admission") return {
-    title: "T3 admission waits", context: "", clock: "Observed request-to-start time", count: "Threads affected",
+    title: "T3 admission waits",
+    context: "This total adds each wait. Where time went counts any overlap with a provider run on the same thread as provider time.",
+    clock: "Observed request-to-start time", count: "Threads affected",
     reach: item.affectedThreads, unit: "thread", event: "wait", longest: "Longest wait",
   };
   const job = item.target.split(" · ").slice(2).join(" · ");
