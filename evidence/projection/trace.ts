@@ -161,13 +161,14 @@ type FeedPolicy = { project_feed(threads: List<FeedThread>, asOf: number): { obs
 const feedList = <T>(values: T[]): List<T> =>
   values.reduceRight<List<T>>((tail, head) => ({ $: "Con", head, tail }), { $: "Nil" });
 
-export async function projectPlowFeed(path: string, scratch: string, asOf = Date.now()) {
+export async function projectPlowFeed(path: string, scratch: string, asOf = Date.now(), scope?: string) {
   const policy = await loadPolicy<FeedPolicy>(
     await buildPolicy(scratch, new URL("../analysis/plow-feed.bend", import.meta.url), "plow-feed.mjs"));
   const db = new DatabaseSync(path, { readOnly: true });
   try {
     db.exec("PRAGMA busy_timeout = 5000; BEGIN");
-    const threads = db.prepare("SELECT instance, thread_id, created_ms, updated_ms FROM t3_threads ORDER BY instance, thread_id").all();
+    const threads = db.prepare(`SELECT instance, thread_id, created_ms, updated_ms FROM t3_threads
+      WHERE (? IS NULL OR instance=?) ORDER BY instance, thread_id`).all(scope ?? null, scope ?? null);
     const runs = db.prepare(`SELECT requested_ms, started_ms, completed_ms, status FROM t3_runs
       WHERE instance=? AND thread_id=? ORDER BY run_id`);
     const spans = db.prepare(`SELECT s.start_ns,s.end_ns,s.operation FROM t3_live_codex_links t

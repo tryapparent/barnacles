@@ -20,6 +20,7 @@ out between calls. The API reports missing threads and unavailable analysis as
 tool errors.
 
 The activity tools read the same atomically refreshed feed as the dashboard.
+The live analysis deployment publishes it to the shared activity volume.
 Both tools default to 24 hours and use the dashboard's Bend2 frame, row
 selection, and chart calculations. A seven-day request returns an error if
 the feed does not cover the full time frame.
@@ -39,8 +40,9 @@ continue to use the configured Tailscale login.
 1. In the installed analysis stack's private Compose environment, set
    `PLOW_MCP_ACCESS_TEAM` and `PLOW_MCP_ACCESS_AUDIENCE` to the same values
    as the dashboard's `PLOW_ACCESS_TEAM` and `PLOW_ACCESS_AUDIENCE`.
-   Set `PLOW_MCP_FEED_DIR` to the dashboard's `PLOW_FRONTEND_STATE/feed`
-   directory containing `timeline.json`. Compose mounts it read-only.
+   Standalone deployments without live T3 history set `PLOW_MCP_FEED_DIR`
+   to the dashboard's `PLOW_FRONTEND_STATE/feed` directory containing
+   `timeline.json`. Compose mounts either feed read-only.
    Rebuild and recreate only `analysis-api` from the verified release using
    the existing Compose project and environment. Leave the analysis volume
    in place.

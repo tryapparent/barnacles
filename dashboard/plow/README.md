@@ -100,9 +100,11 @@ geometry, both time frames, and empty and unavailable feeds. Screenshots are opt
 The dashboard runs as the `plow-dashboard` service in the root Compose file.
 It binds to Clanker's loopback on port 3033 by default and mounts only the built
 page module, its JWT verification dependency, and a private projected feed.
-The feed is generated from the existing evidence SQLite database through
-Bend2. Projection runs read-only and atomically replaces the last usable feed
-after verification. The origin checks the Cloudflare Access JWT signature,
+On the live analysis stack, the dashboard mounts the analysis project's
+activity volume read-only. The analysis refresh projects this feed from
+the same joined evidence and cutoff as the priorities, then publishes it
+with an atomic rename. Standalone deployments project from the configured
+evidence database. The origin checks the Cloudflare Access JWT signature,
 issuer, audience, and expiry before returning dashboard content.
 
 The user timer builds the dashboard from the same attested main revision
@@ -119,12 +121,13 @@ Set these inputs in `~/.config/plow-frontend/compose.env`, mode 0600.
 | --- | --- |
 | `PLOW_ACCESS_TEAM` | Existing Cloudflare Access team name |
 | `PLOW_ACCESS_AUDIENCE` | Audience tag of the existing Plow Access application |
-| `PLOW_EVIDENCE_DATABASE` | Absolute evidence SQLite path |
+| `PLOW_EVIDENCE_DATABASE` | Absolute evidence SQLite path for standalone or initial startup |
 | `PLOW_BEND_BUNDLE` | Absolute path of the verified installed Bend2 compiler bundle |
 | `PLOW_FRONTEND_STATE` | Private application state directory for the built release and projected timeline |
 | `PLOW_FRONTEND_PORT` | Optional loopback port, defaults to 3033 |
 | `PLOW_FRONTEND_UID_GID` | Optional container user. Rootless Clanker uses the default `0:0` mapped to the host owner. With rootful Docker, set the feed owner’s numeric UID and GID. |
 | `PLOW_ANALYSIS_API_URL` | Optional private HTTPS URL ending in `/api/v1/bottlenecks` |
+| `PLOW_ANALYSIS_COMPOSE_PROJECT` | Analysis project's Compose name when it differs from `plow-analysis` |
 
 Install the generated units from the verified source in the existing collector
 release layout. Run these commands as the Clanker deployment user.

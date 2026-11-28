@@ -73,6 +73,7 @@ services:
     group_add: ['10001']
     environment:
       PLOW_ANALYSIS_T3_HISTORY_DB: ${PLOW_ANALYSIS_HISTORY_DIR:+/input/t3/data/projection/evidence.sqlite}
+      PLOW_ANALYSIS_ACTIVITY_DIR: /activity
       PLOW_T3_ORIGIN: ${PLOW_ANALYSIS_T3_ORIGIN:-}
       PLOW_T3_READ_TOKEN_FILE: ${PLOW_ANALYSIS_T3_TOKEN_PATH:-}
       PLOW_ANALYSIS_T3_INSTANCE: ${PLOW_ANALYSIS_T3_INSTANCE:-}
@@ -88,6 +89,7 @@ services:
         bind:
           create_host_path: false
       - analysis:/analysis
+      - activity:/activity
     healthcheck:
       test: [CMD, test, -f, /tmp/plow-analysis-ready]
       interval: 3s
@@ -104,10 +106,12 @@ services:
       PLOW_ANALYSIS_USER: ${PLOW_ANALYSIS_USER:-}
       PLOW_MCP_ACCESS_TEAM: ${PLOW_MCP_ACCESS_TEAM:-}
       PLOW_MCP_ACCESS_AUDIENCE: ${PLOW_MCP_ACCESS_AUDIENCE:-}
+      PLOW_MCP_FEED_FILE: ${PLOW_ANALYSIS_HISTORY_DIR:+/activity/timeline.json}
     ports:
       - "127.0.0.1:${PLOW_ANALYSIS_PORT:-15480}:8080"
     volumes:
       - analysis:/analysis:ro
+      - activity:/activity:ro
       - type: bind
         source: ${PLOW_MCP_FEED_DIR:-./mcp}
         target: /dashboard-feed
@@ -122,6 +126,7 @@ services:
 
 volumes:
   analysis:
+  activity:
 
 networks:
   analysis-api:

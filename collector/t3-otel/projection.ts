@@ -1,8 +1,8 @@
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   admissionPolicy, analysisWindow, backupAnalysisInput, joinedTargets, joinSession, loadEvidence,
-  publishJoinedAnalysis, readT3Projections, repository, sessionJoinPolicy, type AdmissionPolicy,
+  projectPlowFeed, publishJoinedAnalysis, readT3Projections, repository, sessionJoinPolicy, type AdmissionPolicy,
   type SessionJoinPolicy, type SourcePolicy, type StoredT3Projection, type NativeBinding, type Point, type ThreadEvidence,
 } from "../../evidence/index.ts";
 import { buildPolicies, loadPolicy } from "../../tooling/bend.ts";
@@ -142,9 +142,20 @@ export async function refreshAnalysis() {
         catch (error) { if (!(error instanceof Error) || !/\((NoBinding|Ambiguous)\)$/.test(error.message)) throw error; }
       }
     }
-    const result = await publishJoinedAnalysis(path, output, scratch, asOf, readAnalysisImpact(receipts, scratch),
-      history ? t3Instance : undefined);
-    console.log(JSON.stringify({ ...result, t3: capture || undefined, exactCiReceipts }));
+    const activity = history && process.env.PLOW_ANALYSIS_ACTIVITY_DIR;
+    const candidate = activity ? join(activity, "timeline.next") : undefined;
+    try {
+      if (candidate) {
+        const feed = await projectPlowFeed(path, scratch, asOf, t3Instance);
+        writeFileSync(candidate, JSON.stringify(feed), { mode: 0o600 });
+      }
+      const result = await publishJoinedAnalysis(path, output, scratch, asOf, readAnalysisImpact(receipts, scratch),
+        history ? t3Instance : undefined);
+      if (activity && candidate) renameSync(candidate, join(activity, "timeline.json"));
+      console.log(JSON.stringify({ ...result, t3: capture || undefined, exactCiReceipts }));
+    } finally {
+      if (candidate) rmSync(candidate, { force: true });
+    }
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }

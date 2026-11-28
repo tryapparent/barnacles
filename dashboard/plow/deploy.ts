@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import { isDeepStrictEqual } from "node:util";
 import { fileURLToPath } from "node:url";
+import { analysisActivityDirectory } from "../prepare.ts";
 import { analysisApiUrl, checkOAuthChallenge, feedPayload, managedOAuth } from "./worker.mjs";
 
 const source = fileURLToPath(new URL("../../", import.meta.url));
@@ -35,13 +36,14 @@ function node(args: string[]) {
   execFileSync(process.execPath, args, { cwd: source, stdio: "inherit", timeout: 150_000 });
 }
 
-type Release = { source: string; revision: string; assets: string };
+type Release = { source: string; revision: string; assets: string; analysisFeed?: string };
 
 function compose(release: Release, feed: string) {
   execFileSync("docker", ["compose", "-p", "plow-dashboard", "-f", join(release.source, "compose.yaml"),
     "up", "-d", "--wait", "--wait-timeout", "25", "plow-dashboard"], {
     stdio: "inherit", timeout: 60_000,
-    env: { ...process.env, PLOW_RELEASE: release.revision, PLOW_FRONTEND_ASSETS: release.assets, PLOW_FRONTEND_FEED: feed },
+    env: { ...process.env, PLOW_RELEASE: release.revision, PLOW_FRONTEND_ASSETS: release.assets,
+      PLOW_FRONTEND_FEED: release.analysisFeed ?? feed },
   });
 }
 
@@ -64,13 +66,16 @@ async function sync() {
   });
   const scratch = await mkdtemp(join(tmpdir(), "apparent-dev-plow-frontend-"));
   try {
-    const projection = join(scratch, "timeline.json");
-    node(["dashboard/plow/build.ts", "--project-feed", database, projection]);
-    const candidateFeed = join(state, "timeline.next");
-    const raw = await readFile(projection, "utf8");
-    feedPayload(raw);
-    await writeFile(candidateFeed, raw, { mode: 0o600 });
-    await rename(candidateFeed, join(feed, "timeline.json"));
+    const analysisFeed = analysisActivityDirectory();
+    if (!analysisFeed) {
+      const projection = join(scratch, "timeline.json");
+      node(["dashboard/plow/build.ts", "--project-feed", database, projection]);
+      const candidateFeed = join(state, "timeline.next");
+      const raw = await readFile(projection, "utf8");
+      feedPayload(raw);
+      await writeFile(candidateFeed, raw, { mode: 0o600 });
+      await rename(candidateFeed, join(feed, "timeline.json"));
+    }
     const built = await readFile(join(assets, "worker.mjs")).then(() => true, error => {
       if (error.code !== "ENOENT") throw error;
       return false;
@@ -84,7 +89,7 @@ async function sync() {
         await rm(candidateAssets, { recursive: true, force: true });
       }
     }
-    const next = { source, revision, assets };
+    const next = { source, revision, assets, analysisFeed };
     try {
       compose(next, feed);
     } catch (error) {
