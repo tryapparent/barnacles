@@ -88,7 +88,12 @@ const profileFilter = 'filter(u=>u.isExtra?y.includes(u.id):!0)';
 if (asset.split(profileFilter).length !== 2) {
   throw new Error('Expected one Grafana theme picker filter.');
 }
+const themeBuilder = 'build:()=>(0,e.a)(c),isExtra:!0';
+if (asset.split(themeBuilder).length !== 2) {
+  throw new Error('Expected one Grafana experimental theme builder.');
+}
 const patched = asset.replace(definition, 's=' + JSON.stringify(theme) + ',M={name:"Desert bloom"')
+  .replace(themeBuilder, 'build:()=>{const theme=(0,e.a)(c);if(y==="debug"){theme.components.panel.padding=1.5;theme.components.panel.headerHeight=4.5}return theme},isExtra:!0')
   .replace(profileFilter, 'filter(u=>u.isExtra?u.id==="debug"||y.includes(u.id):!0)')
   .split('\n//# sourceMappingURL=')[0] + '\n';
 const replacement = '5923.' + hash('sha256', patched).slice(0, 20) + '.js';

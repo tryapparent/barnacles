@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -305,4 +306,46 @@ func assertCell(t *testing.T, frame *data.Frame, field, row int, want any) {
 
 func int64Ptr(value int64) *int64 {
 	return &value
+}
+
+func TestActivityReadContracts(t *testing.T) {
+	cutoff := time.UnixMilli(1800000000000)
+	var requests atomic.Int64
+	var status atomic.Int64
+	var warned atomic.Bool
+	policy := writePolicy(t, `case "$(cat)" in
+		*'"partial":true'*) printf '%s' '{"from":1,"partial":true}';;
+		*) printf '%s' '{"from":1}';;
+	esac`)
+	ds := newFixtureDatasource(t, policy, func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if r.Header.Get("X-Scope-OrgID") != "fixture-tenant" {
+			t.Error("wrong tenant")
+		}
+		if code := status.Load(); code != 0 {
+			w.WriteHeader(int(code))
+			return
+		}
+		warning := ""
+		if warned.Load() {
+			warning = `,"warnings":["fixture warning"]`
+		}
+		io.WriteString(w, `{"status":"success","data":{"resultType":"streams","result":[]}`+warning+`}`)
+	})
+	query := func(end time.Time, view string) backend.DataResponse {
+		return ds.activity(context.Background(), end, view, "24h", "all")
+	}
+	if result := query(cutoff, "timeline"); result.Error != nil || len(result.Frames) != 0 {
+		t.Fatalf("empty timeline: %v", result)
+	}
+	if result := query(cutoff, "coverage"); result.Error != nil || requests.Load() != int64(len(activityReads(cutoff))) {
+		t.Fatalf("matching views repeated source work: %d requests, %v", requests.Load(), result.Error)
+	}
+	warned.Store(true)
+	partial := query(cutoff.Add(time.Second), "coverage")
+	if partial.Error != nil || partial.Frames[0].Meta == nil {
+		t.Fatalf("missing partial-read notice: %v", partial)
+	}
+	status.Store(http.StatusGatewayTimeout)
+	assertFailure(t, query(cutoff.Add(2*time.Second), "coverage"), backend.StatusTimeout, "Loki query timed out")
 }

@@ -6,6 +6,9 @@ datasources:
     access: proxy
     url: http://tempo:3200
     editable: false
+    jsonData:
+      traceQuery:
+        timeShiftEnabled: false
   - name: Mimir
     uid: plow-mimir
     type: prometheus

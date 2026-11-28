@@ -10,7 +10,7 @@ The [datasource plugin](../analyze/datasource/) interpolates the textbox variabl
 
 ## Dashboard palette
 
-The Compose deployment defaults to the Plow theme. Its canvas is Ink (`#1A130D`), its panels and shell use lighter Ink-toned surfaces, its text uses Cream (`#FFF4DF`), and its primary controls use Meadow (`#6A934F`). The dashboard headings use Young Serif and the native charts, tables, and controls keep Grafana’s interface font. Existing personal theme preferences take precedence. Select **Plow** in Profile preferences or set `PLOW_GRAFANA_THEME=gildedgrove` to change the deployment default.
+The Compose deployment defaults to the Plow theme. Its canvas is Ink (`#1A130D`), its panels and shell use lighter Ink-toned surfaces, its text uses Cream (`#FFF4DF`), and its primary controls use Meadow (`#6A934F`). The dashboard headings use Young Serif and the native charts, tables, and controls keep Grafana’s interface font. Plow uses 12 px of native panel padding and 36 px panel titles. Collection Health gives the guidance and tables more vertical room. Existing personal theme preferences take precedence. Select **Plow** in Profile preferences or set `PLOW_GRAFANA_THEME=gildedgrove` to change the deployment default.
 
 Grafana 12.3 validates theme IDs against a built-in server list. The image reuses its experimental `debug` ID as **Plow** in the theme picker. Gilded Grove, Zen, and other regular presets are still available. The Docker build validates the exact Grafana asset before replacing the theme definition and writes a new content-addressed filename and integrity hashes. On upgrade, revalidate that patch against the new image and confirm the default, a saved preference, and a switch back to a stock theme in Grafana.
 
@@ -34,10 +34,10 @@ Open `/d/plow-activity/activity`. Use **Last 24h** or **Last 7 days** to move
 the Grafana UTC viewport and select the matching analysis window. The
 latest successful live T3 capture checkpoint anchors the analysis. The
 coverage panel displays the cutoff, the oldest observed T3 clock, and gaps.
-The datasource reads at most 5,000 entries per evidence source over eight
-days, including carry-in, and separate bounded latest coverage receipts.
-A capped read stays partial. An older carry-in beyond the read bound is
-unknown.
+The datasource assembles one bounded snapshot for matching panels. It reads
+evidence over eight days, including carry-in, and requests recent checkpoint
+receipts separately. A capped or warned read is partial. A failed source call
+returns a downstream error. An older carry-in beyond the read bound is unknown.
 
 Where time went adds disjoint intervals for each thread. Overlapping
 threads contribute independently. Provider time takes precedence over

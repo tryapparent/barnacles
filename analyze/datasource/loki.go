@@ -8,17 +8,27 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 )
 
 const (
-	t3Selector       = `{plow_source="t3"}`
-	historySelector  = `{plow_source="codex_history"}`
-	maxResponseBytes = 4 << 20
-	maxLineBytes     = 16 << 10
+	t3Selector            = `{plow_source="t3"}`
+	historySelector       = `{plow_source="codex_history"}`
+	maxResponseBytes      = 4 << 20
+	maxLineBytes          = 16 << 10
+	activityDay           = 24 * time.Hour
+	activityPageLimit     = 2000
+	activityCheckpointCap = 32
+	activitySplitDepth    = 6
+	activityReaders       = 4
+	activityShardBytes    = 8 << 20
+	activitySnapshotBytes = 32 << 20
+	activitySnapshotLines = 50000
 )
 
 type lokiClient struct {
@@ -90,6 +100,29 @@ func (l lokiClient) read(ctx context.Context, window backend.TimeRange, query, s
 }
 
 func (l lokiClient) readDirection(ctx context.Context, window backend.TimeRange, query, source string, limit int, latest bool) ([]string, []string, *backend.DataResponse) {
+	page, failure := l.readPage(ctx, window, query, source, limit, latest)
+	if failure != nil {
+		return nil, nil, failure
+	}
+	if page.oversized {
+		return nil, nil, lokiFailure(backend.StatusBadGateway, "Loki response exceeded 4 MiB. Narrow the time range")
+	}
+	var gaps []string
+	if !latest && len(page.lines) == limit {
+		gaps = append(gaps, "Loki entry limit reached. Narrow the time range")
+	}
+	if page.warned {
+		gaps = append(gaps, "Loki returned query warnings")
+	}
+	return page.lines, gaps, nil
+}
+
+type lokiPage struct {
+	lines             []string
+	warned, oversized bool
+}
+
+func (l lokiClient) readPage(ctx context.Context, window backend.TimeRange, query, source string, limit int, latest bool) (lokiPage, *backend.DataResponse) {
 	endpoint := *l.endpoint
 	params := endpoint.Query()
 	params.Set("query", query)
@@ -104,7 +137,7 @@ func (l lokiClient) readDirection(ctx context.Context, window backend.TimeRange,
 	endpoint.RawQuery = params.Encode()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
 	if err != nil {
-		return nil, nil, lokiFailure(backend.StatusInternal, "Could not build the Loki request")
+		return lokiPage{}, lokiFailure(backend.StatusInternal, "Could not build the Loki request")
 	}
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("X-Loki-Response-Encoding-Flags", "categorize-labels")
@@ -114,27 +147,27 @@ func (l lokiClient) readDirection(ctx context.Context, window backend.TimeRange,
 	}
 	response, err := l.http.Do(request)
 	if err != nil {
-		return nil, nil, lokiTransportFailure(err)
+		return lokiPage{}, lokiTransportFailure(err)
 	}
 	defer response.Body.Close()
 	switch response.StatusCode {
 	case http.StatusOK:
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return nil, nil, lokiFailure(backend.StatusForbidden, "Loki denied access. Check the configured tenant and credentials")
+		return lokiPage{}, lokiFailure(backend.StatusForbidden, "Loki denied access. Check the configured tenant and credentials")
 	case http.StatusTooManyRequests:
-		return nil, nil, lokiFailure(backend.StatusTooManyRequests, "Loki rate limited the request")
+		return lokiPage{}, lokiFailure(backend.StatusTooManyRequests, "Loki rate limited the request")
 	case http.StatusRequestTimeout, http.StatusGatewayTimeout:
-		return nil, nil, lokiFailure(backend.StatusTimeout, "Loki query timed out")
+		return lokiPage{}, lokiFailure(backend.StatusTimeout, "Loki query timed out")
 	default:
-		return nil, nil, lokiFailure(backend.StatusBadGateway, "Loki returned HTTP "+strconv.Itoa(response.StatusCode))
+		return lokiPage{}, lokiFailure(backend.StatusBadGateway, "Loki returned HTTP "+strconv.Itoa(response.StatusCode))
 	}
 
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
 	if err != nil {
-		return nil, nil, lokiTransportFailure(err)
+		return lokiPage{}, lokiTransportFailure(err)
 	}
 	if len(body) > maxResponseBytes {
-		return nil, nil, lokiFailure(backend.StatusBadGateway, "Loki response exceeded 4 MiB. Narrow the time range")
+		return lokiPage{oversized: true}, nil
 	}
 	var payload struct {
 		Status   string   `json:"status"`
@@ -148,37 +181,31 @@ func (l lokiClient) readDirection(ctx context.Context, window backend.TimeRange,
 		} `json:"data"`
 	}
 	if json.Unmarshal(body, &payload) != nil || payload.Status != "success" || payload.Data.ResultType != "streams" || payload.Data.Result == nil {
-		return nil, nil, lokiFailure(backend.StatusBadGateway, "Loki returned an invalid stream response")
+		return lokiPage{}, lokiFailure(backend.StatusBadGateway, "Loki returned an invalid stream response")
 	}
 
-	var lines, gaps []string
+	var lines []string
 	for _, stream := range payload.Data.Result {
 		if stream.Stream["plow_source"] != source || stream.Values == nil {
-			return nil, nil, lokiFailure(backend.StatusBadGateway, "Loki returned an unexpected stream")
+			return lokiPage{}, lokiFailure(backend.StatusBadGateway, "Loki returned an unexpected stream")
 		}
 		for _, value := range stream.Values {
 			if len(lines) == limit {
-				return nil, nil, lokiFailure(backend.StatusBadGateway, "Loki returned more entries than requested")
+				return lokiPage{}, lokiFailure(backend.StatusBadGateway, "Loki returned more entries than requested")
 			}
 			var timestamp, line string
 			if len(value) < 2 || len(value) > 3 || json.Unmarshal(value[0], &timestamp) != nil ||
 				json.Unmarshal(value[1], &line) != nil || len(line) > maxLineBytes {
-				return nil, nil, lokiFailure(backend.StatusBadGateway, "Loki returned an invalid log entry")
+				return lokiPage{}, lokiFailure(backend.StatusBadGateway, "Loki returned an invalid log entry")
 			}
 			ns, err := strconv.ParseInt(timestamp, 10, 64)
 			if err != nil || ns < window.From.UnixNano() || ns > window.To.UnixNano() {
-				return nil, nil, lokiFailure(backend.StatusBadGateway, "Loki returned a log entry with an invalid query timestamp")
+				return lokiPage{}, lokiFailure(backend.StatusBadGateway, "Loki returned a log entry with an invalid query timestamp")
 			}
 			lines = append(lines, line)
 		}
 	}
-	if !latest && len(lines) == limit {
-		gaps = append(gaps, "Loki entry limit reached. Narrow the time range")
-	}
-	if len(payload.Warnings) != 0 {
-		gaps = append(gaps, "Loki returned query warnings")
-	}
-	return lines, gaps, nil
+	return lokiPage{lines: lines, warned: len(payload.Warnings) != 0}, nil
 }
 
 func lokiFailure(status backend.Status, message string) *backend.DataResponse {
@@ -230,4 +257,121 @@ func (ds *datasource) readHistoryRun(ctx context.Context, window backend.TimeRan
 	}
 	row := rows[0]
 	return runRecord{ID: row.Run, ThreadID: row.Thread, SessionID: row.Session, StartedMS: row.Start, CompletedMS: row.End}, nil
+}
+
+type activityRead struct {
+	window backend.TimeRange
+	source string
+	kinds  string
+	latest bool
+}
+
+func (r activityRead) selector() string {
+	expr := `{plow_source="` + r.source + `"}`
+	if r.kinds != "" {
+		expr += " |~ `\"(" + r.kinds + ")\"`" +
+			` | json plow_kind="kind" | plow_kind=~"` + r.kinds + `"`
+	}
+	return expr + ` | drop plow_kind, event_id, observed_timestamp, detected_level, run_id, session_id, call_id`
+}
+
+func activityReads(cutoff time.Time) []activityRead {
+	window := backend.TimeRange{From: cutoff.Add(-maxRange - activityDay), To: cutoff}
+	if window.From.Before(minTime) {
+		window.From = minTime
+	}
+	reads := []activityRead{
+		{window, "t3_history", "t3_coverage", true},
+		{window, "codex_history", "codex_coverage", true},
+		{window, "t3", "", false},
+	}
+	for to := cutoff; !to.Before(window.From); {
+		from := to.Truncate(activityDay)
+		if from.Before(window.From) {
+			from = window.From
+		}
+		shard := backend.TimeRange{From: from, To: to}
+		reads = append(reads,
+			activityRead{shard, "t3_history", "t3_activity_run|t3_pr_link|t3_ci_link|confirmed_delay|operation", false},
+			activityRead{shard, "github_history", "github_actions_attempt|github_actions_job", false})
+		to = from.Add(-time.Nanosecond)
+	}
+	return reads
+}
+
+type activityRows struct {
+	lines   []string
+	bytes   int
+	partial bool
+	failure *backend.DataResponse
+}
+
+func (l lokiClient) readActivity(ctx context.Context, cutoff time.Time) (map[string][]string, bool, *backend.DataResponse) {
+	records := make(map[string][]string)
+	var bytes, count int
+	partial := false
+	reads := activityReads(cutoff)
+	for first := 0; first < len(reads); first += activityReaders {
+		batch := reads[first:min(first+activityReaders, len(reads))]
+		results := make([]activityRows, len(batch))
+		var readers sync.WaitGroup
+		for i, read := range batch {
+			readers.Go(func() {
+				results[i] = l.readActivityShard(ctx, read, activitySplitDepth, activityShardBytes)
+			})
+		}
+		readers.Wait()
+		for i, result := range results {
+			if result.failure != nil {
+				return nil, false, result.failure
+			}
+			if bytes+result.bytes > activitySnapshotBytes || count+len(result.lines) > activitySnapshotLines {
+				partial = true
+				continue
+			}
+			records[batch[i].source] = append(records[batch[i].source], result.lines...)
+			bytes += result.bytes
+			count += len(result.lines)
+			partial = partial || result.partial
+		}
+	}
+	return records, partial, nil
+}
+
+func (l lokiClient) readActivityShard(ctx context.Context, read activityRead, depth, remaining int) activityRows {
+	limit := activityPageLimit
+	if read.latest {
+		limit = activityCheckpointCap
+	}
+	page, failure := l.readPage(ctx, read.window, read.selector(), read.source, limit, read.latest)
+	if failure != nil {
+		return activityRows{failure: failure}
+	}
+	saturated := page.oversized || !read.latest && len(page.lines) == limit
+	if saturated && depth > 0 && !read.latest && read.window.To.After(read.window.From) {
+		middle := read.window.From.Add(read.window.To.Sub(read.window.From) / 2)
+		left, right := read, read
+		left.window.To, right.window.From = middle, middle.Add(time.Nanosecond)
+		older := l.readActivityShard(ctx, left, depth-1, remaining)
+		if older.failure != nil {
+			return older
+		}
+		newer := l.readActivityShard(ctx, right, depth-1, remaining-older.bytes)
+		if newer.failure != nil {
+			return newer
+		}
+		return activityRows{lines: append(older.lines, newer.lines...), bytes: older.bytes + newer.bytes,
+			partial: page.warned || older.partial || newer.partial}
+	}
+
+	lines := page.lines
+	slices.Sort(lines)
+	bytes := 0
+	for i, line := range lines {
+		bytes += len(line)
+		if bytes > remaining {
+			return activityRows{lines: lines[:i], bytes: bytes - len(line), partial: true}
+		}
+	}
+	return activityRows{lines: lines, bytes: bytes, partial: saturated || page.warned}
 }

@@ -3,12 +3,12 @@
   "title": "Plow Codex traces",
   "description": "Explore redacted Codex OTLP spans recorded by Tempo. Missing results can reflect partial instrumented coverage or an inactive ingest route.",
   "schemaVersion": 41,
-  "version": 1,
+  "version": 2,
   "editable": false,
   "timezone": "utc",
   "time": { "from": "now-2h", "to": "now" },
   "links": [
-    {"type": "link", "title": "Find a Trace ID", "url": "/d/plow-codex-trace/plow-codex-trace", "keepTime": true},
+    {"type": "link", "title": "Find by trace ID", "url": "/d/plow-codex-trace/plow-codex-trace", "keepTime": true},
     {"type": "link", "title": "Activity", "url": "/d/plow-activity/activity", "keepTime": false}
   ],
   "templating": {
@@ -17,9 +17,9 @@
         "name": "spanStatus",
         "label": "Span status",
         "type": "custom",
-        "description": "Show traces containing at least one span with this OTLP status. Unset is a recorded span status.",
-        "query": "Any : true, Error : span:status = error, OK : span:status = ok, Unset : span:status = unset",
-        "current": { "text": "Any", "value": "true" }
+        "description": "Match any span in the trace. A trace can have both OK and Error spans. Unset means the exporter recorded no outcome.",
+        "query": "Any status : true, Error : span:status = error, OK : span:status = ok, Unset : span:status = unset",
+        "current": { "text": "Any status", "value": "true" }
       }
     ]
   },
@@ -27,7 +27,7 @@
     {
       "id": 1,
       "title": "Recent traces",
-      "description": "Up to 20 traces in the UTC range. Open a Trace ID for the span tree, waterfall and retained span attributes. Trace times come from the Codex exporter. An empty result can reflect missing instrumentation, an inactive route, or restrictive filters. Try a wider range or Any span status.",
+      "description": "Up to 20 traces in the UTC range. Open a trace ID to inspect its spans. If the search is empty, try Any status or widen the range.",
       "type": "table",
       "gridPos": { "x": 0, "y": 3, "w": 24, "h": 10 },
       "datasource": { "type": "tempo", "uid": "plow-tempo" },
@@ -38,8 +38,8 @@
           "queryType": "traceql",
           "tableType": "traces",
           "limit": 20,
-          "spss": 5,
-          "query": "{ instrumentation:name = \"plow.codex\" && (${spanStatus:raw}) } | select(span:status, span.conversation.id, span.turn.id, span.call_id) with (most_recent=true)"
+          "spss": 1,
+          "query": "{ instrumentation:name = \"plow.codex\" && (${spanStatus:raw}) } with (most_recent=true)"
         }
       ],
       "options": { "showHeader": true },
@@ -53,7 +53,7 @@
           {
             "matcher": { "id": "byName", "options": "Trace ID" },
             "properties": [
-              { "id": "custom.width", "value": 295 },
+            { "id": "custom.width", "value": 328 },
               { "id": "links", "value": [{ "title": "Open trace", "url": "/d/plow-codex-trace/plow-codex-trace?var-traceId=${__value.raw}&from=${__from}&to=${__to}" }] }
             ]
           },

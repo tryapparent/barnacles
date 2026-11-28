@@ -128,6 +128,19 @@ services:
   codex-backfill:
     <<: *codex-capture
     command: ["node", "collect/fixture.ts", "--capture", "backfill"]
+  codex-trace-fanout:
+    profiles: [codex-trace-fanout]
+    image: otel/opentelemetry-collector-contrib:0.166.0@sha256:3e18fe04181de50bdd72e23ad4a4d6214b54351e63d496f1c58127cc4541ad7f
+    restart: ${PLOW_LGTM_RESTART:-no}
+    network_mode: host
+    env_file:
+      - ${PLOW_CODEX_TRACE_ENV_FILE:-/dev/null}
+    environment:
+      PLOW_TEMPO_ALLOY_PORT: ${PLOW_TEMPO_ALLOY_PORT:-0}
+    volumes:
+      - ${PLOW_CODEX_TRACE_BASE_CONFIG:-/dev/null}:/etc/plow.yaml:ro
+      - ../../collect/alloy/codex-collector-fanout.yaml:/etc/plow-fanout.yaml:ro
+    command: ["--config=/etc/plow.yaml", "--config=/etc/plow-fanout.yaml"]
   t3-live:
     <<: *t3-capture
     command: ["node", "collect/t3/read.ts", "--capture", "live"]
