@@ -64,8 +64,8 @@ for a saved cursor triggers a fresh head read. No collection predicate uses the 
 range.
 
 Codex reads newline-complete records from active, rotated and archived
-`rollout-*.jsonl` files, including gzip archives. Plain files resume by
-identity, byte offset and a boundary fingerprint. Gzip resume decodes from
+`rollout-*.jsonl` files, including gzip and Zstandard archives. Plain files resume by
+identity, byte offset and a boundary fingerprint. Archive resume decodes from
 the beginning and skips to the saved uncompressed offset. Replacements and
 forked copies replay stable call event identities. A truncated tail stays
 pending. Unsupported compressed formats are a coverage gap. Filenames and

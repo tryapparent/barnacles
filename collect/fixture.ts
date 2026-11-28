@@ -1,7 +1,7 @@
 import { closeSync, constants, createReadStream, fstatSync, fsyncSync, lstatSync, linkSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
-import { createGunzip } from "node:zlib";
+import { createGunzip, createZstdDecompress } from "node:zlib";
 import { setTimeout as wait } from "node:timers/promises";
 import { buildPolicy, loadPolicy } from "../tooling/bend.ts";
 
@@ -156,7 +156,7 @@ function codexInventory(roots: string[]) {
     if (st.isDirectory()) {
       for (const name of readdirSync(path)) queue.push(join(path, name));
     } else if (st.isFile() && /^rollout-.*\.jsonl(?:\.(?:gz|zst|zip))?$/.test(basename(path))) {
-      if (path.endsWith(".zst") || path.endsWith(".zip")) compressed = true;
+      if (path.endsWith(".zip")) compressed = true;
       else items.push({ id: path, updated: Math.max(0, Math.floor(st.mtimeMs)), size: st.size });
     }
   }
@@ -173,17 +173,17 @@ function anchor(file: number, offset: number) {
   return readBytes(file, offset - size, size).toString("base64");
 }
 
-async function archiveBytes(file: number, offset: number, limit: number) {
+async function archiveBytes(file: number, offset: number, limit: number, zstd: boolean) {
   const input = createReadStream("", { fd: file, start: 0 });
   const closed = new Promise<void>(resolve => input.once("close", resolve));
-  const gzip = createGunzip();
-  const forward = (error: Error) => gzip.destroy(error);
+  const decoder = zstd ? createZstdDecompress() : createGunzip();
+  const forward = (error: Error) => decoder.destroy(error);
   input.on("error", forward);
-  input.pipe(gzip);
+  input.pipe(decoder);
   const chunks: Buffer[] = [];
   let position = 0;
   try {
-    for await (const block of gzip) {
+    for await (const block of decoder) {
       const end = position + block.length;
       if (offset < end) chunks.push(block.subarray(Math.max(0, offset - position), Math.min(block.length, offset + limit - position)));
       position = end;
@@ -192,7 +192,7 @@ async function archiveBytes(file: number, offset: number, limit: number) {
     return { data: Buffer.concat(chunks), eof: true };
   } finally {
     input.destroy();
-    gzip.destroy();
+    decoder.destroy();
     await closed;
   }
 }
@@ -204,7 +204,8 @@ async function codexFile(path: string, previous: Mark | undefined, project: Proj
     const st = fstatSync(file);
     if (!st.isFile()) throw Error("source_unavailable");
     const inode = st.dev + ":" + st.ino;
-    const compressed = path.endsWith(".gz");
+    const zstd = path.endsWith(".zst");
+    const compressed = zstd || path.endsWith(".gz");
     const updated = Math.floor(st.mtimeMs);
     const prior = previous?.inode === inode && (compressed
       ? previous.size === st.size && previous.updated === updated
@@ -212,7 +213,7 @@ async function codexFile(path: string, previous: Mark | undefined, project: Proj
         previous.anchor === anchor(file, previous.offset)) ? previous : undefined;
     const offset = prior?.offset ?? 0;
     closeFile = !compressed;
-    const chunk = compressed ? await archiveBytes(file, offset, 8 << 20) : {
+    const chunk = compressed ? await archiveBytes(file, offset, 8 << 20, zstd) : {
       data: readBytes(file, offset, 8 << 20), eof: st.size - offset < 8 << 20,
     };
     const { data, eof } = chunk;
