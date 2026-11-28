@@ -42,10 +42,47 @@ Successive T3 heads and overlapping Codex reads can share a leading record
 while carrying different later evidence. The digest appears inside both
 receivers' fingerprint windows. Padding a small chunk to its receiver's
 fingerprint size preserves the configured fingerprint sizes and file
-positions. Exact replays retain their content identity, and event IDs and
-clocks stay independent of chunk identity. Already staged chunks keep their
-original format. Data missed before this format change requires a replay
-from retained sources.
+positions. Alloy removes the transport marker before sending to Loki. Exact
+replays retain their content identity, and event IDs and clocks stay
+independent of chunk identity.
+
+### Replay previously staged history
+
+After deploying the new file reader, run the following from the pinned release
+directory against the private capture spool. Each invocation restages at most
+100 retained chunks per source. Repeat until both counts are zero. Existing
+checkpoints and original chunks stay in place. The digest check accepts only
+unchanged chunks emitted by the earlier capture workers. Records that were
+never staged still require the original retained sources.
+
+```sh
+PLOW_CAPTURE_SPOOL=/private/plow/runtime/spool node --input-type=module <<'JS'
+import { createHash } from "node:crypto";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
+import { publish } from "./collect/fixture.ts";
+
+const root = process.env.PLOW_CAPTURE_SPOOL ?? "";
+if (!isAbsolute(root)) throw Error("Set an absolute private capture spool");
+for (const [source, fingerprint] of [["t3", 128], ["codex", 1024]]) {
+  const directory = join(root, source);
+  let staged = 0;
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const match = /^([A-Za-z0-9][A-Za-z0-9_-]*-(?:live|backfill))-([a-f0-9]{64})\.jsonl$/.exec(entry.name);
+    if (!entry.isFile() || !match) continue;
+    const [, prefix, digest] = match;
+    if (existsSync(join(directory, prefix + "-v2-" + digest + ".jsonl"))) continue;
+    const body = readFileSync(join(directory, entry.name), "utf8");
+    if (!body.startsWith("{") || !body.endsWith("\n") || createHash("sha256").update(body).digest("hex") !== digest) {
+      throw Error("Invalid staged history chunk");
+    }
+    publish(directory, prefix, body.slice(0, -1).split("\n"), fingerprint);
+    if (++staged === 100) break;
+  }
+  console.log(source, staged);
+}
+JS
+```
 
 | Input | Purpose |
 | --- | --- |
