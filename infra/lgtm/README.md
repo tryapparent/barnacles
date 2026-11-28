@@ -103,6 +103,29 @@ The overlay preserves the original `otlp_http` exporter in the traces pipeline. 
 
 See the [Codex trace guide](../../grafana/traces.md) for the Viewer routes, receipt metric and coverage limits.
 
+### Historical Codex trace discovery
+
+Tempo uses `storage.trace.wal.ingestion_time_range_slack: 48h` so recently backfilled traces can contribute their original clocks to block metadata. Historical TraceQL search selects backend blocks by that metadata. A successful exact lookup can precede discovery. By default Tempo cuts the head block by 30 minutes or its size limit, flushes it, and refreshes the backend blocklist every five minutes. [Tempo configuration](https://github.com/grafana/tempo/blob/v2.10.2/docs/sources/tempo/configuration/_index.md)
+
+For a bounded pilot, select only pre-fan-out traces whose earliest retained timestamp will still be less than 48 hours old when Tempo cuts the traces to its WAL. Leave time for dry-run, ingestion and the WAL cut when choosing the lower bound. Use a single source instance, an explicit historical window of up to 24 hours and at most 32 exact IDs. Confirm writer exclusion and use the replay checkpoint. Recheck eligibility before retrying a pending write.
+
+Slack applies to the whole Tempo instance. It changes how late or future clocks can affect new block metadata. A block mixing late and fresh traces can cover a wider date range and become a candidate in more searches. Out-of-range clocks can still be stored in spans and read by ID. Changing the setting leaves previously persisted block metadata in place. Retention still uses the block end time, so an all-historical block can have less time left than a new block for recent data. [Tempo range calculation](https://github.com/grafana/tempo/blob/v2.10.2/tempodb/encoding/common/slackTimeRange.go) [Tempo block retention](https://github.com/grafana/tempo/blob/v2.10.2/tempodb/retention.go)
+
+The inspected legacy replay source was the receiver's allowlisted SQLite span and event projection. The inspected storage locations had no retained native OTLP export. Replay preserves the available native IDs and nanosecond clocks and labels the result `plow.replay.coverage=partial`. Completeness of individual traces and coverage across the historical period remain unknown. An empty historical search alone cannot establish source absence.
+
+For an isolated Tempo 2.10.2 standalone check, use a fresh writable local backend and bind query and OTLP HTTP to distinct IPv4 loopback ports. Replay a synthetic trace about 27 hours old through the SQLite replay CLI. Verify the native span identities, parent and clocks by exact lookup. On this disposable instance, force the block cut and wait for the block to appear in the backend blocklist. Compare the matching historical window with an adjacent window and the recent window. Send a separate recent span through OTLP and confirm recent search and both exact lookups. The search expression matches the default Codex traces dashboard filter.
+
+```sh
+curl -fsS -X POST "$tempo_query/flush"
+curl -fsS "$tempo_query/metrics" | rg '^tempodb_blocklist_length'
+curl -fsSG "$tempo_query/api/search" \
+  --data-urlencode 'q={ instrumentation:name = "plow.codex" && (true) } with (most_recent=true)' \
+  --data-urlencode "start=$from_epoch_seconds" --data-urlencode "end=$to_epoch_seconds"
+curl -fsS "$tempo_query/api/v2/traces/$trace_id"
+```
+
+In the standalone check, the 27-hour trace appeared in its historical window after one backend block was indexed with the original seconds in its metadata. The 2-minute default indexed the 27-hour fixture with block times at the WAL cut and returned an empty historical search. With 48-hour slack, the 47-hour probe was discoverable and the 49-hour probe was available by exact ID with an empty historical search. The test used a two-second blocklist poll to exercise the normal indexing path sooner.
+
 [Collection Health](../../grafana/collection-health.md) uses a separate Loki tenant for allowlisted progress reports and the existing Mimir data source for Alloy self-metrics.
 Activity reads evidence in bounded windows up to eight days. The single-node
 candidate splits Loki range reads by day. Hourly query splitting multiplied
