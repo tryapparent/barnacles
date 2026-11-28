@@ -150,7 +150,10 @@ function Priorities({ api, range }: { api: string; range: TimeRange }) {
         retry(value => value + 1);
       }}>Try again</Button>
     </div>}
-    {report && (report.priorities.length > 0 ? <PriorityInspector priorities={report.priorities} />
+    {report && (report.priorities.length > 0 ? <>
+      {report.priorities.length < 3 && <p className="priority-status">The captured evidence supports {report.priorities.length === 1 ? "1 priority" : "2 priorities"} in this range.</p>}
+      <PriorityInspector priorities={report.priorities} />
+    </>
       : <p className="priority-status">{report.coverage.active
         ? "No priorities in the captured evidence for this window."
         : "No thread activity was captured in this window."}</p>)}
@@ -187,6 +190,7 @@ function Dashboard({ field, fieldTexture, analysisApi }: { field: string; fieldT
           <Card id="timeline-panel" aria-labelledby="timeline-heading">
             <div className="timeline-heading-row">
               <h2 id="timeline-heading">Timeline</h2>
+              <p className="timeline-count" id="timeline-count" />
               <p id="timeline-selection" role="status" />
               <Popover>
                 <PopoverTrigger render={<Button variant="outline" className="timeline-help" />} aria-label="Timeline guide" title="Timeline guide">
@@ -198,11 +202,12 @@ function Dashboard({ field, fieldTexture, analysisApi }: { field: string; fieldT
                 <PopoverContent className="timeline-guide" align="end" sideOffset={6} inline keepMounted>
                   <PopoverTitle>Timeline guide</PopoverTitle>
                   <PopoverDescription>Drag across the chart to zoom. Select a bar to fit its thread. Hover over a phase or failure to see details.</PopoverDescription>
-                  <p>Resize or slide the minimap selection. Ctrl+scroll or Ctrl+↑/↓ zooms. Use arrow keys to pan and Home to reset.</p>
+                  <p>Scroll to browse threads. Resize or slide the minimap selection. Ctrl+scroll or Ctrl+↑/↓ zooms. Use arrow keys to pan and Home to reset.</p>
                   <ul className="chart-key" aria-label="Chart key">
                     <li><i className="work-key" />Provider run</li>
                     <li><i className="wait-key" />Admission wait</li>
-                    <li><i className="unclear-key" />Unobserved</li>
+                    <li><i className="unclear-key" />Outside runs</li>
+                    <li id="ci-key" hidden><i className="ci-key" />CI observation</li>
                     <li id="failure-key" hidden><i className="failure-key" />Failure</li>
                   </ul>
                   <p id="feed-cutoff" hidden />
@@ -219,7 +224,7 @@ function Dashboard({ field, fieldTexture, analysisApi }: { field: string; fieldT
                 <div className="mini-handles" />
               </div>
             </div>
-            <div className="timeline-viewport" id="timeline-viewport" role="region" aria-label="UTC timelines" tabIndex={0}
+            <div className="timeline-viewport" id="timeline-viewport" role="region" aria-label="UTC timelines" aria-describedby="timeline-count" tabIndex={0}
               aria-keyshortcuts="Control+ArrowUp Control+ArrowDown ArrowLeft ArrowRight Home">
               <div className="timeline-grid" id="timeline-grid">
                 <div className="table-head">

@@ -4,11 +4,9 @@ import { DatabaseSync } from "node:sqlite";
 import { buildPolicies, buildPolicy, loadPolicy } from "../tooling/bend.ts";
 import { admissionPolicy, joinSession, loadEvidence, repository, sessionJoinPolicy, sourcePolicy, type AdmissionPolicy, type SessionJoinPolicy, type Point, type SourcePolicy } from "../evidence/index.ts";
 import { array, bendList, boundedFile, millis, point, positiveInt, row, sha, stockT3Origin, stockT3Rpc, str, toMillis, token } from "./wire.ts";
-import { nativeBindings, t3Id } from "./t3-otel/projection.ts";
+import { nativeBindings, t3Id, watchKey, watchMessage, watchPolicy } from "./t3-otel/projection.ts";
 export { t3Snapshot } from "./t3-otel/projection.ts";
 import { inspectRollout } from "./codex/rollout.ts";
-
-const watchPolicy = new URL("../evidence/analysis/pr-watch.bend", import.meta.url);
 
 function projectionId(value: unknown): string {
   try {
@@ -16,22 +14,6 @@ function projectionId(value: unknown): string {
   } catch {
     return "";
   }
-}
-
-function watchKey(value: unknown) {
-  const key = row(value ?? {});
-  const number = key.number;
-  return { $: "PrWatchKey", host: str(key.host), repository: str(key.repository),
-    number: typeof number === "number" && Number.isInteger(number) && number > 0 && number <= 0xffffffff ? number : 0,
-    sha: str(key.headSha) };
-}
-
-function watchMessage(value: unknown) {
-  const message = row(value);
-  const source = row(row(message.notification ?? {}).source ?? {});
-  return { $: "PrWatchMessage", id: projectionId(message.id), thread: projectionId(message.threadId),
-    run: projectionId(message.runId), kind: str(source.kind), key: watchKey(source.pullRequest),
-    watch_started: point(millis(row(source.pullRequest ?? {}).watchStartedAt)), created: point(millis(message.createdAt)) };
 }
 
 function watchRun(value: unknown) {

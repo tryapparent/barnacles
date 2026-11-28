@@ -178,7 +178,7 @@ def advance_checkpoint(+keep: Bool, +saved: String, +covered: String, +revision:
   Bool.pick(Maybe<&2, Checkpoint>, Bool.and(keep, Bool.not(seed)), None{},
     Some{Checkpoint{revision, older_frontier(priority, oldest), covered_after, tip}})
 
-def projection_due(+updated: Nat, saved: Nat, +now: Nat, title_observed: Bool) -> Bool:
+def projection_due(+updated: Nat, saved: Nat, +now: Nat, metadata_observed: Bool) -> Bool:
   +recent_change = Bool.and(Nat.is_le(Nat.sub(now, 86400000n), updated), Nat.is_gt(updated, saved))
-  +title_backfill = Bool.and(Bool.not(title_observed), Nat.is_le(Nat.sub(now, 604800000n), updated))
-  Bool.or(recent_change, title_backfill)
+  +metadata_backfill = Bool.and(Bool.not(metadata_observed), Nat.is_le(Nat.sub(now, 604800000n), updated))
+  Bool.or(recent_change, metadata_backfill)

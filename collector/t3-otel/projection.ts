@@ -5,17 +5,38 @@ import { join } from "node:path";
 import {
   admissionPolicy, analysisWindow, backupAnalysisInput, joinedTargets, joinSession, loadEvidence,
   projectPlowFeed, publishJoinedAnalysis, readT3Projections, repository, sessionJoinPolicy, type AdmissionPolicy,
-  type ActionAttempt, type AttemptIdentity, type SessionJoinPolicy, type SourcePolicy, type StoredT3Projection, type NativeBinding, type Point, type ThreadEvidence,
+  type ActionAttempt, type AttemptIdentity, type List, type SessionJoinPolicy, type SourcePolicy, type StoredT3Projection, type NativeBinding, type Point, type ThreadEvidence,
 } from "../../evidence/index.ts";
 import { buildPolicies, loadPolicy } from "../../tooling/bend.ts";
 import type { ClockPolicy, GitHubReader } from "../github/attempt.ts";
-import { array, bendList, boundedFile, millis, point, positiveInt, replayOutcomeDelays, row, stockT3Id, stockT3Origin, stockT3Rpc, str, timeParts, toMillis, token } from "../wire.ts";
+import { array, bendList, bendValues, boundedFile, millis, point, positiveInt, replayOutcomeDelays, row, stockT3Id, stockT3Origin, stockT3Rpc, str, timeParts, toMillis, token } from "../wire.ts";
+
+export const watchPolicy = new URL("../../evidence/analysis/pr-watch.bend", import.meta.url);
 
 export type ProjectionCodec = SourcePolicy & {
   github_link(host: string): boolean;
   t3_run_clocks(requested: Point, started: Point, completed: Point): { started: Point; completed: Point };
 };
 type LocalRow = (thread: string, owner: string, visibility: string) => boolean;
+
+export function watchKey(value: unknown) {
+  const key = row(value ?? {});
+  const number = key.number;
+  return { $: "PrWatchKey", host: str(key.host), repository: str(key.repository),
+    number: typeof number === "number" && Number.isInteger(number) && number > 0 && number <= 0xffffffff ? number : 0,
+    sha: str(key.headSha) };
+}
+
+export function watchMessage(value: unknown) {
+  const message = row(value);
+  const source = row(row(message.notification ?? {}).source ?? {});
+  return { $: "PrWatchMessage", id: stockT3Id(message.id), thread: stockT3Id(message.threadId),
+    run: stockT3Id(message.runId), kind: str(source.kind), key: watchKey(source.pullRequest),
+    watch_started: point(millis(row(source.pullRequest ?? {}).watchStartedAt)), created: point(millis(message.createdAt)) };
+}
+
+export type WatchCodec = { pr_watch_windows(thread: string, messages: List<ReturnType<typeof watchMessage>>):
+  List<{ id: string; start: Point; end: Point }> };
 
 export function t3Id(value: unknown): string {
   if (typeof value !== "string" || value.length > 512 || !/^[A-Za-z0-9](?:[A-Za-z0-9:_-]|%[0-9A-Fa-f]{2})*$/.test(value)) {
@@ -119,7 +140,8 @@ export async function captureCiAttempt(database: string, scratch: string, exact:
   console.log(`Captured exact CI ${kind} and ${attempt.jobs.length} jobs`);
 }
 
-export function stockProjection(instance: string, id: string, input: unknown, policy: ProjectionCodec, local: LocalRow): StoredT3Projection {
+export function stockProjection(instance: string, id: string, input: unknown, policy: ProjectionCodec, local: LocalRow,
+  watches: WatchCodec): StoredT3Projection {
   const projection = row(input);
   const thread = row(projection.thread);
   if (thread.id !== id) throw Error("T3 projection belongs to another thread");
@@ -131,11 +153,13 @@ export function stockProjection(instance: string, id: string, input: unknown, po
     .filter(link => policy.github_link(str(link.host)))
     .map(link => ({ host: link.host, repository: link.repository, number: link.number,
       source: link.source, state: row(link.snapshot ?? {}).state }));
+  const prWatches = [...bendValues(watches.pr_watch_windows(id, bendList(array(projection.messages ?? [], 4096).map(watchMessage))))]
+    .map(watch => ({ id: watch.id, start: toMillis(watch.start)!, end: toMillis(watch.end)! }));
   return {
     thread: t3Snapshot({ instance, thread: { threadId: id, createdAt: thread.createdAt, updatedAt: thread.updatedAt,
       title: thread.title, status: thread.status, createdBy: thread.createdBy, creationSource: thread.creationSource, settled: millis(thread.settledAt) > 0 },
       recentRuns, links: { nextCursor: null, pullRequests } }, policy, 4096),
-    references: nativeBindings(array(projection.providerThreads, 64)), titleObserved: true,
+    references: nativeBindings(array(projection.providerThreads, 64)), titleObserved: true, prWatches,
   };
 }
 
@@ -164,7 +188,8 @@ async function joinStored(path: string, traces: string, history: string, scratch
     withSpans += Number(result.acceptedSpans > 0);
   }
   return { counts: { projections: captures.length, bound, ambiguous, withSpans },
-    threads: new Set(captures.map(({ thread }) => thread.id)) };
+    threads: new Set(captures.map(({ thread }) => thread.id)),
+    watches: new Map(captures.map(({ thread, prWatches }) => [thread.id, prWatches])) };
 }
 
 function readAnalysisImpact(receipts: string, scratch: string) {
@@ -213,7 +238,7 @@ export async function refreshAnalysis() {
     const candidate = activity ? join(activity, "timeline.next") : undefined;
     try {
       if (candidate) {
-        const feed = await projectPlowFeed(path, scratch, asOf, t3Instance, process.env.PLOW_ANALYSIS_T3_ENVIRONMENT_ID);
+        const feed = await projectPlowFeed(path, scratch, asOf, t3Instance, process.env.PLOW_ANALYSIS_T3_ENVIRONMENT_ID, capture?.watches);
         writeFileSync(candidate, JSON.stringify(feed), { mode: 0o600 });
       }
       const result = await publishJoinedAnalysis(path, output, scratch, asOf, readAnalysisImpact(receipts, scratch),

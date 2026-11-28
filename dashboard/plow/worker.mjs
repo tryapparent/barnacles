@@ -46,8 +46,8 @@ export function dashboardData(raw, type, policy, range) {
   const rows = candidates.map(row => {
     const intervals = (clock, kind) =>
       clock.map(([a, b, name]) => ({ $: "Interval", a: millis(a), b: millis(b), name, kind }));
-    return { $: "ChartRow", start: row.startUtcMs, duration: millis(row.end),
-      intervals: bendList([...intervals(row.work, 2), ...intervals(row.detail ?? [], 3), ...intervals(row.wait, 1)]) };
+    return { $: "ChartRow", start: row.startUtcMs, duration: millis(row.end), extent: millis(row.extent ?? row.end),
+      intervals: bendList([...intervals(row.work, 2), ...intervals(row.detail ?? [], 3), ...intervals(row.wait, 1), ...intervals(row.between ?? [], 0)]) };
   });
   const all = bendList(rows);
   const { from, to, covered, indices } = policy.activity(all, range, overview?.to ?? observed,

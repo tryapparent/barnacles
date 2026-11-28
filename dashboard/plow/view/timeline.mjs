@@ -7,26 +7,12 @@ const viewport = document.getElementById('timeline-viewport')
 const grid = document.getElementById('timeline-grid')
 const inspector = document.getElementById('thread-inspector')
 const minimap = document.getElementById('minimap')
-const miniWindow = minimap.querySelector('.mini-window')
-const navigatorTrack = minimap.parentElement
-const rangeControls = navigatorTrack.querySelector('.mini-handles')
+const rangeControls = document.querySelector('.mini-handles')
 const millis = seconds => Math.round(seconds * 1000)
 const percent = (value, end) => (value / end * 100).toFixed(5) + '%'
 const asList = entries => entries.reduceRight((tail, head) => ({ $: 'Con', head, tail }), { $: 'Nil' })
 function* values(list) {
   for (let next = list; next.$ === 'Con'; next = next.tail) yield next.head
-}
-function decodeEvidence(trace) {
-  const end = millis(trace.end)
-  const intervals = [
-    ...trace.work.map(([a, b, name]) => ({ $: 'Interval', a: millis(a), b: millis(b), kind: 2, name })),
-    ...(trace.detail ?? []).map(([a, b, name]) => ({ $: 'Interval', a: millis(a), b: millis(b), kind: 3, name })),
-    ...trace.wait.map(([a, b, name]) => ({ $: 'Interval', a: millis(a), b: millis(b), kind: 1, name })),
-  ]
-  const evidence = policy.evidence(asList(intervals), end)
-  const failures = asList(trace.errors.map(millis))
-  return { ...trace, end, evidence, failures, totals: policy.evidence_totals(evidence),
-    recordedFailures: [...values(policy.failure_points(true,end,failures))] }
 }
 let evidenceRows = []
 let frame
@@ -66,18 +52,13 @@ function measure() {
     return { $: 'Measurement', key, width: Math.ceil(probe.getBoundingClientRect().width) }
   }))
 }
-function elapsed(ms) {
-  const seconds = Math.floor(ms / 1000)
-  const minutes = Math.floor(seconds / 60)
-  return Math.floor(minutes / 60) + ':' + String(minutes % 60).padStart(2,'0') + ':' + String(seconds % 60).padStart(2,'0')
-}
 function showEvidence(trace) {
   const heading = makeElement('h3', '', trace.title + ' · Recorded timeline')
   heading.id = 'inspector-heading'
   const list = makeElement('ol','evidence-list')
   list.setAttribute('aria-label', 'Recorded timeline, elapsed from first message')
   const phases = [...values(trace.evidence)].map(p=>({start:p.a,end:p.b,label:p.name}))
-  const ci = (trace.ci ?? []).map(([start, end, label]) => ({ start: millis(start), end: millis(end), label }))
+  const ci = trace.ci
   const failures = trace.recordedFailures.map(at=>({start:at,label:'Recorded failure'}))
   for(const item of [...phases,...ci,...failures].sort((a,b)=>a.start-b.start)){
     const row = makeElement('li',item.end===undefined?'failed':'')
@@ -89,8 +70,8 @@ function showEvidence(trace) {
   close.setAttribute('aria-label', 'Close thread inspector')
   close.addEventListener('click', dismissInspector)
   const coverage = makeElement('p', 'evidence-summary',
-    ci.length ? 'CI watcher observations can overlap provider runs.' :
-      'No linked CI watcher observations for this thread. Unobserved time has no recorded thread activity.')
+    ci.length ? 'A PR watch runs until T3 receives a notification. It can overlap provider activity or time between runs.' :
+      'Plow has no timed CI observations for this thread.')
   const links = makeElement('p', 'inspect-links')
   for (const [url, label] of [
     [trace.t3Url, 'Open in T3'],
@@ -156,8 +137,8 @@ function render(trace, width, measurements, index) {
   header.append(inspect)
   const rail = makeElement('div', 'rail')
   rail.dataset.description = 'Elapsed ' + elapsed(trace.end) + '. Provider run ' + elapsed(trace.totals.work) +
-    '. Admission wait ' + elapsed(trace.totals.workflow) + '. Unobserved ' + elapsed(trace.totals.unclear) +
-    '. ' + trace.recordedFailures.length + ' recorded failures.'
+    '. Admission wait ' + elapsed(trace.totals.workflow) + '. Outside runs ' + elapsed(trace.totals.unclear) +
+    '. ' + trace.recordedFailures.length + ' recorded failures.' + (trace.ci.length ? ' Timed CI observations in the inspector.' : '')
   const action = makeElement('span', 'fit-target')
   const clipStart = Math.max(0, visibleWindow.start - trace.startUtcMs)
   const clipEnd = Math.min(trace.end, visibleWindow.end - trace.startUtcMs)
@@ -199,9 +180,22 @@ function render(trace, width, measurements, index) {
       marker.style.setProperty('--at', percent(time - clipStart, length))
       bar.append(marker)
     }
-    action.style.left = 'min(' + left + ',calc(100% - 8px))'
-    action.style.width = widthInView
     rail.append(bar)
+  }
+  const extentInView = Math.min(trace.extent, visibleWindow.end - trace.startUtcMs)
+  if (extentInView > clipStart) {
+    const left = percent(trace.startUtcMs + clipStart - visibleWindow.start, duration())
+    action.style.left = 'min(' + left + ',calc(100% - 8px))'
+    action.style.width = percent(extentInView - clipStart, duration())
+  }
+  for (const { start, end } of trace.ci) {
+    const a = Math.max(start, clipStart), b = Math.min(end, extentInView)
+    if (b <= a) continue
+    const watch = makeElement('span', 'ci-span')
+    watch.setAttribute('aria-hidden', 'true')
+    watch.style.left = 'min(' + percent(trace.startUtcMs + a - visibleWindow.start, duration()) + ',calc(100% - 3px))'
+    watch.style.width = percent(b - a, duration())
+    rail.append(watch)
   }
   rail.append(action)
   row.dataset.traceIndex = index
@@ -217,6 +211,7 @@ function draw() {
     measurementWidth = measuredWidth
   }
   document.getElementById('failure-key').hidden=!details || !evidenceRows.some(trace=>trace.recordedFailures.length)
+  document.getElementById('ci-key').hidden=!evidenceRows.some(trace=>trace.ci.length)
   const active = document.activeElement
   const row = active?.closest('.trace')
   const part = active?.dataset.focusPart
@@ -224,8 +219,8 @@ function draw() {
   PlowUI.renderTimelineControls(evidenceRows.map((trace, index) => ({
     host: rows.children[index].querySelector('.fit-target'),
     label: 'Fit ' + trace.title + '. ' + rows.children[index].querySelector('.rail').dataset.description,
-    fit: () => applyWindow(policy.view_window(frame, trace.startUtcMs, trace.end, 1), true),
-    visible: policy.window_overlap(visibleWindow, trace.startUtcMs, trace.startUtcMs + trace.end),
+    fit: () => applyWindow(policy.view_window(frame, trace.startUtcMs, trace.extent, 1), true),
+    visible: policy.window_overlap(visibleWindow, trace.startUtcMs, trace.startUtcMs + trace.extent),
   })), {
     host: rangeControls, max: scale(),
     value: [visibleWindow.start - frame.start, visibleWindow.end - frame.start],
@@ -272,6 +267,7 @@ function drawWindow() {
   zoom = scale() / duration()
   details = policy.trace_details(duration(), fitted)
   grid.style.setProperty('--timeline-width', baseWidth + 'px')
+  viewport.parentElement.style.setProperty('--timeline-gutter', viewport.offsetWidth - viewport.clientWidth + 'px')
   clearTooltip()
   drawTicks()
   paintRange()
@@ -312,15 +308,17 @@ function clearTooltip() {
   lastTip = ''
   PlowUI.hideTimelineTooltip()
 }
+viewport.addEventListener('scroll', clearTooltip, { passive:true })
 function hoverBar(target, event) {
   const trace = evidenceRows[Number(target.closest('.trace').dataset.traceIndex)]
   const { left } = chartPlot()
   const at = Math.max(0, Math.round(visibleWindow.start + (event.clientX - left) / baseWidth * duration() - trace.startUtcMs))
+  const watcher = event.clientY >= target.getBoundingClientRect().bottom - 10 && trace.ci.find(span => span.start <= at && at < span.end)
   const failures = details ? [...values(policy.hover_failures(asList(trace.recordedFailures), at, Math.ceil(4 * duration() / baseWidth)))] : []
-  const label = failures.length ? failures.length + (failures.length === 1 ? ' recorded failure' : ' recorded failures')
+  const label = watcher ? watcher.label : failures.length ? failures.length + (failures.length === 1 ? ' recorded failure' : ' recorded failures')
     : policy.hover_phase(trace.evidence, at)
   if (!label) return clearTooltip()
-  const times = failures.map(time => exactClock.format(trace.startUtcMs + time) + ' UTC')
+  const times = (watcher ? [watcher.start, watcher.end] : failures).map(time => exactClock.format(trace.startUtcMs + time) + ' UTC')
   const key = [trace.startUtcMs, label, ...times].join('/')
   if (key === lastTip) return
   lastTip = key

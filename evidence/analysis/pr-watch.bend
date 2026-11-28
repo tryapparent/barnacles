@@ -17,6 +17,9 @@ type Pickup is Data:
   Pickup{thread: String, message: String, run: String, host: String, repository: String, number: U32,
     head_sha: String, watch_started: Clock, notification_created: Clock, run_started: Clock, run_completed: Clock}
 
+type WatchWindow is Data:
+  WatchWindow{id: String, start: Clock, end: Clock}
+
 def clock_ordered(start: Clock, end: Clock) -> Bool:
   match start end:
     case Time{+s, ms} Time{+end_s, end_ms}:
@@ -125,3 +128,37 @@ def bind_message(thread: String, +host: String, +repo: String, +number: U32, +sh
 def pr_watch_pickup(thread: String, id: String, host: String, repository: String, number: U32, sha: String,
     +messages: List<&2, WatchMessage>, runs: List<&2, WatchRun>) -> Maybe<&2, Pickup>:
   bind_message(thread, host, Repository.normalized(repository), number, sha, find_message(id, messages), messages, runs)
+
+def absent_message(message: Maybe<&2,WatchMessage>) -> Bool:
+  match message:
+    case Some{_}: False{}
+    case None{}: True{}
+
+def confirm_window(valid: Bool, message: WatchMessage, all: List<&2,WatchMessage>, later: List<&2,WatchMessage>) -> Maybe<&2,WatchWindow>:
+  match valid message:
+    case True{} PrWatchMessage{+id,owner,run,kind,key,+start,+end}:
+      +stable = consistent_message(PrWatchMessage{id,owner,run,kind,key,start,end},all)
+      +unique = absent_message(find_message(id,later))
+      Bool.pick(Maybe<&2,WatchWindow>,Bool.and(stable,unique),Some{WatchWindow{id,start,end}},None{})
+    case False{} _: None{}
+
+def watch_window(thread: String, message: WatchMessage, all: List<&2, WatchMessage>, later: List<&2, WatchMessage>) -> Maybe<&2, WatchWindow>:
+  match message:
+    case PrWatchMessage{+id, +owner, +run, +kind, PrWatchKey{+host,+repo,+number,+sha}, +start, +end}:
+      +addressed = Bool.and(String.eq(thread,owner),Bool.and(String.starts_with(id,"message:pr-watch:"),Bool.not(String.is_empty(run))))
+      +measured = Bool.and(String.eq(kind,"monitor"),Bool.and(valid_key(host,repo,number,sha),clock_ordered(start,end)))
+      confirm_window(Bool.and(addressed,measured),PrWatchMessage{id,owner,run,kind,PrWatchKey{host,repo,number,sha},start,end},all,later)
+
+def prepend_window(window: Maybe<&2,WatchWindow>, tail: List<&2,WatchWindow>) -> List<&2,WatchWindow>:
+  match window:
+    case None{}: tail
+    case Some{value}: value <> tail
+
+def collect_windows(+thread: String, messages: List<&2, WatchMessage>, +all: List<&2, WatchMessage>) -> List<&2, WatchWindow>:
+  match messages:
+    case []: []
+    case message <> +rest:
+      prepend_window(watch_window(thread,message,all,rest),collect_windows(thread,rest,all))
+
+def pr_watch_windows(thread: String, +messages: List<&2,WatchMessage>) -> List<&2,WatchWindow>:
+  collect_windows(thread,messages,messages)

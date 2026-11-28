@@ -8,11 +8,11 @@ type Thread is Data:
 type ProviderSpan is Data:
   ProviderSpan{a: Nat, b: Nat, operation: String}
 type CiPoll is Data:
-  CiPoll{a: Nat, b: Nat}
+  CiPoll{a: Nat, b: Nat, native: Bool}
 type Span is Data:
   Span{a: Nat, b: Nat, name: String}
 type Trace is Data:
-  Trace{start: Nat, end: Nat, row: Nat, work: List<&2,Span>, wait: List<&2,Span>, errors: List<&2,Nat>, detail: List<&2,Span>, ci: List<&2,Span>}
+  Trace{start: Nat, end: Nat, extent: Nat, row: Nat, work: List<&2,Span>, wait: List<&2,Span>, errors: List<&2,Nat>, detail: List<&2,Span>, ci: List<&2,Span>, between: List<&2,Span>}
 type Clocks is Data:
   Clocks{last: Nat, work: List<&2,Span>, wait: List<&2,Span>, errors: List<&2,Nat>}
 
@@ -40,6 +40,21 @@ def run_clocks(runs: List<&2,Run>, +created: Nat, +updated: Nat, clocks: Clocks)
   match runs:
     case []: clocks
     case run <> rest: run_clocks(rest,created,updated,record_run(run,created,updated,clocks))
+
+def request_before(left: Run, right: Run) -> Bool:
+  match left right:
+    case Run{a,_,_,_} Run{b,_,_,_}: Nat.is_le(a,b)
+
+def between_runs(runs: List<&2,Run>, +created: Nat, +updated: Nat, +frontier: Nat) -> List<&2,Span>:
+  match runs:
+    case []: []
+    case Run{+request,_,+completed,_} <> rest:
+      +start = Nat.max(created,Nat.min(updated,request))
+      +valid_end = Bool.and(Nat.is_le(start,completed),Nat.is_le(completed,updated))
+      +end = Bool.pick(Nat,valid_end,completed,updated)
+      +tail = between_runs(rest,created,updated,Nat.max(frontier,end))
+      +gap = Bool.and(Nat.is_lt(created,frontier),Bool.and(Nat.is_lt(frontier,request),Nat.is_le(request,updated)))
+      Bool.pick(List<&2,Span>,gap,Span{Nat.sub(frontier,created),Nat.sub(request,created),"Between recorded runs"} <> tail,tail)
 
 def thread_before(a: Thread, b: Thread) -> Bool:
   match a b:
@@ -71,13 +86,19 @@ def provider_detail(input: List<&2,ProviderSpan>, +origin: Nat, +work: List<&2,S
       +valid = Bool.and(Bool.not(String.eq(name,"")),Bool.and(Nat.is_le(origin,a),Nat.is_lt(start,end)))
       Bool.pick(List<&2,Span>,Bool.and(valid,contains_span(start,end,work)),Span{start,end,name} <> tail,tail)
 
-def ci_observations(input: List<&2,CiPoll>, +created: Nat, +last: Nat) -> List<&2,Span>:
+def ci_observations(input: List<&2,CiPoll>, +created: Nat, +updated: Nat, +last: Nat) -> List<&2,Span>:
   match input:
     case []: []
-    case CiPoll{+a,+b} <> rest:
-      +tail = ci_observations(rest,created,last)
-      +valid = within(a,b,created,Nat.add(created,last))
-      Bool.pick(List<&2,Span>,valid,Span{Nat.sub(a,created),Nat.sub(b,created),"CI watcher observation"} <> tail,tail)
+    case CiPoll{+a,+b,+native} <> rest:
+      +tail = ci_observations(rest,created,updated,last)
+      +valid = within(a,b,created,Bool.pick(Nat,native,updated,Nat.add(created,last)))
+      +label = Bool.pick(String,native,"T3 PR watch","CI watcher observation")
+      Bool.pick(List<&2,Span>,valid,Span{Nat.sub(a,created),Nat.sub(b,created),label} <> tail,tail)
+
+def span_extent(spans: List<&2,Span>, last: Nat) -> Nat:
+  match spans:
+    case []: last
+    case Span{_,end,_} <> rest: span_extent(rest,Nat.max(end,last))
 
 type PublishedFeed is Data:
   PublishedFeed{observed: Nat, traces: List<&2,Trace>, overview: List<&2,Trace>, from: Nat, as_of: Nat}
@@ -86,13 +107,16 @@ type Projection is Data:
   Projection{remaining: Nat, observed: Nat, traces: List<&2,Trace>, overview: List<&2,Trace>}
 
 def include_trace(clocks: Clocks, +created: Nat, +updated: Nat, +from: Nat, +to: Nat,
-  row: Nat, detail: List<&2,ProviderSpan>, ci: List<&2,CiPoll>, projection: Projection) -> Projection:
+  row: Nat, detail: List<&2,ProviderSpan>, ci: List<&2,CiPoll>, +between: List<&2,Span>, projection: Projection) -> Projection:
   match clocks projection:
     case Clocks{+last,+work,wait,errors} Projection{+remaining,+observed,+traces,+overview}:
-      +known = Nat.is_lt(0n,last)
+      +observations = ci_observations(ci,created,updated,last)
+      +end = span_extent(between,last)
+      +extent = span_extent(observations,end)
+      +known = Nat.is_lt(0n,extent)
       +latest = Bool.and(known,Nat.is_lt(0n,remaining))
-      +in_week = Bool.and(known,Bool.and(Nat.is_lt(created,to),Nat.is_lt(from,Nat.add(created,last))))
-      +trace : Trace = Trace{created,last,row,work,wait,errors,provider_detail(detail,created,work),ci_observations(ci,created,last)}
+      +in_week = Bool.and(known,Bool.and(Nat.is_lt(created,to),Nat.is_lt(from,Nat.add(created,extent))))
+      +trace : Trace = Trace{created,end,extent,row,work,wait,errors,provider_detail(detail,created,work),observations,between}
       Projection{Bool.pick(Nat,latest,Nat.sub(remaining,1n),remaining),
         Bool.pick(Nat,latest,Nat.max(observed,updated),observed),
         Bool.pick(List<&2,Trace>,latest,trace <> traces,traces),
@@ -101,9 +125,10 @@ def include_trace(clocks: Clocks, +created: Nat, +updated: Nat, +from: Nat, +to:
 def collect(threads: List<&2,Thread>, +from: Nat, +to: Nat, projection: Projection) -> Projection:
   match threads:
     case []: projection
-    case Thread{+created,+updated,row,runs,detail,ci} <> rest:
+    case Thread{+created,+updated,row,+runs,detail,ci} <> rest:
       +clocks = run_clocks(runs,created,updated,Clocks{0n,[],[],[]})
-      collect(rest,from,to,include_trace(clocks,created,updated,from,to,row,detail,ci,projection))
+      +between = between_runs(List.sort(~Run,~request_before,runs),created,updated,0n)
+      collect(rest,from,to,include_trace(clocks,created,updated,from,to,row,detail,ci,between,projection))
 
 def publish(projection: Projection, from: Nat, as_of: Nat) -> PublishedFeed:
   match projection:

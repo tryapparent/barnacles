@@ -123,11 +123,12 @@ Collector test, a failed older-page request resumes after a fresh head
 snapshot and stale evidence cannot change the newer exit code.
 
 Head snapshots also retain a separate allowlisted analysis projection.
-It holds local run identities and clocks, GitHub PR links and native
-provider binding fields. Titles, prompts, worktree paths and tool results
-stay out of it. The history poller refreshes missing or changed heads
-from the last 24 hours without traversing their older pages just for the
-projection. It commits the projection with the history page.
+It holds thread titles, local run clocks, GitHub PR links and native provider
+bindings. It admits timed PR watch notifications from the bounded source
+head and retains each by message ID so an older observed watch survives a head
+refresh. Prompts, worktree paths and tool results stay out of it. The poller
+refreshes recent changed heads and backfills missing metadata over seven days.
+It commits the metadata with the history page.
 `projectionFailed` counts head projections that could not be decoded
 while the underlying command import could proceed.
 
