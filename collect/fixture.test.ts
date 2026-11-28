@@ -91,6 +91,6 @@ test("Codex capture restarts, admits new arrivals beside backfill and preserves 
   capture("backfill");
   capture("backfill");
   assert.equal(rows("codex").filter(row => row.sessionId).length, events);
-  assert.ok(rows("health").some(row => row.lane === "backfill" && row.status === "complete" && row.scannedUnits === 4));
+  assert.ok(rows("health").some(row => row.lane === "backfill" && row.status === "complete" && row.scannedUnits === 4 && row.scanProgress === "100.0%"));
   assert.doesNotMatch(JSON.stringify(rows("health")), /retained|rollout-/);
 });

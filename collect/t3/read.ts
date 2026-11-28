@@ -20,7 +20,8 @@ function list<T>(input: unknown, cap: number, decode: (input: unknown) => T): Li
 }
 
 const text = (input: unknown) => typeof input === "string" ? input : "";
-const ms = (input: unknown) => String(Date.parse(text(input)));
+const timestamp = (input: unknown) => Date.parse(text(input));
+const ms = (input: unknown) => String(timestamp(input));
 
 function bindings(projection: Record<string, unknown>) {
   return list<Binding>(projection.providerThreads, 64, value => {
@@ -89,12 +90,7 @@ async function source(url: URL, token: string, limit: number, method = "GET", ti
 
 async function read(origin: string, token: string, thread: string, cursor = "") {
   const url = sourceURL("/api/orchestration/threads/" + encodeURIComponent(thread) + (cursor ? "/history" : "/bounded"), origin);
-  if (cursor) {
-    url.searchParams.set("cursor", cursor);
-    url.searchParams.set("view", "activity");
-  } else {
-    url.searchParams.set("dedupeBodies", "1");
-  }
+  url.search = cursor ? new URLSearchParams({ cursor, view: "activity" }).toString() : "dedupeBodies=1";
   return source(url, token, 8 << 20);
 }
 
@@ -159,7 +155,8 @@ function page(policy: Capture, scope: string, thread: string, input: Record<stri
   const lines: string[] = [];
   let oldest = 0;
   let runHistoryGap = false;
-  const observe = (value: number) => { if (value > 0) oldest = oldest ? Math.min(oldest, value) : value; };
+  const receipt = String(observed);
+  const observe = (value: number) => { if (value > 0) oldest = Math.min(oldest || value, value); };
   let items;
   if (cursor) {
     items = array(input.items, 4096).map(entry => ({ item: object(entry.item),
@@ -173,15 +170,14 @@ function page(policy: Capture, scope: string, thread: string, input: Record<stri
     runHistoryGap = input.hasMoreHistory === true || runs.length === 4096;
     for (const run of runs) {
       const line = policy.run(scope, thread, text(run.id), text(run.threadId), text(run.status),
-        ms(run.requestedAt), ms(run.startedAt), ms(run.completedAt), ms(run.updatedAt ?? head.updatedAt), String(observed), text(run.providerThreadId), refs);
-      if (line) {
-        lines.push(line);
-        observe(Number(ms(run.requestedAt)) || Number(ms(run.startedAt)) || Number(ms(run.completedAt)));
-      }
+        ms(run.requestedAt), ms(run.startedAt), ms(run.completedAt), ms(run.updatedAt ?? head.updatedAt), receipt, text(run.providerThreadId), refs);
+      if (!line) continue;
+      lines.push(line);
+      observe(timestamp(run.requestedAt) || timestamp(run.startedAt) || timestamp(run.completedAt));
     }
     for (const pr of array(head.pullRequests ?? [], 100)) {
       const link = policy.pr_link(scope, thread, text(pr.host), text(pr.repository), String(pr.number ?? ""),
-        text(pr.source), ms(head.updatedAt), String(observed));
+        text(pr.source), ms(head.updatedAt), receipt);
       if (link) lines.push(link);
     }
     items = array(projection.turnItems, 4096).map(item => ({ item, owner: text(item.threadId), visibility: "local" }));
@@ -190,24 +186,25 @@ function page(policy: Capture, scope: string, thread: string, input: Record<stri
     const native = object(item.nativeItemRef ?? {});
     const line = policy.operation(scope, thread, text(item.id), owner === text(item.threadId) ? owner : "", visibility,
       text(item.runId), text(item.type), text(native.driver), text(native.strength), ms(item.startedAt),
-      ms(item.completedAt), ms(item.updatedAt), String(observed));
-    if (owner === thread && visibility === "local") observe(Number(ms(item.startedAt)) || Number(ms(item.updatedAt)));
+      ms(item.completedAt), ms(item.updatedAt), receipt);
+    if (owner === thread && visibility === "local") observe(timestamp(item.startedAt) || timestamp(item.updatedAt));
     if (line) lines.push(line);
   }
   return { lines, next: text(next), oldest, runHistoryGap };
 }
 
 type T3Mark = { revision: number; cursor: string; oldest: number; uncertain: boolean; previous: string[]; retry?: number };
-type State = { last: number; oldest: number; count: number; marks: Record<string, T3Mark> };
+type State = { last: number; lastRead?: number; oldest: number; count: number; marks: Record<string, T3Mark> };
 
 async function capture(lane: string, once: boolean, origin: string, tokenFile: string) {
+  const backfill = lane === "backfill";
   const scope = scopeArg(process.env.PLOW_CAPTURE_SCOPE);
   const { PLOW_CAPTURE_STATE: stateDir, PLOW_CAPTURE_SPOOL: spool } = process.env;
-  if (!stateDir || !spool || !["live", "backfill"].includes(lane)) throw Error("Configure T3 capture state and spool");
+  if (!stateDir || !spool || (lane !== "live" && !backfill)) throw Error("Configure T3 capture state and spool");
   mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   const policy = await capturePolicy(stateDir) as Capture;
   const statePath = join(stateDir, "t3-" + scope + "-" + lane + ".json");
-  const state = resume<State>(statePath, { last: 0, oldest: 0, count: 0, marks: Object.create(null) });
+  const state = resume<State>(statePath, { last: 0, oldest: 0, count: 0, marks: {} });
   Object.setPrototypeOf(state.marks, null);
   do {
     const observed = Date.now();
@@ -231,7 +228,7 @@ async function capture(lane: string, once: boolean, origin: string, tokenFile: s
         for (const entry of array(result.value.threads, 50_000)) {
           const id = text(entry.id);
           if (id.length > 512 || !/^[A-Za-z0-9](?:[A-Za-z0-9:_-]|%[A-Fa-f0-9]{2})*$/.test(id)) continue;
-          const stamp = Number(ms(entry.updatedAt)) || Number(ms(entry.createdAt)) || 0;
+          const stamp = timestamp(entry.updatedAt) || timestamp(entry.createdAt) || 0;
           targets.set(id, Math.max(stamp, targets.get(id) ?? 0));
         }
       }
@@ -240,13 +237,13 @@ async function capture(lane: string, once: boolean, origin: string, tokenFile: s
       const pending = [];
       for (const [id, updated] of targets) {
         const mark = state.marks[id];
-        if (!mark || mark.revision < updated || (lane === "backfill" && mark.cursor)) pending.push({ id, updated: mark?.cursor ? mark.oldest : updated, retry: mark?.retry });
+        if (!mark || mark.revision < updated || (backfill && mark.cursor)) pending.push({ id, updated: mark?.cursor ? mark.oldest : updated, retry: mark?.retry });
         else scanned++;
       }
       for (const thread of ordered(policy, pending).slice(0, 8)) {
         const old = state.marks[thread];
         const revision = targets.get(thread)!;
-        const cursor = lane === "backfill" && old ? old.cursor : "";
+        const cursor = backfill ? old?.cursor ?? "" : "";
         try {
           const result = page(policy, scope, thread, await read(origin, token, thread, cursor), cursor, observed);
           if (result.next && old?.previous.includes(result.next)) throw Error("incomplete_projection");
@@ -255,12 +252,13 @@ async function capture(lane: string, once: boolean, origin: string, tokenFile: s
           const oldest = old?.oldest && result.oldest ? Math.min(old.oldest, result.oldest) : old?.oldest || result.oldest;
           state.marks[thread] = {
             revision: cursor && old ? old.revision : revision,
-            cursor: lane === "backfill" ? result.next : "",
+            cursor: backfill ? result.next : "",
             oldest, uncertain: result.runHistoryGap || !!(cursor && old?.uncertain),
-            previous: result.next && lane === "backfill" ? [...(cursor ? old!.previous : []), result.next] : [],
+            previous: result.next && backfill ? [...(cursor ? old!.previous : []), result.next] : [],
           };
-          if (oldest) state.oldest = state.oldest ? Math.min(state.oldest, oldest) : oldest;
+          if (oldest) state.oldest = Math.min(state.oldest || oldest, oldest);
           state.count += result.lines.length;
+          state.lastRead = observed;
           scanned += Number(!state.marks[thread].cursor && state.marks[thread].revision === revision);
           checkpoint(statePath, state);
         } catch (error) {
@@ -275,15 +273,15 @@ async function capture(lane: string, once: boolean, origin: string, tokenFile: s
         }
       }
       if (!reason) {
-        status = scanned < targets.size ? "working" : lane === "backfill" ? "complete" : "idle";
-        if (status === "idle" || status === "complete") state.last = observed;
+        status = scanned < targets.size ? "working" : backfill ? "complete" : "idle";
+        if (status !== "working") state.last = state.lastRead = observed;
         checkpoint(statePath, state);
         if (Object.values(state.marks).some(mark => mark.uncertain)) reason = "incomplete_projection";
       }
     } catch (error) {
       reason = error instanceof Error && error.message === "bounded_inventory" ? "bounded_inventory" : "source_unavailable";
     }
-    health(policy, spool, "t3", scope, lane, status, observed, state.last, state.oldest, newest, scanned, eligible, state.count, reason);
+    health(policy, spool, "t3", scope, lane, status, observed, state.lastRead ?? state.last, state.oldest, newest, scanned, eligible, state.count, reason);
     if (lane === "live") {
       const progress = resume<State>(join(stateDir, "t3-" + scope + "-backfill.json"), { last: 0, oldest: 0, count: 0, marks: {} });
       publish(join(spool, "t3"), scope + "-" + lane, [policy.coverage(scope, "t3_coverage", lane, status,

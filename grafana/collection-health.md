@@ -2,7 +2,7 @@
 
 Open `/d/plow-collection-health/collection-health` in the Plow Grafana instance. The dashboard uses native OSS tables, time series, logs and stats. Its wordmark, header colors and typography follow Run Breakdown.
 
-The top table shows the latest envelope in the selected range per collector, scope and lane. T3, Codex history and GitHub can each report live and backfill independently. An empty table or missing lane means Grafana found no report in that range. Widen the range to look for an older report. A Grafana query error identifies a serving problem separately. Compare report age with the producer's configured cadence. The dashboard preserves the last reported status and applies no inferred health threshold. A successful empty poll may report `Idle` with a recent last success and zero ingested records. The newest source clock can be much older.
+T3 reports each successful page read even while its scan is running. The full-scan cutoff used by Activity remains a separate clock. The top table shows the latest envelope in the selected range per collector, scope and lane. T3, Codex history and GitHub can each report live and backfill independently. An empty table or missing lane means Grafana found no report in that range. Widen the range to look for an older report. A Grafana query error identifies a serving problem separately. Compare report age with the producer's configured cadence. The dashboard preserves the last reported status and applies no inferred health threshold. A successful empty poll may report `Idle` with a recent last success and zero ingested records. The newest source clock can be much older.
 
 Coverage and progress shows the oldest source time actually scanned. Scanned and eligible refer to source units and are comparable within the same report and unit. Ingested refers to records. Unknown clocks and counts remain unknown. `Complete` means the worker exhausted available authorized history. A gap can still limit coverage. View health report history from the latest-report panel to inspect exact clocks, counts and gap codes. The history panel displays up to 100 reports. Retrying and blocked history counts status reports per interval, including reports about the same incident.
 
@@ -21,6 +21,7 @@ Publish append-only JSONL or atomic immutable chunks matching `/spool/health/*.j
 | `observedMs` | Positive UTC epoch milliseconds for the report itself |
 | `lastSuccessMs`, `newestSourceMs`, `oldestScannedMs` | Source clocks in UTC epoch milliseconds or null |
 | `scannedUnits`, `eligibleUnits`, `ingestedRecords` | Counts or null |
+| `scanProgress` | Producer-calculated share of eligible units scanned, rounded down to one decimal. Empty when no positive denominator is known. |
 | `unit` | `thread`, `session`, `page`, `attempt`, or `record`. Required when a scanned or eligible count is supplied. |
 | `gapCode` | Optional worker-allowlisted token |
 

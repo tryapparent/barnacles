@@ -47,19 +47,33 @@ Health uses `/spool/health/github-<alias>-<unique>.jsonl` with `kind=collector_h
 
 ## Compose deployment
 
-The optional [Compose definition](../../infra/lgtm/github.compose.yaml) runs the same CLI with the writer lock and a private persistent state directory. Set the repository and Actions floor inputs above. From the repository root, set these deployment inputs.
+The [Compose overlay](../../infra/lgtm/github.compose.yaml) runs one worker with a writer lock in the private persistent state directory. The worker runs both lanes. For the existing Clanker stack, apply from the same pinned release directory and with the same private runtime as the Grafana project. The example enables only `tryapparent/plow` and uses an illustrative history floor. Set the authorized repository list and intended floor before the first run.
 
 ```sh
 export PLOW_LGTM_WORKDIR=/private/plow/runtime
 export PLOW_GITHUB_CREDENTIAL_DIR=/private/plow/github-credentials
 export PLOW_BEND_BUNDLE=/private/plow/verified-compiler
 export PLOW_GITHUB_COLLECTOR_USER=0:0
-export COMPOSE_FILE="$PWD/compose.yaml:$PWD/infra/lgtm/github.compose.yaml"
-install -d -m 0700 "$PLOW_LGTM_WORKDIR/github-state" "$PLOW_LGTM_WORKDIR/spool"
-docker compose -p plow-grafana up -d github-collector
+export PLOW_GITHUB_REPOSITORIES=plow=tryapparent/plow
+export PLOW_GITHUB_ACTIONS_SINCE=2026-01-01T00:00:00Z
+bash infra/lgtm/deploy.sh --github-only
 ```
 
-Write the scoped credential to `github-read` in `PLOW_GITHUB_CREDENTIAL_DIR` with mode 0400 or 0600. Set the service UID and GID as seen inside the container. On Clanker's rootless Docker, `0:0` maps to the host account that owns the private runtime. The read-only directory bind lets reruns see an atomically replaced credential. Use the same overlay and persistent paths whenever reapplying the stack. For a bounded check with an isolated state directory, use `docker compose run --rm github-collector --once`.
+Provision `github-read` in `PLOW_GITHUB_CREDENTIAL_DIR` before invoking the script. For Plow alone, select only the `tryapparent/plow` repository under the `tryapparent` resource owner. Grant read access to Pull requests and Actions, with the automatic Metadata read permission. Use a fine-grained token or externally rotated GitHub App installation token. Keep the credential directory private and the file mode at 0400 or 0600. Publish replacements atomically within that directory so the read-only directory mount can see them during an existing run. [GitHub repository permissions](https://docs.github.com/en/rest/authentication/permissions-required-for-fine-grained-personal-access-tokens)
+
+Use the service UID and GID as seen inside the container. On Clanker's rootless Docker, `0:0` maps to the host account that owns the private runtime. The deploy script prepares `github-state` and uses the existing shared `spool`. Keep the private state, spool and compiler paths stable across reapplications. Keep the aliases, floor and job-name allowlist stable with the checkpoints. Ensure that the worker and Alloy can access the spool under their configured identities.
+
+The script targets the existing `plow-grafana` project by default. Set `COMPOSE_PROJECT_NAME` to a unique name for an isolated candidate. The GitHub-only mode starts or reapplies only `github-collector` with the production restart policy. For a full stack deployment, export `PLOW_GITHUB_ENABLED=true` with the same inputs and use the deployment mode for the current ingress. Keep the configured T3 and Codex capture profiles and inputs on full deployments.
+
+After startup, verify a fresh GitHub `live` and `backfill` heartbeat for each configured alias in Collection Health. Confirm both lanes record successful source reads and check any gap code. A running container or a staged spool file alone does not prove delivery to Grafana.
+
+To roll back the worker, unset the enable flag for subsequent full deployments and stop just the service from the release directory with the same inputs.
+
+```sh
+docker compose -p plow-grafana -f compose.yaml -f infra/lgtm/github.compose.yaml stop github-collector
+```
+
+Retain `github-state`, the shared spool and Alloy storage for resume. Use the same overlay and `docker compose run --rm --no-deps github-collector --once` for a bounded run against an isolated state and spool.
 
 The [common Alloy configuration](../alloy/config.txt) reads the GitHub spool and indexes records by source time when present, partitioned by UTC hour for late-arriving history. Records without a source anchor use Alloy’s observation time. Both producer clocks remain in each record. A separate receiver sends health reports to the [Collection Health dashboard](../../grafana/collection-health.md). [Alloy filelog settings](https://grafana.com/docs/alloy/latest/reference/components/otelcol/otelcol.receiver.filelog/) · [Loki ordering limits](https://grafana.com/docs/loki/latest/configure/)
 

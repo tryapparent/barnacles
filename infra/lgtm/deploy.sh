@@ -2,15 +2,51 @@ set -euo pipefail
 
 cd "$(dirname -- "${BASH_SOURCE[0]}")/../.."
 : "${PLOW_LGTM_WORKDIR:?Set the private runtime directory}"
+mode=${1:-}
+case "$mode" in
+  ""|--access|--restore-private|--github-only) ;;
+  *) exit 2 ;;
+esac
+github=${PLOW_GITHUB_ENABLED:-false}
+project=plow-grafana
+if [[ $mode == --github-only ]]; then
+  github=true
+  project=${COMPOSE_PROJECT_NAME:-$project}
+fi
+case "$github" in
+  true|false) ;;
+  *) printf '%s\n' 'Set PLOW_GITHUB_ENABLED to true or false.' >&2; exit 2 ;;
+esac
+compose=(docker compose -p "$project")
+if [[ $mode == --access ]]; then
+  compose+=(-f infra/lgtm/compose.yaml -f infra/access/compose.yaml)
+elif [[ $github == true ]]; then
+  compose+=(-f compose.yaml)
+fi
+umask 077
+if [[ $github == true ]]; then
+  : "${PLOW_BEND_BUNDLE:?Set a verified compiler bundle path}"
+  : "${PLOW_GITHUB_CREDENTIAL_DIR:?Set the private GitHub credential directory}"
+  credential="$PLOW_GITHUB_CREDENTIAL_DIR/github-read"
+  if [[ $PLOW_LGTM_WORKDIR != /* || $PLOW_BEND_BUNDLE != /* || ! -f $PLOW_BEND_BUNDLE/main.ts ||
+        $PLOW_GITHUB_CREDENTIAL_DIR != /* || ! -f $credential || -L $credential || ! -s $credential ]]; then
+    printf '%s\n' 'Use absolute paths to the runtime, verified compiler bundle and directory containing a private github-read file.' >&2
+    exit 2
+  fi
+  export PLOW_GITHUB_SOURCE="$PWD"
+  compose+=(-f infra/lgtm/github.compose.yaml)
+  mkdir -p -m 0700 "$PLOW_LGTM_WORKDIR/github-state" "$PLOW_LGTM_WORKDIR/spool"
+fi
+if [[ $mode == --github-only ]]; then
+  export PLOW_LGTM_RESTART=unless-stopped
+  "${compose[@]}" config --quiet
+  "${compose[@]}" up -d --no-deps --wait --wait-timeout 120 github-collector
+  exit
+fi
 : "${PLOW_TAILNET_VIEWER:?Set the allowed Tailscale login}"
 : "${PLOW_TAILNET_HTTPS_PORT:?Set the dedicated Tailscale HTTPS port}"
 : "${PLOW_GRAFANA_PORT:?Set the dedicated Grafana loopback port}"
 node_name=$(tailscale status --json | jq -er '.Self.DNSName | rtrimstr(".")')
-mode=${1:-}
-case "$mode" in
-  ""|--access|--restore-private) ;;
-  *) exit 2 ;;
-esac
 export PLOW_GRAFANA_ROOT_URL="https://$node_name:$PLOW_TAILNET_HTTPS_PORT/"
 export PLOW_GRAFANA_TAILNET_AUTH=true PLOW_LGTM_RESTART=unless-stopped
 authority="$node_name:$PLOW_TAILNET_HTTPS_PORT"
@@ -19,11 +55,9 @@ legacy_target="$backend"
 access_target="unix:$PLOW_LGTM_WORKDIR/access-tailnet.sock"
 accepted_access=""
 if [[ -n $mode ]]; then accepted_access="$access_target"; fi
-compose=(docker compose -p plow-grafana)
 admin_socket=()
 if [[ $mode == --access ]]; then
   export PLOW_TAILNET_ORIGIN="https://$authority"
-  compose+=(-f infra/lgtm/compose.yaml -f infra/access/compose.yaml)
   admin_socket=(--unix-socket "$PLOW_LGTM_WORKDIR/access-grafana/grafana.sock")
   backend=http://localhost/app
   [[ $(curl --max-time 5 --unix-socket "${access_target#unix:}" -sS -o /dev/null -w '%{http_code}' \
@@ -34,7 +68,6 @@ jq -e --arg authority "$authority" --arg legacy "$legacy_target" --arg access "$
   (.AllowFunnel[$authority] != true) and
   (.Web[$authority] == null or (.Web[$authority].Handlers | keys == ["/"]) and (.Web[$authority].Handlers["/"].Proxy as $target | $target == $legacy or ($access != "" and $target == $access)))
 ' <<< "$route" > /dev/null
-umask 077
 mkdir -p "$PLOW_LGTM_WORKDIR/spool"
 if [[ ! -s "$PLOW_LGTM_WORKDIR/grafana-password" ]]; then
   openssl rand -hex 32 > "$PLOW_LGTM_WORKDIR/grafana-password"

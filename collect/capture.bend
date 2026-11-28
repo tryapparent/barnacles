@@ -134,12 +134,21 @@ def numeric(key: String,parsed: Maybe<&2,Nat>) -> Bytes.Bytes & J.Val:
 def measure(key: String,value: String) -> Bytes.Bytes & J.Val:
   numeric(key,Nat.read(value))
 
+def scan_progress(scanned: Maybe<&2,Nat>,eligible: Maybe<&2,Nat>) -> String:
+  match scanned eligible:
+    case Some{done} Some{+total}:
+      +tenths = Nat.div(Nat.mul(Nat.min(done,total),1000n),Nat.max(total,1n))
+      Bool.pick(String,Nat.is_gt(total,0n),
+        String.concat([Nat.show(Nat.div(tenths,10n)),".",Nat.show(Nat.mod(tenths,10n)),"%"]),"")
+    case _ _: ""
+
 def health(collector: String,+scope: String,lane: String,state: String,observed: String,last: String,newest: String,
-    oldest: String,scanned: String,eligible: String,written: String,unit: String,reason: String) -> String:
+    oldest: String,+scanned: String,+eligible: String,written: String,unit: String,reason: String) -> String:
   row : J.Val = J.Obj{[str("kind","collector_health"),P.clock_field("schemaVersion",1n),str("collector",collector),
     str("scope",scope),str("lane",lane),str("status",status(state)),num("observedMs",value(observed)),
     measure("lastSuccessMs",last),measure("newestSourceMs",newest),measure("oldestScannedMs",oldest),
     measure("scannedUnits",scanned),measure("eligibleUnits",eligible),measure("ingestedRecords",written),
+    str("scanProgress",scan_progress(Nat.read(scanned),Nat.read(eligible))),
     str("unit",unit),str("gapCode",gap(reason))]}
   Bool.pick(String,P.token(scope),P.render(row),"")
 

@@ -18,7 +18,12 @@ services:
       PLOW_GITHUB_MAX_STEPS: ${PLOW_GITHUB_MAX_STEPS:-40}
       PLOW_GITHUB_JOB_NAMES: ${PLOW_GITHUB_JOB_NAMES:-}
     volumes:
-      - .:/app:ro
+      - type: bind
+        source: ${PLOW_GITHUB_SOURCE:-.}
+        target: /app
+        read_only: true
+        bind:
+          create_host_path: false
       - ${PLOW_LGTM_WORKDIR:?Set the private runtime directory}/spool:/spool
       - type: bind
         source: ${PLOW_LGTM_WORKDIR:?Set the private runtime directory}/github-state
