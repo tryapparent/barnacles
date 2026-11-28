@@ -186,16 +186,16 @@ export async function serveAnalysis(file: string, port: string) {
 }
 
 function dockerCommand(args: string[], env = process.env) {
-  return execFileSync("docker", ["--context", "rootless", ...args], {
+  return execFileSync("docker", args, {
     encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 180_000, maxBuffer: 4 * 1024 * 1024, env,
   }).trim();
 }
 
-const docker = (...args: string[]) => dockerCommand(args);
+const docker = (...args: string[]) => dockerCommand(["--context", "rootless", ...args]);
 
 export function analysisActivityDirectory() {
-  const volume = docker("volume", "ls", "-f", `name=^${analysisProject()}_activity$`, "--format", "{{.Mountpoint}}");
-  return volume && existsSync(join(volume, "timeline.json")) ? volume : undefined;
+  const volume = dockerCommand(["volume", "ls", "-f", `name=^${analysisProject()}_activity$`, "--format", "{{.Mountpoint}}"]);
+  if (volume && existsSync(join(volume, "timeline.json"))) return volume;
 }
 
 const analysisProject = () => process.env.PLOW_ANALYSIS_COMPOSE_PROJECT || "plow-analysis";
@@ -274,7 +274,7 @@ function deployAnalysis(release: string) {
         docker("image", "tag", item.backup, item.tag);
         if (switching) {
           const legacyAlias = item.source !== stack && realpathSync(item.source) === stack;
-          dockerCommand(["compose", "--project-name", project, "--env-file", settings, "--profile", "analysis",
+          dockerCommand(["--context", "rootless", "compose", "--project-name", project, "--env-file", settings, "--profile", "analysis",
             "-f", item.source, "up", "--detach", "--no-deps", "--no-build", "--force-recreate", item.service],
           legacyAlias ? { ...process.env, PLOW_ANALYSIS_HISTORY_DIR: "" } : process.env);
         }
