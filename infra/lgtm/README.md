@@ -52,3 +52,9 @@ bash infra/lgtm/deploy.sh
 The deployment publishes Grafana on the configured loopback port in the `plow-grafana` Compose project. Its dedicated Tailscale Serve HTTPS endpoint forwards the authenticated tailnet identity to Grafana. Grafana admits only preprovisioned identities. The script creates or confirms the requested Viewer and leaves the random bootstrap administrator credential in the private runtime directory. Choose ports unused by other services. It keeps Loki, Tempo, Mimir, and Alloy on loopback. Follow the returned URL from a device signed in as the Viewer.
 
 Reapply with the same runtime directory and environment to retain the volumes and the Viewer. To stop serving just this endpoint, use `tailscale serve --https="$PLOW_TAILNET_HTTPS_PORT" off`. To stop the Compose project while preserving telemetry, run `docker compose -p plow-grafana stop` from the deployed release directory with the same runtime environment. Verify Grafana's authenticated `/api/user` returns the intended read-only identity and query the imported run with its original time range.
+
+Activity reads evidence in bounded windows up to eight days. The single-node
+candidate splits Loki range reads by day. Hourly query splitting multiplied
+each panel's source reads into hundreds of subqueries and delayed short
+run-detail reads during range changes. The query split is independent of the
+hourly event streams used for late historical inserts.
