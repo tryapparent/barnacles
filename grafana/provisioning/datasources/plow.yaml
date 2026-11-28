@@ -1,0 +1,10 @@
+apiVersion: 1
+datasources:
+  - name: Plow Agent Observability
+    uid: plow-agent-observability
+    type: plow-agent-observability-datasource
+    access: proxy
+    editable: false
+    jsonData:
+      lokiUrl: http://loki:3100
+      lokiTenant: plow-fixture

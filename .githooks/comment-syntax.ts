@@ -150,6 +150,11 @@ async function parseComments(policy: SyntaxPolicy, file: string, bytes: Buffer):
   if (!policy.valid_text(text)) throw Error("Unexpected NUL in text source");
   switch (format) {
     case "plain": return [];
+    case "dockerfile": return text.split(/\r?\n/).filter((line) => line.trimStart().startsWith("#"));
+    case "go-mod": return text.split(/\r?\n/).flatMap((line) => {
+      const comment = line.indexOf("//");
+      return comment < 0 ? [] : [line.slice(comment)];
+    });
     case "gitignore":
     case "gitattributes":
       return text.split(/\r?\n/).filter((line) => policy.git_pattern_comment(line, format === "gitattributes"));

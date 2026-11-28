@@ -1,0 +1,5 @@
+{"timestamp":"2025-06-03T12:00:00.000Z","type":"session_meta","payload":{"id":"fixture-session","cwd":"PRIVATE_FIXTURE_CWD","instructions":"PRIVATE_FIXTURE_INSTRUCTIONS"}}
+{"timestamp":"2025-06-03T12:00:00.100Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"PRIVATE_FIXTURE_PROMPT"}]}}
+{"timestamp":"2025-06-03T12:00:01.000Z","type":"response_item","payload":{"type":"function_call","name":"exec","call_id":"fixture-call","arguments":"{\"cmd\":\"PRIVATE_FIXTURE_ARGUMENT\"}"}}
+{"timestamp":"2025-06-03T12:00:03.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"fixture-call","output":"PRIVATE_FIXTURE_OUTPUT"}}
+{"timestamp":"2025-06-03T12:00:04.000Z","type":"response_item","payload":{"type":"function_call","name":"exec","call_id":"fixture-incomplete","arguments":"{\"cmd\":\"PRIVATE_FIXTURE_MISSING_RESULT\"}"}}

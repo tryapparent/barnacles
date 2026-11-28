@@ -1,0 +1,168 @@
+otelcol.storage.file "positions" {
+  fsync = true
+}
+
+otelcol.receiver.filelog "codex" {
+  include           = ["/spool/codex.jsonl"]
+  include_file_name = false
+  start_at          = "beginning"
+  storage           = otelcol.storage.file.positions.handler
+  resource          = { "plow_source" = "codex_history" }
+  output {
+    logs = [otelcol.processor.transform.transport.input]
+  }
+}
+
+otelcol.receiver.filelog "t3" {
+  include           = ["/spool/t3.jsonl"]
+  include_file_name = false
+  start_at          = "beginning"
+  storage           = otelcol.storage.file.positions.handler
+  resource          = { "plow_source" = "t3" }
+  output {
+    logs = [otelcol.processor.transform.transport.input]
+  }
+}
+
+otelcol.processor.transform "transport" {
+  error_mode = "propagate"
+
+  log_statements {
+    context = "log"
+    statements = [
+      `merge_maps(cache, ParseJSON(body), "upsert")`,
+      `set(time_unix_nano, Int(cache["timestampMs"]) * 1000000) where cache["timestampMs"] != nil`,
+      `set(time_unix_nano, Int(cache["run"]["completedMs"]) * 1000000) where cache["run"] != nil`,
+      `set(attributes["event_id"], cache["eventId"])`,
+      `set(attributes["call_id"], cache["callId"])`,
+      `set(attributes["session_id"], cache["sessionId"])`,
+      `set(attributes["run_id"], cache["run"]["id"]) where cache["run"] != nil`,
+      `set(attributes["session_id"], cache["run"]["sessionId"]) where cache["run"] != nil`,
+    ]
+  }
+
+  output {
+    logs = [otelcol.exporter.otlphttp.loki.input]
+  }
+}
+
+otelcol.exporter.otlphttp "loki" {
+  client {
+    endpoint = "http://loki:3100/otlp"
+    headers  = { "X-Scope-OrgID" = "plow-fixture" }
+  }
+
+  retry_on_failure {
+    max_elapsed_time = "0s"
+  }
+
+  sending_queue {
+    storage           = otelcol.storage.file.positions.handler
+    num_consumers     = 1
+    block_on_overflow = true
+  }
+}
+
+otelcol.receiver.otlp "codex_live" {
+  http {
+    endpoint = "0.0.0.0:4318"
+  }
+
+  output {
+    traces = [otelcol.processor.transform.codex_live.input]
+  }
+}
+
+otelcol.processor.transform "codex_live" {
+  error_mode = "propagate"
+
+  trace_statements {
+    context = "resource"
+    statements = [
+      `set(resource.schema_url, "")`,
+      `keep_keys(resource.attributes, [])`,
+    ]
+  }
+
+  trace_statements {
+    context = "scope"
+    statements = [
+      `set(scope.schema_url, "")`,
+      `keep_keys(scope.attributes, [])`,
+      `set(scope.name, "plow.codex")`,
+      `set(scope.version, "")`,
+    ]
+  }
+
+  trace_statements {
+    context = "span"
+    statements = [
+      `set(span.name, "codex.span") where not IsMatch(span.name, "^(session_loop|session_task\\.turn|run_turn|codex\\.(sampling|tool_blocking|process\\.spawn)|dispatch_tool_call_with_state|exec_command|write_stdin|unified_exec\\.(exec_command|write_stdin))$")`,
+      `set(span.trace_state, "")`,
+      `set(span.status.message, "")`,
+      `set(span.links, nil)`,
+      `keep_keys(span.attributes, ["conversation.id", "turn.id", "call_id", "thread.id"])`,
+      `set(span.attributes["conversation.id"], span.attributes["thread.id"]) where span.attributes["conversation.id"] == nil and IsString(span.attributes["thread.id"])`,
+      `delete_key(span.attributes, "thread.id")`,
+      `delete_key(span.attributes, "conversation.id") where not IsString(span.attributes["conversation.id"]) or not IsMatch(span.attributes["conversation.id"], "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")`,
+      `delete_key(span.attributes, "turn.id") where not IsString(span.attributes["turn.id"]) or not IsMatch(span.attributes["turn.id"], "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")`,
+      `delete_key(span.attributes, "call_id") where not IsString(span.attributes["call_id"]) or not IsMatch(span.attributes["call_id"], "^call_[A-Za-z0-9_-]{1,96}$")`,
+    ]
+  }
+
+  trace_statements {
+    context = "spanevent"
+    statements = [
+      `set(spanevent.name, "codex.event")`,
+      `set(spanevent.name, spanevent.attributes["event.name"]) where IsString(spanevent.attributes["event.name"]) and IsMatch(spanevent.attributes["event.name"], "^codex\\.(api_request|tool_result|tool_call_received|tool_result_ready|turn_ttft)$")`,
+      `keep_keys(spanevent.attributes, ["conversation.id", "turn.id", "call_id", "duration_ms", "success"])`,
+      `delete_key(spanevent.attributes, "conversation.id") where not IsString(spanevent.attributes["conversation.id"]) or not IsMatch(spanevent.attributes["conversation.id"], "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")`,
+      `delete_key(spanevent.attributes, "turn.id") where not IsString(spanevent.attributes["turn.id"]) or not IsMatch(spanevent.attributes["turn.id"], "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")`,
+      `delete_key(spanevent.attributes, "call_id") where not IsString(spanevent.attributes["call_id"]) or not IsMatch(spanevent.attributes["call_id"], "^call_[A-Za-z0-9_-]{1,96}$")`,
+      `delete_key(spanevent.attributes, "duration_ms") where not IsString(spanevent.attributes["duration_ms"]) or not IsMatch(spanevent.attributes["duration_ms"], "^[0-9]{1,10}$")`,
+      `delete_key(spanevent.attributes, "success") where spanevent.attributes["success"] != "true" and spanevent.attributes["success"] != "false"`,
+    ]
+  }
+
+  output {
+    traces = [otelcol.exporter.otlphttp.tempo.input]
+  }
+}
+
+otelcol.exporter.otlphttp "tempo" {
+  client {
+    endpoint = "http://tempo:4318"
+  }
+}
+
+prometheus.exporter.unix "host" {
+  set_collectors = ["cpu", "meminfo"]
+}
+
+prometheus.scrape "host" {
+  targets = prometheus.exporter.unix.host.targets
+  scrape_interval = "5s"
+  scrape_timeout = "4s"
+  forward_to = [prometheus.relabel.host.receiver]
+}
+
+prometheus.relabel "host" {
+  forward_to = [prometheus.remote_write.mimir.receiver]
+
+  rule {
+    source_labels = ["__name__"]
+    regex = "node_cpu_seconds_total|node_memory_MemAvailable_bytes|node_memory_MemTotal_bytes"
+    action = "keep"
+  }
+
+  rule {
+    target_label = "plow_host"
+    replacement = "loopback-fixture"
+  }
+}
+
+prometheus.remote_write "mimir" {
+  endpoint {
+    url = "http://mimir:9009/api/v1/push"
+  }
+}

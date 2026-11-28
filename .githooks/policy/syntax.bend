@@ -33,6 +33,7 @@ def extension_format(extension: String) -> String:
     case "cpp": "cpp"
     case "hpp": "cpp"
     case "go": "go"
+    case "dockerfile": "dockerfile"
     case "jsonc": "jsonc"
     case "toml": "toml"
     case "txt": "plain"
@@ -52,6 +53,9 @@ def named_format(+name: String, extension: String) -> String:
   match name:
     case ".gitignore": "gitignore"
     case ".gitattributes": "gitattributes"
+    case "go.mod": "go-mod"
+    case "go.sum": "plain"
+    case "Dockerfile": "dockerfile"
     case _:
       Bool.pick(String, license(name), "plain", extension_format(extension))
 

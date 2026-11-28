@@ -36,19 +36,19 @@ test("pre-push routes the outgoing commit and blocks failed verification", () =>
     mkdirSync(join(cwd, ".githooks"));
     mkdirSync(join(cwd, "node_modules/web-tree-sitter"), { recursive: true });
     symlinkSync(fileURLToPath(new URL("../node_modules/js-tiktoken", import.meta.url)), join(cwd, "node_modules/js-tiktoken"));
-    mkdirSync(join(cwd, "collector/github"), { recursive: true });
-    mkdirSync(join(cwd, "dashboard"));
-    mkdirSync(join(cwd, "evidence"));
-    write("evidence/README.md", "Synthetic evidence owner\n");
+    mkdirSync(join(cwd, "collect/source"), { recursive: true });
+    mkdirSync(join(cwd, "analyze"));
+    mkdirSync(join(cwd, "verify"));
+    write("verify/README.md", "Synthetic verification owner\n");
     mkdirSync(join(cwd, "tooling"));
     for (const file of ["verify.ts", "check-directory-width.ts", "check-boundaries.ts", "bend.ts", "verification.bend"]) {
       copyFileSync(new URL("../tooling/" + file, import.meta.url), join(cwd, "tooling", file));
     }
-    write("dashboard/prepare.test.ts", "process.exit(0)\n");
+    write("analyze/run.test.ts", "process.exit(0)\n");
     for (const file of ["pre-push", "snapshot.ts", "check-bend-paths.ts"]) {
       copyFileSync(new URL("./" + file, import.meta.url), join(cwd, ".githooks", file));
     }
-    write(".gitattributes", "collector/github/attempt.test.ts export-ignore\n");
+    write(".gitattributes", "collect/source/attempt.test.ts export-ignore\n");
     write(".githooks/check-comments.ts", "process.exit(0)\n");
     write(".githooks/bend-exceptions.json", "{}\n");
     mkdirSync(join(cwd, ".githooks/policy"));
@@ -61,9 +61,9 @@ test("pre-push routes the outgoing commit and blocks failed verification", () =>
     }
     const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
     write("package.json", JSON.stringify(packageJson));
-    write("collector/github/attempt.test.ts", 'console.log("committed collector test")\n');
-    write("collector/sources.test.ts", "process.exit(0)\n");
-    pass("add", "README.md", "package.json", "package-lock.json", "collector", "dashboard", "evidence", "tooling", ".githooks", ".gitattributes");
+    write("collect/source/attempt.test.ts", 'console.log("committed collector test")\n');
+    write("collect/fixture.test.ts", "process.exit(0)\n");
+    pass("add", "README.md", "package.json", "package-lock.json", "collect", "analyze", "verify", "tooling", ".githooks", ".gitattributes");
     pass("commit", "--quiet", "-m", "baseline");
     pass("push", "--quiet", "origin", "main");
     const install = spawnSync(process.execPath, ["tooling/bend.ts", "--install-hooks"], { cwd, encoding: "utf8" });
@@ -74,24 +74,24 @@ test("pre-push routes the outgoing commit and blocks failed verification", () =>
     commit("README.md");
     assert.doesNotMatch(pass("push", "origin", "feature").stderr, /checking .* tests/);
 
-    write("collector/github/attempt.test.ts", 'console.log("pushed snapshot test")\n');
-    commit("collector/github/attempt.test.ts");
-    write("collector/github/attempt.test.ts", 'import "../../dashboard/prepare.test.ts";\nprocess.exit(1)\n');
+    write("collect/source/attempt.test.ts", 'console.log("pushed snapshot test")\n');
+    commit("collect/source/attempt.test.ts");
+    write("collect/source/attempt.test.ts", 'import "../../analyze/run.test.ts";\nprocess.exit(1)\n');
     const success = pass("push", "origin", "feature");
-    assert.match(success.stderr, /checking collector dashboard tests/);
+    assert.match(success.stderr, /checking collect analyze tests/);
     assert.match(success.stdout, /pushed snapshot test/);
     assert.doesNotMatch(success.stderr, /checking hook tests/);
 
-    commit("collector/github/attempt.test.ts");
+    commit("collect/source/attempt.test.ts");
     const boundary = git("push", "origin", "feature");
     assert.equal(boundary.status, 1);
-    assert.match(boundary.stderr, /collector\/github\/attempt\.test\.ts:1 cannot import/);
+    assert.match(boundary.stderr, /collect\/source\/attempt\.test\.ts:1 cannot import/);
 
-    write("collector/github/attempt.test.ts", "process.exit(1)\n");
-    commit("collector/github/attempt.test.ts");
+    write("collect/source/attempt.test.ts", "process.exit(1)\n");
+    commit("collect/source/attempt.test.ts");
     const failure = git("push", "origin", "feature");
     assert.equal(failure.status, 1);
-    assert.match(failure.stderr, /checking collector dashboard tests/);
+    assert.match(failure.stderr, /checking collect analyze tests/);
     assert.match(failure.stdout, /not ok/);
     write("oversized.bend", `def example() -> String:\n  "${" a".repeat(4100)}"\n`);
     commit("oversized.bend");

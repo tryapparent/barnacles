@@ -60,30 +60,27 @@ def push_base(+local_oid: String, remote_ref: String, remote_oid: String) -> Str
       Bool.pick(String, all_zero(String.to_list(remote_oid)), "missing", "remote"), "main"))
 
 type Scopes is Data:
-  Scopes{collector: Bool, dashboard: Bool, evidence: Bool, hooks: Bool}
+  Scopes{collect: Bool, analyze: Bool, hooks: Bool}
 
 def path_scopes(scopes: Scopes, +path: String) -> Scopes:
   match scopes:
-    case Scopes{+collector, +dashboard, +evidence, +hooks}:
+    case Scopes{+collect, +analyze, +hooks}:
       Bool.pick(Scopes, Bool.or(String.ends_with(path, ".md"), String.eq(path, "LICENSE")),
-        Scopes{collector, dashboard, evidence, hooks},
-        Bool.pick(Scopes, String.starts_with(path, ".githooks/"), Scopes{collector, dashboard, evidence, True{}},
-          Bool.pick(Scopes, String.starts_with(path, "collector/"), Scopes{True{}, True{}, evidence, hooks},
-            Bool.pick(Scopes, String.starts_with(path, "evidence/"), Scopes{True{}, True{}, True{}, hooks},
-              Bool.pick(Scopes, String.starts_with(path, "dashboard/"), Scopes{collector, True{}, evidence, hooks},
-                Scopes{True{}, True{}, True{}, True{}})))))
+        Scopes{collect, analyze, hooks},
+        Bool.pick(Scopes, String.starts_with(path, ".githooks/"), Scopes{collect, analyze, True{}},
+          Bool.pick(Scopes, String.starts_with(path, "collect/"), Scopes{True{}, True{}, hooks},
+            Bool.pick(Scopes, String.starts_with(path, "analyze/"), Scopes{collect, True{}, hooks}, Scopes{True{}, True{}, True{}}))))
 
 def include_scope(name: String, include: Bool, +rest: List<&2, String>) -> List<&2, String>:
   Bool.pick(List<&2, String>, include, name <> rest, rest)
 
 def scope_names(scopes: Scopes) -> List<&2, String>:
   match scopes:
-    case Scopes{collector, dashboard, evidence, hooks}:
-      include_scope("collector", collector, include_scope("dashboard", dashboard,
-        include_scope("evidence", evidence, include_scope("hooks", hooks, []))))
+    case Scopes{collect, analyze, hooks}:
+      include_scope("collect", collect, include_scope("analyze", analyze, include_scope("hooks", hooks, [])))
 
 def push_scopes(paths: List<&2, String>) -> List<&2, String>:
-  scope_names(List.foldl(~&2, ~String, ~Scopes, ~(scopes => path => path_scopes(scopes, path)), paths, Scopes{False{}, False{}, False{}, False{}}))
+  scope_names(List.foldl(~&2, ~String, ~Scopes, ~(scopes => path => path_scopes(scopes, path)), paths, Scopes{False{}, False{}, False{}}))
 
 def valid_component(+part: String) -> Bool:
   Bool.not(Bool.or(String.is_empty(part), Bool.or(String.eq(part, "."), String.eq(part, ".."))))

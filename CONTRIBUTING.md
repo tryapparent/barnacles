@@ -8,9 +8,9 @@ Open a scoped pull request with the change, verification, and remaining acceptan
 
 ## Verify locally
 
-Run `npm ci --ignore-scripts` followed by `npm run verify` from a fresh checkout. The same command runs in the hosted workflow on pull requests and on landed main. Verification builds the pinned Bend2 policy, runs integration tests with synthetic evidence, and checks owner imports. It uses a private temporary job directory. A fresh run fetches the pinned compiler and packages once when there is no installed bundle. Use `npm run verify -- collector`, `npm run verify -- evidence`, `npm run verify -- dashboard`, or `npm run test:hooks` for focused feedback.
+Run `npm ci --ignore-scripts` followed by `npm run verify` from a fresh checkout. The same command runs in the hosted workflow on pull requests and on landed main. Verification builds the pinned Bend2 policy, runs integration tests with synthetic evidence, and checks owner imports. It uses a private temporary job directory. A fresh run fetches the pinned compiler and packages once when there is no installed bundle. Use `npm run verify -- collect`, `npm run verify -- analyze`, or `npm run test:hooks` for focused feedback.
 
-Collector loads evidence through `evidence/index.ts`. Dashboard reads it through `evidence/read.ts`. Its verification fixture can use the loader to seed a synthetic database. Evidence and Collector may use the independent `tooling/bend.ts` compiler bootstrap. The boundary check covers static imports and re-exports, including type imports, and literal module loads in the owner directories. Generated policy loads go through the compiler bootstrap.
+Run `bash infra/lgtm/check.sh` for the isolated Alloy, Loki, Tempo, Mimir, Grafana and Grafana MCP proof. Collection and analysis can use the independent `tooling/bend.ts` compiler bootstrap. The owner boundary checks static imports, re-exports and module loads.
 
 ## Commit hook
 
@@ -41,6 +41,6 @@ Run the focused tests with `npm run test:hooks`. The hook adapts Apparent's stag
 
 The same installation enables the pre-push hook. Fetch the target remote's `main` branch before feature pushes. The hook compares each outgoing ref tip with its integration base and repeats the comment check on that committed tree. It runs tests from a private snapshot of the outgoing commit, so local edits cannot affect the result.
 
-Documentation-only changes still run the directory-width, comment, and Bend2 path checks. Collector changes also run the Collector and Dashboard suites. Evidence changes run all three product suites. Dashboard changes run its snapshot suite. Hook changes run the hook suite. Shared changes run the full verification command. Deleting a ref sends no source to verify.
+Documentation-only changes still run the directory-width, comment, and Bend2 path checks. Collection changes run the collection and analysis suites. Analysis changes run the analysis suite. Hook changes run the hook suite. Shared changes run the full verification command. Deleting a ref sends no source to verify.
 
 The push hook reads the installed compiler bundle and sources locked Node dependencies from the npm cache populated by setup. The tests run from the outgoing commit using the same command as local and hosted verification.

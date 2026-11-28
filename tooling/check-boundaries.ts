@@ -34,7 +34,7 @@ export function verificationInput(scopes: string[]): BendList {
 export function suiteDirectories(policy: VerificationPolicy, input: BendList): string[] {
   const result = policy.select_suites(input);
   if (result.$ === "Invalid") {
-    throw Error("Usage: npm run verify -- [hooks] [collector] [evidence] [dashboard]");
+    throw Error("Usage: npm run verify -- [hooks] [collect] [analyze]");
   }
   return fromBend(result.directories);
 }
