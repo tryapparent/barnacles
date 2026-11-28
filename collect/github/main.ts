@@ -32,6 +32,20 @@ function bound(name: string, fallback: number, upper: number, minimum = 1) {
   return result;
 }
 
+function actionFloors(configured: Target[]) {
+  const input: unknown = JSON.parse(value("PLOW_GITHUB_ACTIONS_SINCE_BY_ALIAS", "{}"));
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw Error("Invalid GitHub Actions floors");
+  const result = new Map<string, number>();
+  for (const [scope, date] of Object.entries(input)) {
+    const floor = typeof date === "string" ? seconds(date) : 0;
+    if (!configured.some(target => target.scope === scope) || !floor || floor >= nowSeconds() - 15) {
+      throw Error("Invalid GitHub Actions floor for alias");
+    }
+    result.set(scope, floor);
+  }
+  return result;
+}
+
 
 async function main() {
   const args = process.argv.slice(2);
@@ -57,6 +71,7 @@ async function main() {
     const evidence = await loadPolicy<Evidence>(evidenceModule);
     const progress = await loadPolicy<Progress>(progressModule);
     const configured = targets(evidence);
+    const floors = actionFloors(configured);
     const layout = value("PLOW_GITHUB_CREDENTIAL_LAYOUT", "legacy");
     const tokenFile = value("PLOW_GITHUB_READ_TOKEN_FILE", "");
     const tokenDirectory = value("PLOW_GITHUB_CREDENTIAL_DIR", "");
@@ -73,12 +88,19 @@ async function main() {
     if (state.version !== 1 || state.floor !== floor) throw Error("GitHub checkpoint version or configured history floor changed");
     const spool = evidenceSpool(root, join(spoolRoot, "github"));
     const schedule = configured.flatMap(target => lanes.map(lane => ({ target, lane })));
-    for (const { repository } of configured) {
+    for (const { repository, scope } of configured) {
+      const prior = state.repositories[repository];
+      const configuredFloor = floors.get(scope) ?? floor;
+      if (prior && (prior.floor ?? state.floor) !== configuredFloor) {
+        throw Error("GitHub repository history floor changed");
+      }
       const repoState = state.repositories[repository] ??= emptyRepo();
+      repoState.floor = configuredFloor;
       repoState.throttle ??= layout === "legacy" ? state.throttle : 0;
     }
     const contextFor = (target: Target, read: Context["read"]): Context => ({
-      read, evidence, progress, now: nowSeconds(), repo: target.repository, floor, receipts, jobNames,
+      read, evidence, progress, now: nowSeconds(), repo: target.repository,
+      floor: floors.get(target.scope) ?? floor, receipts, jobNames,
       state: state.repositories[target.repository], records: [], confirmed: [],
     });
     const save = () => atomic(checkpoint, JSON.stringify(state) + "\n");
@@ -139,7 +161,7 @@ async function main() {
         const transportGap = !readers.has(target.repository) ? "access_denied"
           : progress.ready(nowSeconds(), state.repositories[target.repository].throttle ?? 0) ? "" : "rate_limited";
         const context = contextFor(target, unavailable);
-        context.records.push(progress.coverage(target.repository, "actions_retention", "limited", "retention_unknown", floor,
+        context.records.push(progress.coverage(target.repository, "actions_retention", "limited", "retention_unknown", context.floor,
           0, 0, 0, 0, "", 0));
         stage(context, spool, observed);
         publishHealth(health, target.scope, healthLines(context, target, observed, transportGap));

@@ -8,7 +8,8 @@ Run the Node 22.18+ producer with a separate fine-grained token or externally ro
 | PLOW_GITHUB_CREDENTIAL_LAYOUT | Set to `per-alias` to use one credential file per alias. The default `legacy` layout supports the existing single-repository setup. |
 | PLOW_GITHUB_CREDENTIAL_DIR | Absolute directory path for the per-alias layout. Each configured alias reads `github-read-<alias>` from this directory. |
 | PLOW_GITHUB_READ_TOKEN_FILE | Single credential path required by the legacy layout. |
-| PLOW_GITHUB_ACTIONS_SINCE | Required historical Actions floor as a UTC timestamp such as 2025-01-01T00:00:00Z. This inclusive bound applies to reconciliation as well. PR backfill covers the visible list. Use a fresh state root when intentionally changing the floor. |
+| PLOW_GITHUB_ACTIONS_SINCE | Required default Actions history floor as a UTC timestamp. Keep it stable for an existing checkpoint. |
+| PLOW_GITHUB_ACTIONS_SINCE_BY_ALIAS | Optional JSON object mapping a configured alias to its own inclusive Actions history floor. Set it before adding a repository and keep it stable with its checkpoint. Both bounds also apply to reconciliation. PR backfill covers the visible list. |
 | PLOW_GITHUB_STATE | Private durable state, default /state/github. Contains checkpoint, write-ahead batch, staged IDs and terminal receipts. |
 | PLOW_SPOOL | Private shared spool root, default /spool. Keep its github subdirectory mode 0700. Configure ownership for this producer to write to the shared health subdirectory as well. |
 | PLOW_GITHUB_JOB_NAMES | Optional JSON array of up to 512 reviewed names. Defaults to verify, build, test, lint, release and checks. Unapproved names become Other jobs. Keep the list stable with existing terminal receipts. |
