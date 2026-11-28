@@ -6,8 +6,16 @@ services:
       dockerfile: infra/lgtm/grafana.Dockerfile
     ports:
       - target: 3000
+        published: "${PLOW_GRAFANA_PORT:-0}"
         host_ip: 127.0.0.1
+    restart: ${PLOW_LGTM_RESTART:-no}
     environment:
+      GF_SERVER_ROOT_URL: ${PLOW_GRAFANA_ROOT_URL:-http://localhost:3000/}
+      GF_AUTH_PROXY_ENABLED: ${PLOW_GRAFANA_TAILNET_AUTH:-false}
+      GF_AUTH_PROXY_HEADER_NAME: Tailscale-User-Login
+      GF_AUTH_PROXY_AUTO_SIGN_UP: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_USERS_AUTO_ASSIGN_ORG_ROLE: Viewer
       GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_password
       GF_SECURITY_DISABLE_GRAVATAR: "true"
       GF_ANALYTICS_REPORTING_ENABLED: "false"
@@ -29,6 +37,7 @@ services:
       timeout: 2s
       retries: 20
   loki:
+    restart: ${PLOW_LGTM_RESTART:-no}
     image: grafana/loki:3.6.2@sha256:fad94db64eeb0e14544953789c942453df68a860b6f760d867f06c5b31f461ab
     command: ["-config.file=/etc/loki/plow.yaml"]
     ports:
@@ -38,6 +47,7 @@ services:
       - ./loki.yaml:/etc/loki/plow.yaml:ro
       - loki-data:/loki
   tempo:
+    restart: ${PLOW_LGTM_RESTART:-no}
     image: grafana/tempo:2.10.2@sha256:b6ade23a821c6bdb89487130dee39bd7bf6595e9fc521212ecb7878feb934d72
     command: ["-config.file=/etc/tempo/plow.yaml"]
     ports:
@@ -47,6 +57,7 @@ services:
       - ./tempo.yaml:/etc/tempo/plow.yaml:ro
       - tempo-data:/var/tempo
   mimir:
+    restart: ${PLOW_LGTM_RESTART:-no}
     image: grafana/mimir:3.0.0@sha256:dfa02581c519a28e2ce50c7304d05a635bb1e14b36e2f8a7a54815b36d4d1f9b
     command: ["-config.file=/etc/mimir/plow.yaml"]
     ports:
@@ -56,6 +67,7 @@ services:
       - ./mimir.yaml:/etc/mimir/plow.yaml:ro
       - mimir-data:/data
   alloy:
+    restart: ${PLOW_LGTM_RESTART:-no}
     image: grafana/alloy:v1.22.0@sha256:9acc2529bc1edb7f5b2bd801dd8334ebc80c158e3a9e5526ecd7c9a273d43189
     command: ["run", "--stability.level=public-preview", "--storage.path=/var/lib/alloy", "--disable-reporting", "/etc/alloy/config.alloy"]
     depends_on:
