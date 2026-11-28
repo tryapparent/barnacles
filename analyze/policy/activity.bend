@@ -156,13 +156,41 @@ def run_links(rows: List<&2,S.Evidence>, +from: Nat,+to: Nat) -> List<&2,RunLink
         Bool.and(Nat.is_lt(start,to),Nat.is_lt(from,end))))
       Bool.pick(List<&2,RunLink>,known,RunLink{thread,run,source,start,end} <> tail,tail)
 
-def lookup_selected(result: Indexed) -> List<&2,S.Evidence>:
-  match result:
-    case Indexed{rows,0n}: classifiers(rows,"run")
-    case _: []
+type RunLookup is Data:
+  RunLookup{thread: String, run: String, session: String, start: Nat, end: Nat, gap: String}
 
-def lookup(rows: List<&2,S.Evidence>, +limit: Nat) -> List<&2,S.Evidence>:
-  lookup_selected(selected(Map.values(&2,Receipt,index(rows,limit,Map.new(&2,Receipt))),[],0n))
+def lookup_gap(reason: String) -> RunLookup:
+  RunLookup{"","","",0n,0n,reason}
+
+def run_open(status: String) -> Bool:
+  match status:
+    case "running": True{}
+    case "starting": True{}
+    case "preparing": True{}
+    case "queued": True{}
+    case "pending": True{}
+    case "waiting": True{}
+    case _: False{}
+
+def exact_run(rows: List<&2,S.Evidence>, wanted: String) -> RunLookup:
+  match rows:
+    case []: lookup_gap("missing_run")
+    case [S.Evidence{_,_,_,+thread,+run,+session,_,status,_,_,_,_,+start,+end,_,_,_,_}]:
+      +clocks = Bool.and(Nat.is_gt(start,0n),Nat.is_le(start,end))
+      +reason = Bool.pick(String,Bool.not(String.eq(run,wanted)),"missing_run",
+        Bool.pick(String,run_open(status),"run_open",Bool.pick(String,Bool.not(clocks),"missing_clocks",
+          Bool.pick(String,String.is_empty(session),"missing_binding",""))))
+      RunLookup{thread,run,session,start,end,reason}
+    case _: lookup_gap("conflicting_run")
+
+def lookup_selected(result: Indexed, wanted: String) -> RunLookup:
+  match result:
+    case Indexed{rows,0n}: exact_run(classifiers(rows,"run"),wanted)
+    case _: lookup_gap("conflicting_run")
+
+def lookup(rows: List<&2,S.Evidence>, limit: Nat, wanted: String, partial: Bool) -> RunLookup:
+  Bool.pick(RunLookup,partial,lookup_gap("unreadable_run"),
+    lookup_selected(selected(Map.values(&2,Receipt,index(rows,limit,Map.new(&2,Receipt))),[],0n),wanted))
 
 def coverage_status(mark: Watermark) -> String:
   match mark:
