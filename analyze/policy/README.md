@@ -70,6 +70,15 @@ omits the job ID. SHA must match the selected attempt for linking. Source
 clocks and collection clocks remain independent. Strong T3 run bindings are
 available to the original tool-envelope pairing policy through exact links.
 
+The refresh producer sends the same raw snapshot with a source cutoff and its
+refresh-start observation clock. Bend2 admits source anchors through the cutoff
+and observations through refresh start, so newly collected evidence can revise
+an earlier cutoff. Normal Activity queries and exact lookups keep their
+existing cutoff for both checks. The producer computes the 24-hour and seven-day
+overview from the shared evidence index and projects out the timeline, run
+links, and CI lanes before serialization. The projection keeps the existing
+breakdown, work-share, findings, coverage fields, and nullable values.
+
 A read-only comparison against the legacy Activity projection at
 `2026-11-28T11:00:28.783Z` checked the provider and admission totals per
 thread. Of 327 threads present in both snapshots, 324 matched exactly.

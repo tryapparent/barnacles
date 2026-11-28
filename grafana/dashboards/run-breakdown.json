@@ -445,7 +445,7 @@
     "uid": "plow-activity",
     "title": "Activity",
     "schemaVersion": 41,
-    "version": 4,
+    "version": 5,
     "editable": false,
     "timezone": "utc",
     "time": {
@@ -511,7 +511,7 @@
           "x": 0,
           "y": 3,
           "w": 12,
-          "h": 9
+          "h": 7
         },
         "description": "Elapsed time summed across threads. Use the table selector for Operations. Choose a category or operation to filter the thread timeline.",
         "datasource": {
@@ -572,7 +572,7 @@
                   "value": [
                     {
                       "title": "Filter timeline",
-                      "url": "/d/plow-activity/activity?var-range=${range:percentencode}&var-operation=${__value.raw:percentencode}&${__url_time_range}"
+                      "url": "/d/plow-activity/activity?var-range=${range:percentencode}&var-operation=${__value.raw:percentencode}&${__url_time_range}&viewPanel=panel-12"
                     }
                   ]
                 },
@@ -593,7 +593,7 @@
                   "value": [
                     {
                       "title": "Filter timeline by category",
-                      "url": "/d/plow-activity/activity?var-range=${range:percentencode}&var-operation=${__value.raw:percentencode}&${__url_time_range}"
+                      "url": "/d/plow-activity/activity?var-range=${range:percentencode}&var-operation=${__value.raw:percentencode}&${__url_time_range}&viewPanel=panel-12"
                     }
                   ]
                 },
@@ -643,7 +643,7 @@
           "x": 12,
           "y": 3,
           "w": 12,
-          "h": 9
+          "h": 7
         },
         "description": "Mean of per-thread provider shares, with request-to-start time in the denominator. Four-hour buckets for Last 24h and daily buckets for Last 7 days.",
         "datasource": {
@@ -692,275 +692,16 @@
         }
       },
       {
-        "id": 12,
-        "title": "Thread timeline",
-        "type": "state-timeline",
-        "gridPos": {
-          "x": 0,
-          "y": 12,
-          "w": 24,
-          "h": 9
-        },
-        "description": "UTC clock. Provider time takes precedence over overlapping admission on the same thread. Missing clocks mark bounded unclassified intervals.",
-        "datasource": {
-          "type": "plow-agent-observability-datasource",
-          "uid": "plow-agent-observability"
-        },
-        "targets": [
-          {
-            "refId": "A",
-            "datasource": {
-              "type": "plow-agent-observability-datasource",
-              "uid": "plow-agent-observability"
-            },
-            "activityView": "timeline",
-            "range": "$range",
-            "operation": "$operation"
-          }
-        ],
-        "options": {
-          "mergeValues": false,
-          "showValue": "never",
-          "rowHeight": 0.6,
-          "alignValue": "center",
-          "legend": {
-            "showLegend": true,
-            "displayMode": "list",
-            "placement": "bottom"
-          },
-          "tooltip": {
-            "mode": "single"
-          },
-          "perPage": 12
-        },
-        "fieldConfig": {
-          "defaults": {
-            "color": {
-              "mode": "palette-classic"
-            },
-            "mappings": [
-              {
-                "type": "value",
-                "options": {
-                  "Provider run": {
-                    "text": "Provider run",
-                    "color": "#6A934F",
-                    "index": 0
-                  },
-                  "Command execution": {
-                    "text": "Command execution",
-                    "color": "#3D8241",
-                    "index": 1
-                  },
-                  "Tool call": {
-                    "text": "Tool call",
-                    "color": "#457B56",
-                    "index": 2
-                  },
-                  "Provider operations": {
-                    "text": "Provider operations",
-                    "color": "#54925E",
-                    "index": 3
-                  },
-                  "Request to provider start": {
-                    "text": "T3 admission",
-                    "color": "#B48251",
-                    "index": 5
-                  },
-                  "Between recorded runs": {
-                    "text": "Between recorded runs",
-                    "color": "#948A81",
-                    "index": 6
-                  },
-                  "Missing clocks": {
-                    "text": "Missing clocks",
-                    "color": "#687288",
-                    "index": 7
-                  }
-                }
-              }
-            ],
-            "custom": {
-              "fillOpacity": 85,
-              "lineWidth": 0,
-              "spanNulls": false
-            }
-          },
-          "overrides": []
-        }
-      },
-      {
-        "id": 13,
-        "title": "Linked CI timeline",
-        "type": "state-timeline",
-        "gridPos": {
-          "x": 0,
-          "y": 21,
-          "w": 24,
-          "h": 8
-        },
-        "description": "GitHub attempt and job clocks appear in separate lanes. See Source coverage if no exact links are available.",
-        "datasource": {
-          "type": "plow-agent-observability-datasource",
-          "uid": "plow-agent-observability"
-        },
-        "targets": [
-          {
-            "refId": "A",
-            "datasource": {
-              "type": "plow-agent-observability-datasource",
-              "uid": "plow-agent-observability"
-            },
-            "activityView": "ci",
-            "range": "$range",
-            "operation": "$operation"
-          }
-        ],
-        "options": {
-          "mergeValues": false,
-          "showValue": "never",
-          "rowHeight": 0.6,
-          "alignValue": "center",
-          "legend": {
-            "showLegend": true,
-            "displayMode": "list",
-            "placement": "bottom"
-          },
-          "tooltip": {
-            "mode": "single"
-          },
-          "perPage": 12
-        },
-        "fieldConfig": {
-          "defaults": {
-            "color": {
-              "mode": "palette-classic"
-            },
-            "mappings": [
-              {
-                "type": "value",
-                "options": {
-                  "Attempt queue": {
-                    "text": "Attempt queue",
-                    "color": "#B48251",
-                    "index": 8
-                  },
-                  "Attempt elapsed": {
-                    "text": "Attempt elapsed",
-                    "color": "#8478B7",
-                    "index": 9
-                  },
-                  "Job queue": {
-                    "text": "Job queue",
-                    "color": "#B48251",
-                    "index": 10
-                  },
-                  "Job execution": {
-                    "text": "Job execution",
-                    "color": "#8478B7",
-                    "index": 11
-                  },
-                  "Job failed": {
-                    "text": "Job failed",
-                    "color": "#B64F50",
-                    "index": 12
-                  }
-                }
-              }
-            ],
-            "custom": {
-              "fillOpacity": 85,
-              "lineWidth": 0,
-              "spanNulls": false
-            }
-          },
-          "overrides": []
-        }
-      },
-      {
-        "id": 14,
-        "title": "What to fix",
-        "type": "table",
-        "gridPos": {
-          "x": 0,
-          "y": 29,
-          "w": 24,
-          "h": 7
-        },
-        "description": "Ranked evidence in this range. Confirmed outcome delay, T3 request-to-start waits and failed CI job execution measure different clocks.",
-        "datasource": {
-          "type": "plow-agent-observability-datasource",
-          "uid": "plow-agent-observability"
-        },
-        "targets": [
-          {
-            "refId": "A",
-            "datasource": {
-              "type": "plow-agent-observability-datasource",
-              "uid": "plow-agent-observability"
-            },
-            "activityView": "findings",
-            "range": "$range",
-            "operation": "$operation"
-          }
-        ],
-        "options": {
-          "showHeader": true,
-          "cellHeight": "sm"
-        },
-        "fieldConfig": {
-          "defaults": {
-            "custom": {
-              "minWidth": 95
-            }
-          },
-          "overrides": [
-            {
-              "matcher": {
-                "id": "byName",
-                "options": "Measured impact"
-              },
-              "properties": [
-                {
-                  "id": "unit",
-                  "value": "ms"
-                },
-                {
-                  "id": "noValue",
-                  "value": "Unknown"
-                }
-              ]
-            },
-            {
-              "matcher": {
-                "id": "byName",
-                "options": "Next step"
-              },
-              "properties": [
-                {
-                  "id": "custom.width",
-                  "value": 460
-                },
-                {
-                  "id": "custom.wrapText",
-                  "value": true
-                }
-              ]
-            }
-          ]
-        }
-      },
-      {
         "id": 15,
         "title": "Source coverage",
         "type": "table",
         "gridPos": {
           "x": 0,
-          "y": 36,
+          "y": 10,
           "w": 24,
-          "h": 7
+          "h": 9
         },
-        "description": "The latest successful T3 capture supplies the cutoff. Clock gaps counts runs with missing timing. Empty clocks and stages without linked evidence are unknown.",
+        "description": "T3 shows the measured cutoff. In summary mode, freshness is measured at the end of the selected range. The summary input cutoff and publication have separate clocks. Use Refresh to retry.",
         "datasource": {
           "type": "plow-agent-observability-datasource",
           "uid": "plow-agent-observability"
@@ -1005,6 +746,10 @@
                 {
                   "id": "custom.width",
                   "value": 175
+                },
+                {
+                  "id": "displayName",
+                  "value": "Clock (UTC)"
                 }
               ]
             },
@@ -1036,7 +781,7 @@
               "properties": [
                 {
                   "id": "custom.width",
-                  "value": 113
+                  "value": 124
                 },
                 {
                   "id": "custom.wrapText",
@@ -1055,10 +800,6 @@
               },
               "properties": [
                 {
-                  "id": "custom.width",
-                  "value": 315
-                },
-                {
                   "id": "custom.wrapText",
                   "value": true
                 },
@@ -1076,7 +817,7 @@
               "properties": [
                 {
                   "id": "custom.width",
-                  "value": 110
+                  "value": 100
                 },
                 {
                   "id": "custom.wrapText",
@@ -1096,7 +837,7 @@
               "properties": [
                 {
                   "id": "custom.width",
-                  "value": 110
+                  "value": 95
                 },
                 {
                   "id": "custom.wrapText",
@@ -1112,16 +853,16 @@
         }
       },
       {
-        "id": 16,
-        "title": "Exact run drilldown",
+        "id": 14,
+        "title": "What to fix",
         "type": "table",
         "gridPos": {
           "x": 0,
-          "y": 43,
+          "y": 19,
           "w": 24,
           "h": 7
         },
-        "description": "Open retained Codex tool evidence using the exact T3 run and its observed native binding.",
+        "description": "Ranked evidence in this range. Confirmed outcome delay, T3 request-to-start waits and failed CI job execution measure different clocks.",
         "datasource": {
           "type": "plow-agent-observability-datasource",
           "uid": "plow-agent-observability"
@@ -1133,7 +874,7 @@
               "type": "plow-agent-observability-datasource",
               "uid": "plow-agent-observability"
             },
-            "activityView": "runs",
+            "activityView": "findings",
             "range": "$range",
             "operation": "$operation"
           }
@@ -1152,58 +893,371 @@
             {
               "matcher": {
                 "id": "byName",
-                "options": "Run"
-              },
-              "properties": [
-                {
-                  "id": "links",
-                  "value": [
-                    {
-                      "title": "Open run breakdown",
-                      "url": "/d/plow-run-breakdown/plow-historical-runs?var-runId=${__value.raw:percentencode}&var-history=${__data.fields[\"History\"]}&from=${__data.fields[\"From (UTC)\"].numeric}&to=${__data.fields[\"To (UTC)\"].numeric}"
-                    }
-                  ]
-                }
-              ]
-            },
-            {
-              "matcher": {
-                "id": "byName",
-                "options": "From (UTC)"
+                "options": "Measured impact"
               },
               "properties": [
                 {
                   "id": "unit",
-                  "value": "dateTimeAsIso"
+                  "value": "ms"
+                },
+                {
+                  "id": "noValue",
+                  "value": "Unknown"
+                },
+                {
+                  "id": "custom.width",
+                  "value": 145
                 }
               ]
             },
             {
               "matcher": {
                 "id": "byName",
-                "options": "To (UTC)"
+                "options": "Next step"
               },
               "properties": [
                 {
-                  "id": "unit",
-                  "value": "dateTimeAsIso"
-                }
-              ]
-            },
-            {
-              "matcher": {
-                "id": "byName",
-                "options": "History"
-              },
-              "properties": [
-                {
-                  "id": "custom.hidden",
+                  "id": "custom.wrapText",
                   "value": true
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "Finding"
+              },
+              "properties": [
+                {
+                  "id": "custom.width",
+                  "value": 230
+                },
+                {
+                  "id": "custom.wrapText",
+                  "value": true
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "Occurrences"
+              },
+              "properties": [
+                {
+                  "id": "custom.width",
+                  "value": 118
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "Measured"
+              },
+              "properties": [
+                {
+                  "id": "custom.width",
+                  "value": 108
                 }
               ]
             }
           ]
         }
+      },
+      {
+        "id": 17,
+        "title": "Activity details",
+        "type": "row",
+        "collapsed": true,
+        "gridPos": {
+          "x": 0,
+          "y": 26,
+          "w": 24,
+          "h": 1
+        },
+        "panels": [
+          {
+            "id": 12,
+            "title": "Thread timeline",
+            "type": "state-timeline",
+            "gridPos": {
+              "x": 0,
+              "y": 27,
+              "w": 24,
+              "h": 9
+            },
+            "description": "UTC clock. Provider time takes precedence over overlapping admission on the same thread. Missing clocks mark bounded unclassified intervals.",
+            "datasource": {
+              "type": "plow-agent-observability-datasource",
+              "uid": "plow-agent-observability"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "plow-agent-observability-datasource",
+                  "uid": "plow-agent-observability"
+                },
+                "activityView": "timeline",
+                "range": "$range",
+                "operation": "$operation"
+              }
+            ],
+            "options": {
+              "mergeValues": false,
+              "showValue": "never",
+              "rowHeight": 0.6,
+              "alignValue": "center",
+              "legend": {
+                "showLegend": true,
+                "displayMode": "list",
+                "placement": "bottom"
+              },
+              "tooltip": {
+                "mode": "single"
+              },
+              "perPage": 12
+            },
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "mappings": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "Provider run": {
+                        "text": "Provider run",
+                        "color": "#6A934F",
+                        "index": 0
+                      },
+                      "Command execution": {
+                        "text": "Command execution",
+                        "color": "#3D8241",
+                        "index": 1
+                      },
+                      "Tool call": {
+                        "text": "Tool call",
+                        "color": "#457B56",
+                        "index": 2
+                      },
+                      "Provider operations": {
+                        "text": "Provider operations",
+                        "color": "#54925E",
+                        "index": 3
+                      },
+                      "Request to provider start": {
+                        "text": "T3 admission",
+                        "color": "#B48251",
+                        "index": 5
+                      },
+                      "Between recorded runs": {
+                        "text": "Between recorded runs",
+                        "color": "#948A81",
+                        "index": 6
+                      },
+                      "Missing clocks": {
+                        "text": "Missing clocks",
+                        "color": "#687288",
+                        "index": 7
+                      }
+                    }
+                  }
+                ],
+                "custom": {
+                  "fillOpacity": 85,
+                  "lineWidth": 0,
+                  "spanNulls": false
+                }
+              },
+              "overrides": []
+            }
+          },
+          {
+            "id": 13,
+            "title": "Linked CI timeline",
+            "type": "state-timeline",
+            "gridPos": {
+              "x": 0,
+              "y": 36,
+              "w": 24,
+              "h": 8
+            },
+            "description": "GitHub attempt and job clocks appear in separate lanes. See Source coverage if no exact links are available.",
+            "datasource": {
+              "type": "plow-agent-observability-datasource",
+              "uid": "plow-agent-observability"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "plow-agent-observability-datasource",
+                  "uid": "plow-agent-observability"
+                },
+                "activityView": "ci",
+                "range": "$range",
+                "operation": "$operation"
+              }
+            ],
+            "options": {
+              "mergeValues": false,
+              "showValue": "never",
+              "rowHeight": 0.6,
+              "alignValue": "center",
+              "legend": {
+                "showLegend": true,
+                "displayMode": "list",
+                "placement": "bottom"
+              },
+              "tooltip": {
+                "mode": "single"
+              },
+              "perPage": 12
+            },
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "mappings": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "Attempt queue": {
+                        "text": "Attempt queue",
+                        "color": "#B48251",
+                        "index": 8
+                      },
+                      "Attempt elapsed": {
+                        "text": "Attempt elapsed",
+                        "color": "#8478B7",
+                        "index": 9
+                      },
+                      "Job queue": {
+                        "text": "Job queue",
+                        "color": "#B48251",
+                        "index": 10
+                      },
+                      "Job execution": {
+                        "text": "Job execution",
+                        "color": "#8478B7",
+                        "index": 11
+                      },
+                      "Job failed": {
+                        "text": "Job failed",
+                        "color": "#B64F50",
+                        "index": 12
+                      }
+                    }
+                  }
+                ],
+                "custom": {
+                  "fillOpacity": 85,
+                  "lineWidth": 0,
+                  "spanNulls": false
+                }
+              },
+              "overrides": []
+            }
+          },
+          {
+            "id": 16,
+            "title": "Exact run drilldown",
+            "type": "table",
+            "gridPos": {
+              "x": 0,
+              "y": 44,
+              "w": 24,
+              "h": 7
+            },
+            "description": "Open retained Codex tool evidence using the exact T3 run and its observed native binding.",
+            "datasource": {
+              "type": "plow-agent-observability-datasource",
+              "uid": "plow-agent-observability"
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "datasource": {
+                  "type": "plow-agent-observability-datasource",
+                  "uid": "plow-agent-observability"
+                },
+                "activityView": "runs",
+                "range": "$range",
+                "operation": "$operation"
+              }
+            ],
+            "options": {
+              "showHeader": true,
+              "cellHeight": "sm"
+            },
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "minWidth": 95
+                }
+              },
+              "overrides": [
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "Run"
+                  },
+                  "properties": [
+                    {
+                      "id": "links",
+                      "value": [
+                        {
+                          "title": "Open run breakdown",
+                          "url": "/d/plow-run-breakdown/plow-historical-runs?var-runId=${__value.raw:percentencode}&var-history=${__data.fields[\"History\"]}&from=${__data.fields[\"From (UTC)\"].numeric}&to=${__data.fields[\"To (UTC)\"].numeric}"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "From (UTC)"
+                  },
+                  "properties": [
+                    {
+                      "id": "unit",
+                      "value": "dateTimeAsIso"
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "To (UTC)"
+                  },
+                  "properties": [
+                    {
+                      "id": "unit",
+                      "value": "dateTimeAsIso"
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "History"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.hidden",
+                      "value": true
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
       }
     ],
     "links": [

@@ -24,6 +24,7 @@
   "Grafana SDK process, Loki HTTP adapter, and data frames": [
     "analyze/datasource/go.mod",
     "analyze/datasource/go.sum",
+    "analyze/datasource/activity_summary.go",
     "analyze/datasource/main.go",
     "analyze/datasource/loki.go",
     "analyze/datasource/policy.go",

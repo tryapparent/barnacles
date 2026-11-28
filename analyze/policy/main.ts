@@ -164,10 +164,13 @@ async function activity(request: Record<string, unknown>, module: string) {
   }
   const partial = request.partial === true || decodeGap;
   const lookup = request.view === "lookup" || request.view === "traceBinding";
-  const report = lookup
+  const summaries = request.view === "summaries";
+  const report = summaries
+    ? policy.summaries(input, nat(request.to), nat(request.observedMs), partial)
+    : lookup
     ? policy.lookup(input, nat(request.to), string(request, "runId"), partial)
     : policy.activity(input, string(request, "range"), nat(request.to), partial, string(request, "operation"));
-  const result = lookup || !decodeGap ? report : { ...report, decodeGap };
+  const result = lookup || summaries || !decodeGap ? report : { ...report, decodeGap };
   process.stdout.write(JSON.stringify(result, (_key, value) => {
     if (_key === "turn" && request.view === "lookup") return undefined;
     if (typeof value === "bigint") return Number(value);
@@ -183,6 +186,21 @@ async function activity(request: Record<string, unknown>, module: string) {
     }
     return value;
   }) + "\n");
+}
+
+async function activitySummary(request: Record<string, unknown>, module: string) {
+  if (!Array.isArray(request.snapshots)) throw Error("Expected snapshot metadata");
+  const snapshots = request.snapshots.reduceRight<List<Record<string, unknown>>>((tail, value, index) => {
+    const row = object(value, "snapshot");
+    return { $: "Con", tail, head: {
+      $: "Snapshot", index: index + 1, version: nat(row.version), period: string(row, "period"),
+      cutoff: nat(row.cutoffMs), published: nat(row.publishedMs), watermark: nat(row.watermarkMs),
+      revision: string(row, "revision"),
+    } };
+  }, { $: "Nil" });
+  const { default: policy } = await import(pathToFileURL(module).href);
+  const { index, status, partial } = policy.activity_summary(snapshots, string(request, "range"), nat(request.to), request.partial === true);
+  process.stdout.write(JSON.stringify({ index: Number(index), status, partial }) + "\n");
 }
 
 async function compile(directory: string) {
@@ -207,11 +225,12 @@ async function main() {
   }
   if (mode !== undefined) throw Error("Expected --compile DIRECTORY or a JSON request on stdin");
   const request = object(JSON.parse(readFileSync(0, "utf8")), "request");
-  const range = typeof request.range === "string";
+  const range = typeof request.range === "string" || request.view === "summaries";
   const configured = range ? process.env.PLOW_ACTIVITY_MODULE : process.env.PLOW_POLICY_MODULE;
   const scratch = configured ? undefined : mkdtempSync("/tmp/apparent-dev-plow-policy-");
   try {
     const module = scratch ? (await compile(scratch))[range ? 1 : 0] : configured!;
+    if (request.view === "activity_summary") return await activitySummary(request, module);
     if (range) return await activity(request, module);
     const { default: policy } = await import(pathToFileURL(module).href) as {
       default: { analyze(run: Run, events: List<ToolEvent>): Report; evidence_gap(events: bigint): string;

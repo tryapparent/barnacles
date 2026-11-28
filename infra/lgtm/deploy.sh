@@ -68,6 +68,7 @@ esac
 compose=(docker compose -p "$project")
 if [[ $mode == --access ]]; then
   compose+=(-f infra/lgtm/compose.yaml -f infra/access/compose.yaml)
+  export PLOW_GRAFANA_IMAGE="${PLOW_ACCESS_IMAGE:-plow-grafana-greenfield:local}"
 elif [[ $github == true ]]; then
   compose+=(-f compose.yaml)
 fi
@@ -147,7 +148,11 @@ if [[ $mode == --access ]]; then
   chmod 0777 "$PLOW_LGTM_WORKDIR/access-grafana"
 fi
 "${compose[@]}" config --quiet
-"${compose[@]}" up -d --build --wait --wait-timeout 120
+wait_timeout=120
+case ",${COMPOSE_PROFILES:-}," in
+  *,activity-refresh,*|*,'*',*) wait_timeout=240 ;;
+esac
+"${compose[@]}" up -d --build --wait --wait-timeout "$wait_timeout"
 admin() {
   curl -fsS --max-time 15 "${admin_socket[@]}" --netrc-file <(printf 'default login admin password %s\n' "$(cat "$PLOW_LGTM_WORKDIR/grafana-password")") "$@"
 }

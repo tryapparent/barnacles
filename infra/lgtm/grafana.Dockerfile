@@ -5,6 +5,7 @@ RUN go mod download
 COPY analyze/datasource/ ./
 RUN CGO_ENABLED=0 go test -mod=readonly ./...
 RUN CGO_ENABLED=0 go build -mod=readonly -trimpath -o "/out/gpx_plow_linux_$(go env GOARCH)" .
+RUN CGO_ENABLED=0 go build -mod=readonly -trimpath -ldflags=-X=main.buildMode=activity-refresh -o /plow-activity-refresh .
 
 FROM caddy:2.10-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d AS brand
 ADD --checksum=sha256:ed6f7e8b07fa6bc6922c3e6a41948408833bb0c60a2a867579437048718dc5d5 https://grafana.com/api/plugins/marcusolsson-dynamictext-panel/versions/6.3.1/download /tmp/business-text.zip
@@ -37,6 +38,7 @@ ENTRYPOINT ["node", "/opt/plow/gateway.mjs", "mcp"]
 FROM grafana/grafana:12.3.0-ubuntu@sha256:cee936306135e1925ab21dffa16f8a411535d16ab086bef2309339a8e74d62df
 COPY --from=policy /usr/local/bin/node /usr/local/bin/node
 COPY --from=plugin /out/ /opt/plow/plugins/plow-agent-observability-datasource/
+COPY --from=plugin /plow-activity-refresh /usr/local/bin/plow-activity-refresh
 COPY analyze/datasource/plugin.json analyze/datasource/module.js /opt/plow/plugins/plow-agent-observability-datasource/
 COPY grafana/assets/plow-cream.png /usr/share/grafana/public/build/plow-cream.png
 COPY --from=brand /plugins/ /opt/plow/plugins/
@@ -52,6 +54,7 @@ ENV GF_PATHS_PLUGINS=/opt/plow/plugins \
     PLOW_ACTIVITY_MODULE=/opt/plow/policy/activity.mjs
 
 USER root
+RUN command -v flock
 RUN node --input-type=module <<'JS'
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, unlinkSync } from 'node:fs';

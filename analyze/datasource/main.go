@@ -44,6 +44,7 @@ type datasource struct {
 	tempo         *url.URL
 	policy        string
 	activityCache activityCache
+	summaries     *activitySummaries
 }
 
 func newDatasource(_ context.Context, settings backend.DataSourceInstanceSettings) (instancemgmt.Instance, error) {
@@ -82,7 +83,7 @@ func newDatasource(_ context.Context, settings backend.DataSourceInstanceSetting
 		return nil, errors.New("Set PLOW_POLICY_COMMAND to an absolute executable path")
 	}
 
-	return &datasource{
+	ds := &datasource{
 		loki: lokiClient{
 			endpoint: endpoint.JoinPath("loki", "api", "v1", "query_range"),
 			tenant:   config.LokiTenant,
@@ -97,7 +98,23 @@ func newDatasource(_ context.Context, settings backend.DataSourceInstanceSetting
 		tempo:         tempo,
 		policy:        policy,
 		activityCache: activityCache{gate: make(chan struct{}, 1)},
-	}, nil
+	}
+	if os.Getenv("PLOW_ACTIVITY_SUMMARIES") == "1" {
+		client := ds.loki
+		client.tenant = "plow-activity"
+		if token, ok := settings.DecryptedSecureJSONData["activitySummaryBearerToken"]; ok {
+			if len(token) > 4096 || strings.ContainsAny(token, "\r\n") {
+				return nil, errors.New("Invalid Activity summary bearer token setting")
+			}
+			client.token = token
+		}
+		ds.summaries = &activitySummaries{
+			loki:  client,
+			gate:  make(chan struct{}, 1),
+			cache: make(map[string]activitySummaryCache),
+		}
+	}
+	return ds, nil
 }
 
 func (ds *datasource) QueryData(ctx context.Context, req *backend.QueryDataRequest) (*backend.QueryDataResponse, error) {
@@ -192,6 +209,12 @@ func (ds *datasource) CheckHealth(ctx context.Context, _ *backend.CheckHealthReq
 }
 
 func main() {
+	if buildMode == "activity-refresh" {
+		if err := runActivityRefresh(os.Args[1:]); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if err := grafanads.Manage(pluginID, newDatasource, grafanads.ManageOpts{}); err != nil {
 		log.Fatal(err)
 	}
@@ -216,7 +239,11 @@ func (ds *datasource) activity(ctx context.Context, cutoff time.Time, view, peri
 		return backend.ErrDataResponse(backend.StatusBadRequest, "Select Last 24h or Last 7 days")
 	}
 	switch view {
-	case "breakdown", "share", "timeline", "ci", "runs", "coverage", "findings":
+	case "breakdown", "share", "coverage", "findings":
+		if ds.summaries != nil {
+			return ds.activitySummary(ctx, cutoff, view, period)
+		}
+	case "timeline", "ci", "runs":
 	default:
 		return backend.ErrDataResponse(backend.StatusBadRequest, "Unknown Activity view")
 	}
@@ -254,17 +281,11 @@ func (ds *datasource) activityReport(ctx context.Context, key activityKey) (acti
 }
 
 func (ds *datasource) loadActivityReport(ctx context.Context, key activityKey) (activityOutput, *backend.DataResponse) {
-	query, failure := runPolicy(ctx, ds.policy, map[string]any{
-		"to": key.cutoff.UnixMilli(), "view": "operationQuery", "range": key.period,
-	})
+	query, failure := activityOperationQuery(ctx, ds.policy, key.cutoff)
 	if failure != nil {
 		return activityOutput{}, failure
 	}
-	var operationQuery string
-	if json.Unmarshal(query, &operationQuery) != nil || operationQuery == "" {
-		return activityOutput{}, policyFailure(backend.StatusInternal, "Policy executable returned an invalid Activity query")
-	}
-	records, gaps, failure := ds.loki.readActivity(ctx, key.cutoff, operationQuery)
+	records, gaps, failure := ds.loki.readActivity(ctx, key.cutoff, query)
 	if failure != nil {
 		return activityOutput{}, failure
 	}
@@ -281,4 +302,18 @@ func (ds *datasource) loadActivityReport(ctx context.Context, key activityKey) (
 	}
 	report.notices = activityNotices(gaps, report)
 	return report, nil
+}
+
+func activityOperationQuery(ctx context.Context, policy string, observed time.Time) (string, *backend.DataResponse) {
+	query, failure := runPolicy(ctx, policy, map[string]any{
+		"to": observed.UnixMilli(), "view": "operationQuery", "range": "7d",
+	})
+	if failure != nil {
+		return "", failure
+	}
+	var operationQuery string
+	if json.Unmarshal(query, &operationQuery) != nil || operationQuery == "" {
+		return "", policyFailure(backend.StatusInternal, "Policy executable returned an invalid Activity query")
+	}
+	return operationQuery, nil
 }

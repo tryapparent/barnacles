@@ -191,6 +191,10 @@ func (l lokiClient) readPage(ctx context.Context, window backend.TimeRange, quer
 
 	var lines []string
 	var clocks []int64
+	lineLimit := maxLineBytes
+	if source == activitySummarySource {
+		lineLimit = summaryLineBytes
+	}
 	for _, stream := range payload.Data.Result {
 		if stream.Stream["plow_source"] != source || stream.Values == nil {
 			return lokiPage{}, lokiFailure(backend.StatusBadGateway, "Loki returned an unexpected stream")
@@ -201,7 +205,7 @@ func (l lokiClient) readPage(ctx context.Context, window backend.TimeRange, quer
 			}
 			var timestamp, line string
 			if len(value) < 2 || len(value) > 3 || json.Unmarshal(value[0], &timestamp) != nil ||
-				json.Unmarshal(value[1], &line) != nil || len(line) > maxLineBytes {
+				json.Unmarshal(value[1], &line) != nil || len(line) > lineLimit {
 				return lokiPage{}, lokiFailure(backend.StatusBadGateway, "Loki returned an invalid log entry")
 			}
 			ns, err := strconv.ParseInt(timestamp, 10, 64)
