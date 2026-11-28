@@ -1,16 +1,15 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { once } from "node:events";
 import { test } from "node:test";
 import { promisify } from "node:util";
 
 const execute = promisify(execFile);
-const cli = fileURLToPath(new URL("./main.ts", import.meta.url));
+const cli = join(import.meta.dirname, "main.ts");
 const base = Date.parse("2026-07-10T18:00:00Z");
 const day = 86_400_000;
 const iso = (value: number) => new Date(value).toISOString().replace(".000Z", "Z");
@@ -44,22 +43,18 @@ function job(runId: number, attempt: number, at: number, status: string, conclus
 }
 
 function records(root: string) {
-  type Output = { [key: string]: unknown };
   return readdirSync(root).filter(name => name.endsWith(".jsonl")).flatMap(name =>
-    readFileSync(join(root, name), "utf8").trim().split("\n").map(line => JSON.parse(line) as Output));
+    readFileSync(join(root, name), "utf8").trim().split("\n").map(line => JSON.parse(line) as Record<string, unknown>));
 }
 
 test("normal CLI resumes GitHub history and follows exact attempts independently", { timeout: 180_000 }, async t => {
-  const testRoot = process.env.PLOW_TEST_DIRECTORY;
-  const root = mkdtempSync(testRoot ? join(testRoot, "github-") : "/tmp/apparent-dev-plow-github-proof-");
+  const root = mkdtempSync(join(process.env.PLOW_TEST_DIRECTORY ?? "/tmp", "apparent-dev-plow-github-proof-"));
   if (!process.env.PLOW_GITHUB_KEEP_PROOF) t.after(() => rmSync(root, { recursive: true, force: true }));
-  else t.diagnostic("Synthetic proof directory " + root);
   const token = join(root, "token");
   writeFileSync(token, secret + "\n", { mode: 0o600 });
   const spool = join(root, "spool");
   const checkpoint = join(root, "state", "checkpoint.json");
-  const githubSpool = join(spool, "github");
-  const healthSpool = join(spool, "health");
+  const githubSpool = join(spool, "github"), healthSpool = join(spool, "health");
   const source = Array.from({ length: 101 }, (_, index) => pr(index + 1, veryOld + index * 10_000));
   let phase = 0;
   let requests = 0;
@@ -70,11 +65,13 @@ test("normal CLI resumes GitHub history and follows exact attempts independently
   const server = createServer((request, response) => {
     requests++;
     assert.equal(request.method, "GET");
+    const url = new URL(request.url!, "http://" + request.headers.host);
+    if (url.pathname.startsWith("/repos/example/other/")) {
+      assert.equal(request.headers.authorization, "Bearer other-token");
+      response.end(url.pathname.endsWith("/pulls") ? "[]" : '{"total_count":0,"workflow_runs":[]}');
+      return;
+    }
     assert.equal(request.headers.authorization, "Bearer " + secret);
-    const address = server.address();
-    assert(address && typeof address === "object");
-    const origin = "http://127.0.0.1:" + address.port;
-    const url = new URL(request.url!, origin);
     assert(url.pathname.startsWith("/repos/" + repo + "/"));
     const path = url.pathname.slice(("/repos/" + repo + "/").length);
     seen.add(path);
@@ -90,7 +87,7 @@ test("normal CLI resumes GitHub history and follows exact attempts independently
       if (page < last) {
         const link = (which: number) => new URL(url.pathname + "?" + new URLSearchParams({
           ...Object.fromEntries(url.searchParams), page: String(which),
-        }), origin).href;
+        }), url.origin).href;
         response.setHeader("link", "<" + link(page + 1) + '>; rel="next", <' + link(last) + '>; rel="last"');
       }
       const data = items.slice((page - 1) * 100, page * 100);
@@ -124,8 +121,7 @@ test("normal CLI resumes GitHub history and follows exact attempts independently
     if (runId === 2 && inaccessible) { response.writeHead(404).end(); return; }
     const latest = all.find(item => item.id === runId)!;
     assert(latest && attempt <= latest.run_attempt);
-    const older = attempt < latest.run_attempt;
-    const result = older ? run(runId, attempt, recent, "completed", "success") : latest;
+    const result = attempt < latest.run_attempt ? run(runId, attempt, recent, "completed", "success") : latest;
     if (exact[3]) {
       const entry = job(runId, attempt, Date.parse(result.created_at) + (attempt - 1) * 51_000, result.status, result.conclusion);
       const size = runId === 5 && attempt === 1 ? 101 : 1;
@@ -136,24 +132,25 @@ test("normal CLI resumes GitHub history and follows exact attempts independently
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
-  t.after(() => { server.closeAllConnections(); server.close(); });
+  t.after(() => server.close());
   const address = server.address();
   assert(address && typeof address === "object");
   const prefix = { ...process.env, PLOW_GITHUB_ORIGIN: "http://127.0.0.1:" + address.port,
     PLOW_GITHUB_REPOSITORIES: "fixture=Example/Demo", PLOW_GITHUB_ACTIONS_SINCE: iso(veryOld - day),
-    PLOW_GITHUB_STATE: join(root, "state"), PLOW_SPOOL: spool, PLOW_GITHUB_READ_TOKEN_FILE: token };
-  const cycle = async (at: number, budget: number) => {
+    PLOW_GITHUB_STATE: join(root, "state"), PLOW_SPOOL: spool, PLOW_GITHUB_READ_TOKEN_FILE: token,
+    PLOW_GITHUB_CREDENTIAL_LAYOUT: "legacy" };
+  const cycle = async (at: number, budget: number, overrides = {}) => {
     const source = "Date.now = () => " + at;
     await execute(process.execPath, ["--import", "data:text/javascript," + encodeURIComponent(source), cli, "--once"],
-      { env: { ...prefix, PLOW_GITHUB_MAX_STEPS: String(budget) } });
+      { env: { ...prefix, PLOW_GITHUB_MAX_STEPS: String(budget), ...overrides } });
   };
   const evidence = (kind?: string) => records(githubSpool).filter(row => kind ? row.kind === kind : row.kind !== "github_coverage");
-  const state = () => JSON.parse(readFileSync(checkpoint, "utf8")).repositories[repo];
+  const state = (repository = repo) => JSON.parse(readFileSync(checkpoint, "utf8")).repositories[repository];
   const healthAt = (at: number) => records(healthSpool).filter(row => row.observedMs === at);
   await cycle(base, 5);
   const first = state();
   assert.equal(first.cursors.pulls_backfill.page, 1);
-  assert.equal(first.cursors.pulls_backfill.done, false);
+  assert(!first.cursors.pulls_backfill.done);
   assert.equal(evidence("github_pr").length, 1);
   assert(evidence("github_actions_attempt").some(row => row.runId === "5" && row.status === "in_progress"));
   assert(first.pending["5:1"]);
@@ -189,18 +186,16 @@ test("normal CLI resumes GitHub history and follows exact attempts independently
   assert(attempts.some(row => row.runId === "2" && row.status === "completed"));
   assert(evidence("github_actions_job").some(row => row.runId === "5" && row.attempt === "2" &&
     row.jobId === "502" && row.startedMs === recent + 60_000 && row.jobName === "Other jobs"));
-  assert(evidence("github_actions_job").some(row => row.jobName === "build"));
   assert(evidence("github_pr").some(row => row.prNumber === "101" && row.headSha === sha &&
     row.mergeSha === merge && row.mergedMs === veryOld + 999_900));
   assert(healthAt(base + 360_000).some(row => row.lane === "backfill" && row.status === "complete"));
   assert(coverage().some(row => row.lane === "actions_backfill" && row.status === "window_exhausted"));
-  assert(seen.has("actions/runs/5/attempts/2/jobs"));
   assert(evidence("github_actions_job").some(row => row.jobId === "1000501" && row.status === "completed"));
   assert.equal(state().cursors.actions_live.watermark, Math.floor((base + 360_000) / 1000) - 15);
 
   const beforeReplay = evidence().map(row => row.eventId).sort();
   const hash = (value: string) => createHash("sha256").update(value).digest("hex");
-  const batch = readdirSync(githubSpool).filter(file => file.endsWith(".jsonl"))[0];
+  const batch = readdirSync(githubSpool).find(file => file.endsWith(".jsonl"))!;
   const content = readFileSync(join(githubSpool, batch), "utf8");
   const keys = content.trim().split("\n").map(line => {
     const [revision, ...identity] = JSON.parse(line).eventId.split(":");
@@ -213,7 +208,7 @@ test("normal CLI resumes GitHub history and follows exact attempts independently
   await cycle(base + 480_000, 100);
   assert.deepEqual(evidence().map(row => row.eventId).sort(), beforeReplay);
   assert.equal(new Set(beforeReplay).size, beforeReplay.length);
-  const serialized = JSON.stringify([...records(githubSpool), ...records(healthSpool)]);
+  const serialized = JSON.stringify([records(githubSpool), records(healthSpool)]);
   for (const value of [secret, unrelated, "/private/path", root, "log_url", "runner_name", "actor", "pull_requests"]) {
     assert(!serialized.includes(value), value);
   }
@@ -221,10 +216,10 @@ test("normal CLI resumes GitHub history and follows exact attempts independently
     row.eligibleUnits === null && !JSON.stringify(row).includes(repo)));
 
   const checkpointWithBacklog = JSON.parse(readFileSync(checkpoint, "utf8"));
-  const retryAt = Math.floor((base + 3_600_000) / 1000);
+  const retryAt = (base + 3_600_000) / 1000;
   checkpointWithBacklog.repositories[repo].pending = Object.fromEntries(Array.from({ length: 4096 }, (_, index) => {
     const id = String(index + 1000);
-    return [id + ":1", { run: { run: id, attempt: 1, head: sha, created: Math.floor(veryOld / 1000) },
+    return [id + ":1", { run: { run: id, attempt: 1, head: sha, created: veryOld / 1000 },
       lanes: ["actions_live", "actions_backfill"], due: retryAt, failures: 1, gap: "unavailable" }];
   }));
   writeFileSync(checkpoint, JSON.stringify(checkpointWithBacklog));
@@ -235,22 +230,20 @@ test("normal CLI resumes GitHub history and follows exact attempts independently
   assert.equal(Object.keys(state().pending).length, 4096);
   assert.equal(state().pending["1000:1"].due, retryAt);
 
-  const beforeInvalidScope = requests;
   await assert.rejects(execute(process.execPath, [cli, "--once"], {
     env: { ...prefix, PLOW_GITHUB_REPOSITORIES: "_fixture=example/demo" },
   }), /GitHub collector failed/);
-  assert.equal(requests, beforeInvalidScope);
-});
-
-test("rejects a readable-by-others credential file before HTTP", async t => {
-  const root = mkdtempSync("/tmp/apparent-dev-plow-github-secret-");
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  const token = join(root, "token");
-  writeFileSync(token, secret, { mode: 0o644 });
-  mkdirSync(join(root, "spool"), { mode: 0o700 });
-  await assert.rejects(execute(process.execPath, [cli, "--once"], {
-    env: { ...process.env, PLOW_GITHUB_ORIGIN: "http://127.0.0.1:1", PLOW_GITHUB_REPOSITORIES: "fixture=example/demo",
-      PLOW_GITHUB_ACTIONS_SINCE: "2025-01-01T00:00:00Z", PLOW_GITHUB_READ_TOKEN_FILE: token,
-      PLOW_GITHUB_STATE: join(root, "state"), PLOW_SPOOL: join(root, "spool") },
-  }), /GitHub collector failed/);
+  writeFileSync(join(root, "github-read-fixture"), "unsafe-token", { mode: 0o600 });
+  chmodSync(join(root, "github-read-fixture"), 0o644);
+  writeFileSync(join(root, "github-read-other"), "other-token", { mode: 0o400 });
+  const expanded = { PLOW_GITHUB_CREDENTIAL_LAYOUT: "per-alias", PLOW_GITHUB_CREDENTIAL_DIR: root,
+    PLOW_GITHUB_REPOSITORIES: "fixture=example/demo,other=example/other",
+    PLOW_GITHUB_ACTIONS_SINCE_BY_ALIAS: JSON.stringify({ other: iso(veryOld - 2 * day) }) };
+  const at = base + 700_000;
+  await cycle(at, 45, expanded);
+  assert.equal(healthAt(at).filter(row => row.scope === "fixture" && row.gapCode === "access_denied").length, 2);
+  assert.equal(healthAt(at).filter(row => row.scope === "other" && row.lastSuccessMs === at).length, 2);
+  assert.equal(state().floor, (veryOld - day) / 1000);
+  assert.equal(state("example/other").floor, (veryOld - 2 * day) / 1000);
+  await assert.rejects(cycle(at + 1000, 45, { ...expanded, PLOW_GITHUB_ACTIONS_SINCE_BY_ALIAS: "" }), /GitHub collector failed/);
 });

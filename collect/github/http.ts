@@ -1,4 +1,4 @@
-import { closeSync, constants, fstatSync, openSync, readFileSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
 
 export type Row = Record<string, unknown>;
 export type Reply = { data: unknown; next: number; last: number; cooldown: number };
@@ -55,10 +55,20 @@ export function credential(path: string) {
   const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const metadata = fstatSync(fd);
-    if (!metadata.isFile() || (metadata.mode & 0o077) || metadata.size < 1 || metadata.size > 4096) {
+    const mode = metadata.mode & 0o7777;
+    if (!metadata.isFile() || metadata.uid !== process.geteuid?.() || (mode !== 0o400 && mode !== 0o600) ||
+        metadata.size < 1 || metadata.size > 4096) {
       throw Error("GitHub credential must be a private bounded regular file");
     }
-    const value = readFileSync(fd, "utf8").trim();
+    const bytes = Buffer.alloc(4097);
+    let size = 0;
+    while (size < bytes.length) {
+      const read = readSync(fd, bytes, size, bytes.length - size, null);
+      if (!read) break;
+      size += read;
+    }
+    if (size === bytes.length) throw Error("GitHub credential exceeded the size limit");
+    const value = bytes.toString("utf8", 0, size).trim();
     if (!/^[a-zA-Z0-9_.-]{1,4096}$/.test(value)) throw Error("Invalid GitHub credential format");
     return value;
   } finally {
@@ -108,13 +118,13 @@ function retryAt(headers: Headers, now: number, limited: boolean) {
   return Math.max(u32(after), u32(reset ? reset + 1 : 0), limited ? now + 60 : 0);
 }
 
-export function github(origin: string, token: string, requests: number) {
+export function github(origin: string, requests: number) {
   const base = new URL(origin);
   if ((base.origin !== "https://api.github.com" && !(base.protocol === "http:" && base.hostname === "127.0.0.1")) ||
       base.href !== base.origin + "/") throw Error("Use the GitHub API or a loopback HTTP fixture");
   const deadline = performance.now() + 120_000;
   let remaining = requests;
-  return async (repo: string, endpoint: string): Promise<Reply> => {
+  return async (repo: string, endpoint: string, token: string): Promise<Reply> => {
     const time = Math.floor(deadline - performance.now());
     if (remaining-- <= 0 || time < 1) throw new Budget();
     const prefix = "/repos/" + repo + "/";

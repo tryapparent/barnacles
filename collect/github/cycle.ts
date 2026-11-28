@@ -12,7 +12,7 @@ type Lane = typeof lanes[number];
 type Inventory = Exclude<Lane, "attempts">;
 type Action = "actions_live" | "actions_backfill";
 type Pending = { run: Run; lanes: Action[]; due: number; failures: number; gap: string };
-type Repository = { cursors: Record<Inventory, Cursor>; pending: Record<string, Pending> };
+type Repository = { cursors: Record<Inventory, Cursor>; pending: Record<string, Pending>; throttle?: number; floor?: number };
 export type State = { version: number; floor: number; turn: number; throttle: number; repositories: Record<string, Repository> };
 export type Target = { repository: string; scope: string };
 const history = (lane: Inventory) => lane.endsWith("_backfill");

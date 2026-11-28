@@ -27,12 +27,21 @@ umask 077
 if [[ $github == true ]]; then
   : "${PLOW_BEND_BUNDLE:?Set a verified compiler bundle path}"
   : "${PLOW_GITHUB_CREDENTIAL_DIR:?Set the private GitHub credential directory}"
-  credential="$PLOW_GITHUB_CREDENTIAL_DIR/github-read"
   if [[ $PLOW_LGTM_WORKDIR != /* || $PLOW_BEND_BUNDLE != /* || ! -f $PLOW_BEND_BUNDLE/main.ts ||
-        $PLOW_GITHUB_CREDENTIAL_DIR != /* || ! -f $credential || -L $credential || ! -s $credential ]]; then
-    printf '%s\n' 'Use absolute paths to the runtime, verified compiler bundle and directory containing a private github-read file.' >&2
+        $PLOW_GITHUB_CREDENTIAL_DIR != /* || ! -d $PLOW_GITHUB_CREDENTIAL_DIR ]]; then
+    printf '%s\n' 'Use absolute paths to the runtime, verified compiler bundle and private GitHub credential directory.' >&2
     exit 2
   fi
+  case "${PLOW_GITHUB_CREDENTIAL_LAYOUT:-legacy}" in
+    legacy)
+      credential="$PLOW_GITHUB_CREDENTIAL_DIR/github-read"
+      if [[ ! -f $credential || -L $credential || ! -s $credential ]]; then
+        printf '%s\n' 'Legacy layout requires a private github-read file.' >&2
+        exit 2
+      fi ;;
+    per-alias) ;;
+    *) printf '%s\n' 'Set PLOW_GITHUB_CREDENTIAL_LAYOUT to legacy or per-alias.' >&2; exit 2 ;;
+  esac
   export PLOW_GITHUB_SOURCE="$PWD"
   compose+=(-f infra/lgtm/github.compose.yaml)
   mkdir -p -m 0700 "$PLOW_LGTM_WORKDIR/github-state" "$PLOW_LGTM_WORKDIR/spool"
