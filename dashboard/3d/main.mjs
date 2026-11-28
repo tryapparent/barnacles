@@ -1,7 +1,7 @@
 import { createElement as h, Fragment } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
-import { control, LandscapeBoard, GroundLabels, projectLabels } from "./view/board.mjs";
+import { control, LandscapeBoard } from "./view/board.mjs";
 import { mountScenery, paintShoulder } from "./scenery/layers.mjs";
 import policy from "plow-landscape-policy";
 import { createCamera } from "./view/camera.mjs";
@@ -11,7 +11,7 @@ import {
   landscapeLayout,
   list,
 } from "./view/parcels.mjs";
-import { Inspector } from "./view/inspect.mjs";
+import { Inspector, GroundLabels, projectLabels } from "./view/inspect.mjs";
 import { wideViewport, widthNotice } from "./widescreen.mjs";
 import { idleMetrics, mountLandscape } from "./scene/renderer.mjs";
 

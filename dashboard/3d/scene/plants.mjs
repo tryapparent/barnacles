@@ -10,9 +10,9 @@ export function botanicalModel(distant) {
     vertex(c, tone);
   }
   function stem(x, z, height, r, tint) {
-    for (let side = 0; side < 4; side++) {
-      const a = (side * Math.PI) / 2,
-        b = a + Math.PI / 2,
+    for (let side = 0; side < 3; side++) {
+      const a = side * Math.PI * 2 / 3,
+        b = a + Math.PI * 2 / 3,
         col = shade(tint, 0.67 + 0.3 * Math.max(0, Math.cos(a + 1)));
       const p = [x + Math.cos(a) * r, 0, z + Math.sin(a) * r],
         q = [x + Math.cos(b) * r, 0, z + Math.sin(b) * r];
@@ -60,20 +60,20 @@ export function botanicalModel(distant) {
       return [dx * reach - dz * across, y, dz * reach + dx * across];
     }
     for (const side of [-1, 1]) {
-      for (let k = 0; k < 3; k++) {
-        const t = k/3, end = (k+1)/3;
+      for (let k = 0; k < 2; k++) {
+        const t = k/2, end = (k+1)/2;
         const base=blade(t,0), edge=blade(t,side), next=blade(end,0), rim=blade(end,side);
         const low=shade(green,.88+.10*t+.08*side), high=shade(green,.94+.12*end+.08*side);
         if(k>0) { vertex(base,low); vertex(edge,low); vertex(next,high); }
-        if(k<2) { vertex(edge,low); vertex(rim,high); vertex(next,high); }
+        if(k<1) { vertex(edge,low); vertex(rim,high); vertex(next,high); }
       }
     }
   }
-  for (let j = 0; j < 6; j++) {
+  for (let j = 0; j < 4; j++) {
     const a = j * 2.4,
       dx = Math.cos(a),
       dz = Math.sin(a),
-      y = 1.32 + j * 0.072;
+      y = 1.32 + j * 0.105;
     const O = [0.11, y, 0],
       tip = [0.11 + dx * 0.16, y + 0.23, dz * 0.16],
       left = [0.11 + dx * 0.094 - dz * 0.065, y + 0.1, dz * 0.094 + dx * 0.065],

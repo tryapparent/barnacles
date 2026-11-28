@@ -1,5 +1,5 @@
 import { createProgram, bindTextures } from "./gpu.mjs";
-import { groundMaterials, groundMesh } from "./ground.mjs";
+import { groundMaterials, groundMesh, plantBoundary } from "./ground.mjs";
 import { fieldGeometry } from "./geometry.mjs";
 import { botanicalModel } from "./plants.mjs";
 import { plotMesh, plotSpecs } from "./plots.mjs";
@@ -29,8 +29,6 @@ export function mountLandscape(root, sources, shoulder = () => {}) {
     antialias: true,
     powerPreference: "low-power",
   });
-  const info=gl?.getExtension("WEBGL_debug_renderer_info");
-  const software=info && /SwiftShader|llvmpipe|software rasterizer/i.test(gl.getParameter(info.UNMASKED_RENDERER_WEBGL));
   const counters = { ...idleMetrics };
   const motion = matchMedia("(prefers-reduced-motion: reduce)");
   const contrast = matchMedia("(forced-colors: active)");
@@ -144,15 +142,14 @@ export function mountLandscape(root, sources, shoulder = () => {}) {
       const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
       const ground = document.createElement("canvas");
       const scale = Math.min(
-        1.5,
-        devicePixelRatio,
+        2,
         gl.getParameter(gl.MAX_TEXTURE_SIZE) / Math.max(b.width, b.height),
       );
       ground.width = Math.ceil(b.width * scale);
       ground.height = Math.ceil(b.height * scale);
       const g = ground.getContext("2d");
       g.scale(scale, scale);
-      const { track, shade } = groundMaterials(g, images, rand);
+      const { track } = groundMaterials(g, rand);
       const veil = g.createLinearGradient(0, 0, b.width, b.height);
       veil.addColorStop(0, "#b8964438");
       veil.addColorStop(0.44, "#3d311e4a");
@@ -173,18 +170,17 @@ export function mountLandscape(root, sources, shoulder = () => {}) {
       shoulder(g, -5, cross, b.width + 5, cross - 2, width);
       paintRows(g, b);
       const verts = [];
-      const { timber, canopyShadow, cottage, verge } = fieldGeometry({ g, verts, shade });
+      const { timber, cottage, verge } = fieldGeometry({ verts });
+      plantBoundary(timber,b.width,rand);
       for (const [x,z,r] of [[-.02,b.height*.82,29],[.02,cross+30,15],
         [.027,b.summary.y+b.summary.h*.47,16],[.062,cross-5,20],[.080,cross-4,8],[.104,cross-7,7],[.119,cross-5,4],
         [.186,cross-12,5],[.194,cross-14,7],[.205,cross-10,4],[.59,b.summary.y-20,16]]) {
         timber(b.width*x,z,r);
-        canopyShadow(b.width*x,z,r);
       }
       const yard = b.trendZone.x + b.trendZone.w;
       cottage(yard + 29, cross - 54, 33, 16, 8, .23);
       cottage(yard + 62, cross - 68, 19, 12, 7, -.29);
       for (const [dx, dz, radius] of [[18,-75,9],[46,-72,9],[74,-81,11],[87,-58,8]]) {
-        canopyShadow(yard+dx,cross+dz,radius);
         timber(yard+dx,cross+dz,radius);
       }
       for (const [across, depth, radius] of [[.952,.987,39],[.9,1.01,22],[.185,1.007,15]]) {
@@ -236,12 +232,12 @@ export function mountLandscape(root, sources, shoulder = () => {}) {
           cache.delete(slot);
         }
     };
-    function plants(items, shadow) {
+    function plants(items) {
       if (!instancing || !botanical || !items.length) return;
       const spot = attrs[4];
       gl.uniform1f(loc("plant"), 1);
-      gl.uniform1f(loc("shadow"), shadow);
-      const model=shadow || pose.s<2.2 ? distantCrop : botanical;
+
+      const model=pose.s<2.65 ? distantCrop : botanical;
       attributes(model.buf);
       gl.enableVertexAttribArray(spot);
       instancing.vertexAttribDivisorANGLE(spot, 1);
@@ -269,7 +265,7 @@ export function mountLandscape(root, sources, shoulder = () => {}) {
       sync();
       const vw = root.clientWidth,
         vh = root.clientHeight,
-        dpr = Math.min(software ? .68 : 1.65, devicePixelRatio);
+        dpr = Math.min(1.65, devicePixelRatio);
       if (
         canvas.width !== Math.round(vw * dpr) ||
         canvas.height !== Math.round(vh * dpr)
@@ -280,7 +276,7 @@ export function mountLandscape(root, sources, shoulder = () => {}) {
       }
       counters.lastDrawCalls = 0;
       const lift = Math.sqrt(1 - pose.p * pose.p) / pose.p;
-      gl.clearColor(0.21, 0.25, 0.12, 1);
+      gl.clearColor(.60, .65, .72, 1);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
       gl.uniform1f(loc("crease"), board.summary.y + board.summary.h);
       gl.uniform2f(loc("view"), board.width, board.height);
@@ -293,7 +289,6 @@ export function mountLandscape(root, sources, shoulder = () => {}) {
       gl.uniform1f(loc("cover"), 0);
       gl.enable(gl.DEPTH_TEST);
       gl.depthFunc(gl.LEQUAL);
-      triangles(plane);
       const inView = [...cache.values()].filter(
         ({ r }) =>
           pose.x + (r.x + r.w + 9) * pose.s > -vw*.45 &&
@@ -312,6 +307,8 @@ export function mountLandscape(root, sources, shoulder = () => {}) {
         gl.uniform1f(loc("cover"), 0);
         triangles(mesh.relief);
       }
+      gl.uniform2f(loc("origin"), 0, 0);
+      triangles(plane);
       const planted = inView.filter(
         ({ mesh }) => mesh.plants && pose.s * 0.93 > 0.31,
       );
@@ -326,7 +323,6 @@ export function mountLandscape(root, sources, shoulder = () => {}) {
       counters.visibleParcels = inView.length;
       counters.culledParcels = cache.size - inView.length;
       gl.disable(gl.DEPTH_TEST);
-      plants(planted, 1);
       gl.uniform2f(loc("origin"), 0, 0);
       gl.enable(gl.BLEND);
       gl.blendFunc(gl.DST_COLOR,gl.ZERO);
@@ -337,7 +333,7 @@ export function mountLandscape(root, sources, shoulder = () => {}) {
       gl.uniform1f(loc("shadow"), 0);
       gl.enable(gl.DEPTH_TEST);
       triangles(trees);
-      plants(planted, 0);
+      plants(planted);
       gl.enable(gl.BLEND);
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
       gl.depthMask(false);
@@ -385,7 +381,7 @@ export function mountLandscape(root, sources, shoulder = () => {}) {
     if (images) initialize(images);
   });
   Promise.all(
-    ["tilth", "grain", "oak", "meadow", "road", "horizon"].map(async (name) => {
+    ["tilth", "grain", "oak", "meadow", "horizon"].map(async (name) => {
       const img = new Image();
       img.src = sources[name];
       await img.decode();
@@ -408,7 +404,10 @@ export function mountLandscape(root, sources, shoulder = () => {}) {
     },
     view(next) {
       pose = next;
-      schedule();
+      if (!ready || !visible || suspended || document.hidden || contrast.matches) return;
+      cancelAnimationFrame(frame);
+      frame = 0;
+      draw(performance.now());
     },
   };
 }

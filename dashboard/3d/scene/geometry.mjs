@@ -1,10 +1,10 @@
+export const fogHeight = (width, depth) => Math.min(21, Math.max(2.5, Math.min(width * .65, depth * .64)));
+
 export function fieldGeometry({
   verts,
   grassLocations,
   cutLocations,
   fogVertices,
-  g,
-  shade,
 }) {
   function grains(r, edge, small = false, cut = false, identity = "") {
     const gap = small ? 4.8 : 8.3,
@@ -108,26 +108,9 @@ export function fieldGeometry({
         vertex(i, j + 1);
       }
   }
-  function canopyShadow(x, z, r) {
-    g.save();
-    g.translate(x, z);
-    g.rotate(0.55);
-    for (let i = 0; i < 16; i++) {
-      const t = i / 16;
-      shade(
-        r * (0.5 + t * 1.9),
-        r * (0.5 + t * 0.4),
-        r * (0.6 + 0.55 * t),
-        r * (0.36 + 0.42 * t),
-        "rgba(39,30,9,.23)",
-      );
-    }
-    g.restore();
-  }
-
   function fogBank(r) {
     if (r.w <= 0 || r.h <= 0) return;
-    const height = Math.min(21, Math.max(2.5, Math.min(r.w * 0.65, r.h * 0.64)));
+    const height = fogHeight(r.w,r.h);
     for (const [u, v] of [
       [0, 0],
       [1, 0],
@@ -205,5 +188,5 @@ export function fieldGeometry({
       }
     }
   }
-  return { grains, furrows, timber, canopyShadow, fogBank, cottage, verge };
+  return { grains, furrows, timber, fogBank, cottage, verge };
 }

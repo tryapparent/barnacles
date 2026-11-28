@@ -1,23 +1,4 @@
-export function groundMaterials(g, images, rand) {
-  function pat(k, sx, sy = sx) {
-    const pat = g.createPattern(images[k], "repeat");
-    pat.setTransform(new DOMMatrix().scale(sx, sy));
-    return pat;
-  }
-  function gradient(x, y, r, inner, outer) {
-    const a = g.createRadialGradient(x, y, 0, x, y, r);
-    a.addColorStop(0, inner);
-    a.addColorStop(1, outer);
-    return a;
-  }
-  function shade(x, y, rx, ry, color) {
-    g.save();
-    g.translate(x, y);
-    g.scale(1, ry / rx);
-    g.fillStyle = gradient(0, 0, rx, color, "transparent");
-    g.fillRect(-rx, -rx, 2 * rx, 2 * rx);
-    g.restore();
-  }
+export function groundMaterials(g, rand) {
   function track(x1, z1, x2, z2, width) {
     const dx = x2 - x1,
       dz = z2 - z1,
@@ -32,7 +13,7 @@ export function groundMaterials(g, images, rand) {
       2.1 * Math.sin(t * 0.006);
     const lane = (t, side) => wav(t) + side * width * (.28 + .024 * Math.sin(t / 37));
     for (const side of [-1, 1]) {
-      for (const [spread, fill] of [[.23, "#6a633b99"], [.15, pat("road", .85)], [.055, "#c2a47882"]]) {
+      for (const [spread, fill] of [[.23, "#6a633b99"], [.15, "#907a56"], [.055, "#a28e6882"]]) {
         g.beginPath();
         for (const direction of [1, -1]) {
           for (let i = 0; i <= steps; i++) {
@@ -44,10 +25,19 @@ export function groundMaterials(g, images, rand) {
         g.fillStyle = fill;
         g.fill();
       }
+      for(let t=0;t<len;t+=.48+rand()*1.3) {
+        const center=lane(t,side);
+        const offset=(rand()-.5)*width*.48;
+        const radius=.15+rand()*.47;
+        g.fillStyle=rand()<.54 ? "#4d4836ba" : "#cfb998b8";
+        g.beginPath();
+        g.ellipse(t,center+offset,radius*1.4,radius,rand()*2,0,Math.PI*2);
+        g.fill();
+      }
     }
     g.restore();
   }
-  return { shade, track };
+  return { track };
 }
 
 const crossfall = .049;
@@ -81,4 +71,16 @@ export function groundMesh() {
     for (const [x,z] of [[-12,back],[12,back],[-12,front],[-12,front],[12,back],[12,front]])
       vertices.push(x,0,z,1,1,1,-6,0,0);
   return vertices;
+}
+
+export function plantBoundary(timber, width, random) {
+  for (let x=-width; x<width*2;) {
+    const grove=2+Math.floor(random()*5);
+    for(let i=0;i<grove;i++) {
+      const bank=36+14*Math.sin(x*.008)+6*Math.sin(x*.026+1.3);
+      timber(x,bank+2+random()*7,1.7+random()*2.9);
+      x+=3+random()*5;
+    }
+    x+=24+random()*72;
+  }
 }

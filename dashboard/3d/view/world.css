@@ -312,3 +312,25 @@ main.board { transform-style: preserve-3d; pointer-events: none; }
   font-variant-numeric: tabular-nums;
 }
 .ground-labels .neighbor-reading { font-size: clamp(14px, 1.1vw, 17px); }
+
+.farm-ready .category-tile .parcel-type,
+.farm-ready main :is(.tick,.utc) { opacity: 0; }
+.ground-labels .field-reading {
+  font-size: clamp(17px,1.65vw,26px);
+  font-weight: 550;
+}
+.ground-labels .field-reading strong {
+  font: 700 1.14em/1.05 Georgia,serif;
+}
+.ground-labels .time-reading {
+  transform: translateY(-50%);
+  font: 550 13px/1.15 "Source Serif 4",Georgia,serif;
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 2px #211c12;
+}
+.ground-labels .time-reading strong { margin: 0; font: inherit; }
+.ground-labels [data-fog] { color: #242721; text-shadow: 0 1px 1px #fff3d8a8; }
+
+.ground-labels .field-reading[data-fog] { font-size: clamp(14px,1.12vw,18px); }
+.ground-labels .field-reading[data-fog] strong { display: inline; margin-left: .35em; }

@@ -1,12 +1,12 @@
 import { hillsideShader } from "./ground.mjs";
-import { plowedSoil, rakingLight } from "../scenery/layers.mjs";
+import { farValley, plowedSoil, rakingLight } from "../scenery/layers.mjs";
 export const vs = `attribute vec3 p,color;attribute vec4 spot;uniform float plant;uniform vec2 origin;uniform vec4 cam;uniform vec2 screenSize;attribute vec2 tex;attribute float flex;varying mediump float floorLayer;varying vec2 uv,land,fogScreen;varying vec3 rgb;uniform vec2 view;uniform float lift;uniform highp float time;uniform highp vec4 lens;uniform mediump float shadow;${hillsideShader}
 void main(){vec3 v=p;float sway=max(flex,0.);if(plant>.5){float cs=cos(spot.w),sn=sin(spot.w);v=vec3(spot.x+(p.x*cs-p.z*sn)*spot.z,p.y*spot.z,spot.y+(p.x*sn+p.z*cs)*spot.z);sway*=spot.z;}v.xz+=origin;if(tex.x== -6.)v.xz=vec2(p.x*view.x,crease+p.z*view.y);v.x+=sway*(sin(time*1.4+v.x*.034+v.z*.021)+.3*sin(time*2.+v.z*.08));if(shadow>.5){if(plant>.5||tex.x<= -3.||tex.x>1.5){v.x+=v.y*.53;v.z+=v.y*.7;}else{float ray=(1.-tex.y)*(-flex);v.x+=ray*.75;v.z+=ray*1.38-v.y*.35;}v.y=0.;}vec2 realGround=v.xz;float localHeight=v.y;v.y+=heightAt(realGround);vec2 proj=vec2(v.x,(v.z-lift*v.y)*cam.w)*cam.z+cam.xy;float ground=(v.z*cam.w*cam.z+cam.y)/screenSize.y;
 float depth=1.+lens.z*(.5-ground-.84*v.y*cam.z/screenSize.y);
 float height=mix(lift*cam.w,1.18,lens.z/.44)*v.y*cam.z/screenSize.y;
 float y=lens.w*depth+lens.y*ground-height;
 gl_Position=vec4(lens.x*(2.*proj.x/screenSize.x-1.),depth-2.*y,(.86-localHeight*.009-v.z/view.y*.32)*depth,depth);uv=tex;land=realGround/view;rgb=color;
- if(plant>.5){float seedTone=.5+.5*sin(spot.w*2.8);rgb*=mix(vec3(.91,.83,.55),vec3(1.30,1.16,.72),seedTone);rgb+=vec3(.07,.043,.005)*smoothstep(1.2,1.7,p.y);}
+ if(plant>.5){float seedTone=.5+.5*sin(spot.w*2.8);rgb*=mix(vec3(.91,.83,.55),vec3(1.13,1.10,.76),seedTone);rgb+=vec3(.035,.026,.005)*smoothstep(1.2,1.7,p.y);}
  fogScreen=vec2(0.);
  if(tex.x<=-8.){
    vec2 lo=vec2(1e4), hi=-lo;
@@ -27,19 +27,11 @@ gl_Position=vec4(lens.x*(2.*proj.x/screenSize.x-1.),depth-2.*y,(.86-localHeight*
 export const fs = `precision highp float;varying mediump float floorLayer;varying vec2 uv,land,fogScreen;varying vec3 rgb;uniform highp vec2 screenSize;uniform highp vec2 origin;uniform highp vec4 cam;uniform sampler2D photo,foliage,clods,borderGrass,crops,pasture;uniform mediump float cover;uniform mediump float plotShade;uniform highp float lift;uniform highp vec2 view;uniform highp float time;uniform highp vec4 lens;uniform vec3 mistTint;uniform highp vec2 fieldSize;uniform mediump float shadow;${hillsideShader}
 ${rakingLight}
 ${plowedSoil}
-float hash3(vec3 p){
-      p=fract(p*vec3(.1031,.1030,.0973));
-      p+=dot(p,p.yxz+33.33);
-      return fract((p.x+p.y)*p.z);
-    }
-    float noise3(vec3 p){
-      vec3 i=floor(p),f=fract(p);
-      f=f*f*(3.-2.*f);
-      vec4 a=vec4(hash3(i),hash3(i+vec3(0,1,0)),hash3(i+vec3(0,0,1)),hash3(i+vec3(0,1,1)));
-      vec3 j=i+vec3(1,0,0);
-      vec4 b=vec4(hash3(j),hash3(j+vec3(0,1,0)),hash3(j+vec3(0,0,1)),hash3(j+vec3(0,1,1)));
-      vec4 c=mix(a,b,f.x);
-      return mix(mix(c.x,c.y,f.y),mix(c.z,c.w,f.y),f.z);
+${farValley}
+float noise3(vec3 p){
+      float slice=floor(p.z),f=fract(p.z);
+      vec2 at=p.xy+slice*vec2(53.,97.);
+      return mix(fieldLightNoise(at),fieldLightNoise(at+vec2(53.,97.)),f*f*(3.-2.*f));
     }
     float vapor(vec3 p){
       float large=noise3(p);
@@ -71,7 +63,7 @@ float hash3(vec3 p){
       vec3 light=vec3(0.);
       float transmit=1.;
       vec3 wind=vec3(-time*.135,time*.032,-time*.042);
-      vec3 sky=mix(mistTint,vec3(.99,.92,.80),.78);
+      vec3 sky=mix(mistTint,vec3(.95,.89,.77),.74);
       vec3 underside=mistTint*vec3(.61,.685,.73);
 
       for(int i=0;i<steps;i++){
@@ -84,11 +76,14 @@ float hash3(vec3 p){
           (z+origin.y)/clamp(depth*.34,7.,19.))+wind;
         float billow=vapor(sampleAt);
         float sideZ=smoothstep(0.,min(depth*.33,18.),min(z,depth-z));
-        float edge=sideX*sideZ;
-        float envelope=pow(max(edge,.0001),.62)*(.79+.41*billow);
+        vec2 normalized=(pos/box.xy-.5)*2.;
+        float margin=1.-pow(pow(abs(normalized.x),3.)+pow(abs(normalized.y),3.),1./3.);
+        float edge=sideX*sideZ*smoothstep(-.04,.30,margin+(billow-.50)*.42);
+        float drift=noise3(vec3(x/39.,z/14.,time*.06));
+        float envelope=pow(max(edge,.0001),.66)*(.22+.49*billow+.45*drift);
         float density=smoothstep(-.13,.25,billow*1.15+.23-altitude/max(.01,envelope));
-        density*=edge*smoothstep(0.,.12,altitude)*(.44+.88*billow);
-        float absorbed=1.-exp(-density*pathLength*5.8);
+        density*=edge*smoothstep(0.,.12,altitude)*(.33+1.12*billow)*smoothstep(.18,.58,drift*.50+billow*.62);
+        float absorbed=1.-exp(-density*pathLength*4.9);
         float sun=noise3(sampleAt+vec3(-.44,.54,-.20));
         float lit=clamp(.18+altitude*.70+1.35*(billow-sun),0.,1.);
         light+=transmit*absorbed*mix(underside,sky,lit);
@@ -99,10 +94,11 @@ float hash3(vec3 p){
     }
     vec3 meadowAt(vec2 coords){
       vec2 world=coords*view;
-      vec2 fold=clamp(.13+.72*coords,.002,.998);
-      vec3 pastureColor=texture2D(pasture,vec2(.002+.996*fold.x,.253+.744*fold.y)).rgb;
+      vec2 fold=.002+.996*(1.-abs(mod(.13+.72*coords,2.)-1.));
+      vec3 pastureColor=texture2D(pasture,vec2(.002+.996*fold.x,.377+.621*fold.y)).rgb;
       vec3 turf=texture2D(borderGrass,world/68.).rgb;
-      vec3 grass=mix(turf,pastureColor,.86)*(.79+.73*turf.g);
+      vec3 blades=texture2D(borderGrass,world/17.+.27).rgb;
+      vec3 grass=mix(turf,pastureColor,.74)*(.73+.66*turf.g+.46*blades.g);
       vec4 marks=texture2D(photo,clamp(coords,0.,1.));
       float boundary=min(min(coords.x,1.-coords.x)*view.x,min(coords.y,1.-coords.y)*view.y);
       return mix(grass,marks.rgb,marks.a*smoothstep(0.,38.,boundary));
@@ -119,7 +115,7 @@ float hash3(vec3 p){
 vec2 groundUV=land,meadow=land*view;
     float beam=fieldLightNoise(vec2(meadow.x/230.,(meadow.y+.19*meadow.x)/58.));
     vec3 light=mix(vec3(.93,.94,.91),vec3(1.10,1.07,.99),smoothstep(.31,.74,beam));
-    gl_FragColor=vec4(meadowAt(groundUV)*light*(.87+.23*texture2D(borderGrass,meadow/33.).g),1.);}else if(cover>.5){vec2 world=land*view;
+    gl_FragColor=vec4(valley(meadow,meadowAt(groundUV)*light*(.87+.23*texture2D(borderGrass,meadow/33.).g)),1.);}else if(cover>.5){vec2 world=land*view;
       vec2 uvWorld=world/(cover>1.5?vec2(48.,39.):vec2(108.,105.));
       vec2 tile=1.-abs(mod(uvWorld,2.)-1.);
       vec3 c=cover>1.5 ? mix(vec3(.375,.337,.125),texture2D(crops,tile).rgb,.35)*rakingLight(world) : plowedSoil(world,fract((world.x+.32*world.y)/14.),clods);
@@ -134,4 +130,4 @@ vec2 groundUV=land,meadow=land*view;
       if(uv.x> -4.5) base=mix(base,vec3(.29,.31,.15),smoothstep(.48,.82,patina)*.62);
       else base*=.88+.14*patina+.03*sin(uv.y*3.14);
       gl_FragColor=vec4(shadow>.5?vec3(.91,.92,.89):base*rakingLight(world),1.);
-    }else if(uv.x>3.5){gl_FragColor=vec4(headland(plowedSoil(land*view,uv.x-5.,clods)*(1.+plotShade*vec3(.24,.12,-.13))),1.);}else if(uv.x>1.5){vec4 leaf=texture2D(foliage,uv-vec2(2.,0.));if(leaf.a<.48)discard;gl_FragColor=vec4(shadow>.5?vec3(.73,.75,.71):leaf.rgb*rgb*vec3(.83,.84,.73),1.);}else gl_FragColor=vec4(shadow>.5?meadowAt(land)*vec3(.73,.73,.62):(uv.x<0.?rgb*rakingLight(land*view)*(1.+plotShade*vec3(.24,.12,-.13)) :texture2D(photo,uv).rgb*rgb),1.);}`;
+    }else if(uv.x>3.5){gl_FragColor=vec4(headland(plowedSoil(land*view,uv.x-5.,clods)*(1.+plotShade*vec3(.24,.12,-.13))),1.);}else if(uv.x>1.5){vec4 leaf=texture2D(foliage,uv-vec2(2.,0.));if(shadow>.5)gl_FragColor=vec4(mix(vec3(1.),vec3(.75,.79,.78),leaf.a),1.);else{if(leaf.a<.42)discard;gl_FragColor=vec4(leaf.rgb*rgb*vec3(.88,.89,.78),1.);}}else gl_FragColor=vec4(shadow>.5?meadowAt(land)*vec3(.73,.73,.62):(uv.x<0.?rgb*rakingLight(land*view)*(1.+plotShade*vec3(.24,.12,-.13)) :texture2D(photo,uv).rgb*rgb),1.);}`;

@@ -38,11 +38,10 @@ try {
     .filter((item) => item.type === "chunk");
   if (chunks.length !== 1) throw Error("Expected one landscape bundle.");
   const textures = {};
-  for (const name of ["meadow", "soil", "grain", "road", "oak"])
+  for (const name of ["meadow", "soil", "grain", "oak"])
     textures[name] = await encoded("assets/" + name + ".webp", "image/webp");
   for (const [name, file] of [
     ["horizon", "horizon"],
-    ["hedgerow", "hedgerow"],
     ["framingOak", "framing-oak"],
     ["verge", "verge"],
     ["tilth", "tilth"],

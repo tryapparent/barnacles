@@ -19,6 +19,18 @@ export function createProgram(gl) {
   return program;
 }
 export function bindTextures(gl, loc, images, texture) {
+  const size=256, noise=new Uint8Array(size*size);
+  let seed=16291;
+  for(let i=0;i<noise.length;i++) {
+    seed=(Math.imul(seed,1664525)+1013904223)>>>0;
+    noise[i]=seed>>>24;
+  }
+  gl.activeTexture(gl.TEXTURE6);
+  gl.bindTexture(gl.TEXTURE_2D,gl.createTexture());
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.LUMINANCE,size,size,0,gl.LUMINANCE,gl.UNSIGNED_BYTE,noise);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  gl.uniform1i(loc("noiseMap"),6);
   gl.activeTexture(gl.TEXTURE2);
   gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, images.horizon);

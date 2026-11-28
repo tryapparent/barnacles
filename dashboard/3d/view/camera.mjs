@@ -1,8 +1,8 @@
 import { hillside } from "../scene/ground.mjs";
-export function groundScreen(pose, w, h, x, z) {
+export function groundScreen(pose, w, h, x, z, above = 0) {
   const [breadth,slope,tilt,offset]=pose.lens;
   const ground=(pose.y+z*pose.p*pose.s)/h;
-  const altitude=pose.terrain.height(x,z)*pose.s/h;
+  const altitude=(pose.terrain.height(x,z)+above)*pose.s/h;
   const depth=1+tilt*(.5-ground-.84*altitude);
   return [w/2+(pose.x+x*pose.s-w/2)*breadth/depth,
     h*(offset+(slope*ground-pose.vertical*altitude)/depth)];
@@ -34,11 +34,7 @@ export function createCamera(root, update) {
   function paint() {
     root.style.setProperty("--scale", pose.s);
     root.style.setProperty("--pitch", pose.p);
-    const blend = Math.min(1, Math.max(.70, 2 - pose.s / base));
-    const breadth = 1 - .065 * blend;
-    const slope = 1 - .43 * blend;
-    const tilt = .44 * blend;
-    const offset = .192 * blend;
+    const breadth = .935, slope = .57, tilt = .44, offset = .192;
     const far = 1 + tilt / 2;
     pose.terrain = layout && hillside(layout);
     pose.lens = [breadth, slope, tilt, offset];
@@ -58,7 +54,7 @@ export function createCamera(root, update) {
           panel.style.transform = "matrix3d(" + pose.terrain.plane(panel.id === "timeline-panel") + ")";
       }
       if (pose.terrain && !document.body.dataset.focused) {
-        const labels=world.querySelectorAll("h2,.category-tile .parcel-type,.tick,.axis,.batch-trigger,.inspectable .sample-title");
+        const labels=world.querySelectorAll("h2,.batch-trigger,.inspectable .sample-title");
         for (const label of labels) {
           let origin=labelPositions.get(label);
           if(!origin) {origin=labelOrigin(label,world);labelPositions.set(label,origin);}
@@ -109,7 +105,7 @@ export function createCamera(root, update) {
           s: base,
           p: 0.93,
           x: (w - board.width * base) / 2,
-          y: (h - board.height * base * 0.93) / 2,
+          y: (h - board.height * base * 0.93) / 2 + h*.044,
         },
         immediate,
       );
@@ -127,12 +123,16 @@ export function createCamera(root, update) {
         ),
       ),
     );
+    const centerX=r.x+r.w*.5, centerZ=r.y+r.h*.5;
+    const altitude=hillside(board).height(centerX,centerZ)*s/h;
+    const row=.565-.192;
+    const ground=(row*1.22+altitude*(1.18-row*.44*.84))/(.57+row*.44);
     move(
       {
         s,
         p,
-        x: w * 0.5 - (r.x + r.w * 0.5) * s,
-        y: h * .55 - (r.y+r.h/2)*s*p + hillside(board).height(r.x+r.w/2,r.y+r.h/2)*s*1.45,
+        x: w * .5 - centerX * s,
+        y: h * ground - centerZ * s * p,
       },
       immediate,
       item.kind === "category" || item.kind === "operation" ? 1200 : 480,

@@ -1,10 +1,8 @@
 export const rakingLight = `
+uniform sampler2D noiseMap;
 float fieldLightNoise(vec2 p) {
-  vec2 cell = floor(p), f = fract(p);
-  f = f*f*(3.-2.*f);
-  vec4 index = dot(cell, vec2(1., 47.)) + vec4(0., 1., 47., 48.);
-  vec4 corners = fract(sin(index) * 15317.13);
-  return mix(mix(corners.x, corners.y, f.x), mix(corners.z, corners.w, f.x), f.y);
+  vec2 f=fract(p);
+  return texture2D(noiseMap,(floor(p)+f*f*(3.-2.*f)+.5)/256.).r;
 }
 vec3 rakingLight(vec2 world) {
   vec2 lightSpace = mat2(.91, -.41, .41, .91) * world;
@@ -92,41 +90,15 @@ function imageLayer(parent, name, src) {
   return el;
 }
 
-const nearWoods = [
-  [-.16, .32, .80, false],
-  [.13, .21, .66, true],
-  [.42, .145, .47, false],
-  [.65, .19, .71, true],
-  [.91, .31, .87, false],
-];
-
 export function mountScenery(root, sources) {
   const container = layer(root, "farm-scenery", {
     inset: "0", overflow: "hidden", zIndex: "1",
   });
   container.setAttribute("aria-hidden", "true");
   container.inert = true;
-  const hills = layer(container, "farm-distance", {
-    left: "0", top: "0", right: "0", backgroundColor: "#d6a978",
-    backgroundImage: 'url("' + sources.horizon + '")',
-    backgroundRepeat: "no-repeat", filter: "saturate(.72)",
-    maskImage: "linear-gradient(to bottom, black 58%, transparent)",
-  });
-  const hedge = layer(container, "farm-woodland", {
-    left: "0", top: "0",
-    maskImage: "linear-gradient(to bottom, black 66%, transparent 100%)",
-  });
-  for (const [x, width, height, mirror] of nearWoods) {
-    const trees = imageLayer(hedge, "farm-wood", sources.hedgerow);
-    Object.assign(trees.style, {
-      top: "auto", bottom: "0", left: x * 100 + "%",
-      height: height * 100 + "%", width: width * 100 + "%",
-      transform: mirror ? "scaleX(-1)" : "", transformOrigin: "center",
-    });
-  }
   const oak = imageLayer(container, "farm-framing-oak", sources.framingOak);
   const verge = imageLayer(container, "farm-verge", sources.verge);
-  let board, pose, w, h, base, homeX, homeY, rim, hedgeHeight;
+  let board, pose, w, h, base, homeX, homeY;
   const colors = matchMedia("(forced-colors: active)");
   function visibility() {
     container.hidden = colors.matches;
@@ -139,11 +111,7 @@ export function mountScenery(root, sources) {
     h = root.clientHeight;
     base = Math.min(w / board.width, h / (board.height * .93), 1);
     homeX = (w - board.width * base) / 2;
-    homeY = (h - board.height * base * .93) / 2;
-    rim = homeY + (board.summary.y - 3) * base * .93;
-    hedgeHeight = Math.max(38, board.summary.y * base * .70);
-    hedge.style.width = w + "px";
-    hedge.style.height = hedgeHeight + "px";
+    homeY = (h - board.height * base * .93) / 2 + h*.044;
     oak.style.width = w * .5 + "px";
     oak.style.height = h * 1.065 + "px";
     verge.style.width = w + "px";
@@ -156,24 +124,7 @@ export function mountScenery(root, sources) {
     const zoom = pose.s / base;
     const dx = pose.x - homeX;
     const dy = pose.y - homeY;
-    const projectedRim = pose.y + (board.summary.y - 3) * pose.s * pose.p;
-    const nearScale = zoom ** .45;
-    const relativeRim = projectedRim - rim;
     const dive = Math.max(0, zoom - 1);
-    const ridgeBottom = Math.max(0, Math.min(projectedRim, rim + relativeRim * .52 - h * .42 * dive));
-    const [, slope, tilt, offset] = pose.lens ?? [1, 1, 0, 0];
-    const project = y => offset*h + slope*y/(1+tilt*(.5-y/h));
-    const ridgeSize = Math.max(h * .20, project(ridgeBottom));
-    hills.style.height = ridgeSize + "px";
-    const ridgeWidth = w * Math.max(1.4, 1.4 * zoom ** .21);
-    const ridgeHeight = Math.max(h * .20, project(rim) / (1 + .2 * dive));
-    const skyX = Math.min(0, Math.max(w - ridgeWidth, (w - ridgeWidth) * .48 + dx * .12));
-    const skyY = Math.min(0, ridgeSize - ridgeHeight);
-    hills.style.backgroundSize = ridgeWidth + "px " + (ridgeHeight*4) + "px";
-    hills.style.backgroundPosition = skyX + "px " + skyY + "px";
-    const woodsBottom = Math.min(projectedRim, rim + relativeRim * .67 - h * .50 * dive);
-    hedge.style.transform = "translate(" + dx * .29 + "px," +
-      (project(woodsBottom) - hedgeHeight * nearScale) + "px) scale(" + nearScale + ")";
     const foregroundScale = zoom ** .67;
     const oakX = -w * .009 + dx * 1.2 - w * .72 * dive;
     const oakY = -h * .038 + Math.min(0, dy * 1.2 - h * 1.02 * dive);
@@ -184,3 +135,23 @@ export function mountScenery(root, sources) {
   }
   return {layout, view};
 }
+
+export const farValley = `
+float groundRow(vec2 world) {
+  float g=(world.y*cam.w*cam.z+cam.y)/screenSize.y;
+  float alt=heightAt(world)*cam.z/screenSize.y;
+  return lens.w+(lens.y*g-mix(lift*cam.w,1.18,lens.z/.44)*alt)/(1.+lens.z*(.5-g-.84*alt));
+}
+vec3 valley(vec2 world, vec3 grass) {
+  float crest=36.+14.*sin(world.x*.008)+6.*sin(world.x*.026+1.3);
+  if(world.y>crest+5.) return grass;
+  float center=(screenSize.x*.5-cam.x)/cam.z;
+  float depth=1.+lens.z*(.5-(world.y*cam.w*cam.z+cam.y)/screenSize.y-.84*heightAt(world)*cam.z/screenSize.y);
+  float across=.5+(world.x-center)*cam.z*lens.x/(screenSize.x*depth);
+  float u=.5+(across-.5)*.82+.085*clamp(center/view.x-.5,-1.,1.);
+  float skyline=groundRow(vec2(center,36.))-.055;
+  float v=.29+(groundRow(world)-skyline)*2.49*screenSize.y/screenSize.x;
+  vec3 hills=texture2D(pasture,vec2(clamp(u,.001,.999),clamp(v,.002,.996)*.375)).rgb;
+  vec3 distance=mix(hills,vec3(.60,.65,.72),clamp(-v*.8,0.,.84));
+  return mix(distance,grass,smoothstep(crest-5.,crest+5.,world.y));
+}`;
