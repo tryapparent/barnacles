@@ -10,17 +10,17 @@ The [datasource plugin](../analyze/datasource/) interpolates the textbox variabl
 
 ## Dashboard palette
 
-The Compose deployment defaults to the Plow theme. Its canvas is Ink (`#1A130D`), its panels use Wet Earth (`#392820`), its text uses Cream (`#FFF4DF`), and its primary controls use Meadow (`#6A934F`). The dashboard headings use Young Serif and the native charts, tables, and controls keep Grafana’s interface font. Existing personal theme preferences take precedence. Select **Plow** in Profile preferences or set `PLOW_GRAFANA_THEME=gildedgrove` to change the deployment default.
+The Compose deployment defaults to the Plow theme. Its canvas is Ink (`#1A130D`), its panels and shell use lighter Ink-toned surfaces, its text uses Cream (`#FFF4DF`), and its primary controls use Meadow (`#6A934F`). The dashboard headings use Young Serif and the native charts, tables, and controls keep Grafana’s interface font. Existing personal theme preferences take precedence. Select **Plow** in Profile preferences or set `PLOW_GRAFANA_THEME=gildedgrove` to change the deployment default.
 
 Grafana 12.3 validates theme IDs against a built-in server list. The image reuses its experimental `debug` ID as **Plow** in the theme picker. Gilded Grove, Zen, and other regular presets are still available. The Docker build validates the exact Grafana asset before replacing the theme definition and writes a new content-addressed filename and integrity hashes. On upgrade, revalidate that patch against the new image and confirm the default, a saved preference, and a switch back to a stock theme in Grafana.
 
 Activity is the default home from both the private Grafana root and the Access gateway. Activity links to Collection Health and Codex traces, and each Plow view links back to Activity. Open run and trace detail from the relevant overview to carry its selected identity and time range.
 
-The Plow dashboard header pairs Wet Earth (`#392820`) with the [original cream wordmark](assets/plow-cream.png) and uses Meadow (`#6A934F`) for its outline. Original Cream (`#FFF4DF`) text on Wet Earth reaches 12.85:1 contrast.
+The Plow dashboard header pairs Ink with the [original cream wordmark](assets/plow-cream.png) and uses Meadow (`#6A934F`) for its outline.
 
 Use [named field overrides and value mappings](https://grafana.com/docs/grafana/latest/visualizations/panels-visualizations/configure-value-mappings/) for table colors. Original Cream highlights elapsed values and a complete source read. Wet Earth marks unknown elapsed values, findings, and a partial source read. The labels carry the evidence state and Grafana supplies contrasting text on each fill in both themes. Keep Meadow for graphics. Complete describes the bounded source read, and the findings and unknown calls describe gaps in the evidence it returned.
 
-The dashboards use a common Wet Earth and Cream header with a Meadow outline. Meadow highlights measured activity and receipt rates. Amber marks waiting time, muted violet shows CI execution, and red marks failures or collector problems. Timelines and tables keep the corresponding labels. Grafana supplies the charts, controls, navigation and theme selection. [Shell branding](https://grafana.com/docs/grafana/latest/setup-grafana/configure-grafana/configure-custom-branding/) requires Grafana Enterprise or a supported paid Grafana Cloud account.
+The dashboards use a common Ink and Cream header with a Meadow outline. Meadow highlights measured activity and receipt rates. Amber marks waiting time, muted violet shows CI execution, and red marks failures or collector problems. Timelines and tables keep the corresponding labels. Grafana supplies the charts, controls, navigation and theme selection. [Shell branding](https://grafana.com/docs/grafana/latest/setup-grafana/configure-grafana/configure-custom-branding/) requires Grafana Enterprise or a supported paid Grafana Cloud account.
 
 ### Plow typography and Collection Health artwork
 

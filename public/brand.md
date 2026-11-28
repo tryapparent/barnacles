@@ -32,7 +32,7 @@ Open the [visual brand guide](brand/) for examples and downloadable wordmarks.
 
 Ink labels reach 5.16:1 on Meadow. Meadow reaches 3.56:1 on White, 3.26:1 on Original Cream, and 3.94:1 on Wet Earth for graphical accents. Original Cream reaches 12.85:1 on Wet Earth and 1.09:1 on White. Use Ink or Wet Earth where a meaningful edge needs contrast on a light surface. Plow chart component choices are open.
 
-In the dark dashboard, use Ink as the main background, Wet Earth for supporting surfaces, Original Cream for text, and Meadow for primary actions.
+In the dark dashboard, use Ink as the main background and for headers, lighter Ink tones for panels and navigation, Original Cream for text, and Meadow for primary actions. Use Wet Earth sparingly to mark evidence states.
 
 ## Art and composition
 

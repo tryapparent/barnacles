@@ -66,7 +66,7 @@ const theme = {
   name: 'Plow',
   colors: {
     mode: 'dark',
-    background: { canvas: ink, primary: '#392820', secondary: '#30221B', elevated: '#463329' },
+    background: { canvas: ink, primary: '#221E1B', secondary: '#292521', elevated: '#322D28' },
     text: { primary: cream, secondary: '#E1CDB8', disabled: '#B9A18B', link: focus, maxContrast: '#FFFFFF' },
     border: { weak: '#FFF4DF26', medium: '#FFF4DF40', strong: '#FFF4DF66' },
     primary: {
