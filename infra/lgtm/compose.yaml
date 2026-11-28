@@ -23,6 +23,7 @@ x-codex-capture: &codex-capture
 x-t3-capture: &t3-capture
   <<: *capture
   profiles: [capture-t3]
+  network_mode: ${PLOW_T3_NETWORK_MODE:-bridge}
   environment:
     PLOW_CAPTURE_SCOPE: ${PLOW_T3_SCOPE:-}
     PLOW_CAPTURE_STATE: /state

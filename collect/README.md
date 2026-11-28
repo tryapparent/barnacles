@@ -39,6 +39,7 @@ Loki delivery.
 | Input | Purpose |
 | --- | --- |
 | `PLOW_T3_ORIGIN`, `PLOW_T3_READ_TOKEN_FILE` | Stock T3 orchestration origin and private read-scoped bearer file |
+| `PLOW_T3_NETWORK_MODE` | Docker network mode for T3 capture, default `bridge`. Set `host` when the authorized T3 service listens only on the same Linux host's IPv4 loopback. |
 | `PLOW_T3_SCOPE`, `PLOW_CODEX_SCOPE` | Stable safe aliases for the configured sources |
 | `PLOW_CODEX_SESSIONS`, `PLOW_CODEX_ARCHIVES` | Read-only host roots containing authorized retained Codex rollouts |
 
