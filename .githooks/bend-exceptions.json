@@ -41,6 +41,13 @@
     "collect/t3/read.ts",
     "collect/t3/read.test.ts"
   ],
+  "Native dashboard, Collector fan-out and OTLP verification (see grafana/traces.md)": [
+    "grafana/dashboards/codex-traces.json",
+    "grafana/dashboards/codex-trace-detail.json",
+    "collect/alloy/codex-collector-fanout.yaml",
+    "verify/codex-traces.sh",
+    "verify/tempo-mcp.ts"
+  ],
   "Grafana and Alloy native deployment and provisioning": [
     "compose.yaml",
     "collect/alloy/config.txt",

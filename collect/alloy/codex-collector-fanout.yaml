@@ -1,0 +1,33 @@
+connectors:
+  forward/plow_tempo: {}
+
+processors:
+  transform/plow_tempo_wire:
+    error_mode: propagate
+    trace_statements:
+      - context: spanevent
+        statements:
+          - set(spanevent.attributes["event.name"], spanevent.name) where IsMatch(spanevent.name, "^codex\\.(api_request|tool_result|tool_call_received|tool_result_ready|turn_ttft)$")
+
+exporters:
+  otlp_http/plow_tempo:
+    endpoint: http://127.0.0.1:${env:PLOW_TEMPO_ALLOY_PORT:-0}
+    timeout: 5s
+    sending_queue:
+      enabled: true
+      sizer: bytes
+      queue_size: 8388608
+      num_consumers: 1
+      block_on_overflow: false
+    retry_on_failure:
+      enabled: true
+      max_elapsed_time: 30s
+
+service:
+  pipelines:
+    traces:
+      exporters: [otlp_http, forward/plow_tempo]
+    traces/plow_tempo:
+      receivers: [forward/plow_tempo]
+      processors: [transform/plow_tempo_wire]
+      exporters: [otlp_http/plow_tempo]

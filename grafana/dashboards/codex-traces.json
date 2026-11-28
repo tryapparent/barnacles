@@ -1,0 +1,187 @@
+{
+  "uid": "plow-codex-traces",
+  "title": "Plow Codex traces",
+  "description": "Explore redacted Codex OTLP spans recorded by Tempo. Missing results can reflect partial instrumented coverage or an inactive ingest route.",
+  "schemaVersion": 41,
+  "version": 1,
+  "editable": false,
+  "timezone": "utc",
+  "time": { "from": "now-2h", "to": "now" },
+  "links": [
+    { "type": "link", "title": "Find a Trace ID", "url": "/d/plow-codex-trace/plow-codex-trace", "keepTime": true }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "spanStatus",
+        "label": "Span status",
+        "type": "custom",
+        "description": "Show traces containing at least one span with this OTLP status. Unset is a recorded span status.",
+        "query": "Any : true, Error : span:status = error, OK : span:status = ok, Unset : span:status = unset",
+        "current": { "text": "Any", "value": "true" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Recent traces",
+      "description": "Up to 20 traces in the UTC range. Open a Trace ID for the span tree, waterfall and retained span attributes. Trace times come from the Codex exporter. An empty result can reflect missing instrumentation, an inactive route, or restrictive filters. Try a wider range or Any span status.",
+      "type": "table",
+      "gridPos": { "x": 0, "y": 3, "w": 24, "h": 10 },
+      "datasource": { "type": "tempo", "uid": "plow-tempo" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "tempo", "uid": "plow-tempo" },
+          "queryType": "traceql",
+          "tableType": "traces",
+          "limit": 20,
+          "spss": 5,
+          "query": "{ instrumentation:name = \"plow.codex\" && (${spanStatus:raw}) } | select(span:status, span.conversation.id, span.turn.id, span.call_id) with (most_recent=true)"
+        }
+      ],
+      "options": { "showHeader": true },
+      "fieldConfig": {
+        "defaults": { "custom": { "minWidth": 100 } },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Service" },
+            "properties": [{ "id": "custom.hidden", "value": true }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Trace ID" },
+            "properties": [
+              { "id": "custom.width", "value": 295 },
+              { "id": "links", "value": [{ "title": "Open trace", "url": "/d/plow-codex-trace/plow-codex-trace?var-traceId=${__value.raw}&from=${__from}&to=${__to}" }] }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Start time" },
+            "properties": [{ "id": "unit", "value": "dateTimeAsIso" }]
+          }
+        ]
+      }
+    },
+    {
+      "id": 2,
+      "type": "canvas",
+      "datasource": {
+        "type": "datasource",
+        "uid": "-- Grafana --"
+      },
+      "targets": [],
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 3
+      },
+      "options": {
+        "inlineEditing": false,
+        "panZoom": false,
+        "zoomToContent": false,
+        "root": {
+          "name": "Plow header",
+          "type": "frame",
+          "background": {
+            "color": {
+              "fixed": "#392820"
+            }
+          },
+          "elements": [
+            {
+              "name": "Plow wordmark",
+              "type": "rectangle",
+              "constraint": {
+                "horizontal": "left",
+                "vertical": "center"
+              },
+              "placement": {
+                "left": 24,
+                "top": 0,
+                "width": 112,
+                "height": 58
+              },
+              "background": {
+                "image": {
+                  "fixed": "plow-cream.png"
+                },
+                "size": "contain"
+              }
+            },
+            {
+              "name": "Meadow divider",
+              "type": "rectangle",
+              "constraint": {
+                "horizontal": "left",
+                "vertical": "center"
+              },
+              "placement": {
+                "left": 156,
+                "top": 0,
+                "width": 10,
+                "height": 32
+              },
+              "background": {
+                "color": {
+                  "fixed": "#6A934F"
+                }
+              }
+            },
+            {
+              "name": "Trace evidence",
+              "type": "text",
+              "constraint": {
+                "horizontal": "leftright",
+                "vertical": "center"
+              },
+              "placement": {
+                "left": 180,
+                "right": 24,
+                "top": 12,
+                "height": 24
+              },
+              "config": {
+                "text": {
+                  "fixed": "Codex traces"
+                },
+                "color": {
+                  "fixed": "#FFF4DF"
+                },
+                "size": 18,
+                "align": "left",
+                "valign": "middle"
+              }
+            },
+            {
+              "name": "Trace coverage",
+              "type": "text",
+              "constraint": {
+                "horizontal": "leftright",
+                "vertical": "center"
+              },
+              "placement": {
+                "left": 180,
+                "right": 24,
+                "top": -12,
+                "height": 24
+              },
+              "config": {
+                "text": {
+                  "fixed": "Redacted Codex OTLP \u00b7 Emitted spans only"
+                },
+                "color": {
+                  "fixed": "#FFF4DF"
+                },
+                "size": 13,
+                "align": "left",
+                "valign": "middle"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
