@@ -17,6 +17,109 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run verify
+      - name: Verify the Plow MCP HTTP boundary
+        run: |
+          export PLOW_TEST_DIRECTORY="$(mktemp -d "$RUNNER_TEMP/plow-mcp-XXXXXX")"
+          trap 'rm -rf "$PLOW_TEST_DIRECTORY"' EXIT
+          node --input-type=module <<'JS'
+          import assert from "node:assert/strict";
+          import { once } from "node:events";
+          import { writeFileSync } from "node:fs";
+          import { join } from "node:path";
+          import { DatabaseSync } from "node:sqlite";
+          import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+          import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+          import { exportJWK, generateKeyPair, SignJWT } from "jose";
+          import { serveAnalysis } from "./dashboard/prepare.ts";
+
+          process.env.PLOW_MCP_ACCESS_TEAM = "fixture";
+          process.env.PLOW_MCP_ACCESS_AUDIENCE = "a".repeat(64);
+          process.env.PLOW_ANALYSIS_USER = "fixture@example.invalid";
+          const issuer = "https://fixture.cloudflareaccess.com";
+          const { publicKey, privateKey } = await generateKeyPair("RS256", { extractable: true });
+          const jwk = { ...await exportJWK(publicKey), kid: "fixture", alg: "RS256" };
+          const fetchHttp = globalThis.fetch;
+          globalThis.fetch = (input, init) => String(input) === issuer + "/cdn-cgi/access/certs"
+            ? Promise.resolve(Response.json({ keys: [jwk] }))
+            : fetchHttp(input, init);
+          const token = audience => new SignJWT({}).setProtectedHeader({ alg: "RS256", kid: "fixture" })
+            .setIssuer(issuer).setAudience(audience).setExpirationTime("5m").sign(privateKey);
+          const id = "a".repeat(24);
+          const summary = { analyzedAt: "2026-01-01T00:00:00.000Z", coverage: { active: 1 }, threads: [{ id }] };
+          const thread = { id, coverage: { codexSpans: 0 }, costs: [] };
+          const file = join(process.env.PLOW_TEST_DIRECTORY, "analysis.sqlite");
+          const feedFile = join(process.env.PLOW_TEST_DIRECTORY, "timeline.json");
+          process.env.PLOW_MCP_FEED_FILE = feedFile;
+          const db = new DatabaseSync(file);
+          db.exec("CREATE TABLE analysis_summary(id, payload); CREATE TABLE analysis_threads(id, payload); CREATE TABLE analysis_week(id, payload)");
+          const week = { range: "7d", coverage: { active: 2 }, priorities: [] };
+          db.prepare("INSERT INTO analysis_week VALUES(1, ?)").run(JSON.stringify(week));
+          db.prepare("INSERT INTO analysis_summary VALUES(1, ?)").run(JSON.stringify(summary));
+          db.prepare("INSERT INTO analysis_threads VALUES(?, ?)").run(id, JSON.stringify(thread));
+          db.close();
+
+          const server = await serveAnalysis(file, "0");
+          if (!server.listening) await once(server, "listening");
+          const base = `http://127.0.0.1:${server.address().port}`;
+          const endpoint = new URL("/app/mcp", base);
+          const client = new Client({ name: "fixture", version: "1" });
+          try {
+            assert.equal((await fetch(endpoint, { method: "POST" })).status, 401);
+            const assertion = await token(process.env.PLOW_MCP_ACCESS_AUDIENCE);
+            for (const headers of [
+              { Authorization: `Bearer ${assertion}` },
+              { "CF-Access-Jwt-Assertion": await token("wrong-audience") },
+            ]) assert.equal((await fetch(endpoint, { method: "POST", headers })).status, 401);
+            const headers = { "CF-Access-Jwt-Assertion": assertion };
+            assert.equal((await fetch(endpoint, { method: "POST",
+              headers: { ...headers, Origin: "https://example.invalid" } })).status, 403);
+            assert.equal((await fetch(base + "/api/v1/bottlenecks", { headers })).status, 403);
+            const read = range => fetch(base + "/api/v1/bottlenecks" + range, {
+              headers: { "Tailscale-User-Login": process.env.PLOW_ANALYSIS_USER },
+            });
+            assert.deepEqual(await (await read("")).json(), summary);
+            assert.deepEqual(await (await read("?range=7d")).json(), week);
+            assert.equal((await read("?range=30d")).status, 400);
+            await client.connect(new StreamableHTTPClientTransport(endpoint, { requestInit: { headers } }));
+            assert.deepEqual((await client.listTools()).tools.map(tool => tool.name),
+              ["get_plow_bottlenecks", "get_plow_thread", "get_plow_timeline", "get_plow_charts"]);
+            const call = (name, args) => client.callTool({ name, arguments: args });
+            assert.deepEqual((await call("get_plow_bottlenecks", {})).structuredContent, summary);
+            assert.deepEqual((await call("get_plow_thread", { threadId: id })).structuredContent, thread);
+            assert.equal((await call("get_plow_thread", { threadId: "b".repeat(24) })).isError, true);
+            assert.equal((await call("get_plow_thread", { threadId: "invalid" })).isError, true);
+            assert.equal((await call("get_plow_timeline", {})).isError, true);
+            const to = 1767225600000;
+            const observed = to + 60000;
+            const trace = { startUtcMs: to - 60000, end: 60, work: [[0, 45, "Provider run"]],
+              wait: [[45, 60, "Admission wait"]], errors: [50] };
+            writeFileSync(feedFile, JSON.stringify({ observed, traces: [], overview: { to, traces: [trace] } }));
+            assert.deepEqual((await call("get_plow_timeline", {})).structuredContent,
+              { observed, range: "24h", from: to - 86400000, to, traces: [trace] });
+            const charts = (await call("get_plow_charts", {})).structuredContent;
+            assert.equal(charts.observed, observed);
+            assert.equal(charts.to, to);
+            assert.equal(charts.from, to - 86400000);
+            assert.equal(charts.time_summary.duration, 60000);
+            assert.equal(charts.agent_work_trend.length, 6);
+            assert.equal(charts.agent_work_trend.at(-1).basis_points, 7500);
+            assert.equal((await call("get_plow_charts", { range: "7d" })).isError, true);
+            const from = to - 7 * 86400000;
+            writeFileSync(feedFile, JSON.stringify({ observed, traces: [], overview: { from, to, traces: [trace] } }));
+            assert.deepEqual((await call("get_plow_timeline", { range: "7d" })).structuredContent,
+              { observed, range: "7d", from, to, traces: [trace] });
+            const weekly = (await call("get_plow_charts", { range: "7d" })).structuredContent;
+            assert.equal(weekly.agent_work_trend.length, 7);
+            assert.equal(weekly.time_summary.duration, 60000);
+            writeFileSync(feedFile, JSON.stringify({ observed, traces: [], overview: { from, to, traces: Array(11).fill(trace) } }));
+            assert.equal((await call("get_plow_timeline", { range: "7d" })).structuredContent.traces.length, 10);
+            assert.equal((await call("get_plow_charts", { range: "7d" })).structuredContent.time_summary.duration, 660000);
+          } finally {
+            await client.close();
+            server.closeAllConnections();
+            server.close();
+          }
+          JS
   plow:
     runs-on: ubuntu-latest
     timeout-minutes: 10

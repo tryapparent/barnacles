@@ -1,25 +1,12 @@
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { buildPolicies, buildPolicy, loadPolicy } from "../tooling/bend.ts";
-import { admissionPolicy, backupAnalysisInput, joinedTargets, joinSession, loadEvidence, publishJoinedAnalysis, repository, sessionJoinPolicy, sourcePolicy, type AdmissionPolicy, type NativeBinding, type SessionJoinPolicy, type Point, type SourcePolicy, type ThreadEvidence } from "../evidence/index.ts";
-import { array, bendList, boundedFile, millis, point, replayOutcomeDelays, row, sha, stockT3Origin, stockT3Rpc, str, timeParts, toMillis, token } from "./wire.ts";
-import { positiveInt } from "./github/attempt.ts";
+import { admissionPolicy, joinSession, loadEvidence, repository, sessionJoinPolicy, sourcePolicy, type AdmissionPolicy, type SessionJoinPolicy, type Point, type SourcePolicy } from "../evidence/index.ts";
+import { array, bendList, boundedFile, millis, point, positiveInt, row, sha, stockT3Origin, stockT3Rpc, str, toMillis, token } from "./wire.ts";
+import { nativeBindings, t3Id, watchKey, watchMessage, watchPolicy } from "./t3-otel/projection.ts";
+export { t3Snapshot } from "./t3-otel/projection.ts";
 import { inspectRollout } from "./codex/rollout.ts";
-
-type T3Policy = SourcePolicy & {
-  github_link(host: string): boolean;
-  t3_run_clocks(requested: Point, started: Point, completed: Point): { started: Point; completed: Point };
-};
-
-function t3Id(value: unknown): string {
-  if (typeof value !== "string" || value.length > 512 || !/^[A-Za-z0-9](?:[A-Za-z0-9:_-]|%[0-9A-Fa-f]{2})*$/.test(value)) {
-    throw Error("Invalid T3 source identifier");
-  }
-  return value;
-}
-
-const watchPolicy = new URL("../evidence/analysis/pr-watch.bend", import.meta.url);
 
 function projectionId(value: unknown): string {
   try {
@@ -27,22 +14,6 @@ function projectionId(value: unknown): string {
   } catch {
     return "";
   }
-}
-
-function watchKey(value: unknown) {
-  const key = row(value ?? {});
-  const number = key.number;
-  return { $: "PrWatchKey", host: str(key.host), repository: str(key.repository),
-    number: typeof number === "number" && Number.isInteger(number) && number > 0 && number <= 0xffffffff ? number : 0,
-    sha: str(key.headSha) };
-}
-
-function watchMessage(value: unknown) {
-  const message = row(value);
-  const source = row(row(message.notification ?? {}).source ?? {});
-  return { $: "PrWatchMessage", id: projectionId(message.id), thread: projectionId(message.threadId),
-    run: projectionId(message.runId), kind: str(source.kind), key: watchKey(source.pullRequest),
-    watch_started: point(millis(row(source.pullRequest ?? {}).watchStartedAt)), created: point(millis(message.createdAt)) };
 }
 
 function watchRun(value: unknown) {
@@ -91,35 +62,6 @@ async function replayWatchFile(directory: string, file: string) {
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
-}
-
-export function t3Snapshot(input: unknown, rules: SourcePolicy): ThreadEvidence {
-  const policy = rules as T3Policy;
-  const snapshot = row(input);
-  const thread = row(snapshot.thread);
-  const links = row(snapshot.links);
-  if (links.nextCursor !== null) throw Error("Incomplete T3 pull request listing");
-  const created = millis(thread.createdAt);
-  const updated = millis(thread.updatedAt);
-  if (!policy.interval_ms(...timeParts(created), ...timeParts(updated))) throw Error("Invalid T3 thread clock");
-  const runs = array(snapshot.recentRuns, 50).map((value) => {
-    const run = row(value);
-    const requested = millis(run.requestedAt);
-    const clocks = policy.t3_run_clocks(point(requested), point(millis(run.startedAt)), point(millis(run.completedAt)));
-    return { id: t3Id(run.runId), requested: requested || null, started: toMillis(clocks.started),
-      completed: toMillis(clocks.completed), status: policy.thread_status(str(run.status)) };
-  });
-  const pullRequests = array(links.pullRequests, 100).map((value) => {
-    const link = row(value);
-    if (!policy.github_link(str(link.host))) throw Error("Only github.com T3 links are supported");
-    const source = policy.link_source(str(link.source));
-    return { repository: repository(link.repository, policy), number: positiveInt(link.number),
-      source, state: policy.link_state(str(link.state)), owning: policy.owns_pr(source) };
-  });
-  return { instance: token(snapshot.instance), id: t3Id(thread.threadId), created, updated,
-    title: policy.source_title(str(thread.title)),
-    status: policy.thread_status(str(thread.status)), origin: policy.origin(str(thread.createdBy), str(thread.creationSource)),
-    settled: thread.settled === true, runs, pullRequests };
 }
 
 function readNativeRefs(path: string, thread: string) {
@@ -217,12 +159,7 @@ export async function importLiveSession(evidence: string, scratch: string, bindi
   const bearer = process.env.PLOW_T3_READ_TOKEN;
   if (Boolean(endpoint) !== Boolean(bearer)) throw Error("Set both PLOW_T3_ORIGIN and PLOW_T3_READ_TOKEN");
   const input = endpoint && bearer ? await fetchNativeReferences(endpoint, bearer, threadId) : array(receipt.references, 64);
-  const refs: NativeBinding[] = input.map((item) => {
-    const ref = row(item);
-    const native = ref.nativeThreadRef === undefined || ref.nativeThreadRef === null ? {} : row(ref.nativeThreadRef);
-    return { $: "NativeBinding", thread: t3Id(ref.appThreadId), reference: t3Id(ref.id), driver: str(ref.driver),
-      native_driver: str(native.driver), native_id: str(native.nativeId), strength: str(native.strength) };
-  });
+  const refs = nativeBindings(input);
   const ci = receipt.ci === undefined ? undefined : row(receipt.ci);
   const joinPolicy = await loadPolicy<SessionJoinPolicy>(await buildPolicy(scratch, sessionJoinPolicy, "session-join.mjs"));
   const selected = joinPolicy.choose_binding(threadId, requested, bendList(refs));
@@ -262,44 +199,9 @@ async function main() {
   }
 }
 
-function readAnalysisImpact(receipts: string, scratch: string) {
-  const file = join(receipts, "outcomes", "outcome-delays.json");
-  return statSync(file, { throwIfNoEntry: false })
-    ? async (window: { from: number; to: number }) => JSON.parse(await replayOutcomeDelays(file, scratch, window))
-    : undefined;
-}
-
 if (import.meta.main) {
   main().catch((error: unknown) => {
     console.error(error instanceof Error ? error.message : "T3 rollout import failed");
     process.exitCode = 1;
   });
-}
-
-
-export async function refreshAnalysis() {
-  const [root, input, traces, receipts, output] = process.argv.slice(2);
-  const bearer = process.env.PLOW_T3_READ_TOKEN_FILE;
-  if (bearer) process.env.PLOW_T3_READ_TOKEN = readFileSync(bearer, "utf8").trim();
-  const scratch = mkdtempSync(join(root, "analysis-refresh-"));
-  try {
-    const path = join(scratch, "joined.sqlite");
-    await backupAnalysisInput(input, path);
-    const files = readdirSync(receipts).filter((name) => name.endsWith(".json")).sort();
-    if (files.length > 50) throw Error("Too many join receipts");
-    for (const file of files) await importLiveSession(path, scratch, join(receipts, file), traces);
-    const codexInstance = process.env.PLOW_ANALYSIS_CODEX_INSTANCE;
-    const t3Instance = process.env.PLOW_ANALYSIS_T3_INSTANCE;
-    if (codexInstance && t3Instance && process.env.PLOW_T3_ORIGIN) {
-      const targetPath = join(scratch, "target.json");
-      for (const { thread } of await joinedTargets(path, scratch, t3Instance)) {
-        writeFileSync(targetPath, JSON.stringify({ t3Instance, threadId: thread, codexInstance }), { mode: 0o600 });
-        try { await importLiveSession(path, scratch, targetPath, traces); }
-        catch (error) { if (!(error instanceof Error) || !/\((NoBinding|Ambiguous)\)$/.test(error.message)) throw error; }
-      }
-    }
-    console.log(await publishJoinedAnalysis(path, output, scratch, Date.now(), readAnalysisImpact(receipts, scratch)));
-  } finally {
-    rmSync(scratch, { recursive: true, force: true });
-  }
 }

@@ -15,6 +15,7 @@ x-analysis: &analysis
       COPY collector collector
       COPY dashboard dashboard
       COPY evidence evidence
+      COPY mcp mcp
       ENV PLOW_BEND_BUNDLE=/app/compiler
   profiles: [analysis]
   read_only: true
@@ -40,7 +41,6 @@ services:
       PLOW_ACCESS_AUDIENCE: ${PLOW_ACCESS_AUDIENCE:-}
       PLOW_RELEASE: ${PLOW_RELEASE:-}
       PLOW_ANALYSIS_API_URL: ${PLOW_ANALYSIS_API_URL:-}
-      PLOW_SESSION_HISTORY_URL: ${PLOW_SESSION_HISTORY_URL:-}
     volumes:
       - type: bind
         source: ${PLOW_FRONTEND_ASSETS:-./.plow-assets}/worker.mjs
@@ -69,17 +69,33 @@ services:
   analysis-refresh:
     <<: *analysis
     restart: unless-stopped
-    entrypoint: [/bin/sh, -c, 'umask 077; while :; do node collector/wire.ts /tmp /input/forge/evidence.sqlite /input/codex/evidence.sqlite /receipts /analysis/evidence.sqlite || printf "%s\n" "Analysis refresh failed; retaining previous results" >&2; sleep 900; done']
+    entrypoint: [/bin/sh, -c, 'umask 077; while :; do node collector/wire.ts /tmp /input/forge/evidence.sqlite /input/codex/evidence.sqlite /receipts /analysis/evidence.sqlite && touch /tmp/plow-analysis-ready || printf "%s\n" "Analysis refresh failed; retaining previous results" >&2; sleep 900; done']
+    group_add: ['10001']
     environment:
+      PLOW_ANALYSIS_T3_HISTORY_DB: ${PLOW_ANALYSIS_HISTORY_DIR:+/input/t3/data/projection/evidence.sqlite}
+      PLOW_ANALYSIS_ACTIVITY_DIR: /activity
       PLOW_T3_ORIGIN: ${PLOW_ANALYSIS_T3_ORIGIN:-}
       PLOW_T3_READ_TOKEN_FILE: ${PLOW_ANALYSIS_T3_TOKEN_PATH:-}
       PLOW_ANALYSIS_T3_INSTANCE: ${PLOW_ANALYSIS_T3_INSTANCE:-}
+      PLOW_ANALYSIS_T3_ENVIRONMENT_ID: ${PLOW_ANALYSIS_T3_ENVIRONMENT_ID:-}
       PLOW_ANALYSIS_CODEX_INSTANCE: ${PLOW_ANALYSIS_CODEX_INSTANCE:-}
     volumes:
       - ${PLOW_ANALYSIS_FORGE_DIR:-./.plow/analysis-forge}:/input/forge:ro
       - ${PLOW_ANALYSIS_CODEX_DIR:-./.plow/analysis-codex}:/input/codex:ro
       - ${PLOW_ANALYSIS_RECEIPTS_DIR:-./.plow/analysis-receipts}:/receipts:ro
+      - type: bind
+        source: ${PLOW_ANALYSIS_HISTORY_DIR:-/dev/null}
+        target: /input/t3
+        read_only: true
+        bind:
+          create_host_path: false
       - analysis:/analysis
+      - activity:/activity
+    healthcheck:
+      test: [CMD, test, -f, /tmp/plow-analysis-ready]
+      interval: 3s
+      timeout: 2s
+      retries: 60
 
   analysis-api:
     <<: *analysis
@@ -89,13 +105,29 @@ services:
     environment:
       PLOW_ANALYSIS_BIND_HOST: 0.0.0.0
       PLOW_ANALYSIS_USER: ${PLOW_ANALYSIS_USER:-}
+      PLOW_MCP_ACCESS_TEAM: ${PLOW_MCP_ACCESS_TEAM:-}
+      PLOW_MCP_ACCESS_AUDIENCE: ${PLOW_MCP_ACCESS_AUDIENCE:-}
+      PLOW_MCP_FEED_FILE: ${PLOW_ANALYSIS_HISTORY_DIR:+/activity/timeline.json}
     ports:
       - "127.0.0.1:${PLOW_ANALYSIS_PORT:-15480}:8080"
     volumes:
       - analysis:/analysis:ro
+      - activity:/activity:ro
+      - type: bind
+        source: ${PLOW_MCP_FEED_DIR:-./mcp}
+        target: /dashboard-feed
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8080/api/v1/bottlenecks').then(r=>process.exit(r.status===403?0:1),()=>process.exit(1))"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
 
 volumes:
   analysis:
+  activity:
 
 networks:
   analysis-api:

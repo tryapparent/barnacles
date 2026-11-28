@@ -15,10 +15,14 @@ function fixtureRows<T>(list: FixtureList<T>) {
   return output;
 }
 
-test("daily outcome impact clips confirmed intervals and keeps shared time out of unique pattern totals", async () => {
+function testJob(name: string) {
   const parent = process.env.PLOW_TEST_DIRECTORY;
-  assert.ok(parent);
-  const job = mkdtempSync(join(parent, "daily-impact-"));
+  assert.ok(parent, "Set PLOW_TEST_DIRECTORY to a private job directory");
+  return mkdtempSync(join(parent, name));
+}
+
+test("daily outcome impact clips confirmed intervals and keeps shared time out of unique pattern totals", async () => {
+  const job = testJob("daily-impact-");
   try {
     const compiled = await buildPolicy(job, new URL("./outcome-delay.bend", import.meta.url), "daily-impact.mjs");
     type Time = { $: "Some"; value: number } | { $: "None" };
@@ -54,9 +58,7 @@ test("daily outcome impact clips confirmed intervals and keeps shared time out o
 
 
 test("timeline protects gaps, overlap precedence, and clipped failure times", async () => {
-  const parent = process.env.PLOW_TEST_DIRECTORY;
-  assert.ok(parent, "Set PLOW_TEST_DIRECTORY to a private job directory");
-  const job = mkdtempSync(join(parent, "timeline-"));
+  const job = testJob("timeline-");
   try {
     const compiled = await buildPolicy(job, new URL("./session-timeline.bend", import.meta.url), "timeline.mjs");
     const policy = await loadPolicy<{
@@ -84,35 +86,42 @@ test("timeline protects gaps, overlap precedence, and clipped failure times", as
   }
 });
 
-test("Plow feed preserves aligned history coverage and detailed trace bounds", async () => {
-  const parent = process.env.PLOW_TEST_DIRECTORY;
-  assert.ok(parent);
-  const job = mkdtempSync(join(parent, "plow-feed-"));
+test("Plow feed projects weekly activity and linked timing detail", async () => {
+  const job = testJob("plow-feed-");
   try {
     const dbPath = join(job, 'projection-fixture.sqlite')
-    const db = new DatabaseSync(dbPath)
+    const db = new DatabaseSync(dbPath, { enableForeignKeyConstraints: false })
+    db.exec(readFileSync(new URL("../storage/sources.sql", import.meta.url), "utf8"));
     db.exec(`
-      CREATE TABLE t3_threads(instance TEXT, thread_id TEXT, created_ms INTEGER, updated_ms INTEGER);
-      CREATE TABLE t3_runs(instance TEXT, thread_id TEXT, run_id TEXT, requested_ms INTEGER, started_ms INTEGER,
-        completed_ms INTEGER, status TEXT);
-      INSERT INTO t3_threads VALUES ('t3','older',100,1200),('t3','latest',1500,3000),('t3','unknown',3200,3400);
+      INSERT INTO t3_threads VALUES ('t3','older',100,1200,'settled','fixture',1,1),('t3','latest',1500,3000,'running','fixture',0,3),
+        ('t3','unknown',3200,3400,'running','fixture',0,0);
       INSERT INTO t3_runs VALUES ('t3','older','a',110,300,900,'failed'),('t3','latest','b',2000,2400,NULL,'running'),
         ('t3','latest','c',2100,NULL,NULL,'queued'),('t3','latest','d',NULL,2300,3200,'completed'),
         ('another','latest','e',1600,1700,1800,'completed');
+      INSERT INTO t3_live_codex_links VALUES ('codex','session','t3','older','reference');
+      INSERT INTO codex_otel_spans VALUES
+        ('codex','trace','span',NULL,'codex.sampling','400000000','500000000',0,NULL,NULL,NULL,'fingerprint'),
+        ('codex','trace','outside',NULL,'codex.tool_blocking','150000000','450000000',0,NULL,NULL,NULL,'fingerprint'),
+        ('codex','trace','private',NULL,'unsanitized name','400000000','500000000',0,NULL,NULL,NULL,'fingerprint');
+      INSERT INTO t3_live_codex_span_links VALUES
+        ('codex','trace','span','session'),('codex','trace','outside','session'),('codex','trace','private','session');
+      INSERT INTO t3_codex_links VALUES ('t3','older','codex','rollout');
+      INSERT INTO codex_process_receipts(instance,session_id,call_id,process_status,receipt_kind,poll_started_ms,poll_result_ms)
+        VALUES ('codex','rollout','poll','linked','ExitReceipt',500,700),
+          ('codex','rollout','partial','linked','RunningReceipt',700,NULL);
     `)
     db.close()
-    assert.deepEqual(await projectPlowFeed(dbPath, job), {
-      observed: 3000,
-      history: { first: 1, threads: [
-        { work: 600, workflow: 190 }, { work: 0, workflow: 400 }, { work: 0, workflow: 0 },
-      ] },
-      traces: [
-        { startUtcMs: 1500, end: .9, work: [], wait: [[.5,.9,'T3 admission']], errors: [] },
-        { startUtcMs: 100, end: .8, work: [[.2,.8,'Provider run']], wait: [[.01,.2,'T3 admission']], errors: [.8] },
-      ],
-    })
+    const feed = await projectPlowFeed(dbPath, job, 86401000)
+    assert.deepEqual([feed.observed, feed.overview.from, feed.overview.to], [3000, 0, 86401000])
+    assert.deepEqual(feed.overview.traces, feed.traces)
+    assert.deepEqual(feed.traces.map(({startUtcMs,end,work,wait,errors,detail,ci}) =>
+      [startUtcMs,end,work,wait,errors,detail,ci]), [
+      [1500,.9,[],[[.5,.9,'T3 admission']],[],[],[]],
+      [100,.8,[[.2,.8,'Provider run']],[[.01,.2,'T3 admission']],[.8],
+        [[.3,.4,'Model sampling']],[[.4,.6,'CI watcher observation']]],
+    ])
     const expanded = new DatabaseSync(dbPath)
-    const thread = expanded.prepare("INSERT INTO t3_threads VALUES (?,?,?,?)")
+    const thread = expanded.prepare("INSERT INTO t3_threads VALUES (?,?,?,?,'settled','fixture',1,2)")
     const run = expanded.prepare("INSERT INTO t3_runs VALUES (?,?,?,?,?,?,?)")
     for (let i = 0; i < 60; i++) {
       const start = 10000 + i * 10000
@@ -122,21 +131,17 @@ test("Plow feed preserves aligned history coverage and detailed trace bounds", a
       run.run("fixture", String(i), "two", start + 600, start + 800, start + 1200, "completed")
     }
     expanded.close()
-    const extended = await projectPlowFeed(dbPath, job)
-    assert.equal(extended.traces.length, 10)
-    assert.equal(extended.history.first, 11)
-    assert.equal(extended.history.threads.length, 53)
-    assert.deepEqual(extended.history.threads.slice(0, 2), [{ work: 0, workflow: 0 }, { work: 900, workflow: 200 }])
+    const { traces, overview } = await projectPlowFeed(dbPath, job, 800000)
+    assert.equal(traces.length, 10)
+    assert.equal(overview.traces.length, 61)
   } finally {
     rmSync(job, { recursive: true, force: true });
   }
 });
 
 
-test("joined bottleneck replay counts exact job facts once and preserves missing clocks", async () => {
-  const parent = process.env.PLOW_TEST_DIRECTORY;
-  assert.ok(parent);
-  const job = mkdtempSync(join(parent, "joined-replay-"));
+test("joined bottlenecks deduplicate jobs and report both periods", async () => {
+  const job = testJob("joined-replay-");
   const file = join(job, "evidence.sqlite");
   try {
     const db = new DatabaseSync(file);
@@ -190,19 +195,26 @@ test("joined bottleneck replay counts exact job facts once and preserves missing
     const output = join(job, "analysis.sqlite");
     const cutoff = 1700000012000;
     assert.equal((await publishJoinedAnalysis(file, output, job, cutoff)).recomputed, 53);
-    assert.equal((await publishJoinedAnalysis(file, output, job, cutoff)).recomputed, 0);
+    const delay = { pattern: "review", uniqueMs: 10000, medianMs: 10000, worstMs: 10000,
+      stage: "merge", affectedOutcomes: 1, coverage: { sufficient: 1, occurrences: 2 } };
+    assert.equal((await publishJoinedAnalysis(file, output, job, cutoff, async () =>
+      ({ patterns: [delay] }))).recomputed, 0);
     const published = new DatabaseSync(output, { readOnly: true });
     try {
       const summary = JSON.parse(String(published.prepare("SELECT payload FROM analysis_summary").get()?.payload));
-      assert.equal(Date.parse(summary.window.to) - Date.parse(summary.window.from), 86400000);
+      const week = JSON.parse(String(published.prepare("SELECT payload FROM analysis_week").get()!.payload));
+      assert.equal(Date.parse(week.window.to) - Date.parse(week.window.from), 604800000);
+      assert.equal(week.coverage.active, 54);
+      assert.match(JSON.stringify(week.priorities), /"totalMs":2000/);
       assert.deepEqual(summary.coverage, { $: "Coverage", active: 53, withCodex: 0, withCI: 2, withBoth: 0 });
       assert.deepEqual(summary.ranking, [{ $: "Rank", rule: "ci-job-failure", threads: 2, occurrences: 1 }]);
+      assert.deepEqual(summary.priorities.map((p: { totalMs: number }) => p.totalMs), [10000, 8000, 1000]);
+      assert.equal(summary.priorities[1].occurrences, 1);
       const ciThread = summary.threads.find((thread: { coverage: { githubJobs: number } }) => thread.coverage.githubJobs);
       const detail = JSON.parse(String(published.prepare("SELECT payload FROM analysis_threads WHERE id=?").get(ciThread.id)?.payload));
       assert.deepEqual(detail.rules, ["ci-job-failure"]);
       assert.equal(detail.coverage.githubJobs, 3);
-      assert.notEqual(detail.id, "thread");
-      assert.ok(!JSON.stringify(detail).includes("synthetic/example"));
+      assert.doesNotMatch(JSON.stringify(detail), /"id":"thread"|synthetic\/example/);
     } finally {
       published.close();
     }
@@ -211,6 +223,7 @@ test("joined bottleneck replay counts exact job facts once and preserves missing
     try {
       const summary = JSON.parse(String(expired.prepare("SELECT payload FROM analysis_summary").get()?.payload));
       assert.deepEqual(summary.ranking, []);
+      assert.deepEqual(summary.priorities, []);
       assert.equal(expired.prepare("SELECT count(*) AS n FROM analysis_threads").get()?.n, 1);
     } finally {
       expired.close();

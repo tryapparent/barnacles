@@ -38,6 +38,7 @@ deploy_collector() (
   previous=$(readlink -f "$base/current")
   if [ "$(cat "$previous/revision")" = "$sha" ]; then
     history_ready
+    node "$previous/source/dashboard/prepare.ts" --deploy-t3-history "$previous/source"
     exit
   fi
   run=$(gh run list --repo "$repo" --workflow verify.yml --branch main --event push \
@@ -64,9 +65,9 @@ deploy_collector() (
     if [ "$switching" = 1 ]; then
       systemctl --user stop "$poller" || result=1
       if activate "$previous" && systemctl --user start "$poller"; then
-        printf '%s\n' 'Restored the previous Plow collector release.' >&2
+        printf '%s\n' 'Restored previous collector release.' >&2
       else
-        printf '%s\n' 'Could not restore the previous Plow collector release.' >&2
+        printf '%s\n' 'Collector rollback failed.' >&2
         keep=1
         result=1
       fi
@@ -272,7 +273,7 @@ manage_t3_otlp() (
   stack="$release/collector/t3-otel/compose.yaml"
   test -r "$settings"
   if [ ! -f "$stack" ]; then
-    printf '%s\n' 'This release is missing the durable T3 OTLP Compose stack.' >&2
+    printf '%s\n' 'Missing T3 OTLP Compose stack.' >&2
     exit 1
   fi
   compose() {
@@ -292,7 +293,7 @@ manage_t3_otlp() (
         $ports[0].host_ip == "127.0.0.1" and
         $ports[0].target == 4318 and $ports[0].protocol == "tcp"
       ' >/dev/null; then
-        printf '%s\n' 'Expected only the loopback TCP mapping for the T3 traces service.' >&2
+        printf '%s\n' 'Expected loopback-only T3 traces.' >&2
         exit 1
       fi
       if printf '%s\n' "$config" | jq -e '.services | has("history")' >/dev/null; then

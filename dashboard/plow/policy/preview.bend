@@ -1,4 +1,5 @@
 import Base
+import ../../../evidence/analysis/joined/range.bend as Range
 import ./trend.bend as Trend
 import ./spans.bend as Spans
 import ./summary.bend as Summary
@@ -124,12 +125,6 @@ def layout(+truth: List<&2, Spans.Part>, +scale: Nat, +width: Nat, +details: Boo
   Layout{entries,gather_labels(label_regions(bridge_labels(entries,0,"#ffffff",scale,width)),scale,width,details,measurements,
     Bool.pick(List<&2,Nat>,details,List.sort(~Nat,~Spans.n_before,failures),[]),margin)}
 
-def shared_scale(durations: List<&2, Nat>, +longest: Nat) -> Nat:
-  match durations:
-    case []: longest
-    case +duration <> rest:
-      shared_scale(rest,Bool.pick(Nat,Nat.is_lt(longest,duration),duration,longest))
-
 def valid_failures(times: List<&2,Nat>, +end: Nat) -> List<&2,Nat>:
   match times:
     case []: []
@@ -162,30 +157,6 @@ def evidence_totals(parts: List<&2,Spans.Part>) -> EvidenceTotals:
 
 type UtcSpan is Data:
   UtcSpan{start: Nat, end: Nat}
-
-def expand_utc(current: UtcSpan, next: UtcSpan) -> UtcSpan:
-  match current next:
-    case UtcSpan{+a,+b} UtcSpan{+x,+y}:
-      UtcSpan{Bool.pick(Nat,Nat.is_lt(x,a),x,a),Bool.pick(Nat,Nat.is_lt(b,y),y,b)}
-
-def scan_utc(rest: List<&2,UtcSpan>, bounds: UtcSpan) -> UtcSpan:
-  match rest:
-    case []: bounds
-    case entry <> tail: scan_utc(tail,expand_utc(bounds,entry))
-
-def rounded_utc(bounds: UtcSpan) -> UtcSpan:
-  match bounds:
-    case UtcSpan{a,b}:
-      UtcSpan{Nat.mul(Nat.div(a,21600000n),21600000n),Nat.mul(Nat.div(Nat.add(b,21599999n),21600000n),21600000n)}
-
-def utc_frame(input: List<&2,UtcSpan>) -> UtcSpan:
-  match input:
-    case []: UtcSpan{0n,21600000n}
-    case first <> rest: rounded_utc(scan_utc(rest,first))
-
-def utc_offset(bounds: UtcSpan, start: Nat) -> Nat:
-  match bounds:
-    case UtcSpan{a,_}: Nat.sub(start,a)
 
 def view_window(frame: UtcSpan, +start: Nat, +duration: Nat, minimum: Nat) -> UtcSpan:
   match frame:
@@ -222,11 +193,6 @@ def hover_failures(times: List<&2,Nat>, +at: Nat, +radius: Nat) -> List<&2,Nat>:
       +rest = hover_failures(tail,at,radius)
       Bool.pick(List<&2,Nat>,near,time <> rest,rest)
 
-def utc_axis(bounds: UtcSpan) -> List<&2,Nat>:
-  match bounds:
-    case UtcSpan{+a,+b}:
-      [a,Nat.add(a,Nat.mul(Nat.div(Nat.sub(b,a),43200000n),21600000n)),b]
-
 def detail_zoom(visible_millis: Nat) -> Bool:
   Nat.is_le(visible_millis,21600000n)
 
@@ -237,12 +203,13 @@ def chart_step(+visible_millis: Nat) -> Nat:
   Bool.pick(Nat,Nat.is_le(visible_millis,60000n),1000n,Bool.pick(Nat,Nat.is_le(visible_millis,300000n),10000n,
     Bool.pick(Nat,Nat.is_le(visible_millis,3600000n),300000n,
     Bool.pick(Nat,Nat.is_le(visible_millis,21600000n),1800000n,
-      Bool.pick(Nat,Nat.is_le(visible_millis,43200000n),7200000n,21600000n)))))
+      Bool.pick(Nat,Nat.is_le(visible_millis,43200000n),7200000n,
+        Bool.pick(Nat,Nat.is_le(visible_millis,172800000n),21600000n,86400000n))))))
 
 def chart_tick_list(fuel: Nat, +at: Nat, +stop: Nat, +step: Nat) -> List<&2,Nat>:
   match fuel:
     case 0n: []
-    case 1n+rest:
+    case 1n++rest:
       Bool.pick(List<&2,Nat>,Nat.is_le(at,stop),at <> chart_tick_list(rest,Nat.add(at,step),stop,step),[])
 
 def chart_ticks(bounds: UtcSpan, +viewport: Nat, +width: Nat) -> List<&2,Nat>:
@@ -270,5 +237,23 @@ def initial_overview() -> Summary.OverviewSelection:
 def select_overview(selection: Summary.OverviewSelection, action: Summary.OverviewAction) -> Summary.OverviewSelection:
   Summary.select_overview(selection,action)
 
-def agent_work_trend(threads: List<&2,Trend.TrendThread>, first: Nat) -> List<&2,Trend.TrendBatch>:
-  Trend.agent_work_trend(threads,first)
+def dashboard_frame(range: String, +to: Nat) -> UtcSpan:
+  UtcSpan{Range.start(range,to),to}
+
+def feed_covers(range: String, frame: UtcSpan, from: Nat) -> Bool:
+  match frame:
+    case UtcSpan{start,_}: Bool.or(String.eq(range,"24h"),Nat.is_le(from,start))
+
+def timeline_indices(input: List<&2,UtcSpan>, remaining: Nat, +frame: UtcSpan, +index: Nat) -> List<&2,Nat>:
+  match input:
+    case []: []
+    case UtcSpan{start,end} <> tail:
+      match remaining:
+        case 0n: []
+        case 1n++rest:
+          +overlap = window_overlap(frame,start,end)
+          +next = timeline_indices(tail,Bool.pick(Nat,overlap,rest,Nat.add(rest,1n)),frame,Nat.add(index,1n))
+          Bool.pick(List<&2,Nat>,overlap,index <> next,next)
+
+def agent_work_trend(traces: List<&2,Summary.SummaryTrace>, range: String, from: Nat, to: Nat) -> List<&2,Trend.TrendPoint>:
+  Trend.agent_work_trend(traces,range,from,to)

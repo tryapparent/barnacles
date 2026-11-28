@@ -6,7 +6,8 @@ import { join, resolve } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import { isDeepStrictEqual } from "node:util";
 import { fileURLToPath } from "node:url";
-import { analysisApiUrl, feedPayload, sessionHistoryUrl } from "./worker.mjs";
+import { analysisActivityDirectory } from "../prepare.ts";
+import { analysisApiUrl, checkOAuthChallenge, feedPayload, managedOAuth } from "./worker.mjs";
 
 const source = fileURLToPath(new URL("../../", import.meta.url));
 const collector = "%h/.local/share/barnacles/harbor";
@@ -25,9 +26,9 @@ function accessConfig() {
   return { team, audience };
 }
 
-function originPort() {
-  const port = process.env.PLOW_FRONTEND_PORT || "3033";
-  if (!/^\d{1,5}$/.test(port) || +port < 1024 || +port > 65535) throw Error("Invalid Plow frontend port.");
+function originPort(name = "PLOW_FRONTEND_PORT", fallback = "3033") {
+  const port = process.env[name] || fallback;
+  if (!/^\d{1,5}$/.test(port) || +port < 1024 || +port > 65535) throw Error(`Invalid ${name}.`);
   return port;
 }
 
@@ -35,21 +36,20 @@ function node(args: string[]) {
   execFileSync(process.execPath, args, { cwd: source, stdio: "inherit", timeout: 150_000 });
 }
 
-type Release = { source: string; revision: string; assets: string };
+type Release = { source: string; revision: string; assets: string; analysisFeed?: string };
 
 function compose(release: Release, feed: string) {
   execFileSync("docker", ["compose", "-p", "plow-dashboard", "-f", join(release.source, "compose.yaml"),
     "up", "-d", "--wait", "--wait-timeout", "25", "plow-dashboard"], {
     stdio: "inherit", timeout: 60_000,
-    env: { ...process.env, PLOW_RELEASE: release.revision, PLOW_FRONTEND_ASSETS: release.assets, PLOW_FRONTEND_FEED: feed },
+    env: { ...process.env, PLOW_RELEASE: release.revision, PLOW_FRONTEND_ASSETS: release.assets,
+      PLOW_FRONTEND_FEED: release.analysisFeed ?? feed },
   });
 }
 
 async function sync() {
   accessConfig();
   originPort();
-  const history = process.env.PLOW_SESSION_HISTORY_URL;
-  if (history && !sessionHistoryUrl(history)) throw Error("Expected a private HTTPS Plow /sessions URL.");
   const analysis = process.env.PLOW_ANALYSIS_API_URL;
   if (analysis && !analysisApiUrl(analysis)) throw Error("Expected a private HTTPS analysis API URL.");
   const database = resolve(required("PLOW_EVIDENCE_DATABASE"));
@@ -66,13 +66,16 @@ async function sync() {
   });
   const scratch = await mkdtemp(join(tmpdir(), "apparent-dev-plow-frontend-"));
   try {
-    const projection = join(scratch, "timeline.json");
-    node(["dashboard/plow/build.ts", "--project-feed", database, projection]);
-    const candidateFeed = join(state, "timeline.next");
-    const raw = await readFile(projection, "utf8");
-    feedPayload(raw);
-    await writeFile(candidateFeed, raw, { mode: 0o600 });
-    await rename(candidateFeed, join(feed, "timeline.json"));
+    const analysisFeed = analysisActivityDirectory();
+    if (!analysisFeed) {
+      const projection = join(scratch, "timeline.json");
+      node(["dashboard/plow/build.ts", "--project-feed", database, projection]);
+      const candidateFeed = join(state, "timeline.next");
+      const raw = await readFile(projection, "utf8");
+      feedPayload(raw);
+      await writeFile(candidateFeed, raw, { mode: 0o600 });
+      await rename(candidateFeed, join(feed, "timeline.json"));
+    }
     const built = await readFile(join(assets, "worker.mjs")).then(() => true, error => {
       if (error.code !== "ENOENT") throw error;
       return false;
@@ -86,7 +89,7 @@ async function sync() {
         await rm(candidateAssets, { recursive: true, force: true });
       }
     }
-    const next = { source, revision, assets };
+    const next = { source, revision, assets, analysisFeed };
     try {
       compose(next, feed);
     } catch (error) {
@@ -130,9 +133,15 @@ WantedBy=timers.target
 type Route = { id: string; pattern: string; script: string | null; request_limit_fail_open: boolean };
 type Rule = { hostname?: string; service: string; path?: string; originRequest?: object };
 type TunnelConfig = { ingress: Rule[]; "warp-routing": { enabled: boolean } };
+type OAuth = {
+  enabled?: boolean;
+  dynamic_client_registration?: { enabled?: boolean; allowed_uris?: string[] };
+};
 
 async function ingress(action: string) {
-  if (!["status", "apply", "rollback"].includes(action)) throw Error("Expected status, apply, or rollback.");
+  if (!["status", "apply", "rollback", "mcp-apply", "mcp-remove"].includes(action)) {
+    throw Error("Expected status, apply, rollback, mcp-apply, or mcp-remove.");
+  }
   const { team, audience } = accessConfig();
   const account = required("PLOW_CF_ACCOUNT");
   const zone = required("PLOW_CF_ZONE");
@@ -162,8 +171,9 @@ async function ingress(action: string) {
   } catch {
     await api("user/tokens/verify");
   }
-  const { aud, type, self_hosted_domains: domains } = await api<{ aud: string; type: string; self_hosted_domains: string[] }>(
-    `${accountPath}/access/apps/${application}`);
+  const applicationPath = `${accountPath}/access/apps/${application}`;
+  const accessApp = await api<{ aud: string; type: string; self_hosted_domains: string[]; oauth_configuration?: OAuth }>(applicationPath);
+  const { aud, type, self_hosted_domains: domains } = accessApp;
   if (aud !== audience || type !== "self_hosted" || !domains.includes(hostname + "/app") || !domains.includes(hostname + "/app/*")) {
     throw Error("The existing Access application must protect both Plow dashboard paths.");
   }
@@ -183,8 +193,12 @@ async function ingress(action: string) {
     originRequest: { access: { required: true, teamName: team, audTag: [audience] } },
   };
   const legacy = [publicRule, fallback];
-  const desired = [dashboardRule, ...legacy];
-  const alreadyRouted = isDeepStrictEqual(config.ingress, desired);
+  const dashboardRules = [dashboardRule, ...legacy];
+  const mcpOrigin = `http://127.0.0.1:${originPort("PLOW_ANALYSIS_PORT", "15480")}`;
+  const mcpRule = { ...dashboardRule, service: mcpOrigin, path: "^/app/mcp$" };
+  const mcpRules = [mcpRule, ...dashboardRules];
+  const mcpRouted = isDeepStrictEqual(config.ingress, mcpRules);
+  const alreadyRouted = mcpRouted || isDeepStrictEqual(config.ingress, dashboardRules);
   if (!alreadyRouted && !isDeepStrictEqual(config.ingress, legacy)) {
     throw Error("The Plow Tunnel has unexpected rules. Inspect them before changing routing.");
   }
@@ -194,9 +208,44 @@ async function ingress(action: string) {
     const updated = await api<{ config: TunnelConfig }>(configuration);
     if (!isDeepStrictEqual(updated.config.ingress, rules)) throw Error("Tunnel rules failed readback.");
   }
+  if (action === "mcp-apply" || action === "mcp-remove") {
+    if (!alreadyRouted || route) throw Error("Complete the dashboard ingress cutover before changing MCP ingress.");
+    if (action === "mcp-remove") {
+      if (mcpRouted) await setRules(dashboardRules);
+      console.log("Plow MCP tunnel route is disabled.");
+      return;
+    }
+    const local = await fetch(mcpOrigin + "/app/mcp", { method: "POST", signal: AbortSignal.timeout(5_000) });
+    await local.body?.cancel();
+    if (local.status !== 401) throw Error("The analysis origin must have its JWT-protected MCP handler enabled.");
+    const previousOAuth = accessApp.oauth_configuration;
+    const callback = process.env.PLOW_MCP_OAUTH_REDIRECT_URI;
+    const oauth = managedOAuth(previousOAuth, callback);
+    const changeOAuth = !isDeepStrictEqual(previousOAuth, oauth);
+    try {
+      if (changeOAuth) await api(applicationPath, "PUT", { ...accessApp, oauth_configuration: oauth });
+      const updated = await api<typeof accessApp>(applicationPath);
+      const registered = updated.oauth_configuration?.dynamic_client_registration?.allowed_uris;
+      if (!updated.oauth_configuration?.enabled || updated.aud !== audience ||
+          (callback && (!updated.oauth_configuration.dynamic_client_registration?.enabled || !registered?.includes(callback)))) {
+        throw Error("Cloudflare Managed OAuth settings failed readback.");
+      }
+      if (!mcpRouted) await setRules(mcpRules);
+      await checkOAuthChallenge(`https://${hostname}/app/mcp`);
+      await verifyPublic();
+    } catch (error) {
+      if (!mcpRouted) await setRules(dashboardRules);
+      if (changeOAuth) await api(applicationPath, "PUT", { ...accessApp, oauth_configuration: previousOAuth ?? { enabled: false } });
+      throw error;
+    }
+    console.log("Plow MCP ingress is protected by the existing Access application's Managed OAuth.");
+    return;
+  }
   async function verifyPublic() {
     for (const path of ["/app", "/app/", "/", "/brand/"]) {
-      const response = await fetch(`https://${hostname}${path}`, { redirect: "manual", signal: AbortSignal.timeout(8_000) });
+      const response = await fetch(`https://${hostname}${path}`, {
+        redirect: "manual", signal: AbortSignal.timeout(8_000), headers: { Accept: "text/html" },
+      });
       if (path.startsWith("/app")) {
         const redirect = new URL(response.headers.get("Location") ?? `https://${hostname}`);
         if (response.status !== 302 || redirect.origin !== `https://${team}.cloudflareaccess.com` ||
@@ -248,10 +297,11 @@ async function ingress(action: string) {
   }
   if (action === "status") {
     await verifyPublic();
-    console.log(`Plow Tunnel dashboard route: ${alreadyRouted ? "configured" : "absent"}. Worker route: ${route ? "present" : "absent"}.`);
+    console.log(`Plow Tunnel dashboard route: ${alreadyRouted ? "configured" : "absent"}. Worker route: ${route ? "present" : "absent"}. MCP route: ${mcpRouted ? "configured" : "absent"}.`);
     return;
   }
   if (action === "rollback") {
+    if (mcpRouted) throw Error("Remove MCP ingress before rolling back the dashboard.");
     await restore();
     console.log("Restored the Plow Worker route.");
     return;
@@ -265,7 +315,7 @@ async function ingress(action: string) {
   await verifyPublic();
   try {
     if (!alreadyRouted || route) {
-      if (!alreadyRouted) await setRules(desired);
+      if (!alreadyRouted) await setRules(dashboardRules);
       if (route) {
         await setTimeout(5000);
         await api(`${routesPath}/${route.id}`, "DELETE");
@@ -285,4 +335,4 @@ const [, , command, arg] = process.argv;
 if (command === "--sync") await sync();
 else if (command === "--unit") process.stdout.write(unit(arg));
 else if (command === "--ingress") await ingress(arg);
-else throw Error("Use --sync, --unit service|timer, or --ingress status|apply|rollback.");
+else throw Error("Use --sync, --unit service|timer, or --ingress status|apply|rollback|mcp-apply|mcp-remove.");

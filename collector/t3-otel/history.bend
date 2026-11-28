@@ -125,3 +125,60 @@ def pacing(+previous: Nat, elapsed: Nat, failed: Bool) -> Pace:
   +unhealthy = Bool.or(failed, Nat.is_gt(elapsed, 1000n))
   +pause = Bool.pick(Nat, unhealthy, Nat.min(60000n, Nat.max(1000n, Nat.mul(previous, 2n))), Nat.max(50n, Nat.div(previous, 2n)))
   Pace{Bool.pick(Nat, Nat.is_ge(pause, 1000n), 1n, 2n), pause}
+
+def observe_anchor(+expected: String, id: String, seen: Bool) -> Bool:
+  Bool.or(seen, Bool.and(nonempty(expected), String.eq(expected, id)))
+
+def next_cursor(cursor: String, overlap: Bool) -> String:
+  Bool.pick(String, overlap, "", cursor)
+
+def tip(+previous: String, +id: String, previous_order: Nat, order: Nat) -> String:
+  Bool.pick(String, Bool.and(nonempty(id), Nat.is_ge(order, previous_order)), id, previous)
+
+def finished(status: String) -> Bool:
+  List.contains(~String, ~String.eq, ["completed", "failed", "cancelled", "interrupted"], status)
+
+type Pending is Data:
+  Pending{thread: String, id: String, checked: Nat, status: String}
+
+def pending_before(left: Pending, right: Pending) -> Bool:
+  match left right:
+    case Pending{+a, id, +at, _} Pending{+b, other, +bt, _}:
+      Bool.or(Nat.is_lt(at, bt), Bool.and(Nat.is_eq(at, bt),
+        Bool.or(String.is_lt(a, b), Bool.and(String.eq(a, b), String.is_lt(id, other)))))
+
+def pending_add(input: List<&2, Pending>, +acc: List<&2, Pending>) -> List<&2, Pending>:
+  match input:
+    case []: acc
+    case Pending{thread, id, checked, +status} <> rest:
+      pending_add(rest, Bool.pick(List<&2, Pending>, finished(status), acc, Pending{thread, id, checked, status} <> acc))
+
+def reconcile_batch(input: List<&2, Pending>) -> List<&2, Pending>:
+  List.take(&2, Pending, Metrics.sort_timing(~Pending, ~pending_before, pending_add(input, [])), 16n)
+
+def stale_item(+previous: Nat, +incoming: Nat, saved: String, status: String) -> Bool:
+  Bool.or(Bool.and(Nat.is_gt(incoming, 0n), Nat.is_lt(incoming, previous)),
+    Bool.and(finished(saved), Bool.not(finished(status))))
+
+def confirm_exit(prior_status: String, observed_status: String, prior_clock: Nat, +clock: Nat) -> Bool:
+  Bool.and(Bool.not(finished(prior_status)), Bool.and(finished(observed_status),
+    Bool.and(Nat.is_gt(clock, 0n), Nat.is_ge(clock, prior_clock))))
+
+def seed_baseline(cursor: String, covered: String, +revision: Nat, head: Nat) -> Bool:
+  Bool.and(Bool.not(nonempty(cursor)), Bool.and(Bool.not(nonempty(covered)),
+    Bool.and(Nat.is_gt(revision, 0n), Nat.is_eq(revision, head))))
+
+type Checkpoint is Data:
+  Checkpoint{revision: Nat, frontier: Nat, covered: String, tip: String}
+
+def advance_checkpoint(+keep: Bool, +saved: String, +covered: String, +revision: Nat, +tip: String, +priority: Nat,
+    oldest: Nat, head_revision: Nat, next: String) -> Maybe<&2, Checkpoint>:
+  +seed = Bool.and(keep, seed_baseline(saved, covered, revision, head_revision))
+  +covered_after = Bool.pick(String, Bool.or(nonempty(next), Bool.not(nonempty(tip))), covered, tip)
+  Bool.pick(Maybe<&2, Checkpoint>, Bool.and(keep, Bool.not(seed)), None{},
+    Some{Checkpoint{revision, older_frontier(priority, oldest), covered_after, tip}})
+
+def projection_due(+updated: Nat, saved: Nat, +now: Nat, metadata_observed: Bool) -> Bool:
+  +recent_change = Bool.and(Nat.is_le(Nat.sub(now, 86400000n), updated), Nat.is_gt(updated, saved))
+  +metadata_backfill = Bool.and(Bool.not(metadata_observed), Nat.is_le(Nat.sub(now, 604800000n), updated))
+  Bool.or(recent_change, metadata_backfill)

@@ -5,7 +5,7 @@ import { createAppAuth } from "@octokit/auth-app";
 import { Octokit } from "@octokit/core";
 
 import type { ActionAttempt, AttemptIdentity, List } from "../../evidence/index.ts";
-import { bendList, boundedResponse, SourceReadError } from "../wire.ts";
+import { bendList, boundedResponse, positiveInt, SourceReadError } from "../wire.ts";
 
 type Inventory = { $: "More" | "Complete" | "Invalid" | "Duplicate" | "Partial" };
 type Json = Record<string, unknown>;
@@ -39,14 +39,6 @@ export type ClockPolicy = {
   discoverable_count: (total: number) => number;
   inventory_complete: (eligible: number, total: number) => boolean;
 };
-
-export function positiveInt(value: unknown): number {
-  const number = typeof value === "string" && /^[1-9]\d*$/.test(value) ? Number(value) : value;
-  if (typeof number !== "number" || !Number.isSafeInteger(number) || number < 1) {
-    throw new Error("Expected a positive integer source ID");
-  }
-  return number;
-}
 
 export function object(value: unknown): Json {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -336,3 +328,5 @@ export async function collectWindow(repository: string, from: string, to: string
     },
   };
 }
+
+export { positiveInt } from "../wire.ts";

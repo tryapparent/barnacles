@@ -71,9 +71,11 @@ a subsequent poll to resolve.
 Set `PLOW_ANALYSIS_USER` to the authorized tailnet login. The API binds to
 a loopback host port selected by `PLOW_ANALYSIS_PORT`. The read-only API
 mount contains the named analysis volume only. The refresh container takes a
-consistent backup of the input and refreshes the rolling 24-hour view every
-15 minutes. The report ends at the refresh's UTC cutoff and includes captured
-T3 thread creation and run activity in `[cutoff - 24 hours, cutoff)`. A closed
+consistent backup of the input and refreshes the rolling 24-hour and seven-day
+views every 15 minutes. Both end at the refresh’s UTC cutoff and cover
+captured T3 thread creation and run activity in their respective windows.
+The REST summary defaults to 24 hours. The dashboard requests the weekly
+priorities with `?range=7d`. A closed
 admission or run interval that crosses the boundary also qualifies. Thread
 metadata edits alone do not qualify. The cohort includes threads with partial
 source coverage. Code paths that discover new Codex links have their own
@@ -85,23 +87,58 @@ threads. Its occurrence is counted once. The thread picker shows full-thread
 diagnostic clocks. A missing source or clock limits what the summary can
 observe. When available, put a private [outcome-delay ledger](../../../collector/README.md#measure-confirmed-outcome-delay)
 at `outcomes/outcome-delays.json` under the receipts directory. Bend2 validates
-and unions the original intervals before clipping them to the 24-hour window.
+and unions the original intervals before clipping them to each report window.
 The API publishes only aggregated impact and coverage. Delay is unknown when
 the ledger is absent or insufficient. An interrupted refresh leaves the last
 committed results readable.
 
-To resolve native Codex bindings over the network for already imported T3
-threads, supply `PLOW_ANALYSIS_T3_ORIGIN`, `PLOW_ANALYSIS_T3_INSTANCE`,
-`PLOW_ANALYSIS_CODEX_INSTANCE`, and the container path
-`PLOW_ANALYSIS_T3_TOKEN_PATH=/receipts/t3-read-token` with that private
-read credential mounted from the receipts directory. Keep it out of Git.
-Stock T3 metadata collection and exact CI receipts supply their original
-evidence independently.
+The summary API includes at most three `priorities`. Bend2 ranks patterns
+with unique confirmed outcome delay first, by attributed milliseconds and
+measured outcomes. Observed diagnostics fill any remaining slots. They are
+ranked by distinct threads affected, then distinct events. A T3 admission
+diagnostic measures the observed request-to-start intervals clipped to the
+window. A CI diagnostic groups exactly linked failed or timed-out jobs by
+repository, workflow ID and retained job label. Each job contributes once
+across threads, with execution time accounted for only when its clocks are
+available. These diagnostics do not estimate outcome delay. Each priority
+includes a next step, its ranking basis, affected counts and timing coverage.
+The list can be empty with insufficient evidence. The existing analysis
+summary and thread detail continue to be available for existing clients.
 
-```sh
-docker --context rootless compose --env-file "$private_env" --profile analysis \
-  up -d --build analysis-refresh analysis-api
-```
+For live analysis set `PLOW_ANALYSIS_HISTORY_DIR` to the existing T3
+OTLP evidence volume's mountpoint and set `PLOW_ANALYSIS_T3_INSTANCE`
+and `PLOW_ANALYSIS_CODEX_INSTANCE` to the exact stored source namespaces.
+The worker uses the stock T3 poller's allowlisted run and provider
+projections as its T3 input and uses the live GitHub and Codex databases
+read-only. It loads seven days of projections for the configured T3 instance.
+The same refresh publishes the protected activity feed to the Compose activity
+volume for the dashboard and MCP. Only the refresh container writes to that
+volume. The feed and rankings share a refresh cutoff. Set
+`PLOW_ANALYSIS_T3_ENVIRONMENT_ID` to the T3 environment UUID to enable
+thread links for a collector namespace that uses an alias.
+It reuses the original Bend2 native-session check and leaves missing or
+ambiguous binding evidence out of the trace join. A PR link supplies
+repository context. The exact CI join still requires the original
+query or watch receipt identifying the run, attempt, and head.
+
+The collectors share metadata through the evidence volume. This
+connection uses the existing T3 read credential on the history service
+and requires no additional credential on the analysis worker. A
+standalone analysis without the history volume can still use
+`PLOW_ANALYSIS_T3_ORIGIN` and `PLOW_ANALYSIS_T3_TOKEN_PATH` for the
+bounded network lookup. Point the token path to a mounted read-scoped
+credential and keep it out of Git.
+
+The existing collector release timer upgrades the two installed
+analysis containers after the history service. It reads
+`PLOW_ANALYSIS_DEPLOY_ENV` or the private
+`${XDG_DATA_HOME:-$HOME/.local/share}/plow/analysis/compose.env`.
+`PLOW_ANALYSIS_HISTORY_DIR` opts the analysis project into promotion.
+Readiness requires a published refresh and the API's unauthorized-request
+check. The existing analysis volume and loopback ingress are reused.
+The refresh log reports the number of stored T3 projections, strong
+bindings, sessions with spans, ambiguous bindings, and exact CI receipts
+joined in each pass.
 
 After approval for a private ingress, forward its HTTPS listener to the
 configured loopback port with Tailscale Serve. The backend requires the
@@ -116,6 +153,6 @@ dashboard.
 Verify the protected ranking endpoint and the thread detail endpoint, then
 open the Access-protected app while connected to the tailnet. Grant local
 network access if the browser prompts. A new
-configuration adds the Bottlenecks section after the timeline. The analysis
-section shows coverage and freshness, and it works independently of the
-existing activity feed.
+configuration adds What to fix today after the timeline. The panel shows
+the ranked priorities and their evidence, and it works independently of
+the existing activity feed.

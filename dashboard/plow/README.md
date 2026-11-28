@@ -1,46 +1,43 @@
 # Plow session activity
 
 [Plow session activity](https://plow.tryapparent.com/app) reads a private projection of the
-collector's T3 evidence. It displays the ten newest imported threads with at
-least one measured interval. Run time measures elapsed provider time. Admission
-time runs from request to provider start. Unknown endpoints remain unmeasured,
-and failures appear only when the source records a failed run with a measured
-end. The observation timestamp comes from the selected thread records.
-Time summary and Timeline share a UTC viewport. The summary clips each thread's
-disjoint evidence intervals to that viewport, then sums and ranks them across
-threads. Different threads can overlap on the clock. A category expands to fill
-the summary card and shows its operation breakdown. Selecting an operation shows
-only threads with matching spans in the visible UTC range and outlines those
-spans on the same clock. Matching rows close up inside the fixed-height
-timeline viewport. Selecting the operation again clears the
-filter. Changing the time range updates the matches while preserving the
-selected operation.
+collector's T3 evidence. Scroll the Timeline to browse all imported threads with
+measured intervals in the selected time frame. The UTC ruler stays visible.
+**Time frame** switches the dashboard between the last **24h** (default) and
+**7 days**. The charts and Timeline end at the latest feed projection and
+clip intervals to the selected period. Run time measures elapsed provider
+time. Admission time runs from request to provider start. Unknown endpoints
+remain unmeasured. Failures appear when the source records a failed run with
+a measured end. The thread inspector retains the full recorded thread history.
+
+Where time went sums disjoint intervals across all measured threads in the
+period. The lengths show each category's exact share of the total. Different
+threads can overlap on the clock. A category expands
+into its operation breakdown. Selecting an operation filters the Timeline’s
+threads in the visible UTC range. Dragging, panning, and
+zooming change only that viewport and its matches. Selecting the operation
+again clears the filter. Switching time frames resets the Timeline viewport
+and clears the breakdown and inspector selections.
 
 Drag across the bars to select and zoom to a range. Select a bar with the
 pointer, Enter, or Space to fit its exact start and end. Ctrl+scroll zooms
 around the pointer and Ctrl+↑/↓ zooms in steps. Drag the UTC ruler or use
 horizontal scrolling to pan. Hover over a phase or red marker to see its
-recorded activity or exact failure times. Use Inspect for the recorded
-thread details.
+recorded activity or exact failure times. Use the eye beside a thread to inspect its recorded details.
 
 The minimap’s UI SDK Slider thumbs resize the range. Drag the middle to pan
 or drag outside the selection to select a different interval. Home or a
 double-click on the minimap resets the view. The eye button opens the guide.
 
-**Agent work share** averages each measured thread’s provider-run time divided
-by its classified provider-run plus admission-wait time. Bend2 groups threads
-in creation order into batches of ten. It keeps up to five complete batches
-and skips the unfinished batch in the chart. Unknown clocks retain their
-thread positions. A batch without classified time appears as a gap. The ten
-detailed timeline traces and their visible-range filters are separate from
-historical batches.
+**Agent work share** uses four-hour buckets for 24h and daily buckets for 7 days. Each point averages the
+share of provider-run time among classified provider and admission time for
+threads with a measured clock in that interval. Hatching marks buckets with no
+measured provider or admission time.
 
 React renders the dashboard shell and operation summary with the shared
-[shadcn controls](../web/controls.tsx). The timeline renderer handles the
-custom UTC geometry, scrolling, and brush interaction. Vite bundles the UI
-into the origin-served page with the existing fonts and field artwork. The
-Batch data disclosure uses [UI SDK Collapsible](https://ui-sdk.dev/docs/react/components/collapsible)
-with the shared shadcn button.
+[shadcn controls](../web/controls.tsx). The timeline renderer handles custom UTC
+geometry, scrolling, and brush interaction. It coalesces viewport draws into
+animation frames. Vite packages the interface, fonts and field artwork.
 
 The desktop dashboard uses a single Open Field backdrop. The dashboard image
 is a generated landscape study based on Plow’s existing field painting and
@@ -50,30 +47,42 @@ the field. The Upright Rows material is a 1280 × 640 raster atlas built from
 generated oil-painted soil, foliage, and fine sand studies. The upper half
 stores soil detail, foliage relief, and a mask isolated from the painted
 foliage by channel. The lower half stores fine sand relief with mineral flecks
-for Unobserved. The browser paints the same earth under both upper parcels and
-composites the tinted foliage only on the planted land. FieldSurface reuses the
+for time outside runs. The browser paints the same earth under the first two
+segments and composites foliage on provider time. FieldSurface reuses the
 materials in the trend and in the static grain on timeline spans.
 The trend clips the painted soil and crops at the batch curve and leaves
-gaps for unknown batches. The timeline retains Bend2 phase colors. Field colors adjust
-the summary tints, and Wind displaces only the canopy. Reduced motion pauses
-the effect and forced colors use solid surfaces. Category area follows duration,
-subject to minimum track sizes for readable, clickable tiles. The category name
-leads each tile, with the duration in smaller text. A selected parcel expands
+hatched bands for unknown batches. The timeline retains Bend2 phase colors.
+Both overview cards use a static field palette. Forced colors use system
+surfaces. The proportional plot has separate category controls with durations
+and shares. A selected category expands
 to fill the summary card. Its category replaces the heading and its measured
 operations fill the interior in related shades, with area proportional to
-duration subject to the same readability limits. One texture from the field
-atlas spans the entire breakdown card. Translucent operation fills tint that
-texture in place, including the selected state. The trend and timeline stay
+duration subject to the same readability limits. The expanded view uses the selected parcel’s painted texture. Translucent operation fills tint it in place and an outline marks the selected operation. The trend and timeline stay
 in place. Reduced motion opens and closes the breakdown without zooming.
 
 The pinned Bend2 compiler builds the interval, grouping, ranking, and timeline
 policies under `policy/`. The registered host paths provide HTML, embedded
 fonts, DOM and browser input adapters, build packaging, Chromium verification,
 the Node HTTP adapter, and the Docker Compose and Cloudflare API wiring those runtimes require. The projection reuses the collector database and publishes only
-timing intervals, generic clock labels, and an observation timestamp. It
-omits thread identifiers, titles, prompt text, links, and unlinked Codex
-and GitHub records. Generated files and live data stay out of Git and build
-artifacts. When configured, the Session history link opens Plow’s private tailnet view.
+timing intervals, clock labels, thread titles, IDs, source metadata, linked
+pull requests, and an observation timestamp. The dashboard and MCP share
+this Access-protected feed. Prompts and tool outputs stay in T3. A provider span receives a more specific label when an explicitly
+linked, allowlisted operation falls wholly inside a measured provider run.
+The Timeline marks timed CI observations on a lower track and lists them in
+the inspector. A T3 PR watch runs from the recorded watch start to the monitor
+notification. It can overlap provider time or time between runs. Exact GitHub
+queries without observation clocks carry identity evidence only. GitHub job
+queue and execution describe hosted activity. Outside runs includes intervals
+between a recorded completion and a later request and gaps with insufficient
+clocks. The inspector labels them separately. Generated files and live data
+stay out of Git and build artifacts.
+
+The priorities panel appears below Timeline when the analysis API is
+configured. It shows up to three priorities for the selected period and
+shows the analysis refresh cutoff. The first priority opens automatically. Select another
+priority to see its evidence, timing coverage, and suggested next step.
+A lone priority opens without a selection control. The panel keeps
+confirmed outcome delay distinct from observed admission or CI time.
 
 ## Build and verify
 
@@ -91,16 +100,18 @@ The smoke check serves the built page over loopback HTTP with signed fixture
 tokens. It checks Access denial and response headers, then exercises the Timeline
 in Chrome at 1024, 1120, 1440, and 1920 pixels. It covers exact keyboard fit, range
 resizing, chart selection, grouped failure hover, filtering, stable panel
-geometry, and empty and unavailable feeds. Screenshots are optional.
+geometry, both time frames, and empty and unavailable feeds. Screenshots are optional.
 
 ## Deployment
 
 The dashboard runs as the `plow-dashboard` service in the root Compose file.
 It binds to Clanker's loopback on port 3033 by default and mounts only the built
 page module, its JWT verification dependency, and a private projected feed.
-The feed is generated from the existing evidence SQLite database through
-Bend2. Projection runs read-only and atomically replaces the last usable feed
-after verification. The origin checks the Cloudflare Access JWT signature,
+On the live analysis stack, the dashboard mounts the analysis project's
+activity volume read-only. The analysis refresh projects this feed from
+the same joined evidence and cutoff as the priorities, then publishes it
+with an atomic rename. Standalone deployments project from the configured
+evidence database. The origin checks the Cloudflare Access JWT signature,
 issuer, audience, and expiry before returning dashboard content.
 
 The user timer builds the dashboard from the same attested main revision
@@ -117,13 +128,13 @@ Set these inputs in `~/.config/plow-frontend/compose.env`, mode 0600.
 | --- | --- |
 | `PLOW_ACCESS_TEAM` | Existing Cloudflare Access team name |
 | `PLOW_ACCESS_AUDIENCE` | Audience tag of the existing Plow Access application |
-| `PLOW_EVIDENCE_DATABASE` | Absolute evidence SQLite path |
+| `PLOW_EVIDENCE_DATABASE` | Absolute evidence SQLite path for standalone or initial startup |
 | `PLOW_BEND_BUNDLE` | Absolute path of the verified installed Bend2 compiler bundle |
 | `PLOW_FRONTEND_STATE` | Private application state directory for the built release and projected timeline |
 | `PLOW_FRONTEND_PORT` | Optional loopback port, defaults to 3033 |
 | `PLOW_FRONTEND_UID_GID` | Optional container user. Rootless Clanker uses the default `0:0` mapped to the host owner. With rootful Docker, set the feed owner’s numeric UID and GID. |
 | `PLOW_ANALYSIS_API_URL` | Optional private HTTPS URL ending in `/api/v1/bottlenecks` |
-| `PLOW_SESSION_HISTORY_URL` | Optional private HTTPS URL ending in `/sessions` |
+| `PLOW_ANALYSIS_COMPOSE_PROJECT` | Analysis project's Compose name when it differs from `plow-analysis` |
 
 Install the generated units from the verified source in the existing collector
 release layout. Run these commands as the Clanker deployment user.

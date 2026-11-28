@@ -1,40 +1,42 @@
 import Base
+import ./summary.bend as Summary
 
-type TrendThread is Data:
-  TrendThread{start: Nat, position: Nat, work: Nat, workflow: Nat}
-
-type TrendBatch is Data:
-  TrendBatch{first: Nat, last: Nat, measured: Nat, basis_points: Nat}
-
-def trend_before(a: TrendThread, b: TrendThread) -> Bool:
-  match a b:
-    case TrendThread{+x,i,_,_} TrendThread{+y,j,_,_}:
-      Bool.or(Nat.is_lt(x,y),Bool.and(Nat.is_eq(x,y),Nat.is_le(i,j)))
+type TrendPoint is Data:
+  TrendPoint{from: Nat, to: Nat, measured: Nat, basis_points: Nat}
 
 type TrendScore is Data:
   TrendScore{measured: Nat, total: Nat}
 
-def record_trend(+work: Nat, workflow: Nat, score: TrendScore) -> TrendScore:
+def record_score(+spans: List<&2, Summary.SummarySpan>, score: TrendScore) -> TrendScore:
   match score:
     case TrendScore{measured,total}:
-      +classified = Nat.add(work,workflow)
+      +work = Summary.span_time(Summary.category_spans(spans,2))
+      +classified = Nat.add(work,Summary.span_time(Summary.category_spans(spans,1)))
       +known = Bool.pick(Nat,Nat.is_lt(0n,classified),1n,0n)
       +share = Nat.div(Nat.mul(work,1000000n),Nat.max(1n,classified))
       TrendScore{Nat.add(measured,known),Nat.add(total,share)}
 
-def completed_trend(+first: Nat, score: TrendScore) -> TrendBatch:
+def score_traces(traces: List<&2, Summary.SummaryTrace>, +from: Nat, +to: Nat, score: TrendScore) -> TrendScore:
+  match traces:
+    case []: score
+    case trace <> rest:
+      score_traces(rest,from,to,record_score(Summary.clip_traces([trace],from,to),score))
+
+def point(+from: Nat, +to: Nat, score: TrendScore) -> TrendPoint:
   match score:
     case TrendScore{+measured,total}:
       +mean = Nat.div(Nat.add(total,Nat.mul(measured,50n)),Nat.mul(Nat.max(1n,measured),100n))
-      TrendBatch{first,Nat.add(first,9n),measured,mean}
+      TrendPoint{from,to,measured,mean}
 
-def collect_trend(input: List<&2,TrendThread>, +first: Nat, size: Nat, score: TrendScore) -> List<&2,TrendBatch>:
-  match input size:
-    case [] _: []
-    case TrendThread{_,_,work,workflow} <> rest 0n:
-      completed_trend(first,record_trend(work,workflow,score)) <> collect_trend(rest,Nat.add(first,10n),9n,TrendScore{0n,0n})
-    case TrendThread{_,_,work,workflow} <> rest 1n+left:
-      collect_trend(rest,first,left,record_trend(work,workflow,score))
+def trend_points(buckets: Nat, +traces: List<&2,Summary.SummaryTrace>, +from: Nat, +end: Nat, +step: Nat) -> List<&2,TrendPoint>:
+  match buckets:
+    case 0n: []
+    case 1n+rest:
+      +to = Nat.min(end,Nat.add(from,step))
+      point(from,to,score_traces(traces,from,to,TrendScore{0n,0n})) <>
+        trend_points(rest,traces,to,end,step)
 
-def agent_work_trend(threads: List<&2,TrendThread>, first: Nat) -> List<&2,TrendBatch>:
-  collect_trend(List.sort(~TrendThread,~trend_before,threads),first,9n,TrendScore{0n,0n})
+def agent_work_trend(traces: List<&2,Summary.SummaryTrace>, range: String, +from: Nat, +to: Nat) -> List<&2,TrendPoint>:
+  +count = Bool.pick(Nat,String.eq(range,"7d"),7n,6n)
+  +step = Nat.div(Nat.add(Nat.sub(to,from),Nat.sub(count,1n)),count)
+  trend_points(count,traces,from,to,step)

@@ -8,6 +8,8 @@
     "collector/codex/rollout-syntax.ts",
     "collector/codex/rollout.ts",
     "collector/codex/otel.ts",
+    "collector/t3-otel/history.ts",
+    "collector/t3-otel/projection.ts",
     "collector/t3.ts",
     "collector/wire.ts"
   ],
@@ -24,6 +26,7 @@
   "SQLite I/O, runtime entrypoints, and Bend2 interface types": [
     "evidence/storage/actions.sql",
     "evidence/storage/actions.ts",
+    "evidence/storage/t3/history.ts",
     "evidence/delivery/delivery.ts",
     "evidence/index.ts",
     "evidence/projection/intervals.ts",
@@ -64,6 +67,7 @@
   "Synthetic integration fixtures and demo": [
     "collector/changed-code.test.ts",
     "collector/codex/otel.test.ts",
+    "collector/t3-otel/history.test.ts",
     "collector/github/attempt.test.ts",
     "collector/sources.test.ts",
     "dashboard/prepare.test.ts",

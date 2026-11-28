@@ -1,7 +1,7 @@
 export { admissionPolicy, buildAdmissionPolicy, loadEvidence, type AdmissionPolicy, type ChangedCodeFile, type EvidenceBatch } from "./storage/load.ts";
 export { deliveryPolicy, deliveryReport, type DeliveryPolicy, type PullRequest, type ReleaseEvidence } from "./delivery/delivery.ts";
 export { openHistory, type ActionAttempt, type AttemptIdentity, type HistoryProgress, type HistoryFact } from "./storage/actions.ts";
-export { openT3History, type T3Command, type T3HistoryCheckpoint } from "./storage/actions.ts";
+export { openT3History, readT3Projections, type StoredT3Projection, type T3Command, type T3HistoryCheckpoint, type PendingT3Command } from "./storage/t3/history.ts";
 export {
   sourcePolicy, processTimingPolicy, saveKernelCapture, rolloutCoverage, waitReport, watchOverlaps,
   type KernelPolicy, type KernelCapture,
@@ -17,4 +17,7 @@ export { joinSession, sessionJoinPolicy, type NativeBinding, type SessionJoinPol
 
 export const t3OtelPolicy = new URL("./storage/t3-otel.bend", import.meta.url);
 
-export { backupAnalysisInput, joinedTargets, measureOutcomeDelay, publishJoinedAnalysis } from "./analysis/session-history.ts";
+export { analysisWindow, joinedTargets, publishJoinedAnalysis } from "./analysis/session-history.ts";
+export { projectPlowFeed } from "./projection/trace.ts";
+export { backupAnalysisInput } from "./storage/t3/history.ts";
+export { measureOutcomeDelay } from "./projection/timing.ts";

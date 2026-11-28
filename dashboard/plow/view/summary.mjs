@@ -1,3 +1,31 @@
+function elapsed(ms) {
+  const seconds = Math.floor(ms / 1000)
+  const minutes = Math.floor(seconds / 60)
+  return Math.floor(minutes / 60) + ':' + String(minutes % 60).padStart(2,'0') + ':' + String(seconds % 60).padStart(2,'0')
+}
+function decodeEvidence(trace) {
+  const end = millis(trace.end)
+  const intervals = [
+    ...trace.work.map(([a, b, name]) => ({ $: 'Interval', a: millis(a), b: millis(b), kind: 2, name })),
+    ...(trace.detail ?? []).map(([a, b, name]) => ({ $: 'Interval', a: millis(a), b: millis(b), kind: 3, name })),
+    ...trace.wait.map(([a, b, name]) => ({ $: 'Interval', a: millis(a), b: millis(b), kind: 1, name })),
+    ...(trace.between ?? []).map(([a, b, name]) => ({ $: 'Interval', a: millis(a), b: millis(b), kind: 0, name })),
+  ]
+  const evidence = policy.evidence(asList(intervals), end)
+  const failures = asList(trace.errors.map(millis))
+  const ci = (trace.ci ?? []).map(([start, end, label]) => ({ start: millis(start), end: millis(end), label }))
+  return { ...trace, end, extent: millis(trace.extent ?? trace.end), ci, evidence, failures, totals: policy.evidence_totals(evidence),
+    recordedFailures: [...values(policy.failure_points(true,end,failures))] }
+}
+const feedStatus = document.getElementById('feed-status')
+const feedContent = document.getElementById('feed-content')
+if (feed.observed > 0) {
+  const cutoff = document.getElementById('feed-cutoff')
+  cutoff.textContent = 'Observed through ' + new Intl.DateTimeFormat('en-GB', {
+    dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC',
+  }).format(feed.observed) + ' UTC'
+  cutoff.hidden = false
+}
 const tiles = document.getElementById('tiles')
 const operationPanel = document.getElementById('operation-panel')
 const operationTiles = document.getElementById('operation-tiles')
@@ -9,17 +37,26 @@ const timelineSelection = document.getElementById('timeline-selection')
 const categories = [
   { kind: 1, name: 'Admission wait', style: 'workflow' },
   { kind: 2, name: 'Provider run', style: 'agent' },
-  { kind: 0, name: 'Unobserved', style: 'unclear' },
+  { kind: 0, name: 'Outside runs', style: 'unclear' },
 ]
-const summaryTraces = asList(evidenceRows.map((trace, index) => ({
+const summaryInput = rows => asList(rows.map((trace, index) => ({
   $: 'SummaryTrace', index: index + 1, start: trace.startUtcMs, parts: trace.evidence,
 })))
-
+const overviewEnd = feed.overview?.to ?? feed.observed
+const feedStart = feed.overview?.from ?? policy.dashboard_frame('24h', overviewEnd).start
+const overviewRows = (feed.overview?.traces ?? feed.traces).map(decodeEvidence)
+const overviewTraces = summaryInput(overviewRows)
+const spans = asList(overviewRows.map(trace => ({
+  $: 'UtcSpan', start: trace.startUtcMs, end: trace.startUtcMs + trace.extent,
+})))
+let timelineTraces
+let overview
 let selection = policy.initial_overview()
 let previousWindow = ''
 let matches = new Map()
 
 const shareLabel = new Intl.NumberFormat('en', { style: 'percent', maximumFractionDigits: 1 })
+const share = (part, total) => part && part / total < .001 ? '<0.1%' : shareLabel.format(part ? part / total : 0)
 const utc = time => utcDay.format(time) + ' ' + utcClock.format(time)
 const durationLabel = ms => {
   const minutes = Math.round(ms / 60000)
@@ -28,8 +65,10 @@ const durationLabel = ms => {
   return Math.floor(minutes / 60) + 'h ' + minutes % 60 + 'm'
 }
 const threadCount = count => count === 1 ? '1 thread' : count + ' threads'
-const operationLabel = name => selection.category === 0 ? 'Unobserved interval' : name
+const operationLabel = name => name === 'Unobserved' ? 'Unobserved interval' : name
 
+const navigatorTrack = minimap.parentElement
+const miniWindow = minimap.querySelector('.mini-window')
 const miniBrush = minimap.querySelector('.mini-brush')
 function miniPosition(event) {
   const box = minimap.getBoundingClientRect()
@@ -40,8 +79,8 @@ let previousTap = null
 navigatorTrack.addEventListener('pointerdown', event => {
   if (event.button !== 0 || gesture || event.target.closest('.mini-handle')) return
   const start = miniPosition(event)
-  const left = (visibleWindow.start - frame.start) / scale
-  const right = (visibleWindow.end - frame.start) / scale
+  const left = (visibleWindow.start - frame.start) / scale()
+  const right = (visibleWindow.end - frame.start) / scale()
   event.preventDefault()
   minimap.focus({ preventScroll:true })
   const mode = zoom > 1 && start >= left && start <= right ? 'pan' : 'brush'
@@ -53,7 +92,7 @@ navigatorTrack.addEventListener('pointermove', event => {
   const stop = miniPosition(event)
   const delta = stop - gesture.start
   if (gesture.mode === 'pan') {
-    panWindow(delta * scale / duration(), gesture.window.start)
+    panWindow(delta * scale() / duration(), gesture.window.start)
   } else {
     miniBrush.hidden = false
     miniBrush.style.left = Math.min(stop, gesture.start) * 100 + '%'
@@ -68,7 +107,7 @@ navigatorTrack.addEventListener('pointerup', event => {
     const repeat = previousTap && event.timeStamp - previousTap.time < 450 && Math.abs(event.clientX - previousTap.x) < 8
     previousTap = repeat ? null : { time: event.timeStamp, x: event.clientX }
     if (repeat) applyWindow(frame)
-    else if (gesture.mode === 'brush' && zoom > 1) panWindow(0, frame.start + scale * stop - duration() / 2)
+    else if (gesture.mode === 'brush' && zoom > 1) panWindow(0, frame.start + scale() * stop - duration() / 2)
   } else {
     previousTap = null
     if (gesture.mode === 'brush') selectWindow(Math.min(stop, gesture.start), Math.max(stop, gesture.start), distance, frame)
@@ -89,7 +128,7 @@ navigatorTrack.addEventListener('keydown', event => {
     return
   }
   const direction = event.key === 'ArrowLeft' ? -1 : 1
-  const delta = direction * Math.max(scale * .005, duration() * .1)
+  const delta = direction * Math.max(scale() * .005, duration() * .1)
   const thumb = event.target.closest('.mini-handle')?.dataset.index
   if (thumb === '0') moveBoundary(true, visibleWindow.start + delta)
   else if (thumb === '1') moveBoundary(false, visibleWindow.end + delta)
@@ -98,8 +137,8 @@ navigatorTrack.addEventListener('keydown', event => {
 
 function paintRange() {
   const { start, end } = visibleWindow
-  const first = (start - frame.start) / scale
-  const last = (end - frame.start) / scale
+  const first = (start - frame.start) / scale()
+  const last = (end - frame.start) / scale()
   miniWindow.style.left = (first * 100) + '%'
   miniWindow.style.width = (100 / zoom) + '%'
   navigatorTrack.classList.toggle('has-range', zoom > 1)
@@ -111,8 +150,7 @@ function paintRange() {
   const key = start + '/' + end
   if (previousWindow === key) return
   previousWindow = key
-  renderSummary(start, end)
-  paintFilter(start, end)
+  paintFilter(start, end, false)
 }
 
 function categoryButton(kind) {
@@ -148,15 +186,14 @@ function selectCategory(category) {
   const surfaceStyle = getComputedStyle(summarySurface)
   const previousPaint = {
     background: surfaceStyle.background,
-    '--breakdown-texture': surfaceStyle.getPropertyValue('--breakdown-texture'),
   }
   const interrupted = !opening && summarySurface.getAnimations().length ? summarySurface.getBoundingClientRect() : null
   for (const element of [summarySurface, summaryTop, operationPanel]) {
     for (const animation of element.getAnimations()) animation.cancel()
   }
   selection = policy.select_overview(selection, { $:'SelectCategory', kind:category.kind })
-  previousWindow = ''
-  paintRange()
+  renderSummary()
+  paintFilter(visibleWindow.start, visibleWindow.end)
   if (tile && !summaryMotion.matches) animateCategory(tile, opening, previousPaint, interrupted)
   const next = operationPanel.hidden ? categoryButton(category.kind) : collapse
   next?.focus({ preventScroll:true })
@@ -164,15 +201,15 @@ function selectCategory(category) {
 
 function selectOperation(name) {
   selection = policy.select_overview(selection, { $:'SelectOperation', name })
-  previousWindow = ''
-  paintRange()
+  renderSummary()
+  paintFilter(visibleWindow.start, visibleWindow.end)
   const next = operationButton(name) ?? operationTiles.firstElementChild ?? collapse
   next.focus({ preventScroll:true })
 }
 
-function renderSummary(windowStart, windowEnd) {
+function renderSummary() {
   const focused = document.activeElement
-  const result = policy.time_summary(summaryTraces, windowStart, windowEnd)
+  const result = overview
   const groups = new Map([...values(result.categories)].map(group => [group.kind, group]))
   const activeCategory = categories.find(category => category.kind === selection.category)
   const group = groups.get(selection.category)
@@ -181,7 +218,7 @@ function renderSummary(windowStart, windowEnd) {
     name: operationLabel(operation.name),
     metric: durationLabel(operation.duration),
     weight: operation.duration,
-    share: shareLabel.format(operation.duration / group.duration),
+    share: share(operation.duration, group.duration),
     active: operation.name === selection.operation,
     select: () => selectOperation(operation.name),
   })) : []
@@ -199,7 +236,7 @@ function renderSummary(windowStart, windowEnd) {
         ...category,
         duration: group ? durationLabel(group.duration) : '0m',
         weight: group?.duration ?? 0,
-        share: shareLabel.format(group ? group.duration / result.duration : 0),
+        share: share(group?.duration ?? 0, result.duration),
         expanded: category.kind === selection.category,
         select: () => selectCategory(category),
       }
@@ -219,9 +256,9 @@ function renderSummary(windowStart, windowEnd) {
   }
 }
 
-function paintFilter(start, end) {
+function paintFilter(start, end, repaint = true) {
   const filter = selection.operation
-    ? policy.timeline_filter(summaryTraces, start, end, selection.category, selection.operation)
+    ? policy.timeline_filter(timelineTraces, start, end, selection.category, selection.operation)
     : null
   matches = new Map(filter ? [...values(filter.matches)].map(match => [match.index - 1, match.spans]) : [])
   const status = !filter ? '' : filter.threads > 0
@@ -230,8 +267,9 @@ function paintFilter(start, end) {
   if (timelineSelection.textContent !== status) timelineSelection.textContent = status
   timelineSelection.toggleAttribute('data-empty', !!filter && filter.threads === 0)
   document.getElementById('timeline-panel').dataset.category = selection.category
+  if (openTrace !== -1 && selection.operation && !matches.has(openTrace)) closeInspector()
+  if (!repaint) return
   for (const row of rows.children) paintThreadMatch(row, row.querySelector('.rail'), Number(row.dataset.traceIndex))
-  if (openTrace !== -1 && rows.children[openTrace].hidden) closeInspector()
 }
 
 function paintThreadMatch(row, rail, index) {
@@ -254,7 +292,45 @@ function paintThreadMatch(row, rail, index) {
   }
 }
 
-if (traces.length > 0) {
+function showRange(range) {
+  frame = policy.dashboard_frame(range, overviewEnd)
+  const complete = policy.feed_covers(range, frame, feedStart)
+  evidenceRows = complete ? [...values(policy.timeline_indices(spans, overviewRows.length, frame, 0))].map((index, row) => ({
+    ...overviewRows[index], title: overviewRows[index].title || 'Thread ' + (row + 1),
+  })) : []
+  feedStatus.hidden = evidenceRows.length > 0
+  feedContent.hidden = !feedStatus.hidden
+  if (feed.unavailable) return
+  feedStatus.textContent = !complete ? 'Seven-day activity is temporarily unavailable. Reload to try again.'
+    : 'No measured session time in this range.'
+  closeInspector()
+  clearTooltip()
+  if (!evidenceRows.length) return
+
+  viewport.scrollTop = 0
+  document.getElementById('timeline-count').textContent = threadCount(evidenceRows.length)
+  selection = policy.initial_overview()
+  previousWindow = ''
+  timelineTraces = summaryInput(evidenceRows)
+  overview = policy.time_summary(overviewTraces, frame.start, frame.end)
+  PlowUI.renderAgentWorkTrend([...values(policy.agent_work_trend(overviewTraces, range, frame.start, frame.end))])
+  renderSummary()
+  minimap.querySelector('.mini-threads').replaceChildren(...evidenceRows.map((trace, index) => {
+    const mark = makeElement('span')
+    const start = Math.max(frame.start, trace.startUtcMs)
+    const end = Math.min(frame.end, trace.startUtcMs + trace.extent)
+    mark.style.left = percent(start - frame.start, scale())
+    mark.style.width = percent(end - start, scale())
+    mark.style.top = 3 + index % 7 * 2.6 + 'px'
+    return mark
+  }))
+  measurementWidth = undefined
   applyWindow(frame)
-  document.fonts.ready.then(()=>{draw();paintWindow()})
 }
+
+document.addEventListener('plow-range-change', event => showRange(event.detail))
+showRange('24h')
+document.fonts.ready.then(() => {
+  measurementWidth = undefined
+  applyWindow(visibleWindow, fitted)
+})

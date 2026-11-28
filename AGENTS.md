@@ -22,6 +22,7 @@ Keep the dependency direction from collector to evidence and from dashboard to e
 ## Plow hosting
 
 - Follow the [Plow deployment guide](dashboard/plow/README.md#deployment) for the Docker Compose origin and Cloudflare Access at `plow.tryapparent.com/app`. Keep candidate checks on loopback.
+- When asked to use Plow MCP, call the registered tools. If setup or login is needed, follow the [native MCP OAuth instructions](mcp/README.md#connect-from-codex-or-t3-code) in the agent's client profile.
 
 ## Bend2 is the implementation language
 

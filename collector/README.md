@@ -287,6 +287,25 @@ supply a CI observation. Visit
 coverage behavior. This is a one-session command. The poller and dashboard
 have separate refresh and projection paths.
 
+In a T3 Codex tool call, the exact Actions import can create the receipt
+and import its jobs together. Set `PLOW_CI_CAPTURE=query` for a verified
+query or `PLOW_CI_CAPTURE=watch` for a bounded GitHub CLI wait. Pass the
+exact repository, run ID, attempt and head to `collector/import-actions.ts`.
+Watch mode requires the requested attempt to be the latest both before
+and after the wait. A timeout or changed identity produces no receipt.
+Use the ordinary PR watcher for PR lifecycle monitoring.
+
+Configure `PLOW_T3_ORIGIN`, `PLOW_T3_READ_TOKEN_FILE`,
+`PLOW_ANALYSIS_T3_INSTANCE`, `PLOW_ANALYSIS_CODEX_INSTANCE` and
+`PLOW_ANALYSIS_RECEIPTS_DIR` with the same private source settings as
+analysis. The current tool, thread and session come from the T3 Codex
+environment, and a strong native reference must confirm the session.
+Only the exact keys are retained. The receipt is published after the
+database transaction and retries are safe. Use the configured evidence
+store and coordinate with its existing writer when backfilling. Archive
+old receipt files outside the replay directory. Live history refresh
+ignores receipts for threads outside its current T3 projection set.
+
 ### Analyze one joined thread
 
 Run the historical study rules against one T3 thread in a private joined
