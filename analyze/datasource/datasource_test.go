@@ -32,27 +32,35 @@ const fixturePolicyOutput = `{"runId":"fixture-run","intervals":[{"callId":"pair
 func TestQueryDataFramesAndReplay(t *testing.T) {
 	t.Run("wire contract", func(t *testing.T) {
 		policyPath := writePolicy(t, "input=$(cat)\ncase \"$input\" in *'private fixture field'*) exit 7;; esac\nprintf '%s' '"+fixturePolicyOutput+"'")
-		assertQueryFrames(t, policyPath, false)
+		assertQueryFrames(t, policyPath, false, false)
 	})
 	t.Run("compiled Bend2 policy", func(t *testing.T) {
 		policyPath := os.Getenv("PLOW_TEST_POLICY_COMMAND")
 		if policyPath == "" {
 			t.Skip("set PLOW_TEST_POLICY_COMMAND to the absolute path of the Bend2 CLI wrapper")
 		}
-		assertQueryFrames(t, policyPath, true)
+		assertQueryFrames(t, policyPath, true, false)
+		assertQueryFrames(t, policyPath, true, true)
 	})
 }
 
-func assertQueryFrames(t *testing.T, policyPath string, replay bool) {
+func assertQueryFrames(t *testing.T, policyPath string, replay, history bool) {
 	t.Helper()
 	ds := newFixtureDatasource(t, policyPath, func(w http.ResponseWriter, r *http.Request) {
 		checkRequest(t, r)
 		switch r.URL.Query().Get("query") {
 		case `{plow_source="t3"} | json plow_kind="kind", plow_run_id="run.id" | plow_kind="t3_run" | plow_run_id="fixture-run"`:
-			if r.URL.Query().Get("limit") != "100" {
+			if history || r.URL.Query().Get("limit") != "100" {
 				t.Error("run lookup did not use configured cap")
 			}
 			lokiReply(t, w, "t3", []string{fixtureRun, fixtureRun}, nil)
+		case `{plow_source="t3_history"} | json plow_kind="kind", plow_run_id="run.id" | plow_kind="t3_activity_run" | plow_run_id="fixture-run"`:
+			if !history || r.URL.Query().Get("limit") != "2000" {
+				t.Error("history lookup did not use configured cap")
+			}
+			terminal := `{"kind":"t3_activity_run","eventId":"history-fixture","revisionMs":7000,"run":{"id":"fixture-run","threadId":"fixture-thread","sessionId":"fixture-session","status":"completed","startedMs":1000,"completedMs":7000}}`
+			prior := `{"kind":"t3_activity_run","eventId":"history-fixture","revisionMs":1000,"run":{"id":"fixture-run","threadId":"fixture-thread","status":"running","startedMs":1000}}`
+			lokiReply(t, w, "t3_history", []string{prior, terminal, terminal}, nil)
 		case `{plow_source="codex_history"} | json plow_session_id="sessionId" | plow_session_id="fixture-session"`:
 			if r.URL.Query().Get("limit") != "2000" {
 				t.Error("event lookup did not use configured cap")
@@ -68,7 +76,15 @@ func assertQueryFrames(t *testing.T, policyPath string, replay bool) {
 		}
 	})
 
-	result := queryFixture(t, ds)
+	query := fixtureQuery()
+	if history {
+		query.JSON = json.RawMessage(`{"runId":"fixture-run","history":"1"}`)
+	}
+	response, err := ds.QueryData(context.Background(), &backend.QueryDataRequest{Queries: []backend.DataQuery{query}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := response.Responses["A"]
 	if result.Error != nil {
 		t.Fatal(result.Error)
 	}
@@ -448,5 +464,32 @@ func TestActivityContinuationKeepsTimestampTies(t *testing.T) {
 	}
 	if tail := got.lines[len(got.lines)-2:]; !reflect.DeepEqual(tail, []string{"tie-a", "tie-b"}) {
 		t.Fatalf("continuation ties = %v", tail)
+	}
+}
+
+func TestActivityContinuationKeepsPrefixAfterReadDeadline(t *testing.T) {
+	var requests atomic.Int64
+	ds := newFixtureDatasource(t, "/bin/false", func(w http.ResponseWriter, r *http.Request) {
+		if requests.Add(1) == 2 {
+			<-r.Context().Done()
+			return
+		}
+		values := make([][2]string, activityPageLimit)
+		for i := range values {
+			values[i] = [2]string{"1000000000", "prefix"}
+		}
+		values[len(values)-1] = [2]string{"2000000000", "unresolved-boundary"}
+		stream := map[string]any{"stream": map[string]string{"plow_source": "t3_history"}, "values": values}
+		json.NewEncoder(w).Encode(map[string]any{"status": "success", "data": map[string]any{
+			"resultType": "streams", "result": []any{stream},
+		}})
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	pages := 2
+	read := activityRead{window: fixtureQuery().TimeRange, source: "t3_history"}
+	got := ds.loki.readActivityShard(ctx, read, 0, activityShardBytes, &pages)
+	if requests.Load() != 2 || got.failure != nil || got.gaps != activityReadDeadline || len(got.lines) != activityPageLimit-1 {
+		t.Fatalf("deadline returned %d rows with gaps %v and error %v after %d requests", len(got.lines), got.gaps, got.failure, requests.Load())
 	}
 }
