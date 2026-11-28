@@ -3,6 +3,7 @@ set -euo pipefail
 cd "$(dirname -- "${BASH_SOURCE[0]}")/../.."
 export PLOW_LGTM_WORKDIR
 PLOW_LGTM_WORKDIR=$(mktemp -d /tmp/apparent-dev-plow-lgtm-XXXXXX)
+export PLOW_HOST_ALIAS=loopback-fixture
 job=${PLOW_LGTM_WORKDIR##*-}
 export PLOW_GRAFANA_IMAGE="plow-grafana-check-${job,,}:local"
 compose() { docker compose -p "plow-lgtm-${job,,}" "$@"; }
@@ -30,8 +31,9 @@ loki=$(compose port loki 3100)
 tempo=$(compose port tempo 3200)
 mimir=$(compose port mimir 9009)
 alloy=$(compose port alloy 4318)
-[[ $grafana == 127.0.0.1:* && $loki == 127.0.0.1:* && $tempo == 127.0.0.1:* &&
-   $mimir == 127.0.0.1:* && $alloy == 127.0.0.1:* ]]
+for endpoint in "$grafana" "$loki" "$tempo" "$mimir" "$alloy"; do
+  [[ $endpoint == 127.0.0.1:* ]]
+done
 grafana_api() {
   curl -fsS --max-time 5 --user "admin:$(cat "$PLOW_LGTM_WORKDIR/grafana-password")" "http://$grafana/api/$1"
 }
@@ -146,7 +148,7 @@ if grep -Fq fixture-live-canary "$PLOW_LGTM_WORKDIR/tempo.json"; then
   exit 1
 fi
 await_query "http://$mimir/prometheus/api/v1/query?query=node_memory_MemTotal_bytes" \
-  'any(.data.result[]; .metric.plow_host == "loopback-fixture" and (.value[1] | tonumber) > 0)' \
+  'any(.data.result[]; .metric.plow_host=="loopback-fixture" and .metric.instance==.metric.plow_host and .metric.plow_host_source=="host-proc" and (.value[1]|tonumber)>0)' \
   "$PLOW_LGTM_WORKDIR/mimir.json"
 
 before=$(compose ps -q)

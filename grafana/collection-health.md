@@ -8,6 +8,10 @@ Coverage and progress shows the oldest source time actually scanned. Scanned and
 
 Alloy self-scrape requires a sample in the last 45 seconds at the selected range end. No recent sample can mean Alloy or the Mimir path is unavailable. The health exporter queue covers just the health Loki writer. Live Codex OTLP spans count receiver activity since Alloy started, and are independent of the Codex history collector. The receipt-rate chart uses the same sampled receiver counter. Receiver activity has no source completeness denominator and does not establish delivery to Tempo.
 
+## Host context
+
+The bottom of Collection Health shows CPU non-idle and RAM in use by [configured host alias](../infra/lgtm/README.md#host-and-capture-aliases). Both plots use the dashboard's selected UTC range. CPU uses a one-minute idle-counter rate across logical CPUs and includes I/O wait and steal time in the non-idle share. RAM uses Linux's available memory estimate. Both require samples within 15 seconds of each plotted time. Empty charts can indicate a time range before host collection or a gap in the scrape. Run attribution remains unknown.
+
 ## Status spool contract
 
 Publish append-only JSONL or atomic immutable chunks matching `/spool/health/*.jsonl`. Choose a unique prefix for each writer. Use an operator-selected, stable, non-sensitive `scope` alias of up to 64 letters, numbers, spaces, underscores or hyphens, starting with a letter or number. Keep source IDs, repositories, paths, raw errors, URLs and private content out of the spool. Each worker owns its source decisions and validates its own allowlisted `gapCode`. Gap codes are short tokens using letters, digits, underscores or hyphens.

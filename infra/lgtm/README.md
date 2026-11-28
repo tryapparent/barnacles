@@ -55,6 +55,22 @@ Reapply with the same runtime directory and environment to retain the volumes an
 
 The [GitHub collector deployment](../../collect/github/README.md#compose-deployment) adds continuous polling and historical backfill when supplied with a repository-scoped credential. Use `bash infra/lgtm/deploy.sh --github-only` for worker-only activation or set `PLOW_GITHUB_ENABLED=true` to include it when reapplying the whole stack.
 
+### Host and capture aliases
+
+Set these independent mappings in the same private Compose environment used for reapply. Use stable, non-sensitive aliases. For production, set a unique host alias for each measured host in the Mimir deployment and keep one writer per alias. Preserve the alias for the same host across container recreation.
+
+| Measured or captured source | Compose input | Published alias |
+| --- | --- | --- |
+| Linux Docker host supplying the read-only `/proc/stat` and `/proc/meminfo` binds | `PLOW_HOST_ALIAS`, defaults to `loopback-fixture` for local candidates | Mimir `plow_host` and `instance` on the allowlisted node metrics |
+| Configured Codex sessions and archives | `PLOW_CODEX_SCOPE` | Codex capture and health scope |
+| Configured T3 endpoint | `PLOW_T3_SCOPE` | T3 capture and health scope |
+
+Host aliases use 1–64 ASCII letters, digits, underscores or hyphens and start with a letter or digit. The host scrape drops samples with an invalid alias. The Compose binds refer to the machine running the Docker daemon. On Clanker, verify the daemon host, compare the CPU counters and RAM total with that host's procfs, and check fresh samples under the configured alias. `PLOW_HOST_PROCFS` points Alloy at the directory holding those two files and is set by Compose.
+
+Capture scope identifies an input. T3 may report remote work, and Codex archives may have been copied from elsewhere. Equal aliases or overlapping timestamps cannot establish the execution host. Run context requires a verified source and execution host plus a UTC run window covered by that host's samples. Plow currently displays the host series separately. Keep private alias values and any source attestations outside Git.
+
+New samples carry `plow_host_source="host-proc"`. Existing samples remain queryable in Mimir under their original labels. The host charts require the explicit procfs source, so they start when the new scrape first writes samples. The existing Mimir writer and Loki and Tempo routing continue unchanged.
+
 ### Optional Codex trace fan-out
 
 The `codex-trace-fanout` Compose profile adopts an existing standalone Codex Collector. Its pinned image adds Alloy as a second destination after the legacy authenticated input and redaction pipeline. The original Codex listener, evidence receiver, and credentials are reused.
