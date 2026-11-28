@@ -5,10 +5,10 @@ import { join } from "node:path";
 import {
   admissionPolicy, analysisWindow, backupAnalysisInput, joinedTargets, joinSession, loadEvidence,
   projectPlowFeed, publishJoinedAnalysis, readT3Projections, repository, sessionJoinPolicy, type AdmissionPolicy,
-  type AttemptIdentity, type SessionJoinPolicy, type SourcePolicy, type StoredT3Projection, type NativeBinding, type Point, type ThreadEvidence,
+  type ActionAttempt, type AttemptIdentity, type SessionJoinPolicy, type SourcePolicy, type StoredT3Projection, type NativeBinding, type Point, type ThreadEvidence,
 } from "../../evidence/index.ts";
 import { buildPolicies, loadPolicy } from "../../tooling/bend.ts";
-import { collectAttempt, type ClockPolicy, type GitHubReader } from "../github/attempt.ts";
+import type { ClockPolicy, GitHubReader } from "../github/attempt.ts";
 import { array, bendList, boundedFile, millis, point, positiveInt, replayOutcomeDelays, row, stockT3Id, stockT3Origin, stockT3Rpc, str, timeParts, toMillis, token } from "../wire.ts";
 
 export type ProjectionCodec = SourcePolicy & {
@@ -100,7 +100,7 @@ async function prepareCiReceipt(scratch: string, exact: AttemptIdentity, kind: s
 }
 
 export async function captureCiAttempt(database: string, scratch: string, exact: AttemptIdentity, kind: string,
-  policy: ClockPolicy, admission: AdmissionPolicy, read: GitHubReader) {
+  policy: ClockPolicy, admission: AdmissionPolicy, read: GitHubReader, collect: () => Promise<ActionAttempt>) {
   const publish = await prepareCiReceipt(scratch, exact, kind);
   async function verifyWatchTarget() {
     const { id, run_attempt, head_sha } = row(await read(`repos/${exact.repository}/actions/runs/${exact.runId}`));
@@ -112,7 +112,7 @@ export async function captureCiAttempt(database: string, scratch: string, exact:
     execFileSync("gh", ["run", "watch", String(exact.runId), "--repo", exact.repository, "--interval", "30", "--compact"],
       { stdio: ["ignore", "inherit", "inherit"], timeout: 600_000, env: { ...process.env, GH_PROMPT_DISABLED: "1" } });
   }
-  const attempt = await collectAttempt(exact, policy, read);
+  const attempt = await collect();
   if (kind === "watch") await verifyWatchTarget();
   loadEvidence(database, { source: "github-actions", attempt }, admission);
   publish();

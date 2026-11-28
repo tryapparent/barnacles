@@ -1,13 +1,31 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
+import { parse } from "yaml";
 import { openT3History, readT3Projections, sourcePolicy } from "../../evidence/index.ts";
 import { buildPolicy, loadPolicy } from "../../tooling/bend.ts";
 import { historyPage, type HistoryPolicy } from "./history.ts";
 import { stockProjection, type ProjectionCodec } from "./projection.ts";
+
+test("the history entry point loads with the tracked container source layout", () => {
+  const job = mkdtempSync(join(process.env.PLOW_TEST_DIRECTORY!, "history-package-"));
+  try {
+    const compose = parse(readFileSync(new URL("./compose.yaml", import.meta.url), "utf8"));
+    for (const [, copy] of compose.services.history.build.dockerfile_inline.matchAll(/^COPY (.+)$/gm)) {
+      const inputs = copy.trim().split(/\s+/);
+      const destination = inputs.pop()!;
+      for (const input of inputs) {
+        const output = join(job, destination, destination.endsWith("/") ? basename(input) : "");
+        mkdirSync(dirname(output), { recursive: true });
+        cpSync(new URL("../../" + input, import.meta.url), output, { recursive: true });
+      }
+    }
+    execFileSync(process.execPath, ["--input-type=module", "-e", 'await import("./collector/codex/otel.ts")'], { cwd: job });
+  } finally { rmSync(job, { recursive: true, force: true }); }
+});
 
 test("history stops at an exact local anchor and reconciles a command outside the head", async () => {
   const job = mkdtempSync(join(process.env.PLOW_TEST_DIRECTORY!, "t3-overlap-"));
