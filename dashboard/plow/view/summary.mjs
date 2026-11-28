@@ -274,7 +274,7 @@ function showRange(range) {
   frame = policy.dashboard_frame(range, overviewEnd)
   const complete = policy.feed_covers(range, frame, feedStart)
   evidenceRows = complete ? [...values(policy.timeline_indices(spans, 10, frame, 0))].map((index, row) => ({
-    ...overviewRows[index], title: 'Thread ' + (row + 1),
+    ...overviewRows[index], title: overviewRows[index].title || 'Thread ' + (row + 1),
   })) : []
   feedStatus.hidden = evidenceRows.length > 0
   feedContent.hidden = !feedStatus.hidden

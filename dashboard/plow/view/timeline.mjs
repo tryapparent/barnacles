@@ -91,7 +91,22 @@ function showEvidence(trace) {
   const coverage = makeElement('p', 'evidence-summary',
     ci.length ? 'CI watcher observations can overlap provider runs.' :
       'No linked CI watcher observations for this thread. Unobserved time has no recorded thread activity.')
-  inspector.replaceChildren(heading, close, list, coverage)
+  const links = makeElement('p', 'inspect-links')
+  for (const [url, label] of [
+    [trace.t3Url, 'Open in T3'],
+    ...(trace.pullRequests ?? []).map(url => [url, 'PR #' + url.split('/').at(-1)]),
+  ]) {
+    if (!url) continue
+    const link = makeElement('a', '', label)
+    link.href = url
+    link.target = '_blank'
+    link.rel = 'noopener noreferrer'
+    links.append(link, ' ')
+  }
+  const metadata = [trace.status, trace.origin].filter(Boolean).join(' · ')
+  inspector.replaceChildren(heading, close,
+    ...(metadata ? [makeElement('p', 'evidence-summary thread-metadata', metadata)] : []),
+    ...(links.childElementCount ? [links] : []), list, coverage)
 }
 
 function closeInspector() {
@@ -114,6 +129,7 @@ function render(trace, width, measurements, index) {
   const row = makeElement('li', 'trace')
   const header = makeElement('header')
   const title = makeElement('strong', 'sample-title', trace.title)
+  title.title = trace.title
   const subtitle = utcDay.format(trace.startUtcMs) + ' · ' + utcClock.format(trace.startUtcMs) + ' UTC'
   const meta = makeElement('small','meta')
   meta.append(makeElement('span','',subtitle))

@@ -111,9 +111,11 @@ and `PLOW_ANALYSIS_CODEX_INSTANCE` to the exact stored source namespaces.
 The worker uses the stock T3 poller's allowlisted run and provider
 projections as its T3 input and uses the live GitHub and Codex databases
 read-only. It loads seven days of projections for the configured T3 instance.
-The same refresh publishes an anonymous activity feed to the Compose activity
+The same refresh publishes the protected activity feed to the Compose activity
 volume for the dashboard and MCP. Only the refresh container writes to that
-volume. The feed and rankings share a refresh cutoff.
+volume. The feed and rankings share a refresh cutoff. Set
+`PLOW_ANALYSIS_T3_ENVIRONMENT_ID` to the T3 environment UUID to enable
+thread links for a collector namespace that uses an alias.
 It reuses the original Bend2 native-session check and leaves missing or
 ambiguous binding evidence out of the trace join. A PR link supplies
 repository context. The exact CI join still requires the original

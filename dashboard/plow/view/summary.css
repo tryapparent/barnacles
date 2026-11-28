@@ -175,3 +175,6 @@ button.priority-option:hover{background:#fff4df15}
   .priority-option[aria-pressed="true"],.priority-option[data-current]{border-color:Highlight}
   .priority-option:focus-visible{outline-color:Highlight}
 }
+
+.inspect-links{display:flex;flex-wrap:wrap;gap:12px}
+.inspect-links a{color:inherit}

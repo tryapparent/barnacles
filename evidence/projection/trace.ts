@@ -152,23 +152,26 @@ export function writeTraces(source: DatabaseSync, view: DatabaseSync, policy: Tr
 type FeedRun = { $: "Run"; requested: number; started: number; completed: number; status: string };
 type ProviderSpan = { $: "ProviderSpan"; a: number; b: number; operation: string };
 type CiPoll = { $: "CiPoll"; a: number; b: number };
-type FeedThread = { $: "Thread"; created: number; updated: number; runs: List<FeedRun>; detail: List<ProviderSpan>; ci: List<CiPoll> };
+type FeedThread = { $: "Thread"; created: number; updated: number; row: number; runs: List<FeedRun>; detail: List<ProviderSpan>; ci: List<CiPoll> };
 type FeedSpan = { a: number; b: number; name: string };
-type FeedTrace = { start: number; end: number; work: List<FeedSpan>; wait: List<FeedSpan>; errors: List<number>; detail: List<FeedSpan>; ci: List<FeedSpan> };
+type FeedTrace = { start: number; end: number; row: number; work: List<FeedSpan>; wait: List<FeedSpan>; errors: List<number>; detail: List<FeedSpan>; ci: List<FeedSpan> };
 type FeedPolicy = { project_feed(threads: List<FeedThread>, asOf: number): { observed: number; traces: List<FeedTrace>;
   overview: List<FeedTrace>; from: number; as_of: number } };
 
 const feedList = <T>(values: T[]): List<T> =>
   values.reduceRight<List<T>>((tail, head) => ({ $: "Con", head, tail }), { $: "Nil" });
 
-export async function projectPlowFeed(path: string, scratch: string, asOf = Date.now(), scope?: string) {
+export async function projectPlowFeed(path: string, scratch: string, asOf = Date.now(), scope?: string, environment?: string) {
   const policy = await loadPolicy<FeedPolicy>(
     await buildPolicy(scratch, new URL("../analysis/plow-feed.bend", import.meta.url), "plow-feed.mjs"));
   const db = new DatabaseSync(path, { readOnly: true });
   try {
     db.exec("PRAGMA busy_timeout = 5000; BEGIN");
-    const threads = db.prepare(`SELECT instance, thread_id, created_ms, updated_ms FROM t3_threads
-      WHERE (? IS NULL OR instance=?) ORDER BY instance, thread_id`).all(scope ?? null, scope ?? null);
+    const threads = db.prepare(`SELECT t.instance,t.thread_id,t.created_ms,t.updated_ms,t.status,t.origin,t.settled,n.title
+      FROM t3_threads t LEFT JOIN t3_thread_titles n USING (instance,thread_id)
+      WHERE (? IS NULL OR t.instance=?) ORDER BY t.instance,t.thread_id`).all(scope ?? null, scope ?? null);
+    const links = db.prepare(`SELECT repository,pr_number FROM t3_pr_links WHERE instance=? AND thread_id=?
+      ORDER BY repository,pr_number`);
     const runs = db.prepare(`SELECT requested_ms, started_ms, completed_ms, status FROM t3_runs
       WHERE instance=? AND thread_id=? ORDER BY run_id`);
     const spans = db.prepare(`SELECT s.start_ns,s.end_ns,s.operation FROM t3_live_codex_links t
@@ -179,8 +182,8 @@ export async function projectPlowFeed(path: string, scratch: string, asOf = Date
       JOIN codex_process_receipts p ON (p.instance,p.session_id)=(t.codex_instance,t.session_id)
       WHERE t.t3_instance=? AND t.thread_id=? ORDER BY p.poll_started_ms,p.poll_result_ms`);
     const ms = (ns: SQLOutputValue) => Number(BigInt(String(ns)) / 1000000n);
-    const projected = policy.project_feed(feedList(threads.map(thread => ({
-      $: "Thread", created: Number(thread.created_ms), updated: Number(thread.updated_ms),
+    const projected = policy.project_feed(feedList(threads.map((thread, row) => ({
+      $: "Thread", row, created: Number(thread.created_ms), updated: Number(thread.updated_ms),
       runs: feedList(runs.all(thread.instance, thread.thread_id).map(run => ({
         $: "Run", requested: Number(run.requested_ms), started: Number(run.started_ms),
         completed: Number(run.completed_ms), status: String(run.status),
@@ -193,10 +196,20 @@ export async function projectPlowFeed(path: string, scratch: string, asOf = Date
       }))),
     }))), asOf);
     const encodeSpans = (list: List<FeedSpan>) => rows(list).map(({ a, b, name }) => [a / 1000, b / 1000, name]);
-    const encodeTraces = (list: List<FeedTrace>) => rows(list).map(trace => ({
-      startUtcMs: trace.start, end: trace.end / 1000, work: encodeSpans(trace.work), wait: encodeSpans(trace.wait),
-      errors: rows(trace.errors).map(at => at / 1000), detail: encodeSpans(trace.detail), ci: encodeSpans(trace.ci),
-    }));
+    const encodeTraces = (list: List<FeedTrace>) => rows(list).map(trace => {
+      const thread = threads[trace.row];
+      const threadId = String(thread.thread_id);
+      const environmentId = scope === thread.instance ? environment || scope : String(thread.instance);
+      const t3Url = environmentId && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(environmentId)
+        ? `https://app.t3.codes/threads/${environmentId}/${encodeURIComponent(threadId)}` : undefined;
+      return {
+        threadId, title: thread.title ?? "", status: thread.status, origin: thread.origin, settled: Boolean(thread.settled), t3Url,
+        pullRequests: links.all(thread.instance, thread.thread_id).map(link =>
+          `https://github.com/${link.repository}/pull/${link.pr_number}`),
+        startUtcMs: trace.start, end: trace.end / 1000, work: encodeSpans(trace.work), wait: encodeSpans(trace.wait),
+        errors: rows(trace.errors).map(at => at / 1000), detail: encodeSpans(trace.detail), ci: encodeSpans(trace.ci),
+      };
+    });
     return { observed: projected.observed, traces: encodeTraces(projected.traces),
       overview: { from: projected.from, to: projected.as_of, traces: encodeTraces(projected.overview) } };
   } finally {

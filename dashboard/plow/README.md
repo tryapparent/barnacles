@@ -60,9 +60,9 @@ The pinned Bend2 compiler builds the interval, grouping, ranking, and timeline
 policies under `policy/`. The registered host paths provide HTML, embedded
 fonts, DOM and browser input adapters, build packaging, Chromium verification,
 the Node HTTP adapter, and the Docker Compose and Cloudflare API wiring those runtimes require. The projection reuses the collector database and publishes only
-timing intervals, generic clock labels, and an observation timestamp. It
-omits thread identifiers, titles, prompt text, links, and unlinked source
-records. A provider span receives a more specific label when an explicitly
+timing intervals, clock labels, thread titles, IDs, source metadata, linked
+pull requests, and an observation timestamp. The dashboard and MCP share
+this Access-protected feed. Prompts and tool outputs stay in T3. A provider span receives a more specific label when an explicitly
 linked, allowlisted operation falls wholly inside a measured provider run.
 The inspector shows linked exact CI watcher observations alongside the primary
 thread phases. These observations can overlap provider time. GitHub job

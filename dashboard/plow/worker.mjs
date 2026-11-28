@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url'
 
 const html = "__PLOW_HTML__"
 const emptyFeed = '{"observed":0,"traces":[],"unavailable":true}'
-const maxFeedLength = 132 * 1024
+const maxFeedLength = 512 * 1024
 const headers = {
   'Content-Type': 'text/html; charset=utf-8',
   'Cache-Control': 'private, no-store',

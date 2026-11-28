@@ -4,7 +4,7 @@ import ./joined/range.bend as Range
 type Run is Data:
   Run{requested: Nat, started: Nat, completed: Nat, status: String}
 type Thread is Data:
-  Thread{created: Nat, updated: Nat, runs: List<&2,Run>, detail: List<&2,ProviderSpan>, ci: List<&2,CiPoll>}
+  Thread{created: Nat, updated: Nat, row: Nat, runs: List<&2,Run>, detail: List<&2,ProviderSpan>, ci: List<&2,CiPoll>}
 type ProviderSpan is Data:
   ProviderSpan{a: Nat, b: Nat, operation: String}
 type CiPoll is Data:
@@ -12,7 +12,7 @@ type CiPoll is Data:
 type Span is Data:
   Span{a: Nat, b: Nat, name: String}
 type Trace is Data:
-  Trace{start: Nat, end: Nat, work: List<&2,Span>, wait: List<&2,Span>, errors: List<&2,Nat>, detail: List<&2,Span>, ci: List<&2,Span>}
+  Trace{start: Nat, end: Nat, row: Nat, work: List<&2,Span>, wait: List<&2,Span>, errors: List<&2,Nat>, detail: List<&2,Span>, ci: List<&2,Span>}
 type Clocks is Data:
   Clocks{last: Nat, work: List<&2,Span>, wait: List<&2,Span>, errors: List<&2,Nat>}
 
@@ -43,7 +43,7 @@ def run_clocks(runs: List<&2,Run>, +created: Nat, +updated: Nat, clocks: Clocks)
 
 def thread_before(a: Thread, b: Thread) -> Bool:
   match a b:
-    case Thread{x,_,_,_,_} Thread{y,_,_,_,_}: Nat.is_le(y,x)
+    case Thread{x,_,_,_,_,_} Thread{y,_,_,_,_,_}: Nat.is_le(y,x)
 
 def detail_name(operation: String) -> String:
   match operation:
@@ -86,13 +86,13 @@ type Projection is Data:
   Projection{remaining: Nat, observed: Nat, traces: List<&2,Trace>, overview: List<&2,Trace>}
 
 def include_trace(clocks: Clocks, +created: Nat, +updated: Nat, +from: Nat, +to: Nat,
-  detail: List<&2,ProviderSpan>, ci: List<&2,CiPoll>, projection: Projection) -> Projection:
+  row: Nat, detail: List<&2,ProviderSpan>, ci: List<&2,CiPoll>, projection: Projection) -> Projection:
   match clocks projection:
     case Clocks{+last,+work,wait,errors} Projection{+remaining,+observed,+traces,+overview}:
       +known = Nat.is_lt(0n,last)
       +latest = Bool.and(known,Nat.is_lt(0n,remaining))
       +in_week = Bool.and(known,Bool.and(Nat.is_lt(created,to),Nat.is_lt(from,Nat.add(created,last))))
-      +trace : Trace = Trace{created,last,work,wait,errors,provider_detail(detail,created,work),ci_observations(ci,created,last)}
+      +trace : Trace = Trace{created,last,row,work,wait,errors,provider_detail(detail,created,work),ci_observations(ci,created,last)}
       Projection{Bool.pick(Nat,latest,Nat.sub(remaining,1n),remaining),
         Bool.pick(Nat,latest,Nat.max(observed,updated),observed),
         Bool.pick(List<&2,Trace>,latest,trace <> traces,traces),
@@ -101,9 +101,9 @@ def include_trace(clocks: Clocks, +created: Nat, +updated: Nat, +from: Nat, +to:
 def collect(threads: List<&2,Thread>, +from: Nat, +to: Nat, projection: Projection) -> Projection:
   match threads:
     case []: projection
-    case Thread{+created,+updated,runs,detail,ci} <> rest:
+    case Thread{+created,+updated,row,runs,detail,ci} <> rest:
       +clocks = run_clocks(runs,created,updated,Clocks{0n,[],[],[]})
-      collect(rest,from,to,include_trace(clocks,created,updated,from,to,detail,ci,projection))
+      collect(rest,from,to,include_trace(clocks,created,updated,from,to,row,detail,ci,projection))
 
 def publish(projection: Projection, from: Nat, as_of: Nat) -> PublishedFeed:
   match projection:
