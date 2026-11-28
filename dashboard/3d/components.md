@@ -1,31 +1,38 @@
-# Reusing the landscape as evidence changes
+# How a Plow landscape is assembled
 
-This is a design proposal for the next implementation. The branch preserves the interactive prototype. Today it reconstructs plots from the HTML and SVG, including accessible descriptions, and repaints the terrain when the board changes.
+## From evidence to a footprint
 
-## One footprint for drawing and interaction
+The standalone builder compiles [the landscape policy](landscape.bend) and bundles it alongside the browser view. Its input is the same shape as the [illustrative fixture](fixture.json). A thread starts at an absolute UTC time in milliseconds. Its intervals and event offsets use elapsed seconds. The adapter decodes clocks before passing them to the policy. The policy supplies the category durations, operation breakdowns, non-overlapping timeline segments, failure points and batch measurements. Two concurrent threads can each contribute time.
 
-Let the existing Bend2 policy produce the clipped data and durations. Let the chart layout turn them into exact world-space footprints. Give React and WebGL the same descriptors. An example operation parcel would contain a snapshot key, parent key, operation name, category, duration in milliseconds, rectangular footprint and label anchors. A trend needs separate measured runs and isolated points. A failure needs a point and an accessible target. A missing sample breaks a line.
+The chart layout gives each parcel a key, parent, semantic role, material, name, value and world-space rectangle. Selection, drawing and labels refer to that descriptor. Category and operation areas follow their durations. A zero-duration category has zero area. A tiny positive category still has its proportional area. Small labels can move to the edge, and a keyboard target can be larger than the ground it selects.
 
-Build reusable soil, crop and fog renderers around the footprint. Keep paths, meadow, sunlight and wind shared across the world. Bind each label to an anchor and a permitted footprint, with a priority and minimum readable screen height. Swapping a mud inscription for a floating label or a sign changes its material and placement. The same semantic name, duration, selection target and accessible control still identify the parcel. Cache glyph shapes. A timer update can replace the numeral glyphs without rebuilding a gate or replanting a field.
+A thread row uses elapsed time along its horizontal axis. Ground before and after the recorded extent is meadow. A gap inside that extent is unobserved, with fog. A recorded failure is a point. The trend has separate runs for contiguous measured batches, including a mark for an isolated batch. A missing batch measurement leaves a gap. A measured zero reaches the zero line.
 
-Preserve exact normalized area using the policy denominator. At 320 pixels move labels to the path edge or reveal them on selection. Give tiny plots a distinct keyboard or list target. Keep time labels horizontal at reading distance. Reserve fog for unobserved intervals within the recorded extent. Outside the interval is meadow. A measured zero, an unknown and a point event require different representations.
+## Changing the data
 
-## A stable landscape
+The standalone page starts with embedded synthetic data. The integration entry point accepts a feed or a function supplying one.
 
-Use a stable local origin and spacing for each perennial field. Seed plants by parcel identity, material type and local cell coordinates. Sample texture coordinates and wind phase in world space, so furrows and light remain continuous across parcel boundaries. When a field grows, keep the plants in cells that remain inside the footprint and add plants in the newly covered cells. Shrinking removes the uncovered cells. Shade both old and new plants with the same sun. Clip ground cover, labels and hit regions from one layout result.
+```js
+const applied = await window.plowLandscape.refresh(nextFeed)
+const diagnostics = window.plowLandscape.stats()
+```
 
-The current feed has scoped ordinals, clocks and labels. Distinct threads can share all those values. Keep selection local to one snapshot until evidence exposes a privacy-reviewed opaque identity. Never manufacture a persistent key from the display row or timestamp. Timeline traces and the trend history cover different cohorts. Their array positions cannot identify the same thread.
+Pass complete snapshots. The fixture is useful for testing insertion, removal, duration changes and unavailable data. Selection can follow a surviving category or named operation within its category. The feed does not expose durable identity for individual threads or runs. Row numbers can identify different threads after an insertion. A change of cohort returns an anonymous selection to a known parent and announces the change. The trend and timeline also cover different cohorts, so their array indexes cannot be joined.
 
-On a later keyed feed, apply one complete snapshot atomically. Keep focus on a surviving key, even if its row moves. When evidence changes or splits an interval beyond recognition, return focus to the nearest surviving parent and announce it. Keep the last usable scene during a transient refresh error, with an explicit stale status. Changes to category shares can move neighboring parcel boundaries. Maintain each surviving parcel’s local planting pattern across that transition.
+If two refreshes overlap, the latest request takes precedence. When an update fails, the farm keeps the last usable scene and marks it stale. Calling `refresh` with the same data reuses the existing parcel geometry.
 
-## Frame and update costs
+## Materials and field labels
 
-Separate evidence, layout, view and material changes. An evidence revision invalidates the affected regions and distribution layout. A camera move changes projection, visibility, picking and label detail. A selection changes its outline and readout. Wind updates a shader uniform. Batch visible vegetation instances, keep static buffers resident, and render the fog only inside its projected volume. Use textured ground cover at distance and on devices without plant instancing. Pause animation while hidden and honor reduced motion. Profile frame time, draw calls, reuploaded bytes and peak instances on real phones before selecting budgets.
+Change terrain shading, foliage and fog in [the scene](scene/). Keep sun, paths, meadow and wind consistent from one plot to the next. Use the parcel and local plant cell when varying position, rotation and size. A surviving cell should keep its plant when a neighboring parcel changes.
 
-## Migration and checks
+A label has a world anchor and a permitted footprint. Set its name and duration as horizontal text. Keep text selectable through the parcel’s keyboard target and expose both values in its accessible name.
 
-1. Replace operation-area reads from accessibility text with structured policy durations. Share the category, operation and timeline geometry with the hit targets. Check the 320 px case and all-zero, tiny and mixed known/unknown spans.
-2. Move plants and ground geometry to keyed buffers. Insert, reorder, resize and remove synthetic records while a parcel is selected. Compare unaffected cell positions and ensure keyboard focus survives wherever identity permits.
-3. Connect the trend’s measured runs and singleton marks to the renderer. Check gaps, late evidence, duration ties, overlapping thread time and changes in cohort membership. Never smooth across a missing measurement.
-4. Introduce lettering as an independent renderer. Compare mud, hovering letters and field signs at overview, drill-down and phone scales. Hide or simplify decorative lettering when the exact visible label would otherwise become illegible.
-5. Compare identical snapshots before and after replay. Confirm equal area, selection and plant placement. Capture stationary wind, reduced motion, wheel zoom and repeated refresh while checking GPU upload and redraw counters.
+## Checks for future changes
+
+Run the landscape regressions from the repository root with `node --test dashboard/3d/landscape.test.ts`. The dashboard verification suite also includes these tests.
+
+- Verify the entire overview and each selected field at the 1024 CSS pixel minimum and on a larger widescreen. Compare parcel areas to durations and keep tiny or empty entries reachable. Test crossing the [minimum width](widescreen.mjs) in both directions.
+- Replay identical snapshots, reverse the completion order of two refreshes, remove a selected operation, and replace a thread with one that has the same time and label. Check focus, data and recovery together.
+- Record the plant pattern and upload counters before changing one region. Compare surviving local cells. Pan and zoom without changing the data and check buffer reuse.
+- Exercise missing and zero measurements, a trend singleton, a failure point and overlapping work and admission waits.
+- Exercise keyboard, mouse, reduced motion, missing instancing and unavailable WebGL. Inspect both the whole farm and the focused terrain. Record the renderer and viewport when reporting performance.

@@ -1,101 +1,86 @@
-export function createInspectors({
-  clearPlots,
-  first,
-  worldRect,
-  remember,
-  focusRect,
-  dispatch,
-  tags,
-  labelAnchorsForRow,
-  placeLabels,
-  present,
-  facts,
-  home,
-  all,
-  rememberBatch,
-}) {
-  function threadDetails(trigger) {
-    clearPlots();
-    const row = trigger.closest(".trace"),
-      el = row.querySelector(".bar");
-    if (!el) return;
+import { createElement as h } from "react";
+import { Button } from "../../web/controls.tsx";
+import { timeLabel } from "./parcels.mjs";
 
-    const native = row.querySelector(".inspectable"),
-      r = worldRect(el);
-    remember(trigger);
-    focusRect(r, el, "thread");
-    if (native.getAttribute("aria-expanded") !== "true") dispatch(native);
-    for (const span of row.querySelectorAll(".bar .field-span")) {
-      const tag = document.createElement("span");
-      tag.textContent =
-        span.dataset.kind === "1"
-          ? "Admission wait"
-          : span.dataset.kind === "2"
-            ? "Provider run"
-            : "Unobserved";
-      tags.append(tag);
-      labelAnchorsForRow({ tag, r: worldRect(span) });
-    }
-    placeLabels();
-    present(
-      row.querySelector(".sample-title").textContent,
-      row.querySelector(".meta").textContent,
+const control = (props, ...children) =>
+  h(Button, { type: "button", ...props }, ...children);
+export function Inspector({ item, board, select }) {
+  if (!item) return null;
+  const parent = board.objects.get(item.parent);
+  let facts;
+  if (item.kind === "batch") {
+    facts = [
+      item.measured + " of 10 threads measured",
+      ...[-1, 1].map((step) =>
+        control(
+          {
+            key: step,
+            disabled: !board.batches[item.index + step],
+            onClick: () =>
+              select(board.batches[item.index + step].key, "batch-step"),
+          },
+          step < 0 ? "Previous batch" : "Next batch",
+        ),
+      ),
+    ];
+  } else if (item.kind === "category" || item.kind === "operation") {
+    const category = item.kind === "category" ? item : parent;
+    facts = category.operations.length
+      ? category.operations.map((op) =>
+          control(
+            {
+              key: op.key,
+              "data-fallback": op.key,
+              "aria-pressed": item.key === op.key,
+              onClick: () => select(op.key),
+            },
+            op.name + " · " + op.value,
+          ),
+        )
+      : "No operations in this range.";
+  } else {
+    const thread = item.kind === "thread" ? item : parent;
+    const entries = [...thread.parts, ...thread.failures].sort(
+      (a, b) => a.start - b.start,
     );
-    requestAnimationFrame(() => {
-      const inspector = first("#thread-inspector");
-      const list = inspector?.querySelector("ol,ul,dl");
-      if (list) {
-        const c = list.cloneNode(true);
-        c.removeAttribute("id");
-        facts.append(c);
-      } else if (inspector) {
-        facts.textContent = inspector.innerText
-          .split("\n")
-          .filter((v) => v && v !== "×" && !v.includes("Recorded timeline"))
-          .join(" · ");
-      }
-    });
-    home.focus({ preventScroll: true });
+    facts = h(
+      "ul",
+      { className: "evidence-list", "aria-label": "Recorded timeline" },
+      entries.map((part) =>
+        h(
+          "li",
+          { key: part.key },
+          control(
+            {
+              "aria-pressed": part.key === item.key,
+              onClick: () => select(part.key),
+            },
+            timeLabel(part.start) +
+              (part.duration != null
+                ? "–" + timeLabel(part.start + part.duration)
+                : "") +
+              " · " +
+              (part.category && part.name !== part.category
+                ? part.category + " · "
+                : "") +
+              part.name,
+          ),
+        ),
+      ),
+    );
+    if (!entries.length) facts = "No elapsed interval recorded.";
   }
-  function batchDetails(idx, trigger) {
-    clearPlots();
-    const chart = first(".trend-plot svg"),
-      bounds = worldRect(chart.querySelector("foreignObject"));
-    const btn = first(".batch-trigger");
-    if (btn.getAttribute("aria-expanded") !== "true") dispatch(btn);
-    requestAnimationFrame(() => {
-      const rows = all(".trend-batch-panel tbody tr");
-      if (!rows.length) return;
-      idx = Math.max(0, Math.min(rows.length - 1, idx));
-      const row = rows[idx],
-        cells = [...row.cells].map((c) => c.textContent);
-      const frac = idx / Math.max(1, rows.length - 1),
-        x = bounds.x + bounds.w * frac,
-        step = bounds.w / Math.max(1, rows.length - 1);
-      const left = Math.max(bounds.x, x - step * 0.5),
-        right = Math.min(bounds.x + bounds.w, x + step * 0.5);
-      dispatch(btn);
-      remember(trigger);
-      focusRect(
-        { x: left, y: bounds.y, w: right - left, h: bounds.h },
-        chart,
-        "batch",
-      );
-      rememberBatch(idx);
-      present("Threads " + cells[0], cells[1] + " agent work");
-      facts.textContent = cells[2] + " threads measured";
-      const prev = document.createElement("button"),
-        next = document.createElement("button");
-      prev.type = next.type = "button";
-      prev.textContent = "Previous batch";
-      next.textContent = "Next batch";
-      prev.disabled = idx === 0;
-      next.disabled = idx === rows.length - 1;
-      prev.onclick = () => batchDetails(idx - 1, trigger);
-      next.onclick = () => batchDetails(idx + 1, trigger);
-      facts.append(prev, next);
-      home.focus({ preventScroll: true });
-    });
-  }
-  return { threadDetails, batchDetails };
+  return h(
+    "section",
+    { className: "farm-detail", "aria-label": "Selected field" },
+    h("h2", null, item.name),
+    h("span", { className: "readout" }, item.value),
+    item.duration !== null &&
+      h(
+        "small",
+        { className: "sr-only" },
+        item.duration.toLocaleString("en") + " ms",
+      ),
+    h("div", { className: "facts" }, facts),
+  );
 }

@@ -1,27 +1,27 @@
-# Plow landscape prototype
+# Plow in 3D
 
-Explore the synthetic thread dashboard as a continuous farm. Click a field, operation, trend position or thread to move the camera there. Use the zoom buttons or wheel for a closer look, drag to pan, and use Whole farm or Escape to return.
+Explore how agent work is divided among admission waits, provider runs and unobserved time in one interactive farm. Plots, rows of plants and localized fog represent a synthetic evidence snapshot. Select a field to see its operations, or select a thread to inspect its intervals. Use the wheel or zoom buttons to move closer. Use **Whole farm** or Escape to return.
 
-From the repository root, install the locked dependencies and compiler as described in [Contributing](../../CONTRIBUTING.md). Build to a file of your choosing.
+**Widescreen only.** The farm requires a browser viewport at least **1024 CSS pixels wide**. Design and verify changes against the full landscape composition. Below that width, show the window-size message and keep the 3D renderer inactive. Widening the window opens the scene automatically.
+
+## Build and open
+
+Install the locked dependencies and pinned compiler as described in [Contributing](../../CONTRIBUTING.md). From the repository root, build the standalone page into a directory of your choice.
 
 ```sh
 node dashboard/3d/build.mjs "$output_directory/dashboard.html"
 ```
 
-Open the resulting file in a WebGL-capable browser. The build embeds the seven local landscape images, the fixture, the existing React dashboard and the compiled Bend2 policy. The standalone file runs without a server or feed credentials. The normal dashboard build and deployment have their own entry points.
+Open the HTML file directly in a browser. It works offline and includes the assets, fonts, compiled evidence policy and synthetic fixture.
 
-## Source
+## Landscape
 
-- [Scene](scene/) contains the WebGL renderer, instanced vegetation, ground materials, volumetric fog shaders, chart plots and thread strips.
-- [View](view/) contains navigation, drill-down, accessible HTML labels, and the farm styles.
-- [Fixture](fixture.json) contains illustrative intervals. The build uses the tracked Plow dashboard shell on this branch.
-- [Lettering study](studies/lettering.html) compares painted labels and survey stakes on stills from the synthetic prototype. Open the HTML file directly and switch materials or treatments.
-- [Component design](components.md) describes the proposed data-driven architecture and verification cases.
+[The evidence policy](landscape.bend) uses Plow’s interval, summary and trend policies. [The view](view/) projects the data into parcels, time intervals and label anchors. React controls and the [WebGL scene](scene/) share those coordinates. The foreground oak, woodland and distant ridges are [painted scenery layers](scenery/) that move at different rates as the camera travels. The [component guide](components.md) covers updating the world and the limits of snapshot-local identity.
 
-The host exception for this prototype preserves its browser-specific WebGL, Canvas, DOM controls and build wiring. Its existing chart and summary policies compile from Bend2 through the Plow builder. Camera positions, graphical parcel splits, mesh generation and projected label placement are presentation concerns. The standalone build contains synthetic data only.
+## Field labels
 
-## Verification
+Keep field names, operation names and durations in the established Plow serif lettering. Anchor the text to its parcel and keep the baseline horizontal and the numerals readable as the camera moves.
 
-At desktop and phone widths, open every category, select and deselect its operations, open each batch, inspect a thread, then return to the overview. Check pointer and keyboard paths, zoom, drag and resize. Unobserved intervals use animated ray-marched fog. With reduced motion enabled the volume should stay still while navigation remains usable.
+## Host boundaries
 
-The narrow overview inherits a layout constraint. At 320 pixels the Admission wait field occupies about 54% of the visible parcel area while its duration represents 65% of the displayed total. Read exact durations from the labels. The component design specifies the geometry repair.
+The exact host paths registered for this prototype cover the WebGL and DOM APIs, React presentation, static assets, synthetic fixtures, build and verification I/O. Bend2 owns evidence decisions. Camera transforms, terrain construction, visual level of detail and projected label placement belong to the renderer.

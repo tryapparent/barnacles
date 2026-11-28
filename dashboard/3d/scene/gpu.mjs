@@ -38,7 +38,7 @@ export function bindTextures(gl, loc, images, texture) {
     gl.LINEAR_MIPMAP_LINEAR,
   );
   gl.uniform1i(loc("foliage"), 1);
-  gl.activeTexture(gl.TEXTURE2);
+  gl.activeTexture(gl.TEXTURE5);
   gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());
   gl.texImage2D(
     gl.TEXTURE_2D,
@@ -46,13 +46,16 @@ export function bindTextures(gl, loc, images, texture) {
     gl.RGB,
     gl.RGB,
     gl.UNSIGNED_BYTE,
-    images.soil,
+    images.tilth,
   );
-  for (const axis of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T])
-    gl.texParameteri(gl.TEXTURE_2D, axis, gl.CLAMP_TO_EDGE);
-  for (const f of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER])
-    gl.texParameteri(gl.TEXTURE_2D, f, gl.LINEAR);
-  gl.uniform1i(loc("earth"), 2);
+  gl.texParameteri(
+    gl.TEXTURE_2D,
+    gl.TEXTURE_MIN_FILTER,
+    gl.LINEAR_MIPMAP_LINEAR,
+  );
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.generateMipmap(gl.TEXTURE_2D);
+  gl.uniform1i(loc("clods"), 5);
   gl.activeTexture(gl.TEXTURE3);
   gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());
   gl.texImage2D(
@@ -68,6 +71,21 @@ export function bindTextures(gl, loc, images, texture) {
   for (const f of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER])
     gl.texParameteri(gl.TEXTURE_2D, f, gl.LINEAR);
   gl.uniform1i(loc("borderGrass"), 3);
+  gl.activeTexture(gl.TEXTURE4);
+  gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());
+  gl.texImage2D(
+    gl.TEXTURE_2D,
+    0,
+    gl.RGB,
+    gl.RGB,
+    gl.UNSIGNED_BYTE,
+    images.grain,
+  );
+  for (const axis of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T])
+    gl.texParameteri(gl.TEXTURE_2D, axis, gl.CLAMP_TO_EDGE);
+  for (const filter of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER])
+    gl.texParameteri(gl.TEXTURE_2D, filter, gl.LINEAR);
+  gl.uniform1i(loc("crops"), 4);
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, texture);
 }

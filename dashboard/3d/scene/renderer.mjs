@@ -1,457 +1,411 @@
 import { createProgram, bindTextures } from "./gpu.mjs";
-import { botanicalModel } from "./plants.mjs";
 import { groundMaterials } from "./ground.mjs";
 import { fieldGeometry } from "./geometry.mjs";
-import { drawPlots } from "./plots.mjs";
-import { drawThreads } from "./timeline.mjs";
-export function mountLandscape(controller, first, sources) {
-  const { root, main, worldRect, camera, screen, reduced } = controller;
-  let windEnabled = !reduced.matches;
+import { botanicalModel } from "./plants.mjs";
+import { plotMesh, plotSpecs } from "./plots.mjs";
+import { paintRows } from "./timeline.mjs";
+
+export const idleMetrics = {
+  frames: 0,
+  drawCalls: 0,
+  lastDrawCalls: 0,
+  uploadedBytes: 0,
+  meshUploads: 0,
+  groundUploads: 0,
+  visibleInstances: 0,
+  peakInstances: 0,
+  visibleParcels: 0,
+  culledParcels: 0,
+  frameMs: 0,
+};
+
+export function mountLandscape(root, sources, shoulder = () => {}) {
   const canvas = document.createElement("canvas");
   canvas.id = "farm-scene";
   canvas.setAttribute("aria-hidden", "true");
-  root.insertBefore(canvas, main);
+  root.prepend(canvas);
   const gl = canvas.getContext("webgl", {
-    alpha: true,
+    alpha: false,
     antialias: true,
     powerPreference: "low-power",
   });
-  if (!gl) return;
-  const program = createProgram(gl);
-  const buffer = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-  for (const [key, n, at] of [
-    ["p", 3, 0],
-    ["color", 3, 3],
-    ["tex", 2, 6],
-    ["flex", 1, 8],
-  ]) {
-    const loc = gl.getAttribLocation(program, key);
-    gl.enableVertexAttribArray(loc);
-    gl.vertexAttribPointer(loc, n, gl.FLOAT, false, 36, at * 4);
-  }
-  const loc = (k) => gl.getUniformLocation(program, k),
-    view = loc("view"),
-    lift = loc("lift"),
-    time = loc("time");
-  const texture = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, texture);
-  for (const axis of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T])
-    gl.texParameteri(gl.TEXTURE_2D, axis, gl.CLAMP_TO_EDGE);
-  for (const filter of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER])
-    gl.texParameteri(gl.TEXTURE_2D, filter, gl.LINEAR);
-  const ground = document.createElement("canvas"),
-    g = ground.getContext("2d", { alpha: false }),
-    images = {};
-
-  const wind = first(".field-settings input[type=checkbox]");
-  let verts = [],
-    seed = 42,
-    size = [0, 0],
-    treeStart = 0,
-    count = 0,
-    dirty = true,
+  const counters = { ...idleMetrics };
+  const motion = matchMedia("(prefers-reduced-motion: reduce)");
+  const contrast = matchMedia("(forced-colors: active)");
+  let board,
+    pose = { x: 0, y: 0, s: 1, p: 0.93 },
     frame = 0,
     timer = 0,
+    suspended = false,
     ready = false,
     visible = true;
-  function rand() {
-    seed = (seed * 16807) % 2147483647;
-    return seed / 2147483647;
+  let draw,
+    sync,
+    lost = false;
+  const stats = () => ({
+    ...counters,
+    webgl: !!gl && ready,
+    hidden: document.hidden,
+    reducedMotion: motion.matches,
+  });
+  function schedule() {
+    if (
+      !gl ||
+      !ready ||
+      suspended ||
+      !visible ||
+      frame ||
+      document.hidden ||
+      contrast.matches
+    )
+      return;
+    frame = requestAnimationFrame((now) => {
+      frame = 0;
+      draw(now);
+    });
   }
-  function point(x, y, z, col, flex = 0) {
-    verts.push(x, y, z, ...col, -1, 0, flex);
-  }
-  function tri(a, b, c, col) {
-    point(...a, col);
-    point(...b, col);
-    point(...c, col);
-  }
-
-  let worldBox,
-    scaleY = 1;
-  function bounds(el) {
-    return worldRect(el);
-  }
-  const { shade, seedbed, track } = groundMaterials(g, images, rand);
-  const instancing = gl.getExtension("ANGLE_instanced_arrays");
-  const spot = gl.getAttribLocation(program, "spot"),
-    plantMode = loc("plant");
-  const instanceBuffer = gl.createBuffer(),
-    plantBuffer = gl.createBuffer();
-  let grassLocations = [],
-    cutLocations = [],
-    registry = [],
-    plantRanges = [];
-  const standing = botanicalModel(false),
-    straw = botanicalModel(true);
-  const model = new Float32Array(standing.length + straw.length);
-  model.set(standing);
-  model.set(straw, standing.length);
-  gl.bindBuffer(gl.ARRAY_BUFFER, plantBuffer);
-  gl.bufferData(gl.ARRAY_BUFFER, model, gl.STATIC_DRAW);
-  function attributes(buf) {
-    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-    for (const [key, n, at] of [
-      ["p", 3, 0],
-      ["color", 3, 3],
-      ["tex", 2, 6],
-      ["flex", 1, 8],
-    ]) {
-      const attr = gl.getAttribLocation(program, key);
-      gl.enableVertexAttribArray(attr);
-      gl.vertexAttribPointer(attr, n, gl.FLOAT, false, 36, at * 4);
+  if (!gl) return { stats, layout() {}, view() {}, pause() {} };
+  function initialize(images) {
+    const program = createProgram(gl);
+    const locations = new Map();
+    function loc(key) {
+      if (!locations.has(key))
+        locations.set(key, gl.getUniformLocation(program, key));
+      return locations.get(key);
     }
-  }
-  function storePlants() {
-    registry = grassLocations.concat(cutLocations);
-    plantRanges = [
-      [0, standing.length / 9, 0, grassLocations.length / 4],
+    const attrs = ["p", "color", "tex", "flex", "spot"].map((key) =>
+      gl.getAttribLocation(program, key),
+    );
+    const instancing = gl.getExtension("ANGLE_instanced_arrays");
+    const cache = new Map();
+    const texture = gl.createTexture();
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    for (const param of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T])
+      gl.texParameteri(gl.TEXTURE_2D, param, gl.CLAMP_TO_EDGE);
+    for (const param of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER])
+      gl.texParameteri(gl.TEXTURE_2D, param, gl.LINEAR);
+    bindTextures(gl, loc, images, texture);
+    gl.uniform3f(loc("mistTint"), 0.65, 0.71, 0.72);
+    function upload(data) {
+      if (!data.length) return null;
+      const buf = gl.createBuffer(),
+        array = new Float32Array(data);
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(gl.ARRAY_BUFFER, array, gl.STATIC_DRAW);
+      counters.uploadedBytes += array.byteLength;
+      return { buf, count: data.length / 9 };
+    }
+    const botanical = instancing ? upload(botanicalModel(false)) : null;
+    const plane = upload(
       [
-        standing.length / 9,
-        straw.length / 9,
-        grassLocations.length,
-        cutLocations.length / 4,
-      ],
-    ];
-    gl.bindBuffer(gl.ARRAY_BUFFER, instanceBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(registry), gl.STATIC_DRAW);
-  }
-  function drawPlants(shadows) {
-    attributes(plantBuffer);
-    gl.uniform1f(plantMode, 1);
-    gl.uniform1f(loc("shadow"), shadows ? 1 : 0);
-    for (const [firstVertex, n, offset, copies] of plantRanges) {
-      if (!copies) continue;
-      if (instancing) {
-        gl.bindBuffer(gl.ARRAY_BUFFER, instanceBuffer);
-        gl.enableVertexAttribArray(spot);
-        gl.vertexAttribPointer(spot, 4, gl.FLOAT, false, 16, offset * 4);
-        instancing.vertexAttribDivisorANGLE(spot, 1);
+        [0, 0],
+        [1, 0],
+        [0, 1],
+        [0, 1],
+        [1, 0],
+        [1, 1],
+      ].flatMap(([u, v]) => [u, -0.2, v, 1, 1, 1, u, v, 0]),
+    );
+    function attributes(buf) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      for (const [i, count, offset] of [
+        [0, 3, 0],
+        [1, 3, 3],
+        [2, 2, 6],
+        [3, 1, 8],
+      ]) {
+        gl.enableVertexAttribArray(attrs[i]);
+        gl.vertexAttribPointer(
+          attrs[i],
+          count,
+          gl.FLOAT,
+          false,
+          36,
+          offset * 4,
+        );
+      }
+    }
+    function triangles(resource) {
+      if (!resource) return;
+      attributes(resource.buf);
+      gl.drawArrays(gl.TRIANGLES, 0, resource.count);
+      counters.lastDrawCalls++;
+    }
+    let backdropKey = "",
+      trees = null;
+    function backdrop(b) {
+      const key = [
+        b.width,
+        b.height,
+        b.summary.y,
+        b.trendZone.y,
+        b.timeline.y,
+        b.axis.y,
+        b.threads.length,
+      ].join("/");
+      if (key === backdropKey) return;
+      backdropKey = key;
+      let seed = 428;
+      const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+      const ground = document.createElement("canvas");
+      const scale = Math.min(
+        1.5,
+        devicePixelRatio,
+        gl.getParameter(gl.MAX_TEXTURE_SIZE) / Math.max(b.width, b.height),
+      );
+      ground.width = Math.ceil(b.width * scale);
+      ground.height = Math.ceil(b.height * scale);
+      const g = ground.getContext("2d", { alpha: false });
+      g.scale(scale, scale);
+      const { track, shade } = groundMaterials(g, images, rand);
+      const photo = images.meadow,
+        srcW = Math.min(photo.width, (photo.height * b.width) / b.height);
+      gl.uniform2f(
+        loc("grassCrop"),
+        (1 - srcW / photo.width) / 2,
+        srcW / photo.width,
+      );
+      g.drawImage(
+        photo,
+        (photo.width - srcW) / 2,
+        0,
+        srcW,
+        photo.height,
+        0,
+        0,
+        b.width,
+        b.height,
+      );
+      const veil = g.createLinearGradient(0, 0, b.width, b.height);
+      veil.addColorStop(0, "#b8964438");
+      veil.addColorStop(0.44, "#3d311e4a");
+      veil.addColorStop(1, "#48442d36");
+      g.fillStyle = veil;
+      g.fillRect(0, 0, b.width, b.height);
+      const cross = b.timeline.y - 19,
+        width = Math.max(7, Math.min(15, b.width * 0.009));
+      {
+        const fork = (b.summary.x + b.summary.w + b.trendZone.x) / 2;
+        track(fork, 0, fork + 2, cross, width);
+        shoulder(g, fork, 0, fork + 2, cross, width);
+      }
+      track(-5, cross, b.width + 5, cross - 2, width);
+      shoulder(g, -5, cross, b.width + 5, cross - 2, width);
+      paintRows(g, b);
+      const verts = [];
+      const { timber, canopyShadow } = fieldGeometry({ g, verts, shade });
+      const radius = 33;
+      canopyShadow(b.width + radius * 0.47, cross - 12, radius);
+      timber(b.width + radius * 0.47, cross - 12, radius);
+      if (trees) gl.deleteBuffer(trees.buf);
+      trees = upload(verts);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, ground);
+      counters.groundUploads++;
+      counters.uploadedBytes += ground.width * ground.height * 3;
+    }
+    function discard(mesh) {
+      for (const part of Object.values(mesh))
+        if (part?.buf) gl.deleteBuffer(part.buf);
+    }
+    let lastBoard;
+    sync = () => {
+      if (!board || lastBoard === board) return;
+      lastBoard = board;
+      backdrop(board);
+      const retained = new Set();
+      for (const spec of plotSpecs(board)) {
+        const { slot, material, r, small, points } = spec;
+        retained.add(slot);
+        const signature = JSON.stringify([material, r.w, r.h, small, points]);
+        const prior = cache.get(slot);
+        if (prior?.signature === signature) {
+          prior.r = r;
+          continue;
+        }
+        if (prior) discard(prior.mesh);
+        const data = plotMesh(spec, !!instancing);
+        const mesh = Object.fromEntries(
+          Object.entries(data).map(([key, vertices]) => [
+            key,
+            upload(vertices),
+          ]),
+        );
+        if (mesh.plants) mesh.plants.count = data.plants.length / 4;
+        cache.set(slot, { signature, r, mesh });
+        counters.meshUploads++;
+      }
+      for (const [slot, rec] of cache)
+        if (!retained.has(slot)) {
+          discard(rec.mesh);
+          cache.delete(slot);
+        }
+    };
+    function plants(items, shadow) {
+      if (!instancing || !botanical || !items.length) return;
+      const spot = attrs[4];
+      gl.uniform1f(loc("plant"), 1);
+      gl.uniform1f(loc("shadow"), shadow);
+      attributes(botanical.buf);
+      gl.enableVertexAttribArray(spot);
+      instancing.vertexAttribDivisorANGLE(spot, 1);
+      for (const { r, mesh } of items) {
+        gl.uniform2f(loc("origin"), r.x, r.y);
+        gl.bindBuffer(gl.ARRAY_BUFFER, mesh.plants.buf);
+        gl.vertexAttribPointer(spot, 4, gl.FLOAT, false, 16, 0);
         instancing.drawArraysInstancedANGLE(
           gl.TRIANGLES,
-          firstVertex,
-          n,
-          copies,
+          0,
+          botanical.count,
+          mesh.plants.count,
         );
-        instancing.vertexAttribDivisorANGLE(spot, 0);
-        gl.disableVertexAttribArray(spot);
-      } else {
-        gl.disableVertexAttribArray(spot);
-        for (let j = 0; j < copies; j += 3) {
-          const i = offset + j * 4;
-          gl.vertexAttrib4f(
-            spot,
-            registry[i],
-            registry[i + 1],
-            registry[i + 2],
-            registry[i + 3],
-          );
-          gl.drawArrays(gl.TRIANGLES, firstVertex, n);
+        counters.lastDrawCalls++;
+      }
+      instancing.vertexAttribDivisorANGLE(spot, 0);
+      gl.disableVertexAttribArray(spot);
+      gl.uniform1f(loc("plant"), 0);
+      gl.uniform1f(loc("shadow"), 0);
+    }
+    draw = (now) => {
+      if (!board || lost) return;
+      const start = performance.now();
+      sync();
+      const vw = root.clientWidth,
+        vh = root.clientHeight,
+        dpr = Math.min(1.65, devicePixelRatio);
+      if (
+        canvas.width !== Math.round(vw * dpr) ||
+        canvas.height !== Math.round(vh * dpr)
+      ) {
+        canvas.width = Math.round(vw * dpr);
+        canvas.height = Math.round(vh * dpr);
+        gl.viewport(0, 0, canvas.width, canvas.height);
+      }
+      counters.lastDrawCalls = 0;
+      const lift = Math.sqrt(1 - pose.p * pose.p) / pose.p;
+      gl.clearColor(0.21, 0.25, 0.12, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      gl.uniform2f(loc("view"), board.width, board.height);
+      gl.uniform2f(loc("screenSize"), vw, vh);
+      gl.uniform4f(loc("cam"), pose.x, pose.y, pose.s, pose.p);
+      gl.uniform1f(loc("lift"), lift);
+      gl.uniform1f(loc("time"), motion.matches ? 0 : now / 1000);
+      gl.uniform2f(loc("origin"), 0, 0);
+      gl.uniform1f(loc("cover"), 0);
+      gl.enable(gl.DEPTH_TEST);
+      gl.depthFunc(gl.LEQUAL);
+      triangles(plane);
+      const inView = [...cache.values()].filter(
+        ({ r }) =>
+          pose.x + (r.x + r.w + 9) * pose.s > 0 &&
+          pose.x + (r.x - 9) * pose.s < vw &&
+          pose.y + (r.y + r.h + 9) * pose.s * pose.p > 0 &&
+          pose.y + (r.y - 34 * lift) * pose.s * pose.p < vh,
+      );
+      for (const { r, mesh } of inView) {
+        gl.uniform2f(loc("origin"), r.x, r.y);
+        gl.uniform1f(loc("cover"), 1);
+        triangles(mesh.surface);
+        gl.uniform1f(loc("cover"), 2);
+        triangles(mesh.canopy);
+        gl.uniform1f(loc("cover"), 0);
+        triangles(mesh.relief);
+      }
+      const planted = inView.filter(
+        ({ mesh }) => mesh.plants && pose.s * 0.93 > 0.31,
+      );
+      counters.visibleInstances = planted.reduce(
+        (n, { mesh }) => n + mesh.plants.count,
+        0,
+      );
+      counters.peakInstances = Math.max(
+        counters.peakInstances,
+        counters.visibleInstances,
+      );
+      counters.visibleParcels = inView.length;
+      counters.culledParcels = cache.size - inView.length;
+      gl.disable(gl.DEPTH_TEST);
+      plants(planted, 1);
+      gl.uniform2f(loc("origin"), 0, 0);
+      gl.uniform1f(loc("shadow"), 1);
+      triangles(trees);
+      gl.uniform1f(loc("shadow"), 0);
+      gl.enable(gl.DEPTH_TEST);
+      triangles(trees);
+      plants(planted, 0);
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      gl.depthMask(false);
+      for (const { r, mesh } of inView)
+        if (mesh.fog) {
+          gl.uniform2f(loc("origin"), r.x, r.y);
+          triangles(mesh.fog);
         }
-      }
-    }
-    gl.uniform1f(plantMode, 0);
-    gl.uniform1f(loc("shadow"), 0);
-    attributes(buffer);
-  }
-  let fogStart = 0;
-  const fogVertices = [];
-  const { grains, furrows, timber, canopyShadow, fogBank, strip } =
-    fieldGeometry({
-      verts,
-      grassLocations,
-      cutLocations,
-      fogVertices,
-      g,
-      rand,
-      shade,
-      seedbed,
-    });
-  function rebuild() {
-    dirty = false;
-    seed = 419;
-    worldBox = main.getBoundingClientRect();
-    const w = main.clientWidth,
-      h = main.clientHeight;
-    scaleY = worldBox.height / h;
-    size = [w, h];
-    if (!w || !h) return;
-    const resolution = Math.min(
-      1.5,
-      devicePixelRatio,
-      gl.getParameter(gl.MAX_TEXTURE_SIZE) / Math.max(w, h),
-    );
-    ground.width = Math.ceil(w * resolution);
-    ground.height = Math.ceil(h * resolution);
-    g.scale(resolution, resolution);
-    const photo = images.meadow;
-    const srcW = Math.min(photo.width, (photo.height * w) / h);
-    gl.uniform2f(
-      loc("grassCrop"),
-      (1 - srcW / photo.width) / 2,
-      srcW / photo.width,
-    );
-    g.drawImage(
-      photo,
-      (photo.width - srcW) / 2,
-      0,
-      srcW,
-      photo.height,
-      0,
-      0,
-      w,
-      h,
-    );
-    for (let i = 0; i < 110; i++) {
-      const x = rand() * w,
-        z = rand() * h,
-        r = 25 + rand() * 170;
-      shade(
-        x,
-        z,
-        r,
-        r * 0.76,
-        i % 3 ? "rgba(64,67,19,.12)" : "rgba(219,188,57,.19)",
-      );
-    }
-    const light = g.createLinearGradient(0, 0, w, h);
-    light.addColorStop(0, "#a7952420");
-    light.addColorStop(0.53, "#20290132");
-    light.addColorStop(1, "#5b571c32");
-    g.fillStyle = light;
-    g.fillRect(0, 0, w, h);
-    const left = bounds(first("#summary-panel")),
-      right = bounds(first(".agent-work-trend")),
-      timeline = bounds(first("#timeline-panel"));
-    const fork = (left.x + left.w + right.x) / 2,
-      cross = timeline.y - 15;
-    const sideBySide = right.x > left.x + left.w * 0.95;
-    if (sideBySide)
-      track(fork - 5, -10, fork, cross, Math.max(7, Math.min(18, w * 0.0105)));
-    else track(-10, right.y - 9, w + 10, right.y - 9, 6);
-    track(-10, cross, w + 10, cross - 2, Math.max(8, Math.min(17, w * 0.009)));
-    verts.length = 0;
-    fogVertices.length = 0;
-    grassLocations.length = 0;
-    cutLocations.length = 0;
-    const { chosen, plots } = controller;
-    drawPlots({
-      bounds,
-      worldRect,
-      chosen,
-      plots,
-      g,
-      fogBank,
-      seedbed,
-      furrows,
-      grains,
-      tri,
-      first,
-      worldBox,
-      camera,
-      scaleY,
-    });
-    drawThreads({ bounds, first, g, rand, strip });
-    const trees = sideBySide
-      ? [
-          [
-            left.x + left.w * 0.34,
-            Math.max(37, left.y - 14),
-            Math.min(58, Math.max(35, w * 0.038)),
-          ],
-          [
-            fork + 1,
-            Math.max(40, right.y - 8),
-            Math.min(54, Math.max(32, w * 0.036)),
-          ],
-          [-8, cross + 23, 32],
-          [w + 13, cross - 14, 33],
-        ]
-      : [
-          [w * 0.48, 19, 18],
-          [w - 4, right.y - 10, 18],
-          [-8, cross + 8, 14],
-        ];
-    treeStart = 6 + verts.length / 9;
-    for (const [x, z, r] of trees) {
-      canopyShadow(x, z, r);
-      timber(x, z, r);
-    }
-    for (const [x, z, r] of trees) {
-      for (let i = 0; i < 85; i++) {
-        const a = rand() * 6.28,
-          d = (0.65 + rand() * 1.4) * r,
-          px = x + Math.cos(a) * d,
-          pz = z + Math.sin(a) * d * 0.46;
-        if (px < 1 || pz < 0) continue;
-        g.fillStyle = i % 4 ? "#a9a762" : "#f3e5bb";
-        g.beginPath();
-        g.ellipse(
-          px,
-          pz,
-          rand() * 1.35 + 0.35,
-          rand() * 0.86 + 0.4,
-          0,
-          0,
-          6.283,
-        );
-        g.fill();
-      }
-    }
-    if (chosen?.sub) {
-      const p = chosen.sub;
-      g.strokeStyle = "#e9d58e";
-      g.lineWidth = 1.2;
-      g.strokeRect(
-        p.x + 0.6,
-        p.y + 0.6,
-        Math.max(0, p.w - 1.2),
-        Math.max(0, p.h - 1.2),
-      );
-    }
-    const plane = [];
-    for (const [x, z, u, v] of [
-      [0, 0, 0, 0],
-      [w, 0, 1, 0],
-      [w, h, 1, 1],
-      [0, 0, 0, 0],
-      [w, h, 1, 1],
-      [0, h, 0, 1],
-    ])
-      plane.push(x, -0.2, z, 1, 1, 1, u, v, 0);
-    fogStart = 6 + verts.length / 9;
-    const all = new Float32Array(
-      plane.length + verts.length + fogVertices.length,
-    );
-    all.set(plane);
-    all.set(verts, plane.length);
-    all.set(fogVertices, plane.length + verts.length);
-    count = all.length / 9;
-    const picker = document.querySelectorAll(
-      ".field-settings-controls input[type=color]",
-    )[2];
-    const tint = picker?.value || "#a5b6b7";
-    gl.uniform3f(
-      loc("mistTint"),
-      ...tint
-        .slice(1)
-        .match(/../g)
-        .map((c) => parseInt(c, 16) / 255),
-    );
-    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-    gl.bufferData(gl.ARRAY_BUFFER, all, gl.STATIC_DRAW);
-    storePlants();
-    attributes(buffer);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, ground);
-  }
-  const schedule = () => {
-    if (ready && visible && !frame && !document.hidden)
-      frame = requestAnimationFrame(draw);
-  };
-  const redraw = () => {
-    dirty = true;
+      gl.depthMask(true);
+      gl.disable(gl.BLEND);
+      counters.frames++;
+      counters.drawCalls += counters.lastDrawCalls;
+      counters.frameMs = performance.now() - start;
+      document.body.classList.add("farm-ready");
+      clearTimeout(timer);
+      if (!motion.matches && !document.hidden && visible)
+        timer = setTimeout(schedule, 50);
+    };
+    ready = true;
     schedule();
-  };
-  function draw(ms) {
-    frame = 0;
-    if (dirty) rebuild();
-    const [w, h] = size;
-    if (!w || !h) return;
-    const { w: vw, h: vh } = screen(),
-      dpr = Math.min(devicePixelRatio, 1.65);
-    if (
-      canvas.width !== Math.round(vw * dpr) ||
-      canvas.height !== Math.round(vh * dpr)
-    ) {
-      canvas.width = Math.round(vw * dpr);
-      canvas.height = Math.round(vh * dpr);
-      gl.viewport(0, 0, canvas.width, canvas.height);
-    }
-    gl.clearColor(0, 0, 0, 0);
-    gl.clear(gl.DEPTH_BUFFER_BIT | gl.COLOR_BUFFER_BIT);
-    gl.enable(gl.DEPTH_TEST);
-    gl.uniform2f(view, w, h);
-    gl.uniform2f(loc("screenSize"), vw, vh);
-    gl.uniform4f(loc("cam"), camera.x, camera.y, camera.s, camera.p);
-    gl.uniform1f(
-      lift,
-      Math.sqrt(Math.max(0, 1 - camera.p * camera.p)) / camera.p,
-    );
-    gl.uniform1f(time, windEnabled ? ms / 1000 : 0);
-    gl.uniform1f(loc("shadow"), 0);
-    gl.uniform1f(plantMode, 0);
-    attributes(buffer);
-    gl.drawArrays(gl.TRIANGLES, 0, 6);
-    gl.disable(gl.DEPTH_TEST);
-    drawPlants(true);
-    gl.uniform1f(loc("shadow"), 1);
-    gl.drawArrays(gl.TRIANGLES, treeStart, fogStart - treeStart);
-    gl.uniform1f(loc("shadow"), 0);
-    gl.enable(gl.DEPTH_TEST);
-    gl.drawArrays(gl.TRIANGLES, 6, fogStart - 6);
-    drawPlants(false);
-    gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-    gl.depthMask(false);
-    gl.drawArrays(gl.TRIANGLES, fogStart, count - fogStart);
-    gl.depthMask(true);
-    gl.disable(gl.BLEND);
-    clearTimeout(timer);
-    if (windEnabled && visible && !document.hidden)
-      timer = setTimeout(schedule, 50);
   }
-  controller.onRender(schedule, redraw);
-  new ResizeObserver(redraw).observe(main);
-  new MutationObserver(redraw).observe(first(".board"), {
-    subtree: true,
-    childList: true,
-    attributes: true,
-    characterData: true,
-    attributeFilter: [
-      "class",
-      "style",
-      "hidden",
-      "aria-expanded",
-      "aria-pressed",
-    ],
-  });
-  first(".field-settings")?.addEventListener("input", redraw);
-  first(".timeline-viewport").addEventListener("scroll", redraw, {
-    passive: true,
-  });
-  wind?.addEventListener("change", redraw);
-  document.addEventListener("visibilitychange", schedule);
+  function wake() {
+    clearTimeout(timer);
+    cancelAnimationFrame(frame);
+    frame = 0;
+    schedule();
+  }
+  motion.addEventListener("change", wake);
+  contrast.addEventListener("change", wake);
+  document.addEventListener("visibilitychange", wake);
   new IntersectionObserver(([entry]) => {
     visible = entry.isIntersecting;
-    schedule();
-  }).observe(main);
-  canvas.addEventListener("webglcontextlost", (e) => {
-    e.preventDefault();
+    wake();
+  }).observe(root);
+  let images;
+  canvas.addEventListener("webglcontextlost", (event) => {
+    event.preventDefault();
+    lost = true;
     ready = false;
-    cancelAnimationFrame(frame);
-    clearTimeout(timer);
+    wake();
     document.body.classList.remove("farm-ready");
   });
-  canvas.addEventListener("webglcontextrestored", () => location.reload());
-  if (first(".trend-plot svg"))
-    first(".trend-plot svg").setAttribute("preserveAspectRatio", "none");
-  reduced.addEventListener("change", () => {
-    windEnabled = !reduced.matches;
-    schedule();
+  canvas.addEventListener("webglcontextrestored", () => {
+    lost = false;
+    if (images) initialize(images);
   });
   Promise.all(
-    Object.entries(sources).map(async ([name, url]) => {
+    ["tilth", "grain", "oak", "meadow", "road"].map(async (name) => {
       const img = new Image();
-      img.src = url;
+      img.src = sources[name];
       await img.decode();
-      images[name] = img;
+      return [name, img];
     }),
-  ).then(() => {
-    bindTextures(gl, loc, images, texture);
-    ready = true;
-    document.body.classList.add("farm-ready");
-    redraw();
-    document.fonts.ready.then(redraw);
+  ).then((entries) => {
+    images = Object.fromEntries(entries);
+    if (!lost) initialize(images);
   });
+  return {
+    stats,
+    pause(value) {
+      suspended = value;
+      wake();
+    },
+    layout(next) {
+      if (board === next) return;
+      board = next;
+      schedule();
+    },
+    view(next) {
+      pose = next;
+      schedule();
+    },
+  };
 }

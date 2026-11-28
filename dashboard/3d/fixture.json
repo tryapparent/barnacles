@@ -30,7 +30,7 @@
       "work": [],
       "wait": [[0, 12240, "CI checks"]],
       "end": 16200,
-      "errors": [[12240, 16200, "Local testing"]]
+      "errors": [12240]
     },
     {
       "startUtcMs": 1795698000000,

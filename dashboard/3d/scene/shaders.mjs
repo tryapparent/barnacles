@@ -1,6 +1,11 @@
-export const vs = `attribute vec3 p,color;attribute vec4 spot;uniform float plant;uniform vec4 cam;uniform vec2 screenSize;attribute vec2 tex;attribute float flex;varying mediump float floorLayer;varying vec2 uv,land;varying vec3 rgb;uniform vec2 view;uniform float lift;uniform highp float time;uniform mediump float shadow;void main(){vec3 v=p;float sway=max(flex,0.);if(plant>.5){float cs=cos(spot.w),sn=sin(spot.w);v=vec3(spot.x+(p.x*cs-p.z*sn)*spot.z,p.y*spot.z,spot.y+(p.x*sn+p.z*cs)*spot.z);sway*=spot.z;}v.x+=sway*(sin(time*1.4+v.x*.034+v.z*.021)+.3*sin(time*2.+v.z*.08));if(shadow>.5){if(plant>.5){v.x+=v.y*.53;v.z+=v.y*.7;}else{float ray=(1.-tex.y)*(-flex);v.x+=ray*.75;v.z+=ray*1.38-v.y*.35;}v.y=0.;}vec2 proj=vec2(v.x,(v.z-lift*v.y)*cam.w)*cam.z+cam.xy;gl_Position=vec4(proj.x/screenSize.x*2.-1.,1.-proj.y/screenSize.y*2.,.86-v.y*.009-v.z/view.y*.32,1.);uv=tex;land=v.xz/view;rgb=color;floorLayer=0.;
+import { plowedSoil, rakingLight } from "../scenery/layers.mjs";
+export const vs = `attribute vec3 p,color;attribute vec4 spot;uniform float plant;uniform vec2 origin;uniform vec4 cam;uniform vec2 screenSize;attribute vec2 tex;attribute float flex;varying mediump float floorLayer;varying vec2 uv,land;varying vec3 rgb;uniform vec2 view;uniform float lift;uniform highp float time;uniform mediump float shadow;void main(){vec3 v=p;float sway=max(flex,0.);if(plant>.5){float cs=cos(spot.w),sn=sin(spot.w);v=vec3(spot.x+(p.x*cs-p.z*sn)*spot.z,p.y*spot.z,spot.y+(p.x*sn+p.z*cs)*spot.z);sway*=spot.z;}v.xz+=origin;v.x+=sway*(sin(time*1.4+v.x*.034+v.z*.021)+.3*sin(time*2.+v.z*.08));if(shadow>.5){if(plant>.5){v.x+=v.y*.53;v.z+=v.y*.7;}else{float ray=(1.-tex.y)*(-flex);v.x+=ray*.75;v.z+=ray*1.38-v.y*.35;}v.y=0.;}vec2 proj=vec2(v.x,(v.z-lift*v.y)*cam.w)*cam.z+cam.xy;gl_Position=vec4(proj.x/screenSize.x*2.-1.,1.-proj.y/screenSize.y*2.,.86-v.y*.009-v.z/view.y*.32,1.);uv=tex;land=v.xz/view;rgb=color;
+ if(plant>.5){float seedTone=.5+.5*sin(spot.w*2.8);rgb*=mix(vec3(.74,.77,.64),vec3(1.13,.99,.71),seedTone);rgb+=vec3(.07,.043,.005)*smoothstep(1.2,1.7,p.y);}
+ floorLayer=0.;
  if(p.y<-.1 && plant<.5 && tex.x>=0. && tex.x<=1.){gl_Position=vec4(tex.x*2.-1.,1.-tex.y*2.,.99,1.);vec2 world=(tex*screenSize-cam.xy)/cam.z;uv=vec2(world.x,world.y/cam.w)/view;floorLayer=1.;}}`;
-export const fs = `precision highp float;varying mediump float floorLayer;varying vec2 uv,land;varying vec3 rgb;uniform sampler2D photo,foliage,earth,borderGrass;uniform highp float lift;uniform highp vec2 view;uniform highp float time;uniform vec3 mistTint;uniform vec2 grassCrop;uniform mediump float shadow;float hash3(vec3 p){
+export const fs = `precision highp float;varying mediump float floorLayer;varying vec2 uv,land;varying vec3 rgb;uniform sampler2D photo,foliage,clods,borderGrass,crops;uniform mediump float cover;uniform highp float lift;uniform highp vec2 view;uniform highp float time;uniform vec3 mistTint;uniform vec2 grassCrop;uniform mediump float shadow;${rakingLight}
+${plowedSoil}
+float hash3(vec3 p){
       p=fract(p*vec3(.1031,.1030,.0973));
       p+=dot(p,p.yxz+33.33);
       return fract((p.x+p.y)*p.z);
@@ -55,8 +60,16 @@ export const fs = `precision highp float;varying mediump float floorLayer;varyin
       return vec4(light/max(.00001,1.-transmit),1.-transmit);
     }
     void main(){if(floorLayer>.5){vec2 tile=1.-abs(mod(uv,2.)-1.);vec3 groundColor=texture2D(photo,tile).rgb;
-    if(uv.x<0.||uv.y<0.||uv.x>1.||uv.y>1.){vec2 grassUV=vec2(grassCrop.x+tile.x*grassCrop.y,tile.y);groundColor=texture2D(borderGrass,grassUV).rgb*.91;}gl_FragColor=vec4(groundColor,1.);}else if(uv.x < -7.0){
+    if(uv.x<0.||uv.y<0.||uv.x>1.||uv.y>1.){vec2 grassUV=vec2(grassCrop.x+tile.x*grassCrop.y,tile.y);groundColor=texture2D(borderGrass,grassUV).rgb*vec3(.89,.87,.77);}float boundary=min(min(uv.x,1.-uv.x)*view.x,min(uv.y,1.-uv.y)*view.y);
+    vec2 grassUV=vec2(grassCrop.x+tile.x*grassCrop.y,tile.y);
+    vec3 border=texture2D(borderGrass,grassUV).rgb*vec3(.89,.87,.77);
+    gl_FragColor=vec4(mix(border,groundColor,smoothstep(0.,38.,boundary)),1.);}else if(cover>.5){vec2 world=land*view;
+      vec2 uvWorld=world/(cover>1.5?vec2(125.,76.):vec2(108.,105.));
+      vec2 tile=1.-abs(mod(uvWorld,2.)-1.);
+      vec3 c=cover>1.5 ? texture2D(crops,tile).rgb*rakingLight(world) : plowedSoil(world,fract((world.x+.32*world.y)/14.),clods);
+      gl_FragColor=vec4(c,1.);
+    }else if(uv.x < -7.0){
       vec2 q=vec2(-uv.x-8., uv.y);
       vec2 origin=land*view-q*rgb.xy;
       gl_FragColor=marchFog(q,rgb,origin);
-    }else if(uv.x>3.5){vec2 q=uv-vec2(5.,2.);vec2 a=mat2(.80,.60,-.60,.80)*q*3.7;vec2 b=mat2(.36,-.93,.93,.36)*q*8.4;vec3 lo=texture2D(earth,1.-abs(mod(a,2.)-1.)).rgb;vec3 hi=texture2D(earth,1.-abs(mod(b,2.)-1.)).rgb;gl_FragColor=vec4((vec3(.135,.083,.045)+lo*.49+hi*.34)*rgb,1.);}else if(uv.x>1.5){vec4 leaf=texture2D(foliage,uv-vec2(2.,0.));if(leaf.a<.48)discard;gl_FragColor=vec4(shadow>.5?texture2D(photo,clamp(land,0.,1.)).rgb*vec3(.69,.68,.58):leaf.rgb*rgb,1.);}else gl_FragColor=vec4(shadow>.5?texture2D(photo,land).rgb*vec3(.73,.73,.62):(uv.x<0.?rgb:texture2D(photo,uv).rgb*rgb),1.);}`;
+    }else if(uv.x>3.5){gl_FragColor=vec4(plowedSoil(land*view,uv.x-5.,clods),1.);}else if(uv.x>1.5){vec4 leaf=texture2D(foliage,uv-vec2(2.,0.));if(leaf.a<.48)discard;gl_FragColor=vec4(shadow>.5?texture2D(photo,clamp(land,0.,1.)).rgb*vec3(.69,.68,.58):leaf.rgb*rgb,1.);}else gl_FragColor=vec4(shadow>.5?texture2D(photo,land).rgb*vec3(.73,.73,.62):(uv.x<0.?rgb*rakingLight(land*view):texture2D(photo,uv).rgb*rgb),1.);}`;

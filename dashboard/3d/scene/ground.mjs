@@ -18,57 +18,6 @@ export function groundMaterials(g, images, rand) {
     g.fillRect(-rx, -rx, 2 * rx, 2 * rx);
     g.restore();
   }
-  function seedbed(r, kind, small = false) {
-    if (!r || r.w < 0.4 || r.h < 0.4) return;
-    const s =
-      kind === "soil"
-        ? small
-          ? 0.18
-          : 0.83
-        : kind === "grain"
-          ? small
-            ? 0.29
-            : 0.76
-          : small
-            ? 0.28
-            : 0.77;
-    g.save();
-    g.fillStyle = pat(
-      kind === "grain" ? "soil" : kind,
-      kind === "grain" ? 0.37 : s,
-    );
-    g.translate(r.x, r.y);
-    if (kind === "soil" && !small) g.drawImage(images.soil, 0, 0, r.w, r.h);
-    else g.fillRect(0, 0, r.w, r.h);
-    const picks = document.querySelectorAll(
-      ".field-settings-controls input[type=color]",
-    );
-    const idx = kind === "soil" ? 0 : kind === "grain" ? 1 : 2;
-    if (
-      picks[idx] &&
-      picks[idx].value !== ["#543b2a", "#91ad5f", "#dfbf89"][idx]
-    ) {
-      g.save();
-      g.globalCompositeOperation = "color";
-      g.fillStyle = picks[idx].value;
-      g.fillRect(0, 0, r.w, r.h);
-      g.restore();
-    }
-    g.fillStyle =
-      kind === "soil"
-        ? "rgba(39,18,4,.13)"
-        : kind === "grain"
-          ? "rgba(37,51,15,.46)"
-          : "rgba(236,185,96,.2)";
-    g.fillRect(0, 0, r.w, r.h);
-    const ridge = g.createLinearGradient(0, 0, 0, r.h);
-    ridge.addColorStop(0, "#34210855");
-    ridge.addColorStop(0.1, "#40230500");
-    ridge.addColorStop(1, "#a7713614");
-    g.fillStyle = ridge;
-    g.fillRect(0, 0, r.w, r.h);
-    g.restore();
-  }
   function track(x1, z1, x2, z2, width) {
     const dx = x2 - x1,
       dz = z2 - z1,
@@ -111,5 +60,5 @@ export function groundMaterials(g, images, rand) {
     }
     g.restore();
   }
-  return { shade, seedbed, track };
+  return { shade, track };
 }

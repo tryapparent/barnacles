@@ -1,540 +1,206 @@
-body main {
-  position: relative;
-  isolation: isolate;
-  background: transparent;
-  transform-origin: 50% 0;
+.category-tile,
+.parcel-button,
+.batch-trigger,
+.batch-parcel,
+.path-labels {
+  position: absolute;
 }
-body[data-angle="tilt"] main {
-  transform: scaleY(0.84);
-}
-body[data-angle="tilt"] .activity-overview > section,
-body .activity-overview > section,
-body #timeline-panel,
-body #summary-panel,
-body .agent-work-trend {
-  transform: none;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-  background: transparent;
-  overflow: visible;
-}
-body .activity-overview::before,
-body #timeline-panel::before {
-  display: none;
-}
-body .board,
-body .activity-meta {
-  max-width: 1650px;
-}
-body .board {
-  position: relative;
-  --thread-width: clamp(130px, 12vw, 182px);
-  --column-gap: 16px;
-}
-body .activity-header {
-  padding-block: 14px 22px;
-}
-body .activity-overview {
-  gap: clamp(28px, 4vw, 60px);
-  grid-template-columns: minmax(0, 1.19fr) minmax(0, 1fr);
-}
-body #timeline-panel,
-body #summary-panel,
-body .agent-work-trend {
+.category-tile,
+.parcel-button {
+  min-width: 0;
+  min-height: 0;
   padding: 0;
+  text-align: left;
 }
-body #summary-panel,
-body .agent-work-trend {
-  padding-block: 6px 12px;
-}
-body .summary-top,
-body .agent-work-trend h2 {
-  margin: 0 0 10px;
-}
-body .summary-top h2,
-body .agent-work-trend h2,
-body #timeline-heading {
-  font:
-    400 clamp(24px, 2.45vw, 39px) / 1.17 "Young Serif",
-    Georgia,
-    serif;
-  color: #fff2ca;
-  text-shadow:
-    1px 2px 4px #212204,
-    0 1px 10px #232207;
-}
-body .summary-tiles:has(.field-canvas) #tiles,
-body .summary-tiles #tiles {
-  block-size: clamp(190px, 18vw, 273px);
-  border-radius: 0;
-}
-body .summary-tiles {
-  box-shadow: none;
-  border-radius: 0;
-}
-body .category-tile {
+.category-tile {
+  display: grid;
   align-content: start;
   justify-content: start;
-  justify-items: start;
-  padding: clamp(9px, 1.8vw, 28px);
-  gap: 0;
 }
-body .category-icon {
-  position: absolute;
-  right: 6px;
-  top: 6px;
-  opacity: 0;
-}
-body .category-tile:is(:focus-visible, :hover) .category-icon {
-  opacity: 1;
-}
-body #tiles .category-name,
-body #tiles .category-metric {
-  font-family: "Source Serif 4", Georgia, serif;
-  background: none !important;
-  padding: 0;
-  border-radius: 0;
+.parcel-type {
+  display: block;
+  pointer-events: none;
   line-height: 1.03;
+}
+.category-tile .parcel-type {
+  padding: clamp(9px, 1.8vw, 28px);
+  font-family: "Source Serif 4", Georgia, serif;
+  color: #fff4d2;
   text-shadow:
     0 2px 4px #211801,
     0 0 9px #272005;
 }
-body #tiles .category-name {
+#tiles .soil .parcel-type {
+  color: #fff4df;
+}
+.category-name {
   font-weight: 650;
   font-size: clamp(17px, 2.5vw, 36px);
 }
-body #tiles .category-metric {
-  font-weight: 700;
-  font-size: clamp(23px, 3.4vw, 55px);
+.category-metric {
+  display: block;
   margin-top: 4px;
+  font:
+    700 clamp(23px, 3.4vw, 55px) / 1.03 Georgia,
+    serif;
 }
-body #tiles .agent .category-name,
-body #tiles .unclear .category-name {
+#tiles :is(.grain, .fog) .category-name {
   font-size: clamp(15px, 1.85vw, 28px);
 }
-body #tiles .agent .category-metric,
-body #tiles .unclear .category-metric {
+#tiles :is(.grain, .fog) .category-metric {
   font-size: clamp(21px, 2.8vw, 42px);
 }
-body #tiles .unclear {
-  padding: 3px 13px;
+#tiles .fog {
   align-content: center;
 }
-body #tiles .unclear :is(.category-name, .category-metric) {
-  color: #281d08;
-  text-shadow: 0 1px 4px #fff0b6;
+#tiles .fog .parcel-type {
+  padding: 3px 13px;
+  color: #1a130d;
+  text-shadow: 0 1px 3px #fff4dfa6;
+}
+#tiles .fog .category-metric {
   margin-top: 0;
 }
-body .trend-disclosure .batch-trigger {
-  inset: 1px 0 auto auto;
-  background: transparent;
+.path-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+}
+.path-labels button,
+.batch-trigger {
+  padding: 1px 5px;
   border: 0;
-  color: #fff3c9;
-  text-shadow: 0 2px 4px #121904;
-  text-decoration: underline;
-  text-underline-offset: 3px;
+  border-bottom: 1px solid #f1deb583;
+  background: #252b16d9;
+  color: #fff2d4;
+  font-size: 14px;
 }
-body .trend-plot,
-body .trend-batch-panel {
-  block-size: clamp(192px, 18vw, 273px);
+.batch-trigger {
+  background: transparent;
+  text-shadow: 0 1px 4px #151508;
+  min-height: 30px;
 }
-body .trend-plot svg {
-  max-width: none;
-  max-height: none;
-  width: 100%;
-  height: 100%;
+.batch-trigger::before {
+  content: "▦ ";
+}
+.trend-plot svg {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
   overflow: visible;
 }
-body .trend-plot text {
+.trend-plot text {
   font:
-    600 10px "Source Serif 4",
+    650 14px "Source Serif 4",
     Georgia,
     serif;
+  fill: #fff0ca;
   paint-order: stroke;
-  stroke: #41421a;
-  stroke-width: 0.8px;
+  stroke: #39371d;
+  stroke-width: 1px;
 }
-body .trend-field-outline {
-  stroke: #f1d67d;
-  stroke-width: 1.4px;
+.trend-series {
+  fill: none;
+  stroke: #f2d785;
+  stroke-width: 1.5px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
-body .trend-batch-panel {
-  background: #293519e6;
+.trend-ground {
+  fill: #6d863e;
 }
-body #timeline-panel {
-  margin-top: 32px;
+.trend-soil {
+  fill: #63492d;
 }
-body
-  #timeline-panel
-  :is(
-    .table-head,
-    .pinned-heading,
-    .pinned-heading::after,
-    .trace header,
-    .trace header::after
-  ) {
+.farm-ready :is(.trend-ground, .trend-soil) {
+  fill: transparent;
+}
+.batch-parcel {
   background: transparent;
 }
-body #timeline-panel .trace {
-  border-color: #f3ebc14d;
+.parcel-button {
+  text-align: center;
+  display: grid;
+  place-content: center;
+  overflow: hidden;
 }
-body
-  #timeline-panel
-  :is(.table-head, .meta, .sample-title, .utc-meta, .utc-tick, .inspectable) {
-  text-shadow: 0 1px 4px #1c2008;
-}
-body #timeline-panel .time-strip {
-  margin-inline: 0;
-}
-body .minimap {
-  background: #8a8a454d;
-  box-shadow: inset 0 0 0 1px #f2e7be9c;
-}
-body .mini-window {
-  background: #baaf5c38;
-  border-color: #eee6c1;
-}
-body .sample-title {
+.parcel-button .parcel-type {
+  transform: scaleY(calc(1 / var(--pitch)));
+  max-width: 100%;
+  padding: calc(3px / var(--scale)) calc(5px / var(--scale));
+  color: #fff3cc;
+  background: #272314ba;
+  border-radius: calc(3px / var(--scale));
+  text-shadow: 0 1px 2px #111;
   font:
-    600 15px "Source Serif 4",
-    Georgia,
+    600 calc(clamp(14px, 1.5vw, 20px) / var(--scale)) / 1.05 Georgia,
     serif;
 }
-body .mini-threads span {
-  background: #342e15;
+.parcel-button .category-name {
+  font: inherit;
 }
-body .inspectable {
-  opacity: 0.78;
+.parcel-button .category-metric {
+  font: inherit;
+  font-size: 0.85em;
+  white-space: nowrap;
+  margin-top: calc(2px / var(--scale));
 }
-body .trace .meta {
-  font-size: 10px;
+.parcel-button:is(:hover, :focus-visible, [aria-pressed="true"]) {
+  outline: calc(2px / var(--scale)) solid #dfc77c;
+  outline-offset: calc(-2px / var(--scale));
 }
-body .field-settings summary,
-body .camera-switch {
-  background: #2f321ad9;
+.parcel-button:focus-visible .parcel-type {
+  outline: calc(2px / var(--scale)) solid #ffe79a;
 }
-body .field-settings-controls {
-  z-index: 14;
-}
-#farm-scene {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  z-index: -1;
-  pointer-events: none;
-}
-body .activity-header,
-body .board {
-  background: transparent;
-}
-body.farm-ready .activity-landscape,
-body.farm-ready .field-canvas,
-body.farm-ready .summary-surface {
-  visibility: hidden !important;
-}
-body.farm-ready #tiles > .category-tile,
-body.farm-ready .trend-material,
-body.farm-ready .trend-field,
-body.farm-ready .bar,
-body.farm-ready .field-span {
-  background: transparent !important;
-  box-shadow: none !important;
-  outline: none;
-}
-body.farm-ready .trend-field {
-  opacity: 0;
-}
-body.farm-ready .field-span {
+body[data-focused]:not([data-focused=""])
+  main
+  :is(
+    h2,
+    .field-story,
+    .tick,
+    .axis,
+    .meta,
+    .sample-title,
+    .batch-trigger,
+    .trend-plot text,
+    .path-labels,
+    #tiles .parcel-type
+  ) {
   visibility: hidden;
 }
-body.farm-ready .bar {
-  overflow: visible;
+.parcel-button[data-compact] .parcel-type {
+  visibility: hidden;
 }
-body.farm-ready .summary-panel[data-breakdown] .summary-top h2 {
-  color: #fff2ca;
-}
-body #operation-panel {
-  background: transparent;
-}
-body .summary-top h2,
-body #summary-panel:has(#operation-panel:not([hidden])) .summary-top h2 {
-  color: #fff2ca;
-}
-body .timeline-heading-row {
-  background: transparent;
-}
-body .agent-work-trend h2 {
-  padding-right: 95px;
-}
-body .batch-trigger {
-  font-size: 12px;
-}
-@media (max-width: 799px) {
-  body .activity-overview {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 20px;
-  }
-  body .summary-tiles #tiles,
-  body .summary-tiles:has(.field-canvas) #tiles {
-    block-size: clamp(180px, 35vw, 240px);
-  }
-  body .trend-plot,
-  body .agent-work-trend:has(.trend-plot) .trend-plot,
-  body .trend-batch-panel {
-    block-size: clamp(140px, 28vw, 192px);
-  }
-  body .agent-work-trend {
-    min-height: 0;
-  }
-  body #timeline-panel {
-    margin-top: 22px;
-  }
-  body .board {
-    --thread-width: 98px;
-    --column-gap: 8px;
-  }
-  body .trace header {
-    padding-right: 0;
-  }
-  body #tiles .category-metric {
-    font-size: clamp(24px, 6vw, 36px);
-  }
-  body #tiles .unclear .category-metric {
-    font-size: 21px;
-  }
-  body .activity-header {
-    padding-block: 10px 20px;
-  }
-  body .category-tile.agent {
-    padding: 10px 7px;
-  }
-  body .agent-work-trend h2 {
-    max-width: 100%;
-    padding-right: 98px;
-  }
-  body .summary-top h2,
-  body .agent-work-trend h2,
-  body #timeline-heading {
-    font-size: clamp(22px, 4vw, 29px);
-  }
-}
-html body {
-  overflow-x: clip;
-}
-body.farm-ready {
-  background: #3d4419;
-}
-body .trend-batch-panel,
-body .trend-batch-panel td {
-  color: #fff5d7;
-}
-body #tiles .category-metric {
-  font-family: Georgia, serif;
-  font-weight: 700;
-}
-body #timeline-panel .trace header::after,
-body #timeline-panel .pinned-heading::after {
-  background: transparent;
-}
-body .trace .inspectable {
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  opacity: 0;
-}
-body .trace header {
-  cursor: pointer;
-}
-body .trace header:focus-within {
-  outline: 2px solid #ffe58a;
-  outline-offset: -2px;
-}
-body .trace header:is(:hover, :focus-within) .sample-title {
-  text-decoration: underline;
-}
-body .sample-title {
-  text-decoration: underline dotted #fff4d46b;
-  text-underline-offset: 3px;
-}
-body #timeline-panel .table-head {
-  border-color: #d9d1a057;
-}
-body .mini-window {
-  border: 1px solid #efdfac99;
-}
-body .trend-batch-panel th {
-  background: #34401e;
-}
-@media (max-width: 550px) {
-  body .trend-disclosure .batch-trigger {
-    font-size: 0;
-    width: 44px;
-    display: grid;
-    place-items: center;
-    border: 1px solid #ece9b857;
-    border-radius: 50%;
-  }
-  body .trend-disclosure .batch-trigger svg {
-    width: 18px;
-    height: 18px;
-  }
-  body .agent-work-trend h2 {
-    padding-inline-end: 46px;
-  }
-  body .trace header .sample-title {
-    font-size: 14px;
-  }
-  body .board {
-    padding-inline: 16px;
-  }
-  body .activity-header {
-    padding-inline: 10px;
-  }
-  body .trend-plot svg {
-    overflow: hidden;
-  }
-  body .activity-links,
-  body .board {
-    min-width: 0;
-  }
-}
-body .farm-wind {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 44px;
-  padding: 0 10px;
-  color: #fff2d1;
-  text-shadow: 0 1px 4px #151902;
-  cursor: pointer;
-  font:
-    600 16px Georgia,
-    serif;
-}
-body .farm-wind input {
-  appearance: none;
-  cursor: pointer;
-  width: 33px;
-  height: 20px;
-  border-radius: 12px;
-  border: 1px solid #dfdbaf88;
-  background:
-    radial-gradient(circle at 9px 50%, #f6efd6 0 6px, transparent 7px), #353b22;
-}
-body .farm-wind input:checked {
-  background:
-    radial-gradient(circle at 23px 50%, #fff7db 0 6px, transparent 7px), #78974a;
-}
-body .farm-wind:has(input:disabled) {
-  cursor: default;
-}
-body .field-settings summary {
-  font-size: 0;
-  width: 44px;
+.phase-target {
+  position: absolute;
+  overflow: hidden;
+  display: grid;
+  align-content: center;
+  justify-content: center;
+  border: 0;
   padding: 0;
-  background: #262c17b0;
-  border-radius: 50%;
-}
-body .field-settings summary::before {
-  content: "⚙";
-  font:
-    22px/1 Georgia,
-    serif;
-}
-body.farm-ready #operation-tiles {
+  color: #fff1ce;
   background: transparent;
 }
-body.farm-ready #operation-tiles .operation-tile {
-  background: transparent !important;
-  box-shadow: none;
-  border: 1px solid #f1d69885;
-  text-shadow: 0 1px 5px #251605;
+.phase-target .parcel-type {
+  width: max-content;
+  max-width: 100%;
+  padding: 1px 3px;
+  background: #242916dc;
+  transform: scaleY(calc(1 / var(--pitch)));
 }
-body.farm-ready #operation-tiles .operation-tile[aria-pressed="true"] {
-  outline: 2px solid #f6dda5;
-  outline-offset: -3px;
-}
-body.farm-ready .operation-tile .operation-name {
+.phase-target .category-name {
   font:
-    650 clamp(17px, 2vw, 27px) "Source Serif 4",
+    600 calc(15px / var(--scale)) / 1.1 "Source Serif 4",
     Georgia,
     serif;
 }
-body.farm-ready .operation-tile .operation-metric {
-  font:
-    700 clamp(18px, 2.3vw, 30px) Georgia,
-    serif;
+.phase-target .category-metric {
+  font-size: calc(14px / var(--scale));
 }
-body .category-tile:hover,
-body .operation-tile:hover {
-  outline: 2px solid #ffe5a6;
-  outline-offset: -3px;
-}
-@media (max-width: 550px) {
-  body .farm-wind {
-    display: none;
-  }
-  body #timeline-panel .time-strip {
-    margin-inline: 12px;
-  }
-  body .trace .inspectable {
-    width: 100%;
-    height: 100%;
-  }
-}
-@media (min-width: 640px) and (max-width: 799px) {
-  body .activity-overview {
-    grid-template-columns: minmax(0, 1.16fr) minmax(0, 1fr);
-    gap: 25px;
-  }
-  body .summary-top h2,
-  body .agent-work-trend h2 {
-    font-size: 23px;
-  }
-  body .summary-tiles:has(.field-canvas) #tiles,
-  body .summary-tiles #tiles,
-  body .agent-work-trend:has(.trend-plot) .trend-plot,
-  body .trend-batch-panel {
-    block-size: 162px;
-  }
-  body .agent-work-trend h2 {
-    padding-right: 32px;
-  }
-  body .trend-disclosure .batch-trigger {
-    font-size: 0;
-    width: 35px;
-    padding: 0;
-    justify-content: center;
-    top: 0;
-  }
-  body #tiles .category-name {
-    font-size: 19px;
-  }
-  body #tiles .category-metric {
-    font-size: 29px;
-  }
-  body #tiles .agent .category-name,
-  body #tiles .unclear .category-name {
-    font-size: 15px;
-  }
-  body #tiles .agent .category-metric,
-  body #tiles .unclear .category-metric {
-    font-size: 20px;
-  }
-  body #tiles .unclear {
-    padding: 1px 4px;
-  }
-  body .category-tile {
-    padding: 8px;
-  }
-}
-body[data-angle="tilt"] #plow-root {
-  overflow: clip;
-}
-@media (min-width: 640px) and (max-width: 799px) {
-  body .trend-plot text {
-    font-size: 13px;
-  }
+.phase-target[aria-pressed="true"],
+.batch-parcel[aria-pressed="true"] {
+  outline: calc(2px / var(--scale)) solid #ffe698;
+  outline-offset: calc(-2px / var(--scale));
 }

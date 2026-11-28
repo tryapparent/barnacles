@@ -4,33 +4,44 @@ export function fieldGeometry({
   cutLocations,
   fogVertices,
   g,
-  rand,
   shade,
-  seedbed,
 }) {
-  function grains(r, edge, small = false, cut = false) {
-    if (r.w < 1 || r.h < 1) return;
-    const gap = cut ? (small ? 4.7 : 8.5) : small ? 4.8 : 8.3,
+  function grains(r, edge, small = false, cut = false, identity = "") {
+    const gap = small ? 4.8 : 8.3,
       row = small ? 4.3 : 6.2;
-    for (let x = r.x + gap * 0.33; x < r.x + r.w - 0.2; x += gap) {
-      const top = edge ? Math.max(r.y, edge(x)) : r.y;
-      for (let z = top + row * 0.33; z < r.y + r.h - 0.2; z += row) {
-        const h = cut ? (small ? 1.75 : 2.9) : small ? 3.9 : 6.35;
+    let seed = 2166136261;
+    for (const ch of identity)
+      seed = Math.imul(seed ^ ch.charCodeAt(0), 16777619);
+    const hash = (col, line, salt) => {
+      let h =
+        seed ^
+        Math.imul(col + 1, 73856093) ^
+        Math.imul(line + 1, 19349663) ^
+        Math.imul(salt, 83492791);
+      h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
+      return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+    };
+    for (let col = 0; col * gap < r.w; col++) {
+      for (let line = 0; line * row < r.h; line++) {
+        const x = r.x + (col + 0.33) * gap + hash(col, line, 1) * 0.66;
+        const z = r.y + (line + 0.33) * row + hash(col, line, 2) * 0.85;
+        if (x >= r.x + r.w || z >= r.y + r.h || (edge && z < edge(x))) continue;
+        const height = (small ? 4.1 : 7.8) * (0.78 + hash(col, line, 3) * 0.46);
         (cut ? cutLocations : grassLocations).push(
-          x + rand() * 0.66,
-          z + rand() * 0.85,
-          h * (0.78 + rand() * 0.46),
-          rand() * 6.28,
+          x,
+          z,
+          height,
+          hash(col, line, 4) * 6.28,
         );
       }
     }
   }
   function furrows(r, small = false) {
-    const gap = small ? 5 : 9,
-      ht = small ? 0.78 : 1.55;
-    function surface(a, b, c, light) {
-      for (const [x, y, z] of [a, b, c])
-        verts.push(x, y, z, light, light, light, 5 + x / 210, 2 + z / 180, 0);
+    const gap = small ? 5 : 14,
+      ht = small ? 0.8 : 2.7;
+    function surface(a, b, c) {
+      for (const [x, y, z, t] of [a, b, c])
+        verts.push(x, y, z, 1, 1, 1, 5 + t, 0, 0);
     }
     const tilt = r.till || 0,
       steps = Math.max(1, Math.ceil(r.h / 12));
@@ -41,13 +52,14 @@ export function fieldGeometry({
         0.46 * Math.sin(z * 0.067 + x * 0.12);
       const clamp = (v) => Math.min(r.x + r.w, Math.max(r.x, v + shift));
       return [
-        [clamp(x), 0.05, z],
+        [clamp(x), 0.05, z, 0],
         [
           clamp(x + (end - x) * 0.43),
           ht * (1 + 0.19 * Math.sin(z * 0.13 + x * 0.07)),
           z,
+          0.43,
         ],
-        [clamp(end), 0.05, z],
+        [clamp(end), 0.05, z, 1],
       ];
     }
     const margin = Math.abs(tilt) * r.h + gap;
@@ -55,11 +67,10 @@ export function fieldGeometry({
       let top = ring(x, x + gap, r.y);
       for (let j = 1; j <= steps; j++) {
         const bottom = ring(x, x + gap, r.y + (r.h * j) / steps);
-        const lit = 1.09 + 0.065 * Math.sin(x * 0.42 + j * 0.39);
-        surface(top[0], bottom[0], top[1], lit);
-        surface(bottom[0], bottom[1], top[1], lit - 0.015);
-        surface(top[1], bottom[1], top[2], 0.89);
-        surface(bottom[1], bottom[2], top[2], 0.9);
+        surface(top[0], bottom[0], top[1]);
+        surface(bottom[0], bottom[1], top[1]);
+        surface(top[1], bottom[1], top[2]);
+        surface(bottom[1], bottom[2], top[2]);
         top = bottom;
       }
     }
@@ -141,15 +152,5 @@ export function fieldGeometry({
       );
     }
   }
-  function strip(r, kind) {
-    if (r.w < 1 || r.h < 1) return;
-    if (kind === "fog") {
-      fogBank(r);
-      return;
-    }
-    seedbed(r, kind, true);
-    if (kind === "grain") grains(r, null, true);
-    else furrows(r, true);
-  }
-  return { grains, furrows, timber, canopyShadow, fogBank, strip };
+  return { grains, furrows, timber, canopyShadow, fogBank };
 }
