@@ -42,12 +42,9 @@
     },
     {
       "id": 2,
-      "type": "canvas",
-      "datasource": {
-        "type": "datasource",
-        "uid": "-- Grafana --"
-      },
-      "targets": [],
+      "type": "marcusolsson-dynamictext-panel",
+      "datasource": {"type": "grafana", "uid": "grafana"},
+      "targets": [{"refId": "A", "queryType": "snapshot", "snapshot": []}],
       "gridPos": {
         "x": 0,
         "y": 0,
@@ -55,72 +52,10 @@
         "h": 3
       },
       "options": {
-        "inlineEditing": false,
-        "panZoom": false,
-        "zoomToContent": false,
-        "root": {
-          "name": "Plow header",
-          "type": "frame",
-          "background": {
-            "color": {
-              "fixed": "#392820"
-            }
-          },
-          "elements": [
-            {
-              "name": "Plow wordmark",
-              "type": "rectangle",
-              "constraint": {
-                "horizontal": "left",
-                "vertical": "center"
-              },
-              "placement": {
-                "left": 24,
-                "top": 0,
-                "width": 112,
-                "height": 58
-              },
-              "background": {
-                "image": {
-                  "fixed": "plow-cream.png"
-                },
-                "size": "contain"
-              }
-            },
-            {
-              "name": "Trace detail",
-              "type": "text",
-              "constraint": {
-                "horizontal": "leftright",
-                "vertical": "center"
-              },
-              "placement": {
-                "left": 156,
-                "right": 24,
-                "top": 0,
-                "height": 28
-              },
-              "config": {
-                "text": {
-                  "fixed": "Trace detail"
-                },
-                "color": {
-                  "fixed": "#FFF4DF"
-                },
-                "size": 20,
-                "align": "left",
-                "valign": "middle"
-              }
-            }
-          ],
-          "border": {
-            "color": {
-              "fixed": "#6A934F"
-            },
-            "width": 2
-          }
-        }
-      }
+        "defaultContent": "<div class=\"plow-heading\"><img class=\"plow-wordmark\" src=\"public/build/plow-cream.png\" alt=\"Plow\"><h1>Trace detail</h1></div>",
+        "styles": "@font-face { font-family: 'Plow Young Serif'; src: url('public/build/plow-brand/youngserif.woff2') format('woff2'); font-display: swap; }\n& > .dt-row { margin: 0; padding: 0; border: 0; flex: 1; display: flex; }\n.plow-heading { display: flex; align-items: center; flex: 1; gap: 20px; padding: 12px 28px; min-width: 0; color: #FFF4DF; background-color: #392820; border: 1px solid #6A934F; border-radius: 3px; }\n.plow-wordmark { width: clamp(92px, 9vw, 128px); height: auto; flex: 0 0 auto; }\n.plow-heading h1 { color: inherit; margin: 0; font: 400 clamp(24px, 2.5vw, 40px) / 1.15 'Plow Young Serif', Georgia, serif; }"
+      },
+      "transparent": true
     }
   ]
 }
