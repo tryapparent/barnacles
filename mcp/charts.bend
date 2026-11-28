@@ -35,6 +35,6 @@ def summary_rows(rows: List<&2, ChartTrace>, +index: Nat) -> List<&2, Summary.Su
     case ChartRow{start,duration,intervals} <> rest:
       Summary.SummaryTrace{index,start,Dashboard.evidence(intervals,duration)} <> summary_rows(rest,Nat.add(index,1n))
 
-def charts(selected: List<&2, ChartTrace>, overview: List<&2, ChartTrace>, range: String, +from: Nat, +to: Nat) -> DashboardCharts:
-  Charts{from,to,Dashboard.time_summary(summary_rows(selected,1n),from,to),
-    Dashboard.agent_work_trend(summary_rows(overview,1n),range,from,to)}
+def charts(overview: List<&2, ChartTrace>, range: String, +from: Nat, +to: Nat) -> DashboardCharts:
+  +traces = summary_rows(overview,1n)
+  Charts{from,to,Dashboard.time_summary(traces,from,to),Dashboard.agent_work_trend(traces,range,from,to)}

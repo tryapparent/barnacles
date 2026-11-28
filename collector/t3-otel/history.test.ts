@@ -158,14 +158,20 @@ test("the ordinary refresh reads a persisted stock T3 projection and joins exact
       references: [reference], ci: { observationId: "obs-fixture", kind: "query", repository,
         runId: 42, attempt: 1, headSha: sha } };
     writeFileSync(join(job, "receipt.json"), JSON.stringify(receipt));
+    const activity = mkdtempSync(join(job, "activity-"));
     const refresh = () => JSON.parse(String(execFileSync(process.execPath, [new URL("../wire.ts", import.meta.url).pathname,
-      job, forge, codex, job, joined], { env: { ...process.env, PLOW_ANALYSIS_T3_HISTORY_DB: shared,
+      job, forge, codex, job, joined], { env: { ...process.env, PLOW_ANALYSIS_T3_HISTORY_DB: shared, PLOW_ANALYSIS_ACTIVITY_DIR: activity,
         PLOW_ANALYSIS_T3_INSTANCE: instance, PLOW_ANALYSIS_CODEX_INSTANCE: "codex-fixture" } })));
     assert.equal(refresh().exactCiReceipts, 1);
     const output = new DatabaseSync(joined, { readOnly: true });
     try {
       const summary = JSON.parse(String(output.prepare("SELECT payload FROM analysis_summary").get()?.payload));
       assert.deepEqual(summary.coverage, { $: "Coverage", active: 1, withCodex: 1, withCI: 1, withBoth: 1 });
+      const feed = JSON.parse(readFileSync(join(activity, "timeline.json"), "utf8"));
+      assert.equal(feed.overview.to, Date.parse(summary.analyzedAt));
+      assert.equal(feed.overview.traces.length, 1);
+      assert.equal(feed.overview.traces[0].startUtcMs, now);
+      assert.ok(!JSON.stringify(feed).includes(id));
     } finally { output.close(); }
     assert.equal(refresh().recomputed, 0);
   } finally { rmSync(job, { recursive: true, force: true }); }

@@ -15,17 +15,12 @@ import { accessVerifier, dashboardData } from "./plow/worker.mjs";
 
 function validateSnapshot(directory: string) {
   const path = join(directory, "snapshot.json");
-  if (!statSync(path, { throwIfNoEntry: false })?.isFile()) {
-    throw Error("Missing snapshot manifest. Prepare a new dashboard snapshot.");
-  }
   const manifest = JSON.parse(readFileSync(path, "utf8"));
   if (manifest?.formatVersion !== snapshotFormatVersion) {
     throw Error(`Unsupported snapshot format. Prepare a version ${snapshotFormatVersion} snapshot.`);
   }
   for (const file of ["dashboard.sqlite", "tempo.ndjson"]) {
-    if (!statSync(join(directory, file), { throwIfNoEntry: false })?.isFile()) {
-      throw Error(`Incomplete snapshot: missing ${file}.`);
-    }
+    if (!statSync(join(directory, file), { throwIfNoEntry: false })?.isFile()) throw Error(`Missing ${file}.`);
   }
 }
 
@@ -76,10 +71,8 @@ function readAnalysis(file: string, thread?: string, weekly = false): string | u
   const db = new DatabaseSync(file, { readOnly: true });
   try {
     db.exec("PRAGMA busy_timeout=3000");
-    const item = thread
-      ? db.prepare("SELECT payload FROM analysis_threads WHERE id=?").get(thread)
-      : db.prepare(weekly ? "SELECT payload FROM analysis_week WHERE id=1" : "SELECT payload FROM analysis_summary WHERE id=1").get();
-    return item ? String(item.payload) : undefined;
+    const table = thread ? "analysis_threads" : weekly ? "analysis_week" : "analysis_summary";
+    return db.prepare(`SELECT payload FROM ${table} WHERE id=?`).get(thread ?? 1)?.payload as string | undefined;
   } finally {
     db.close();
   }
@@ -112,7 +105,7 @@ async function analysisMcp(file: string) {
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
-  const feedFile = process.env.PLOW_MCP_FEED_FILE ?? "/dashboard-feed/timeline.json";
+  const feedFile = process.env.PLOW_MCP_FEED_FILE || "/dashboard-feed/timeline.json";
   return async (request: import("node:http").IncomingMessage, response: import("node:http").ServerResponse) => {
     response.setHeader("Cache-Control", "private, no-store");
     if (request.headers.origin && request.headers.origin !== "https://plow.tryapparent.com") {
@@ -193,12 +186,19 @@ export async function serveAnalysis(file: string, port: string) {
 }
 
 function dockerCommand(args: string[], env = process.env) {
-  return execFileSync("docker", ["--context", "rootless", ...args], {
+  return execFileSync("docker", args, {
     encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 180_000, maxBuffer: 4 * 1024 * 1024, env,
   }).trim();
 }
 
-const docker = (...args: string[]) => dockerCommand(args);
+const docker = (...args: string[]) => dockerCommand(["--context", "rootless", ...args]);
+
+export function analysisActivityDirectory() {
+  const volume = dockerCommand(["volume", "ls", "-f", `name=^${analysisProject()}_activity$`, "--format", "{{.Mountpoint}}"]);
+  if (volume && existsSync(join(volume, "timeline.json"))) return volume;
+}
+
+const analysisProject = () => process.env.PLOW_ANALYSIS_COMPOSE_PROJECT || "plow-analysis";
 
 function deployT3History(release: string) {
   const etc = process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config");
@@ -240,7 +240,7 @@ function deployAnalysis(release: string) {
   const settings = process.env.PLOW_ANALYSIS_DEPLOY_ENV ?? join(state, "plow", "analysis", "compose.env");
   if (!existsSync(settings)) return;
   const stack = join(resolve(release), "compose.yaml");
-  const project = process.env.PLOW_ANALYSIS_COMPOSE_PROJECT || "plow-analysis";
+  const project = analysisProject();
   const compose = (file: string, ...args: string[]) => docker("compose", "--project-name", project,
     "--env-file", settings, "--profile", "analysis", "-f", file, ...args);
   const services = ["analysis-refresh", "analysis-api"];
@@ -274,7 +274,7 @@ function deployAnalysis(release: string) {
         docker("image", "tag", item.backup, item.tag);
         if (switching) {
           const legacyAlias = item.source !== stack && realpathSync(item.source) === stack;
-          dockerCommand(["compose", "--project-name", project, "--env-file", settings, "--profile", "analysis",
+          dockerCommand(["--context", "rootless", "compose", "--project-name", project, "--env-file", settings, "--profile", "analysis",
             "-f", item.source, "up", "--detach", "--no-deps", "--no-build", "--force-recreate", item.service],
           legacyAlias ? { ...process.env, PLOW_ANALYSIS_HISTORY_DIR: "" } : process.env);
         }

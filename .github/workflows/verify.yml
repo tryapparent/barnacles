@@ -111,6 +111,9 @@ jobs:
             const weekly = (await call("get_plow_charts", { range: "7d" })).structuredContent;
             assert.equal(weekly.agent_work_trend.length, 7);
             assert.equal(weekly.time_summary.duration, 60000);
+            writeFileSync(feedFile, JSON.stringify({ observed, traces: [], overview: { from, to, traces: Array(11).fill(trace) } }));
+            assert.equal((await call("get_plow_timeline", { range: "7d" })).structuredContent.traces.length, 10);
+            assert.equal((await call("get_plow_charts", { range: "7d" })).structuredContent.time_summary.duration, 660000);
           } finally {
             await client.close();
             server.closeAllConnections();
