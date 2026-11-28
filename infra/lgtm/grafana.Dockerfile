@@ -90,7 +90,12 @@ const definition = /s=\{name:"Debug",.*?\},M=\{name:"Desert bloom"/g;
 if ([...asset.matchAll(definition)].length !== 1) {
   throw new Error('Expected one Grafana Debug theme definition.');
 }
+const profileFilter = 'filter(u=>u.isExtra?y.includes(u.id):!0)';
+if (asset.split(profileFilter).length !== 2) {
+  throw new Error('Expected one Grafana theme picker filter.');
+}
 const patched = asset.replace(definition, 's=' + JSON.stringify(theme) + ',M={name:"Desert bloom"')
+  .replace(profileFilter, 'filter(u=>u.isExtra?u.id==="debug"||y.includes(u.id):!0)')
   .split('\n//# sourceMappingURL=')[0] + '\n';
 const replacement = '5923.' + hash('sha256', patched).slice(0, 20) + '.js';
 const oldSource = 'public/build/' + original;
