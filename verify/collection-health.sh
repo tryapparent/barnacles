@@ -69,6 +69,7 @@ to=$((now + 5000))
 jq -c --arg from "$from" --arg to "$to" '
   {from:$from,to:$to,queries:[
     (.dashboard.panels[] | select(.id==3).targets[0] | .expr |= sub("\\$__range";"7205s")),
+    (.dashboard.panels[] | select(.id==4).targets[0] | .refId="D" | .expr |= sub("\\$__range";"7205s")),
     (.dashboard.panels[] | select(.id==11).targets[0] | .refId="B"),
     (.dashboard.panels[] | select(.id==10).targets[0] | .refId="C" | .expr |= sub("\\$__interval";"1m") | .intervalMs=60000)
   ]}
@@ -89,7 +90,7 @@ jq -nc --argjson t "$now" '
   report("codex_history";"backfill";"complete";75000;($t-75500);($t-175000);($t-600000000);51;51;720;"session";"retention_limited"),
   (report("codex_history";"live";"retrying";65000;null;null;null;null;null;null;"session";null) | del(.lastSuccessMs,.scannedUnits,.ingestedRecords)),
   report("github";"backfill";"blocked";60000;($t-9000000);($t-8000000);($t-970000000);3;null;14;"page";"permission_denied"),
-  report("t3";"backfill";"working";50000;($t-51000);($t-125000);($t-80000000);99;100;75;"thread";null),
+  (report("t3";"backfill";"working";50000;($t-51000);($t-125000);($t-80000000);99;100;75;"thread";null) + {scanProgress:"99.0%"}),
   report("t3";"live";"idle";2000;($t-2500);($t-120000);null;0;null;0;"thread";null)
 ' > "$PLOW_LGTM_WORKDIR/reports.jsonl"
 jq -c '
@@ -114,6 +115,7 @@ jq -e --slurpfile reports "$PLOW_LGTM_WORKDIR/reports.jsonl" '
   | ([$columns[2][] | fromjson] | sort_by(.observedMs)) == ($reports | sort_by(.observedMs))
     and all(range(0; $columns[1] | length); . as $index | $columns[1][$index] == ($columns[2][$index] | fromjson | .observedMs))
 ' "$PLOW_LGTM_WORKDIR/health.json"
+jq -e '[.results.D.frames[].schema.fields[1].labels | .scanProgress // ""] | sort == ["","","","","","99.0%"]' "$PLOW_LGTM_WORKDIR/health.json"
 curl -fsSG --max-time 15 -H 'X-Scope-OrgID: plow-fixture' \
   --data-urlencode 'query={plow_source="collector_health"}' \
   "http://$loki/loki/api/v1/query_range" > "$PLOW_LGTM_WORKDIR/raw-tenant.json"

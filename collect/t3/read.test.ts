@@ -118,6 +118,10 @@ test("T3 live head and durable opaque backfill advance independently", async () 
     const marks = () => JSON.parse(readFileSync(join(state, "t3-fixture-backfill.json"), "utf8")).marks;
     assert.equal(await capture("backfill"), 0);
     assert.equal(marks()["thread-archived"].cursor, cursor);
+    const report = JSON.parse(readFileSync(join(spool, "health", readdirSync(join(spool, "health"))[0]), "utf8"));
+    assert.equal(report.status, "working");
+    assert.equal(report.lastSuccessMs, report.observedMs);
+    assert.equal(report.scanProgress, "50.0%");
     unavailable = true;
     assert.equal(await capture("backfill"), 1);
     assert.equal(marks()["thread-archived"].cursor, cursor);

@@ -108,7 +108,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "**Expected status reports** · T3, Codex history and GitHub · Live and backfill lanes  \nA missing lane has no report in this range. Widen the range to find older reports. Clocks are shown in UTC."
+        "content": "**Expected status reports** · T3, Codex history and GitHub · Live and backfill lanes  \nGitHub appears when its collector reports. Widen the range for older reports. Clocks are shown in UTC."
       }
     },
     {
@@ -171,7 +171,7 @@
               "lane": "Lane",
               "status": "Last status",
               "Value #A": "Report age",
-              "lastSuccessMs": "Last success",
+              "lastSuccessMs": "Last successful read",
               "newestSourceMs": "Newest source"
             }
           }
@@ -181,7 +181,7 @@
           "options": {
             "conversions": [
               {
-                "targetField": "Last success",
+                "targetField": "Last successful read",
                 "destinationType": "number"
               },
               {
@@ -348,7 +348,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Last success"
+              "options": "Last successful read"
             },
             "properties": [
               {
@@ -379,7 +379,7 @@
           }
         ]
       },
-      "description": "Latest report in the selected time range for each collector, scope and lane. Use report age and the collector’s expected cadence to assess freshness. Last success can be a poll that found no new records.",
+      "description": "Latest report in the selected time range for each collector, scope and lane. Use report age and the collector’s expected cadence to assess freshness. Last successful read can be a poll that found no new records.",
       "links": [
         {
           "title": "View health report history",
@@ -409,7 +409,7 @@
             "type": "loki",
             "uid": "plow-collection-status"
           },
-          "expr": "topk by (collector, scope, lane) (1, max_over_time({plow_source=\"collector_health\"} | json collector, scope, lane, status, observedMs, lastSuccessMs, newestSourceMs, oldestScannedMs, scannedUnits, eligibleUnits, ingestedRecords, unit, gapCode | label_format lastSuccessMs=`{{ default \"Unknown\" .lastSuccessMs }}`, newestSourceMs=`{{ default \"Unknown\" .newestSourceMs }}`, oldestScannedMs=`{{ default \"Unknown\" .oldestScannedMs }}`, scannedUnits=`{{ default \"Unknown\" .scannedUnits }}`, eligibleUnits=`{{ default \"Unknown\" .eligibleUnits }}`, ingestedRecords=`{{ default \"Unknown\" .ingestedRecords }}` | unwrap observedMs | __error__=\"\" [$__range]) by (collector, scope, lane, status, lastSuccessMs, newestSourceMs, oldestScannedMs, scannedUnits, eligibleUnits, ingestedRecords, unit, gapCode))",
+          "expr": "topk by (collector, scope, lane) (1, max_over_time({plow_source=\"collector_health\"} | json collector, scope, lane, status, observedMs, lastSuccessMs, newestSourceMs, oldestScannedMs, scannedUnits, eligibleUnits, ingestedRecords, scanProgress, unit, gapCode | label_format lastSuccessMs=`{{ default \"Unknown\" .lastSuccessMs }}`, newestSourceMs=`{{ default \"Unknown\" .newestSourceMs }}`, oldestScannedMs=`{{ default \"Unknown\" .oldestScannedMs }}`, scannedUnits=`{{ default \"Unknown\" .scannedUnits }}`, eligibleUnits=`{{ default \"Unknown\" .eligibleUnits }}`, ingestedRecords=`{{ default \"Unknown\" .ingestedRecords }}` | unwrap observedMs | __error__=\"\" [$__range]) by (collector, scope, lane, status, lastSuccessMs, newestSourceMs, oldestScannedMs, scannedUnits, eligibleUnits, ingestedRecords, scanProgress, unit, gapCode))",
           "queryType": "instant",
           "editorMode": "code"
         }
@@ -438,9 +438,10 @@
               "oldestScannedMs": 3,
               "scannedUnits": 4,
               "eligibleUnits": 5,
-              "unit": 6,
-              "ingestedRecords": 7,
-              "gapCode": 8
+              "scanProgress": 6,
+              "unit": 7,
+              "ingestedRecords": 8,
+              "gapCode": 9
             },
             "renameByName": {
               "collector": "Collector",
@@ -449,6 +450,7 @@
               "oldestScannedMs": "Oldest scanned",
               "scannedUnits": "Scanned",
               "eligibleUnits": "Eligible",
+              "scanProgress": "Progress",
               "unit": "Unit",
               "ingestedRecords": "Ingested",
               "gapCode": "Reported gap"
@@ -658,6 +660,22 @@
           {
             "matcher": {
               "id": "byName",
+              "options": "Progress"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 92
+              },
+              {
+                "id": "noValue",
+                "value": "—"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
               "options": "Reported gap"
             },
             "properties": [
@@ -677,7 +695,7 @@
           }
         ]
       },
-      "description": "Scanned and eligible counts are comparable within the same report and unit. Ingested counts are records. Complete means the available authorized history was exhausted. A reported gap can still limit its coverage."
+      "description": "Progress is the share of the current eligible inventory scanned. A dash means there is no known positive total or the report predates percentage reporting. Ingested counts are records. Complete means the available authorized history was exhausted. A reported gap can still limit its coverage."
     },
     {
       "id": 5,
